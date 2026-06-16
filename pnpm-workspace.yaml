@@ -1,0 +1,4 @@
+# pnpm 11+ 工作区配置
+# 允许 esbuild 运行构建脚本（vitest/tsup 依赖 esbuild 的原生二进制）
+allowBuilds:
+  esbuild: true
