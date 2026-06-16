@@ -174,7 +174,7 @@ export type LLMStreamEvent =
   | { type: 'tool_call_delta'; toolCallId: string; argumentsDelta: string }
   | { type: 'tool_call_end'; toolCallId: string }
   | { type: 'usage'; usage: TokenUsageInfo }
-  | { type: 'done'; finishReason: 'stop' | 'tool_use' | 'length' };
+  | { type: 'done'; finishReason: 'stop' | 'tool_use' | 'length' | 'error' };
 
 /** LLM 客户端接口（OpenAI / Anthropic 共同实现） */
 export interface ILLMClient {

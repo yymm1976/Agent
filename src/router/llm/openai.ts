@@ -57,7 +57,7 @@ export class OpenAIClient extends BaseLLMClient {
 
     try {
       const params = this.buildRequestParams(options, false);
-      const response = await this.client.chat.completions.create(params);
+      const response = await this.client.chat.completions.create(params) as ChatCompletion;
 
       const usage = this.extractUsage(response);
       const toolCalls = this.extractToolCalls(response.choices[0]?.message);
@@ -87,7 +87,7 @@ export class OpenAIClient extends BaseLLMClient {
 
     try {
       const params = this.buildRequestParams(options, true);
-      const stream = await this.client.chat.completions.create(params);
+      const stream = await this.client.chat.completions.create(params) as AsyncIterable<ChatCompletionChunk>;
 
       let currentToolId = '';
       let currentToolName = '';
@@ -313,11 +313,16 @@ export class OpenAIClient extends BaseLLMClient {
   private extractToolCalls(message: ChatCompletionMessage | undefined): ToolCallRequest[] {
     if (!message?.tool_calls) return [];
 
-    return message.tool_calls.map((tc) => ({
-      id: tc.id,
-      name: tc.function.name,
-      arguments: JSON.parse(tc.function.arguments || '{}'),
-    }));
+    return message.tool_calls.map((tc) => {
+      // OpenAI SDK 6.x: tool_calls 可能是 function 类型或 custom 类型
+      // 安全访问 function 属性
+      const fn = (tc as { function?: { name: string; arguments?: string } }).function;
+      return {
+        id: tc.id,
+        name: fn?.name || '',
+        arguments: JSON.parse(fn?.arguments || '{}'),
+      };
+    });
   }
 
   /**

@@ -58,7 +58,7 @@ export class AnthropicClient extends BaseLLMClient {
 
     try {
       const params = await this.buildRequestParams(options, false);
-      const response = await this.client.messages.create(params);
+      const response = await this.client.messages.create(params) as Message;
 
       const usage = this.extractUsage(response);
       const { content, toolCalls } = this.extractContent(response.content);
@@ -233,15 +233,16 @@ export class AnthropicClient extends BaseLLMClient {
     parts: ContentPart[],
     role: 'user' | 'assistant' | 'system',
   ): Promise<MessageParam> {
-    const content: Array<TextBlock | ToolUseBlock | ToolResultBlockParam> = [];
+    // 使用 MessageParam['content'] 类型以兼容 Anthropic SDK 的变化
+    const content: MessageParam['content'] = [];
 
     for (const part of parts) {
       switch (part.type) {
         case 'text':
-          content.push({ type: 'text', text: part.text });
+          (content as Array<{ type: 'text'; text: string }>).push({ type: 'text', text: part.text });
           break;
         case 'tool_use':
-          content.push({
+          (content as Array<{ type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }>).push({
             type: 'tool_use',
             id: part.id,
             name: part.name,
@@ -249,7 +250,7 @@ export class AnthropicClient extends BaseLLMClient {
           });
           break;
         case 'tool_result':
-          content.push({
+          (content as Array<ToolResultBlockParam>).push({
             type: 'tool_result',
             tool_use_id: part.toolUseId,
             content: part.content,
@@ -258,11 +259,11 @@ export class AnthropicClient extends BaseLLMClient {
           break;
         case 'image':
           // Anthropic 图片格式
-          content.push({
+          (content as Array<{ type: 'image'; source: { type: 'base64'; media_type: string; data: string } }>).push({
             type: 'image',
             source: {
               type: 'base64',
-              media_type: part.source.mediaType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+              media_type: part.source.mediaType,
               data: part.source.data,
             },
           });
@@ -270,7 +271,7 @@ export class AnthropicClient extends BaseLLMClient {
       }
     }
 
-    return { role, content: content as MessageParam['content'] };
+    return { role, content };
   }
 
   /**
