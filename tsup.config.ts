@@ -10,4 +10,7 @@ export default defineConfig({
   sourcemap: true,
   splitting: false,
   shims: true,
+  // 支持 JSX/TSX
+  jsx: 'automatic',
+  external: ['react', 'ink'],
 });
