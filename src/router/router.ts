@@ -223,13 +223,13 @@ export class ModelRouter {
   private toModelConfig(model: ModelDefinition): ModelConfig {
     return {
       id: model.id,
-      providerId: model.providerId,
-      modelName: model.id,
-      // 其他字段使用默认值
+      name: model.id,
+      provider: model.providerId,
+      tier: model.tier,
       contextWindow: 128000,
-      maxOutputTokens: 4096,
-      supportsTools: true,
-      supportsVision: false,
+      capabilities: [],
+      latencyMs: 0,
+      available: true,
     };
   }
 

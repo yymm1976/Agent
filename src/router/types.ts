@@ -4,6 +4,12 @@
 
 import type { ScenarioTier, Protocol, BudgetMode, ModelConfig } from '../config/schema.js';
 
+// 重新导出 config/schema 中的类型
+export type { ScenarioTier, Protocol, BudgetMode, ModelConfig };
+
+// 重新导出 AppConfig
+export type { AppConfig } from '../config/schema.js';
+
 // ============================================================
 // LLM 消息格式（统一 OpenAI 风格，Anthropic 客户端内部转换）
 // ============================================================
