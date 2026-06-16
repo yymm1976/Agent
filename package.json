@@ -1,6 +1,6 @@
 {
   "name": "routedev",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "按任务复杂度自动路由模型的开发助手",
   "license": "AGPL-3.0",
   "type": "module",
