@@ -37,6 +37,11 @@ import type { AutonomyMode } from '../config/schema.js';
 import { CheckpointManager } from '../harness/checkpoint-manager.js';
 import { CheckpointWriter } from '../agent/memory/checkpoint-writer.js';
 import { ContextManager } from '../agent/memory/context-manager.js';
+import { VisionAssistant } from '../agent/vision.js';
+import type { ImageInput } from '../agent/vision.js';
+import { BranchManager } from '../agent/branch.js';
+import { InitAnalyzer } from '../agent/init-analyzer.js';
+import { DreamConsolidator } from '../agent/dream-consolidator.js';
 
 interface AppProps {
   config: AppConfig;
@@ -124,6 +129,34 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     },
     writerRef.current,
   ));
+
+  // Phase 12：VisionAssistant
+  const visionAssistantRef = useRef(new VisionAssistant(
+    config.providers,
+    (providerId: string) => clientManager.get(providerId),
+  ));
+
+  // Phase 12：BranchManager
+  const branchManagerRef = useRef(new BranchManager());
+  branchManagerRef.current.initFromHistory(conversationHistoryRef.current);
+
+  // Phase 12：InitAnalyzer（懒创建）
+  const primaryProviderId = config.providers[0]?.id ?? 'default';
+  const primaryClient = clientManager.get(primaryProviderId) ?? fallbackClient;
+  const initAnalyzerRef = useRef<InitAnalyzer | null>(null);
+  if (!initAnalyzerRef.current && primaryClient) {
+    initAnalyzerRef.current = new InitAnalyzer({
+      llmClient: primaryClient,
+      modelId: config.router.classifierModel,
+      rootPath: process.cwd(),
+    });
+  }
+
+  // Phase 12：DreamConsolidator
+  const dreamConsolidatorRef = useRef(new DreamConsolidator({
+    llmClient: primaryClient ?? checkpointClient,
+    modelId: config.router.classifierModel,
+  }));
 
   // 初始化工具注册表
   const registryRef = useRef(new ToolRegistry());
@@ -325,12 +358,55 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       let accumulatedContent = '';
       let finalUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
+      // Phase 12：处理 @图片引用
+      let actualUserMessage = text;
+      const imageRefs = VisionAssistant.extractImageReferences(text);
+      if (imageRefs.length > 0 && (VisionAssistant.needsVision(text) || true)) {
+        const loadedImages: ImageInput[] = [];
+        for (const ref of imageRefs) {
+          const img = await VisionAssistant.loadImage(ref);
+          if (img) loadedImages.push(img);
+        }
+        if (loadedImages.length > 0) {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: `📷 正在分析 ${loadedImages.length} 张图片...`,
+          }]);
+          const visionResult = await visionAssistantRef.current.analyze(
+            loadedImages,
+            `用户问题: ${text}`,
+          );
+          if (visionResult) {
+            // 用图片描述替换 @filename 引用
+            actualUserMessage = text;
+            for (const img of loadedImages) {
+              if (img.fileName) {
+                actualUserMessage = actualUserMessage.replace(`@${img.fileName}`, `[图片:${img.fileName}]`);
+              }
+            }
+            actualUserMessage = `[图片分析结果]\n${visionResult.description}\n\n[用户原问题]\n${actualUserMessage}`;
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: `✓ 图片分析完成（${visionResult.modelId}，${visionResult.inputTokens + visionResult.outputTokens} tokens）`,
+            }]);
+          } else {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: '⚠️ 没有可用的多模态模型，将按纯文本处理',
+            }]);
+          }
+        }
+      }
+
       try {
         // Phase 10：为本次对话创建 AbortController
         const chatAbort = new AbortController();
         abortControllerRef.current = chatAbort;
         for await (const event of agentLoopRef.current.run({
-          userMessage: text,
+          userMessage: actualUserMessage,
           llmClient: client,
           routeDecision,
           conversationHistory: conversationHistoryRef.current,
@@ -409,7 +485,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
         });
 
         // 更新对话历史
-        conversationHistoryRef.current.push({ role: 'user', content: text });
+        conversationHistoryRef.current.push({ role: 'user', content: actualUserMessage });
         conversationHistoryRef.current.push({ role: 'assistant', content: accumulatedContent });
 
         // 限制历史长度（保留最近 20 条）
@@ -514,6 +590,11 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
             '  /memory show        - 查看当前记忆',
             '  /memory write       - 手动写入记忆',
             '  /memory clear       - 清除记忆',
+            '  /branch list        - 查看对话分支',
+            '  /branch edit N ...  - 在第 N 条消息创建分支',
+            '  /branch switch ID   - 切换到指定分支',
+            '  /init               - 分析项目结构生成 .routedev-rules.md',
+            '  /dream              - 整理记忆（合并去重）',
             '  /checkpoint list    - 查看所有检查点',
             '  /checkpoint create  - 手动创建检查点',
             '  /rollback <id>      - 回滚到指定检查点（破坏性操作）',
@@ -733,6 +814,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
             `对话历史: ${conversationHistoryRef.current.length} 条消息`,
             `检查点: ${cpCount} 个${cpEnabled ? '' : ' (未启用 / 非 Git 仓库)'}`,
             `记忆: ${memoryStatus}`,
+            `分支: ${branchManagerRef.current.listBranches().length} 个 (active: ${branchManagerRef.current.getActiveBranchId()?.slice(0, 4) ?? '无'})`,
             `MCP: ${mcpManagerRef.current.connectedCount} 个 server, ${mcpManagerRef.current.totalToolCount} 个工具`,
           ].join('\n'),
         }]);
@@ -838,6 +920,168 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
             ].join('\n'),
           }]);
         }
+        break;
+      }
+
+      case '/branch': {
+        const subCmd = parts[1]?.toLowerCase();
+
+        if (subCmd === 'list' || subCmd === undefined) {
+          const branches = branchManagerRef.current.listBranches();
+          if (branches.length === 0) {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: '没有分支。在消息前输入 /branch edit 可以创建分支。',
+            }]);
+          } else {
+            const lines = branches.map((b, i) => {
+              const marker = b.isActive ? '→' : ' ';
+              return `  ${marker} [${i + 1}] ${b.id} - ${b.name} (${b.messageCount} 条消息)`;
+            });
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: `对话分支 (${branches.length}):\n${lines.join('\n')}`,
+            }]);
+          }
+        } else if (subCmd === 'edit') {
+          const editArg = parts.slice(2).join(' ');
+          // 格式: /branch edit <index> <new content>
+          const spaceIdx = editArg.indexOf(' ');
+          if (spaceIdx < 0) {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: '用法: /branch edit <消息索引> <新内容>\n例: /branch edit 3 修正一下: 这个函数应该返回字符串',
+            }]);
+            break;
+          }
+          const indexStr = editArg.slice(0, spaceIdx);
+          const newContent = editArg.slice(spaceIdx + 1);
+          const idx = parseInt(indexStr, 10);
+          if (isNaN(idx) || idx < 1) {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: `无效的索引: ${indexStr}（应为正整数）`,
+            }]);
+            break;
+          }
+          const newBranchId = branchManagerRef.current.editByHistoryIndex(idx - 1, newContent);
+          if (newBranchId) {
+            // 用新分支的消息路径替换 conversationHistoryRef
+            const newPath = branchManagerRef.current.getPath(newBranchId);
+            conversationHistoryRef.current = newPath;
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: `🌿 已创建新分支 [${newBranchId}]，第 ${idx} 条消息已替换为新内容。\n使用 /branch switch 切换回主线。`,
+            }]);
+          } else {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: `编辑失败: 索引 ${idx} 超出范围`,
+            }]);
+          }
+        } else if (subCmd === 'switch') {
+          const targetId = parts[2];
+          if (!targetId) {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: '用法: /branch switch <branch-id>\n使用 /branch list 查看所有分支。',
+            }]);
+            break;
+          }
+          const newPath = branchManagerRef.current.switchBranch(targetId);
+          if (newPath) {
+            conversationHistoryRef.current = newPath;
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: `✓ 已切换到分支 [${branchManagerRef.current.getActiveBranchId()}]`,
+            }]);
+          } else {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: `未找到分支 "${targetId}"`,
+            }]);
+          }
+        } else {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: [
+              '分支对话命令：',
+              '  /branch list          - 查看所有分支',
+              '  /branch edit N <...>  - 在第 N 条消息处创建分支',
+              '  /branch switch <id>   - 切换到指定分支',
+            ].join('\n'),
+          }]);
+        }
+        break;
+      }
+
+      case '/init': {
+        if (!initAnalyzerRef.current) {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: '❌ InitAnalyzer 不可用（没有 LLM 客户端）',
+          }]);
+          break;
+        }
+        setMessages(prev => [...prev, {
+          id: nextId(),
+          role: 'system',
+          content: '🔍 正在分析项目结构...',
+        }]);
+        try {
+          const info = await initAnalyzerRef.current.analyze();
+          const rules = await initAnalyzerRef.current.generateRules(info);
+          const filePath = await initAnalyzerRef.current.saveRules(rules);
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: `✓ 项目规则已生成: ${filePath}\n- 主要语言: ${info.primaryLanguage}\n- 检测到框架: ${info.detectedFrameworks.join(', ') || '无'}\n- 包含测试: ${info.hasTests ? '是' : '否'}`,
+          }]);
+        } catch (error) {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: `❌ /init 失败: ${error instanceof Error ? error.message : String(error)}`,
+          }]);
+        }
+        break;
+      }
+
+      case '/dream': {
+        const checkpoint = contextManagerRef.current.getCheckpoint();
+        if (!checkpoint) {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: '没有记忆可整理。请先与 AI 对话积累记忆。',
+          }]);
+          break;
+        }
+        setMessages(prev => [...prev, {
+          id: nextId(),
+          role: 'system',
+          content: '💤 正在整理记忆...',
+        }]);
+        const result = await dreamConsolidatorRef.current.consolidate(checkpoint);
+        contextManagerRef.current.setCheckpoint(result.consolidated);
+        await contextManagerRef.current.saveCheckpoint();
+        await dreamConsolidatorRef.current.saveToDisk(result.consolidated, result);
+        setMessages(prev => [...prev, {
+          id: nextId(),
+          role: 'system',
+          content: result.summary,
+        }]);
         break;
       }
 
