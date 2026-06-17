@@ -1,7 +1,6 @@
 // src/tools/security.ts
 // 安全检查器：验证工具操作是否安全
-// Phase 6：实现文件路径检查（目录边界 + 敏感文件）
-// Phase 7：添加命令检查和网络请求检查
+// Phase 7：完整实现文件路径、命令黑名单、网络域名检查
 
 import path from 'node:path';
 import type { ISecurityChecker, SecurityCheckResult, ToolExecutionContext } from './types.js';
@@ -12,6 +11,9 @@ export class SecurityChecker implements ISecurityChecker {
   private allowedDirs: string[];
   private sensitiveFiles: string[];
   private sensitiveFilePolicy: 'readonly' | 'deny';
+  private commandBlacklist: string[];
+  private commandWhitelist: string[];
+  private networkConfirm: boolean;
 
   constructor(
     workingDirectory: string,
@@ -20,19 +22,21 @@ export class SecurityChecker implements ISecurityChecker {
     this.allowedDirs = [path.resolve(workingDirectory)];
     this.sensitiveFiles = securityConfig.sensitiveFiles;
     this.sensitiveFilePolicy = securityConfig.sensitiveFilePolicy;
+    this.commandBlacklist = securityConfig.commandBlacklist.map(c => c.toLowerCase());
+    this.commandWhitelist = securityConfig.commandWhitelist.map(c => c.toLowerCase());
+    this.networkConfirm = securityConfig.networkConfirm;
 
     logger.debug('SecurityChecker initialized', {
       allowedDirs: this.allowedDirs,
       sensitiveFiles: this.sensitiveFiles,
-      policy: this.sensitiveFilePolicy,
+      commandBlacklist: this.commandBlacklist,
+      networkConfirm: this.networkConfirm,
     });
   }
 
-  /** 检查文件路径是否在允许范围内 */
   checkFilePath(filePath: string, _context: ToolExecutionContext): SecurityCheckResult {
     const resolved = path.resolve(filePath);
 
-    // 检查是否在允许的目录内
     const inAllowedDir = this.allowedDirs.some(dir =>
       resolved.startsWith(dir + path.sep) || resolved === dir,
     );
@@ -45,7 +49,6 @@ export class SecurityChecker implements ISecurityChecker {
       };
     }
 
-    // 检查是否为敏感文件
     const fileName = path.basename(resolved);
     const isSensitive = this.sensitiveFiles.some(pattern => {
       if (pattern.startsWith('*.')) {
@@ -62,43 +65,92 @@ export class SecurityChecker implements ISecurityChecker {
           requiresConfirmation: false,
         };
       }
-      // readonly 策略：读取允许，写入拒绝
-      if (this.isWriteOperation(resolved)) {
-        return {
-          allowed: false,
-          reason: `文件 "${fileName}" 是敏感文件，只允许读取`,
-          requiresConfirmation: false,
-        };
-      }
+      return {
+        allowed: false,
+        reason: `文件 "${fileName}" 是敏感文件，只允许读取`,
+        requiresConfirmation: false,
+      };
     }
 
     return { allowed: true, requiresConfirmation: false };
   }
 
-  /** 检查 Shell 命令（Phase 7 实现） */
   checkCommand(command: string, _context: ToolExecutionContext): SecurityCheckResult {
-    // Phase 6 暂不检查命令，Phase 7 添加命令黑名单
+    const normalized = command.toLowerCase().trim();
+
+    // 白名单优先
+    if (this.commandWhitelist.length > 0) {
+      const allowed = this.commandWhitelist.some(allowed => normalized.includes(allowed));
+      if (!allowed) {
+        return {
+          allowed: false,
+          reason: `命令 "${command}" 不在白名单中`,
+          requiresConfirmation: false,
+        };
+      }
+      return { allowed: true, requiresConfirmation: false };
+    }
+
+    // 黑名单检查
+    const blocked = this.commandBlacklist.some(black => normalized.includes(black));
+    if (blocked) {
+      return {
+        allowed: false,
+        reason: `命令 "${command}" 在黑名单中`,
+        requiresConfirmation: false,
+      };
+    }
+
     return { allowed: true, requiresConfirmation: false };
   }
 
-  /** 检查网络请求（Phase 7 实现） */
   checkNetworkRequest(url: string): SecurityCheckResult {
-    // Phase 6 暂不检查网络请求，Phase 7 添加域名白/黑名单
-    return { allowed: true, requiresConfirmation: false };
+    try {
+      const parsed = new URL(url);
+      const hostname = parsed.hostname.toLowerCase();
+
+      // 基础危险协议检查
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return {
+          allowed: false,
+          reason: `不支持的协议: ${parsed.protocol}`,
+          requiresConfirmation: false,
+        };
+      }
+
+      // 本地地址保护
+      const localPatterns = ['localhost', '127.0.0.1', '::1', '0.0.0.0'];
+      if (localPatterns.some(p => hostname === p || hostname.endsWith(`.${p}`))) {
+        return {
+          allowed: false,
+          reason: `禁止访问本地地址: ${hostname}`,
+          requiresConfirmation: false,
+        };
+      }
+
+      if (this.networkConfirm) {
+        return {
+          allowed: true,
+          requiresConfirmation: true,
+          reason: `网络请求需要确认: ${hostname}`,
+        };
+      }
+
+      return { allowed: true, requiresConfirmation: false };
+    } catch {
+      return {
+        allowed: false,
+        reason: `无效的 URL: ${url}`,
+        requiresConfirmation: false,
+      };
+    }
   }
 
-  /** 添加允许目录 */
   addAllowedDir(dirPath: string): void {
     const resolved = path.resolve(dirPath);
     if (!this.allowedDirs.includes(resolved)) {
       this.allowedDirs.push(resolved);
       logger.debug('Added allowed directory', { dir: resolved });
     }
-  }
-
-  /** 判断是否为写操作（通过文件名判断不可行，Phase 7 在调用处传 operation） */
-  private isWriteOperation(filePath: string): boolean {
-    // 简单启发式：敏感文件默认禁止写入
-    return true;
   }
 }
