@@ -61,4 +61,48 @@ describe('SecurityChecker', () => {
     const result = checker.checkFilePath(path.join(os.homedir(), 'allowed.txt'), dummyContext);
     expect(result.allowed).toBe(true);
   });
+
+  it('should block blacklisted commands', () => {
+    const config = makeSecurityConfig();
+    config.commandBlacklist = ['rm -rf'];
+    const checker = new SecurityChecker(process.cwd(), config);
+    const result = checker.checkCommand('rm -rf /', dummyContext);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('黑名单');
+  });
+
+  it('should allow non-blacklisted commands', () => {
+    const checker = new SecurityChecker(process.cwd(), makeSecurityConfig());
+    const result = checker.checkCommand('ls -la', dummyContext);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('should respect command whitelist', () => {
+    const config = makeSecurityConfig();
+    config.commandWhitelist = ['git'];
+    config.commandBlacklist = [];
+    const checker = new SecurityChecker(process.cwd(), config);
+
+    expect(checker.checkCommand('git status', dummyContext).allowed).toBe(true);
+    expect(checker.checkCommand('ls -la', dummyContext).allowed).toBe(false);
+  });
+
+  it('should require confirmation for network requests', () => {
+    const checker = new SecurityChecker(process.cwd(), makeSecurityConfig());
+    const result = checker.checkNetworkRequest('https://example.com');
+    expect(result.allowed).toBe(true);
+    expect(result.requiresConfirmation).toBe(true);
+  });
+
+  it('should deny invalid URLs', () => {
+    const checker = new SecurityChecker(process.cwd(), makeSecurityConfig());
+    const result = checker.checkNetworkRequest('not-a-url');
+    expect(result.allowed).toBe(false);
+  });
+
+  it('should deny local network addresses', () => {
+    const checker = new SecurityChecker(process.cwd(), makeSecurityConfig());
+    expect(checker.checkNetworkRequest('http://localhost:3000').allowed).toBe(false);
+    expect(checker.checkNetworkRequest('http://127.0.0.1:8080').allowed).toBe(false);
+  });
 });
