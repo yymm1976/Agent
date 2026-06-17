@@ -21,7 +21,7 @@ export interface ToolDefinition {
   /** 工具是否需要用户确认（写操作通常需要） */
   requiresApproval: boolean;
   /** 工具分类 */
-  category: 'file' | 'shell' | 'git' | 'web' | 'search' | 'code' | 'system';
+  category: 'file' | 'shell' | 'git' | 'web' | 'search' | 'code' | 'system' | 'mcp';
 }
 
 /** 工具执行上下文 */
