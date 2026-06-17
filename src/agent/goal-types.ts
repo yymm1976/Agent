@@ -25,6 +25,8 @@ export type GoalPlanStatus = 'parsing' | 'pending' | 'executing' | 'verifying' |
 
 /** 目标计划 */
 export interface GoalPlan {
+  /** 唯一 ID（UUID 短格式） */
+  id: string;
   /** 用户输入的目标描述 */
   description: string;
   /** 用户提供的验证条件（可空） */

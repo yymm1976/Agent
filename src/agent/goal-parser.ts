@@ -5,6 +5,7 @@
 import type { ILLMClient, LLMMessage, LLMRequestOptions, RoutingResult, TokenUsageInfo } from '../router/types.js';
 import type { GoalPlan, GoalStep } from './goal-types.js';
 import { logger } from '../utils/logger.js';
+import crypto from 'node:crypto';
 
 const PARSER_SYSTEM_PROMPT = `你是 RouteDev 的目标分解助手。请把用户输入的目标拆分为可执行的步骤列表。
 
@@ -75,6 +76,7 @@ export class GoalParser {
     if (!jsonStr) {
       logger.warn('GoalParser: no JSON found in LLM response, creating single-step plan', { content });
       return {
+        id: this.generateId(),
         description,
         verificationCriteria,
         steps: [{
@@ -103,6 +105,7 @@ export class GoalParser {
       }));
 
       return {
+        id: this.generateId(),
         description,
         verificationCriteria,
         steps,
@@ -116,6 +119,7 @@ export class GoalParser {
       });
 
       return {
+        id: this.generateId(),
         description,
         verificationCriteria,
         steps: [{
@@ -146,5 +150,9 @@ export class GoalParser {
     }
 
     return null;
+  }
+
+  private generateId(): string {
+    return crypto.randomUUID().slice(0, 8);
   }
 }

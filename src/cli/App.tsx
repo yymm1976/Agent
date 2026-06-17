@@ -34,6 +34,7 @@ import { GoalParser } from '../agent/goal-parser.js';
 import { GoalVerifier } from '../agent/goal-verifier.js';
 import type { GoalPlan } from '../agent/goal-types.js';
 import type { AutonomyMode } from '../config/schema.js';
+import { CheckpointManager } from '../harness/checkpoint-manager.js';
 
 interface AppProps {
   config: AppConfig;
@@ -81,6 +82,16 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
 
   // 当前目标计划（执行中）
   const currentPlanRef = useRef<GoalPlan | null>(null);
+
+  // 检查点管理器（Phase 10）
+  const checkpointManagerRef = useRef(new CheckpointManager({
+    enabled: config.checkpoint.enabled,
+    maxCheckpoints: 10,
+    workingDirectory: process.cwd(),
+  }));
+
+  // AbortController 用于 /pause 命令
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // 初始化工具注册表
   const registryRef = useRef(new ToolRegistry());
@@ -130,6 +141,13 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       });
     };
   }, [config.mcp.autoConnect, config.mcp.servers]);
+
+  // 初始化 CheckpointManager（Phase 10）
+  useEffect(() => {
+    checkpointManagerRef.current.init().catch(err => {
+      logger.warn('CheckpointManager init failed', { error: String(err) });
+    });
+  }, []);
 
   // 初始化权限检查器（Phase 9 自主模式）
   const permissionCheckerRef = useRef(
@@ -269,12 +287,16 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       let finalUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
       try {
+        // Phase 10：为本次对话创建 AbortController
+        const chatAbort = new AbortController();
+        abortControllerRef.current = chatAbort;
         for await (const event of agentLoopRef.current.run({
           userMessage: text,
           llmClient: client,
           routeDecision,
           conversationHistory: conversationHistoryRef.current,
           systemPrompt,
+          signal: chatAbort.signal,
           onConfirmTool: async (toolName, args) => {
             return new Promise<boolean>(resolve => {
               pendingConfirmRef.current = { resolve, toolName };
@@ -385,7 +407,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     }
   }, [classifier, modelRouter, clientManager, tracker, systemPrompt]);
 
-  const handleCommand = useCallback((text: string) => {
+  const handleCommand = useCallback(async (text: string) => {
     const parts = text.split(' ');
     const cmd = parts[0].toLowerCase();
 
@@ -396,14 +418,18 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
           role: 'system',
           content: [
             '可用命令：',
-            '  /help             - 显示帮助',
-            '  /status           - 查看当前状态',
-            '  /auto             - 切换到全自动模式',
-            '  /semi             - 切换到半自动模式（关键操作确认）',
-            '  /manual           - 切换到手动模式（所有操作确认）',
-            '  /goal "目标"      - 目标分解与执行（可选 --verify "验证条件"）',
-            '  /clear            - 清空对话',
-            '  /quit             - 退出',
+            '  /help               - 显示帮助',
+            '  /status             - 查看当前状态',
+            '  /auto               - 切换到全自动模式',
+            '  /semi               - 切换到半自动模式（关键操作确认）',
+            '  /manual             - 切换到手动模式（所有操作确认）',
+            '  /goal "目标"        - 目标分解与执行（可选 --verify "验证条件"）',
+            '  /pause              - 中断当前执行',
+            '  /checkpoint list    - 查看所有检查点',
+            '  /checkpoint create  - 手动创建检查点',
+            '  /rollback <id>      - 回滚到指定检查点（破坏性操作）',
+            '  /clear              - 清空对话',
+            '  /quit               - 退出',
           ].join('\n'),
         }]);
         break;
@@ -450,8 +476,158 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
         });
         break;
 
+      case '/pause':
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: '⏸ 已中断当前执行。后续步骤已跳过。',
+          }]);
+          if (currentPlanRef.current?.status === 'executing') {
+            currentPlanRef.current.status = 'failed';
+          }
+          setIsProcessing(false);
+        } else {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: '当前没有正在执行的任务。',
+          }]);
+        }
+        break;
+
+      case '/checkpoint': {
+        const subCmd = parts[1]?.toLowerCase();
+        if (subCmd === 'create') {
+          const desc = parts.slice(2).join(' ') || '手动创建的检查点';
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: '💾 正在创建检查点...',
+          }]);
+          const cp = await checkpointManagerRef.current.create({
+            description: desc,
+            isAutoCreated: false,
+          });
+          if (cp) {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: `💾 检查点已创建: cp-${cp.id} (${cp.gitCommitHash.slice(0, 7)}, ${cp.filesSnapshot.length} 个文件)`,
+            }]);
+          } else {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: '检查点创建失败（可能没有变更或不在 Git 仓库中）。',
+            }]);
+          }
+        } else if (subCmd === undefined || subCmd === 'list') {
+          const cps = checkpointManagerRef.current.list();
+          if (cps.length === 0) {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: '没有检查点记录。检查点会在 /goal 步骤执行前自动创建。',
+            }]);
+          } else {
+            const lines = cps.map((cp, i) => {
+              const time = new Date(cp.timestamp).toLocaleString('zh-CN');
+              const auto = cp.isAutoCreated ? '自动' : '手动';
+              const files = cp.filesSnapshot.length;
+              return `  ${i + 1}. [cp-${cp.id}] ${cp.description}\n     ${time} | ${cp.gitCommitHash.slice(0, 7)} | ${files} 文件 | ${auto}`;
+            });
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: `检查点列表 (${cps.length}):\n${lines.join('\n')}`,
+            }]);
+          }
+        } else {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: [
+              '检查点命令：',
+              '  /checkpoint list    - 查看所有检查点',
+              '  /checkpoint create  - 手动创建检查点',
+            ].join('\n'),
+          }]);
+        }
+        break;
+      }
+
+      case '/rollback': {
+        const cpId = parts[1];
+        if (!cpId) {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: '用法: /rollback <checkpoint-id>\n例: /rollback a1b2c3d4\n使用 /checkpoint list 查看可用检查点。',
+          }]);
+          break;
+        }
+        const cps = checkpointManagerRef.current.list();
+        const target = cps.find(c => c.id === cpId || c.id.startsWith(cpId));
+        if (!target) {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: `未找到检查点 "${cpId}"。使用 /checkpoint list 查看可用检查点。`,
+          }]);
+          break;
+        }
+        setMessages(prev => [...prev, {
+          id: nextId(),
+          role: 'system',
+          content: [
+            `⚠️ 即将回滚到检查点: cp-${target.id}`,
+            `  描述: ${target.description}`,
+            `  提交: ${target.gitCommitHash.slice(0, 7)}`,
+            `  时间: ${new Date(target.timestamp).toLocaleString('zh-CN')}`,
+            '',
+            `⚠️ 这是破坏性操作（git reset --hard），回滚后当前未提交的变更将丢失！`,
+            `输入 y 确认回滚，n 取消`,
+          ].join('\n'),
+        }]);
+        const confirmed = await new Promise<boolean>((resolve) => {
+          pendingConfirmRef.current = {
+            resolve,
+            toolName: `回滚到 cp-${target.id}`,
+          };
+        });
+        if (confirmed) {
+          const success = await checkpointManagerRef.current.rollback(target.id);
+          if (success) {
+            const remaining = checkpointManagerRef.current.count;
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: `✓ 已回滚到 cp-${target.id} (${target.gitCommitHash.slice(0, 7)})。剩余 ${remaining} 个检查点。`,
+            }]);
+          } else {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: '回滚失败。请检查 Git 状态。',
+            }]);
+          }
+        } else {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: '回滚已取消。',
+          }]);
+        }
+        break;
+      }
+
       case '/status':
         const stats = tracker.getStats();
+        const cpCount = checkpointManagerRef.current.count;
+        const cpEnabled = checkpointManagerRef.current.isEnabled;
         setMessages(prev => [...prev, {
           id: nextId(),
           role: 'system',
@@ -459,8 +635,11 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
             `当前模型: ${currentModel}`,
             `场景等级: ${currentTier}`,
             `已降级: ${isDegraded ? '是' : '否'}`,
+            `自主度模式: ${autonomyMode}`,
             `今日 Token: ${stats.total.totalTokens}`,
             `对话历史: ${conversationHistoryRef.current.length} 条消息`,
+            `检查点: ${cpCount} 个${cpEnabled ? '' : ' (未启用 / 非 Git 仓库)'}`,
+            `MCP: ${mcpManagerRef.current.connectedCount} 个 server, ${mcpManagerRef.current.totalToolCount} 个工具`,
           ].join('\n'),
         }]);
         break;
@@ -570,7 +749,38 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     plan.status = 'executing';
     currentPlanRef.current = plan;
 
+    // Phase 10：持久化 GoalPlan
+    await checkpointManagerRef.current.saveGoalPlan(plan);
+
     for (const step of plan.steps) {
+      // Phase 10：检查是否已被 /pause 中断
+      if (abortControllerRef.current?.signal.aborted) {
+        setMessages(prev => [...prev, {
+          id: nextId(),
+          role: 'system',
+          content: `⏸ 目标已暂停。已完成 ${plan.steps.indexOf(step)}/${plan.steps.length} 个步骤。`,
+        }]);
+        plan.status = 'failed';
+        break;
+      }
+
+      // Phase 10：步骤执行前自动创建检查点
+      if (config.checkpoint.enabled) {
+        const checkpoint = await checkpointManagerRef.current.create({
+          description: `步骤 ${step.id} 前快照: ${step.description.slice(0, 40)}`,
+          stepId: step.id,
+          goalId: plan.id,
+          isAutoCreated: true,
+        });
+        if (checkpoint) {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: `💾 检查点已创建: cp-${checkpoint.id} (${checkpoint.filesSnapshot.length} 个文件)`,
+          }]);
+        }
+      }
+
       step.status = 'in_progress';
       setMessages(prev => [...prev, {
         id: nextId(),
@@ -594,12 +804,16 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
         }
 
         let stepContent = '';
+        // Phase 10：每个步骤创建独立的 AbortController
+        const stepAbort = new AbortController();
+        abortControllerRef.current = stepAbort;
         for await (const event of agentLoopRef.current.run({
           userMessage: step.description,
           llmClient: client,
           routeDecision,
           conversationHistory: conversationHistoryRef.current,
           systemPrompt,
+          signal: stepAbort.signal,
           onConfirmTool: async (toolName, args) => {
             return new Promise<boolean>(resolve => {
               pendingConfirmRef.current = { resolve, toolName };
