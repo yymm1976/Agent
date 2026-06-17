@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// CLI 入口（Phase 4 版本：启动 Ink UI）
+// CLI 入口（Phase 4：Ink UI；Phase 13：支持 `serve` 子命令启动服务器模式）
 
 import React from 'react';
 import { render } from 'ink';
@@ -11,10 +11,24 @@ import { ScenarioClassifier } from './router/classifier.js';
 import { ModelRouter } from './router/router.js';
 import { buildRouterConfig } from './router/config.js';
 import { App } from './cli/App.js';
+import { startServer } from './cli/server.js';
 
-const VERSION = '0.4.0';
+const VERSION = '0.13.0';
 
 async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  const subcommand = args[0];
+
+  if (subcommand === '--version' || subcommand === '-v') {
+    console.log(`RouteDev v${VERSION}`);
+    process.exit(0);
+  }
+
+  if (subcommand === 'serve') {
+    await startServer();
+    return;
+  }
+
   try {
     // 加载配置
     const config = loadConfig();

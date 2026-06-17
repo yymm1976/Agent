@@ -595,6 +595,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
             '  /branch switch ID   - 切换到指定分支',
             '  /init               - 分析项目结构生成 .routedev-rules.md',
             '  /dream              - 整理记忆（合并去重）',
+            '  /channels list      - 查看已配置的渠道',
             '  /checkpoint list    - 查看所有检查点',
             '  /checkpoint create  - 手动创建检查点',
             '  /rollback <id>      - 回滚到指定检查点（破坏性操作）',
@@ -1082,6 +1083,63 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
           role: 'system',
           content: result.summary,
         }]);
+        break;
+      }
+
+      case '/channels': {
+        const subCmd = parts[1]?.toLowerCase();
+        if (subCmd === 'list' || subCmd === undefined) {
+          const entries = config.channels.entries;
+          if (entries.length === 0) {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: [
+                '未配置任何渠道。',
+                '',
+                '要使用渠道功能：',
+                '  1. 在 config.yaml 的 channels.entries 中添加渠道配置',
+                '  2. 运行 `routedev serve` 启动服务器模式',
+                '  3. 在企业微信管理后台配置回调 URL',
+              ].join('\n'),
+            }]);
+          } else {
+            const lines = entries.map(e => {
+              const hasCreds = e.type === 'wechat-work'
+                ? !!(e.options.corpId && e.options.corpSecret)
+                : Object.keys(e.options).length > 0;
+              const status = e.enabled ? (hasCreds ? '✓ 已配置' : '⚠ 缺少凭据') : '✗ 已禁用';
+              return `  ${status}  [${e.type}] ${e.id} - ${e.enabled ? '启用' : '禁用'}`;
+            });
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: [
+                `已配置渠道 (${entries.length}):`,
+                ...lines,
+                '',
+                `服务器端口: ${config.channels.port}`,
+                `响应长度限制: ${config.channels.maxResponseLength}`,
+              ].join('\n'),
+            }]);
+          }
+        } else if (subCmd === 'port') {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: `服务器端口: ${config.channels.port}\n使用 'routedev serve' 启动`,
+          }]);
+        } else {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: [
+              '渠道命令：',
+              '  /channels list  - 查看已配置的渠道',
+              '  /channels port  - 查看服务器端口',
+            ].join('\n'),
+          }]);
+        }
         break;
       }
 

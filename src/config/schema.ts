@@ -122,6 +122,28 @@ export const CheckpointConfigSchema = z.object({
 });
 export type CheckpointConfig = z.infer<typeof CheckpointConfigSchema>;
 
+// --- 渠道配置（Phase 13） ---
+
+export const ChannelTypeSchema = z.enum(['wechat-work', 'telegram', 'slack', 'discord']);
+export type ChannelType = z.infer<typeof ChannelTypeSchema>;
+
+export const ChannelEntrySchema = z.object({
+  id: z.string().min(1),
+  type: ChannelTypeSchema,
+  enabled: z.boolean().default(true),
+  options: z.record(z.string(), z.string()).default({}),
+});
+
+export const ChannelsConfigSchema = z.object({
+  entries: z.array(ChannelEntrySchema).default([]),
+  port: z.number().positive().int().default(9800),
+  publicUrl: z.string().optional(),
+  maxResponseLength: z.number().positive().int().default(2000),
+  requestTimeout: z.number().positive().int().default(60000),
+});
+export type ChannelsConfig = z.infer<typeof ChannelsConfigSchema>;
+export type ChannelEntryConfig = z.infer<typeof ChannelEntrySchema>;
+
 // --- GoalVerifier 配置 ---
 
 // 目标验证器（验证 /goal 是否完成）
@@ -229,6 +251,7 @@ export const AppConfigSchema = z.object({
   checkpoint: z.preprocess((v) => v ?? {}, CheckpointConfigSchema),    // 增量 Checkpoint
   goalVerifier: z.preprocess((v) => v ?? {}, GoalVerifierConfigSchema), // 目标验证
   security: z.preprocess((v) => v ?? {}, SecurityConfigSchema),        // 安全策略
+  channels: z.preprocess((v) => v ?? {}, ChannelsConfigSchema),         // 渠道集成（Phase 13）
   autonomy: z.preprocess((v) => v ?? {}, AutonomyConfigSchema),        // 自主度
   sounds: z.preprocess((v) => v ?? {}, SoundsConfigSchema),            // 提示音
   updates: z.preprocess((v) => v ?? {}, UpdatesConfigSchema),          // 更新策略

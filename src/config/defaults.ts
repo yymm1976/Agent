@@ -52,6 +52,12 @@ export const DEFAULT_CONFIG: AppConfig = {
     sensitiveFilePolicy: 'readonly',
     networkConfirm: true,
   },
+  channels: {
+    entries: [],
+    port: 9800,
+    maxResponseLength: 2000,
+    requestTimeout: 60000,
+  },
   autonomy: {
     defaultMode: 'semi',
     autoApprovePatterns: ['file_read', 'file_search', 'code_search'],
