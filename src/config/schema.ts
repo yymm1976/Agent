@@ -171,6 +171,39 @@ export const UpdatesConfigSchema = z.object({
 });
 export type UpdatesConfig = z.infer<typeof UpdatesConfigSchema>;
 
+// --- MCP 配置 ---
+
+export const MCPServerConfigSchema = z.discriminatedUnion('transport', [
+  z.object({
+    transport: z.literal('stdio'),
+    command: z.string(),
+    args: z.array(z.string()).default([]),
+    env: z.record(z.string(), z.string()).optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({
+    transport: z.literal('http'),
+    url: z.string().url(),
+    headers: z.record(z.string(), z.string()).optional(),
+  }),
+]);
+
+export const MCPServerEntrySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  enabled: z.boolean().default(true),
+  config: MCPServerConfigSchema,
+  connectTimeout: z.number().optional(),
+});
+
+export const MCPConfigSchema = z.object({
+  servers: z.array(MCPServerEntrySchema).default([]),
+  autoConnect: z.boolean().default(true),
+});
+
+export type MCPConfig = z.infer<typeof MCPConfigSchema>;
+export type MCPServerEntryConfig = z.infer<typeof MCPServerEntrySchema>;
+
 // --- 通用配置 ---
 
 export const GeneralConfigSchema = z.object({
@@ -195,5 +228,6 @@ export const AppConfigSchema = z.object({
   autonomy: z.preprocess((v) => v ?? {}, AutonomyConfigSchema),        // 自主度
   sounds: z.preprocess((v) => v ?? {}, SoundsConfigSchema),            // 提示音
   updates: z.preprocess((v) => v ?? {}, UpdatesConfigSchema),          // 更新策略
+  mcp: z.preprocess((v) => v ?? {}, MCPConfigSchema),                  // MCP 客户端配置
 });
 export type AppConfig = z.infer<typeof AppConfigSchema>;

@@ -65,4 +65,8 @@ export const DEFAULT_CONFIG: AppConfig = {
     checkOnStartup: true,
     autoUpdate: false,
   },
+  mcp: {
+    servers: [],
+    autoConnect: true,
+  },
 };
