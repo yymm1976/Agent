@@ -1,38 +1,70 @@
 // src/tools/permission.ts
 // 权限检查器
-// MVP 阶段：semi 模式下 confirm → 自动放行并记录日志
-// Phase 9（自主模式）：confirm → 弹出交互式确认对话框
+// Phase 9：支持自主度模式（auto/semi/manual）与 autoApprovePatterns
+//   - auto 模式：confirm 级别自动放行
+//   - semi/manual 模式：confirm 级别返回 'confirm'（需外部回调确认）
+//   - autoApprovePatterns 中的工具在任何模式下都返回 'auto'
+//   - deny 规则在所有模式下都返回 'deny'
 
 import type { IPermissionChecker, PermissionLevel, PermissionRule } from './types.js';
+import type { AutonomyMode } from '../config/schema.js';
 import { logger } from '../utils/logger.js';
 
 export class PermissionChecker implements IPermissionChecker {
   private rules: PermissionRule[] = [];
-  /** MVP 模式：confirm 级别是否自动放行 */
-  private autoApproveConfirm: boolean;
+  private mode: AutonomyMode;
+  private autoApprovePatterns: string[];
 
-  constructor(autoApproveConfirm: boolean = true) {
-    this.autoApproveConfirm = autoApproveConfirm;
+  constructor(mode: AutonomyMode = 'semi', autoApprovePatterns: string[] = []) {
+    this.mode = mode;
+    this.autoApprovePatterns = autoApprovePatterns;
+  }
+
+  /** 设置当前自主度模式（运行时切换） */
+  setAutonomyMode(mode: AutonomyMode): void {
+    logger.debug('Autonomy mode changed', { from: this.mode, to: mode });
+    this.mode = mode;
+  }
+
+  /** 设置自动批准 pattern */
+  setAutoApprovePatterns(patterns: string[]): void {
+    this.autoApprovePatterns = patterns;
+  }
+
+  /** 获取当前模式 */
+  getMode(): AutonomyMode {
+    return this.mode;
   }
 
   checkPermission(toolName: string, _args: Record<string, unknown>): PermissionLevel {
-    const level = this.getPermissionLevel(toolName);
-
-    switch (level) {
-      case 'auto':
-        return 'auto';
-
-      case 'deny':
-        logger.warn('Tool execution denied by permission rule', { toolName });
-        return 'deny';
-
-      case 'confirm':
-        if (this.autoApproveConfirm) {
-          logger.debug('Tool auto-approved (confirm → auto)', { toolName });
-          return 'auto'; // MVP 自动放行
-        }
-        return 'confirm';
+    // 1. autoApprovePatterns 优先
+    if (this.matchesAnyPattern(toolName, this.autoApprovePatterns)) {
+      return 'auto';
     }
+
+    // 2. 计算规则命中的级别
+    const level = this.getRuleLevel(toolName);
+
+    if (level === 'deny') {
+      logger.warn('Tool execution denied by permission rule', { toolName });
+      return 'deny';
+    }
+
+    if (level === 'auto') {
+      return 'auto';
+    }
+
+    // 3. confirm 级别 → 按自主度模式决定
+    if (level === 'confirm') {
+      if (this.mode === 'auto') {
+        logger.debug('Tool auto-approved (auto mode)', { toolName });
+        return 'auto';
+      }
+      // semi / manual → 返回 confirm 等待外部确认
+      return 'confirm';
+    }
+
+    return 'auto';
   }
 
   addRule(rule: PermissionRule): void {
@@ -52,13 +84,17 @@ export class PermissionChecker implements IPermissionChecker {
     return [...this.rules];
   }
 
-  private getPermissionLevel(toolName: string): PermissionLevel {
+  private getRuleLevel(toolName: string): PermissionLevel {
     for (const rule of this.rules) {
       if (this.matchPattern(toolName, rule.toolPattern)) {
         return rule.level;
       }
     }
     return 'auto';
+  }
+
+  private matchesAnyPattern(toolName: string, patterns: string[]): boolean {
+    return patterns.some(p => this.matchPattern(toolName, p));
   }
 
   private matchPattern(toolName: string, pattern: string): boolean {
