@@ -30,6 +30,10 @@ import { CodeSearchTool } from '../tools/builtin/code-search.js';
 import { PermissionChecker } from '../tools/permission.js';
 import { MCPClientManager } from '../tools/mcp/client.js';
 import { logger } from '../utils/logger.js';
+import { GoalParser } from '../agent/goal-parser.js';
+import { GoalVerifier } from '../agent/goal-verifier.js';
+import type { GoalPlan } from '../agent/goal-types.js';
+import type { AutonomyMode } from '../config/schema.js';
 
 interface AppProps {
   config: AppConfig;
@@ -53,7 +57,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     },
   ]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [autonomyMode] = useState(config.autonomy.defaultMode);
+  const [autonomyMode, setAutonomyMode] = useState<AutonomyMode>(config.autonomy.defaultMode);
   const [workMode] = useState('build');
   const [currentModel, setCurrentModel] = useState('gpt-4o-mini');
   const [currentTier, setCurrentTier] = useState<ScenarioTier>('simple');
@@ -62,6 +66,21 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
 
   // 对话历史（用于传递给 ReAct Loop）
   const conversationHistoryRef = useRef<LLMMessage[]>([]);
+
+  // 工具确认 pending resolve（Phase 9 自主模式）
+  const pendingConfirmRef = useRef<{
+    resolve: (approved: boolean) => void;
+    toolName: string;
+  } | null>(null);
+
+  // 目标确认 pending resolve（Phase 9 /goal 命令）
+  const awaitingGoalConfirmRef = useRef<{
+    resolve: (approved: boolean) => void;
+    plan: GoalPlan;
+  } | null>(null);
+
+  // 当前目标计划（执行中）
+  const currentPlanRef = useRef<GoalPlan | null>(null);
 
   // 初始化工具注册表
   const registryRef = useRef(new ToolRegistry());
@@ -112,8 +131,10 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     };
   }, [config.mcp.autoConnect, config.mcp.servers]);
 
-  // 初始化权限检查器（MVP：confirm 级别自动放行）
-  const permissionCheckerRef = useRef(new PermissionChecker(true));
+  // 初始化权限检查器（Phase 9 自主模式）
+  const permissionCheckerRef = useRef(
+    new PermissionChecker(config.autonomy.defaultMode, config.autonomy.autoApprovePatterns),
+  );
   permissionCheckerRef.current.addRule({ toolPattern: 'file_*', level: 'auto', description: '文件操作自动执行' });
   permissionCheckerRef.current.addRule({ toolPattern: 'code_search', level: 'auto', description: '代码搜索自动执行' });
   permissionCheckerRef.current.addRule({ toolPattern: 'shell_exec', level: 'confirm', description: 'Shell 命令需要确认' });
@@ -152,6 +173,46 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   const systemPrompt = getSystemPrompt(config.general.language);
 
   const handleSubmit = useCallback(async (text: string) => {
+    // 1. 工具确认 pending 优先
+    if (pendingConfirmRef.current) {
+      const pending = pendingConfirmRef.current;
+      pendingConfirmRef.current = null;
+      const approved = /^[yY]/.test(text.trim());
+      setMessages(prev => [...prev, {
+        id: nextId(),
+        role: 'system',
+        content: `${approved ? '✅ 已批准' : '❌ 已拒绝'}: ${pending.toolName}`,
+      }]);
+      pending.resolve(approved);
+      return;
+    }
+
+    // 2. 目标确认 pending
+    if (awaitingGoalConfirmRef.current) {
+      const pending = awaitingGoalConfirmRef.current;
+      awaitingGoalConfirmRef.current = null;
+      const approved = /^[yY]/.test(text.trim());
+      if (approved) {
+        setMessages(prev => [...prev, {
+          id: nextId(),
+          role: 'system',
+          content: '✅ 已确认，开始执行目标计划...',
+        }]);
+        currentPlanRef.current = pending.plan;
+        executeGoalPlan(pending.plan).catch(err => {
+          logger.error('Goal plan execution failed', { error: String(err) });
+        });
+      } else {
+        setMessages(prev => [...prev, {
+          id: nextId(),
+          role: 'system',
+          content: '❌ 已取消目标计划',
+        }]);
+      }
+      pending.resolve(approved);
+      return;
+    }
+
     // 添加用户消息
     const userMsg: ChatMessage = {
       id: nextId(),
@@ -214,6 +275,18 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
           routeDecision,
           conversationHistory: conversationHistoryRef.current,
           systemPrompt,
+          onConfirmTool: async (toolName, args) => {
+            return new Promise<boolean>(resolve => {
+              pendingConfirmRef.current = { resolve, toolName };
+              const argsStr = JSON.stringify(args, null, 2).slice(0, 200);
+              setMessages(prev => [...prev, {
+                id: nextId(),
+                role: 'system',
+                content: `⚠️  工具 ${toolName} 需要确认 [y/n]\n参数: ${argsStr}`,
+              }]);
+              setIsProcessing(false);
+            });
+          },
         })) {
           // 处理事件
           switch (event.type) {
@@ -234,6 +307,10 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
                 role: 'system',
                 content: `🔧 调用工具: ${event.toolName}`,
               }]);
+              break;
+
+            case 'approval_required':
+              // approval_required 事件本身只是信号，真正的提示在 onConfirmTool 中已经发出
               break;
 
             case 'tool_call_result':
@@ -319,12 +396,58 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
           role: 'system',
           content: [
             '可用命令：',
-            '  /help     - 显示帮助',
-            '  /status   - 查看当前状态',
-            '  /clear    - 清空对话',
-            '  /quit     - 退出',
+            '  /help             - 显示帮助',
+            '  /status           - 查看当前状态',
+            '  /auto             - 切换到全自动模式',
+            '  /semi             - 切换到半自动模式（关键操作确认）',
+            '  /manual           - 切换到手动模式（所有操作确认）',
+            '  /goal "目标"      - 目标分解与执行（可选 --verify "验证条件"）',
+            '  /clear            - 清空对话',
+            '  /quit             - 退出',
           ].join('\n'),
         }]);
+        break;
+
+      case '/auto':
+        setAutonomyMode('auto');
+        permissionCheckerRef.current.setAutonomyMode('auto');
+        setMessages(prev => [...prev, {
+          id: nextId(),
+          role: 'system',
+          content: '🤖 已切换到 auto 模式：所有工具调用自动执行（无确认）',
+        }]);
+        break;
+
+      case '/semi':
+        setAutonomyMode('semi');
+        permissionCheckerRef.current.setAutonomyMode('semi');
+        setMessages(prev => [...prev, {
+          id: nextId(),
+          role: 'system',
+          content: '🌓 已切换到 semi 模式：confirm 级别工具需确认',
+        }]);
+        break;
+
+      case '/manual':
+        setAutonomyMode('manual');
+        permissionCheckerRef.current.setAutonomyMode('manual');
+        setMessages(prev => [...prev, {
+          id: nextId(),
+          role: 'system',
+          content: '🖐️  已切换到 manual 模式：所有 confirm 级别工具需确认',
+        }]);
+        break;
+
+      case '/goal':
+        // 解析 /goal "目标" --verify "验证条件"
+        handleGoalCommand(text).catch(err => {
+          logger.error('Goal command failed', { error: String(err) });
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: `❌ /goal 命令失败: ${err instanceof Error ? err.message : String(err)}`,
+          }]);
+        });
         break;
 
       case '/status':
@@ -367,6 +490,198 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
 
     setIsProcessing(false);
   }, [currentModel, currentTier, isDegraded, tracker]);
+
+  // /goal 命令处理：解析目标描述与验证条件，调用 GoalParser 生成计划，请求用户确认
+  const handleGoalCommand = useCallback(async (text: string) => {
+    setIsProcessing(true);
+
+    // 解析: /goal "目标描述" --verify "验证条件"
+    const goalMatch = text.match(/^\/goal\s+"([^"]+)"/);
+    if (!goalMatch) {
+      // 尝试无引号匹配（目标描述不含空格）
+      const noQuoteMatch = text.match(/^\/goal\s+(\S+)/);
+      if (!noQuoteMatch) {
+        setMessages(prev => [...prev, {
+          id: nextId(),
+          role: 'system',
+          content: '❌ 用法: /goal "目标描述" [--verify "验证条件"]',
+        }]);
+        setIsProcessing(false);
+        return;
+      }
+      var description = noQuoteMatch[1];
+    } else {
+      var description = goalMatch[1];
+    }
+
+    const verifyMatch = text.match(/--verify\s+"([^"]+)"/);
+    const verificationCriteria = verifyMatch ? verifyMatch[1] : undefined;
+
+    setMessages(prev => [...prev, {
+      id: nextId(),
+      role: 'system',
+      content: `🎯 解析目标: ${description}${verificationCriteria ? `\n验证条件: ${verificationCriteria}` : ''}`,
+    }]);
+
+    // 路由决策（用于 GoalParser）
+    const classifyResult = await classifier.classify({ query: description });
+    const routeDecision = await modelRouter.route(classifyResult);
+    const client = clientManager.get(routeDecision.providerId);
+    if (!client || !client.isReady()) {
+      setMessages(prev => [...prev, {
+        id: nextId(),
+        role: 'system',
+        content: `❌ 错误: 提供商 ${routeDecision.providerId} 不可用`,
+      }]);
+      setIsProcessing(false);
+      return;
+    }
+
+    const parser = new GoalParser();
+    const plan = await parser.parse(description, {
+      verificationCriteria,
+      routeDecision,
+      llmClient: client,
+    });
+
+    // 展示步骤计划
+    const planText = [
+      '📋 目标计划：',
+      ...plan.steps.map(s => `  ${s.id}. ${s.description}`),
+      '',
+      '确认开始执行？[y/n]',
+    ].join('\n');
+
+    setMessages(prev => [...prev, {
+      id: nextId(),
+      role: 'system',
+      content: planText,
+    }]);
+
+    // 等待用户确认
+    awaitingGoalConfirmRef.current = {
+      resolve: () => { /* 实际 resolve 在 handleSubmit 中完成 */ },
+      plan,
+    };
+    // 不调用 resolve，awaitingGoalConfirmRef 由 handleSubmit 清空
+  }, [classifier, modelRouter, clientManager]);
+  const executeGoalPlan = useCallback(async (plan: GoalPlan) => {
+    setIsProcessing(true);
+    plan.status = 'executing';
+    currentPlanRef.current = plan;
+
+    for (const step of plan.steps) {
+      step.status = 'in_progress';
+      setMessages(prev => [...prev, {
+        id: nextId(),
+        role: 'system',
+        content: `▶ 步骤 ${step.id}/${plan.steps.length}: ${step.description}`,
+      }]);
+
+      try {
+        const classifyResult = await classifier.classify({ query: step.description });
+        const routeDecision = await modelRouter.route(classifyResult);
+        const client = clientManager.get(routeDecision.providerId);
+        if (!client || !client.isReady()) {
+          step.status = 'failed';
+          step.error = `提供商 ${routeDecision.providerId} 不可用`;
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: `❌ 步骤 ${step.id} 失败: ${step.error}`,
+          }]);
+          continue;
+        }
+
+        let stepContent = '';
+        for await (const event of agentLoopRef.current.run({
+          userMessage: step.description,
+          llmClient: client,
+          routeDecision,
+          conversationHistory: conversationHistoryRef.current,
+          systemPrompt,
+          onConfirmTool: async (toolName, args) => {
+            return new Promise<boolean>(resolve => {
+              pendingConfirmRef.current = { resolve, toolName };
+              const argsStr = JSON.stringify(args, null, 2).slice(0, 200);
+              setMessages(prev => [...prev, {
+                id: nextId(),
+                role: 'system',
+                content: `⚠️  目标步骤 · 工具 ${toolName} 需要确认 [y/n]\n参数: ${argsStr}`,
+              }]);
+            });
+          },
+        })) {
+          if (event.type === 'text_delta') stepContent += event.text;
+          if (event.type === 'done') {
+            tracker.record(event.usage, {
+              modelId: routeDecision.model.id,
+              agentId: 'goal',
+              stepId: `step-${step.id}`,
+            });
+          }
+        }
+
+        step.status = 'completed';
+        step.result = stepContent.slice(0, 200);
+        conversationHistoryRef.current.push({ role: 'user', content: step.description });
+        conversationHistoryRef.current.push({ role: 'assistant', content: stepContent });
+        if (conversationHistoryRef.current.length > 20) {
+          conversationHistoryRef.current = conversationHistoryRef.current.slice(-20);
+        }
+        setMessages(prev => [...prev, {
+          id: nextId(),
+          role: 'system',
+          content: `✅ 步骤 ${step.id} 完成`,
+        }]);
+      } catch (error) {
+        step.status = 'failed';
+        step.error = error instanceof Error ? error.message : String(error);
+        setMessages(prev => [...prev, {
+          id: nextId(),
+          role: 'system',
+          content: `❌ 步骤 ${step.id} 失败: ${step.error}`,
+        }]);
+      }
+    }
+
+    plan.status = 'verifying';
+    plan.completedAt = Date.now();
+    setMessages(prev => [...prev, {
+      id: nextId(),
+      role: 'system',
+      content: '🔍 正在验证目标完成度...',
+    }]);
+
+    // 验证：使用 verifier 路由
+    try {
+      const verifierQuery = plan.description;
+      const verifyClassify = await classifier.classify({ query: verifierQuery });
+      const verifyRoute = await modelRouter.route(verifyClassify);
+      const verifyClient = clientManager.get(verifyRoute.providerId);
+      if (verifyClient && verifyClient.isReady()) {
+        const verifier = new GoalVerifier();
+        const result = await verifier.verify(plan, {
+          routeDecision: verifyRoute,
+          llmClient: verifyClient,
+        });
+        plan.verificationResult = result;
+        plan.status = result.passed ? 'completed' : 'failed';
+        const passedIcon = result.passed ? '✅' : '⚠️';
+        setMessages(prev => [...prev, {
+          id: nextId(),
+          role: 'system',
+          content: `${passedIcon} 验证结果 (置信度 ${(result.confidence * 100).toFixed(0)}%): ${result.reasoning}\n${result.missingItems.length > 0 ? `缺失项: ${result.missingItems.join('; ')}` : ''}`,
+        }]);
+      }
+    } catch (error) {
+      logger.error('Goal verification failed', { error: String(error) });
+      plan.status = 'completed';
+    }
+
+    currentPlanRef.current = null;
+    setIsProcessing(false);
+  }, [classifier, modelRouter, clientManager, tracker, systemPrompt]);
 
   return (
     <Box flexDirection="column" height="100%">
