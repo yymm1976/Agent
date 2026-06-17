@@ -140,7 +140,7 @@ export class VisionAssistant {
   }
 
   static extractImageReferences(message: string): string[] {
-    const atMatches = message.match(/@[\w./\\-]+\.(png|jpg|jpeg|gif|webp|bmp)/gi);
+    const atMatches = message.match(/@[\w./\\:_-]+\.(png|jpg|jpeg|gif|webp|bmp)/gi);
     if (!atMatches) return [];
     return atMatches.map(m => m.slice(1));
   }

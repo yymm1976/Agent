@@ -162,8 +162,8 @@ export class BranchManager {
   }
 
   /**
-   * 编辑某条消息：找到该消息的节点，从其父节点创建新分支
-   * @returns 新分支 ID
+   * 编辑某条消息：找到该消息的节点，从其父节点创建新分支，并保留后续消息
+   * @returns 新分支的叶节点 ID（不是 fork 节点，而是末端节点）
    */
   editByHistoryIndex(historyIndex: number, newContent: string): string | null {
     if (historyIndex < 0 || historyIndex >= this.historyNodeIds.length) {
@@ -181,7 +181,20 @@ export class BranchManager {
       role: targetNode.message.role,
       content: newContent,
     };
-    return this.fork(parentId, newMessage);
+    this.fork(parentId, newMessage);
+
+    // 保留后续消息：从当前 active 分支的同位置之后所有消息
+    let lastId: string | null = null;
+    for (let i = historyIndex + 1; i < this.historyNodeIds.length; i++) {
+      const laterNodeId = this.historyNodeIds[i];
+      const laterNode = this.nodes.get(laterNodeId);
+      if (laterNode) {
+        lastId = this.append({ ...laterNode.message });
+      }
+    }
+
+    // 返回叶节点：只有存在后缀时才返回；否则返回 fork 创建的节点
+    return lastId ?? this.activeBranchId;
   }
 
   /** 切换到指定分支（支持前缀匹配） */
