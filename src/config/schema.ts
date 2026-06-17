@@ -230,6 +230,23 @@ export const MCPConfigSchema = z.object({
 export type MCPConfig = z.infer<typeof MCPConfigSchema>;
 export type MCPServerEntryConfig = z.infer<typeof MCPServerEntrySchema>;
 
+// --- Prompt 模板配置（Phase 16） ---
+
+export const PromptConfigSchema = z.object({
+  userTemplatesDir: z.string().optional(),
+  projectOverrides: z.boolean().default(true),
+  cacheTtlSeconds: z.number().int().min(0).default(0),
+});
+export type PromptConfigType = z.infer<typeof PromptConfigSchema>;
+
+export const ProjectMemoryConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  maxMemorySize: z.number().int().min(100).default(10000),
+  maxDecisions: z.number().int().min(10).default(100),
+  autoInject: z.boolean().default(true),
+});
+export type ProjectMemoryConfigType = z.infer<typeof ProjectMemoryConfigSchema>;
+
 // --- 通用配置 ---
 
 export const GeneralConfigSchema = z.object({
@@ -256,5 +273,7 @@ export const AppConfigSchema = z.object({
   sounds: z.preprocess((v) => v ?? {}, SoundsConfigSchema),            // 提示音
   updates: z.preprocess((v) => v ?? {}, UpdatesConfigSchema),          // 更新策略
   mcp: z.preprocess((v) => v ?? {}, MCPConfigSchema),                  // MCP 客户端配置
+  prompts: z.preprocess((v) => v ?? {}, PromptConfigSchema),            // Prompt 模板系统（Phase 16）
+  projectMemory: z.preprocess((v) => v ?? {}, ProjectMemoryConfigSchema), // 项目记忆（Phase 16）
 });
 export type AppConfig = z.infer<typeof AppConfigSchema>;

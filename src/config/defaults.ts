@@ -77,4 +77,14 @@ export const DEFAULT_CONFIG: AppConfig = {
     servers: [],
     autoConnect: true,
   },
+  prompts: {
+    projectOverrides: true,
+    cacheTtlSeconds: 0,
+  },
+  projectMemory: {
+    enabled: true,
+    maxMemorySize: 10000,
+    maxDecisions: 100,
+    autoInject: true,
+  },
 };
