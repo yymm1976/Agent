@@ -12,26 +12,37 @@ import { ModelRouter } from './router/router.js';
 import { buildRouterConfig } from './router/config.js';
 import { App } from './cli/App.js';
 import { startServer } from './cli/server.js';
+import { parseArgs, printHelp, printVersion } from './cli/args.js';
 
-const VERSION = '0.13.0';
+const VERSION = '0.14.0';
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  const subcommand = args[0];
+  const args = parseArgs(process.argv.slice(2));
 
-  if (subcommand === '--version' || subcommand === '-v') {
-    console.log(`RouteDev v${VERSION}`);
+  if (args.version) {
+    printVersion();
     process.exit(0);
   }
 
-  if (subcommand === 'serve') {
-    await startServer();
+  if (args.help) {
+    printHelp();
+    process.exit(0);
+  }
+
+  if (args.command === 'serve') {
+    await startServer(args.port, args.configPath);
+    return;
+  }
+
+  if (args.command === 'config' && args.subArgs[0] === 'validate') {
+    const { validateConfigCommand } = await import('./cli/commands/config.js');
+    await validateConfigCommand(args.subArgs[1]);
     return;
   }
 
   try {
-    // 加载配置
-    const config = loadConfig();
+    // 加载配置（支持 -c 覆盖）
+    const config = loadConfig({ globalConfigPath: args.configPath });
 
     // 初始化 LLM 客户端
     const clientManager = new LLMClientManager();

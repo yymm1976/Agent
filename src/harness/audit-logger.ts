@@ -2,6 +2,7 @@
 // 审计日志器：记录所有敏感/关键操作到 JSONL
 
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import type {
   AuditRecord,
@@ -188,11 +189,14 @@ export class AuditLogger {
     const dayDir = path.join(dir, today);
     const filePath = path.join(dayDir, `${this.sessionId}.audit.jsonl`);
     ensureDir(dayDir);
-    fs.appendFile(filePath, JSON.stringify(record) + '\n', 'utf-8').catch(err => {
+    // 同步写入保证测试可读性；生产环境可换 appendFile
+    try {
+      fsSync.appendFileSync(filePath, JSON.stringify(record) + '\n', 'utf-8');
+    } catch (err) {
       logger.warn('AuditLogger: write failed', {
         error: err instanceof Error ? err.message : String(err),
       });
-    });
+    }
   }
 
   private getStorageDir(): string {

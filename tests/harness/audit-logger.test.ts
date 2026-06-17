@@ -97,8 +97,9 @@ describe('AuditLogger', () => {
       al.logGoalComplete('plan-1', true);
       await new Promise(r => setTimeout(r, 50));
       const records = await al.listToday();
-      expect(records[0].action).toBe('goal_start');
-      expect(records[1].action).toBe('goal_complete');
+      // listToday 按时间倒序，[0] 是最新的 goal_complete
+      expect(records[0].action).toBe('goal_complete');
+      expect(records[1].action).toBe('goal_start');
     });
 
     it('logGoalComplete with success=false should use goal_fail', async () => {

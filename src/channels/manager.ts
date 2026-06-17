@@ -5,6 +5,7 @@ import type { ChannelAdapter, ChannelType, ChannelStatus } from './types.js';
 import type { ChannelEntryConfig } from '../config/schema.js';
 import type { MessageRouter } from './message-router.js';
 import { WeChatWorkAdapter } from './adapters/wechat-work.js';
+import { TelegramAdapter, type TelegramConfig } from './adapters/telegram.js';
 import { WebhookServer } from './server.js';
 import { logger } from '../utils/logger.js';
 
@@ -53,6 +54,13 @@ export class ChannelManager {
           type: 'wechat-work',
           enabled: entry.enabled,
           options: entry.options as WeChatWorkConfig['options'],
+        });
+      case 'telegram':
+        return new TelegramAdapter({
+          id: entry.id,
+          type: 'telegram',
+          enabled: entry.enabled,
+          options: entry.options as TelegramConfig['options'],
         });
       default:
         throw new Error(`Unsupported channel type: ${entry.type}`);

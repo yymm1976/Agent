@@ -13,11 +13,15 @@ import { MessageRouter } from '../channels/message-router.js';
 import { ChannelManager } from '../channels/manager.js';
 import type { ModelConfig } from '../config/schema.js';
 
-export async function startServer(): Promise<void> {
+export async function startServer(
+  portOverride?: number,
+  configPath?: string,
+): Promise<void> {
   logger.info('RouteDev server starting...');
 
   // 1. 加载配置
-  const config = loadConfig();
+  const config = loadConfig({ globalConfigPath: configPath });
+  const serverPort = portOverride ?? config.channels.port;
 
   // 2. 初始化 LLM 客户端
   const clientManager = new LLMClientManager();
@@ -73,16 +77,16 @@ export async function startServer(): Promise<void> {
   );
 
   // 5. ChannelManager
-  const channelManager = new ChannelManager(config.channels.port);
+  const channelManager = new ChannelManager(serverPort);
   channelManager.initializeAdapters(config.channels.entries, messageRouter);
 
   // 6. 启动
   await channelManager.start();
   logger.info('RouteDev server ready', {
     adapters: channelManager.adapterCount,
-    port: config.channels.port,
+    port: serverPort,
   });
-  console.log(`✓ Channel server started on port ${config.channels.port}`);
+  console.log(`✓ Channel server started on port ${serverPort}`);
   console.log(`  Adapters: ${channelManager.adapterCount}`);
   console.log(`  Endpoints: GET /status, POST /webhook/<channel-type>`);
 

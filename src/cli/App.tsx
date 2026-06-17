@@ -42,6 +42,24 @@ import type { ImageInput } from '../agent/vision.js';
 import { BranchManager } from '../agent/branch.js';
 import { InitAnalyzer } from '../agent/init-analyzer.js';
 import { DreamConsolidator } from '../agent/dream-consolidator.js';
+import { Blackboard } from '../agent/multi/blackboard.js';
+import { Orchestrator } from '../agent/multi/orchestrator.js';
+import { WorkerExecutor } from '../agent/multi/worker-executor.js';
+import { TraceCollector } from '../harness/trace-collector.js';
+import { AuditLogger } from '../harness/audit-logger.js';
+import { PromptTemplateManager } from '../prompts/manager.js';
+import { ProjectMemoryManager } from '../memory/project-memory.js';
+import { CommandRegistry } from './command-registry.js';
+import {
+  clearCommand,
+  helpCommand,
+  memoryCommand,
+  statusCommand,
+  traceCommand,
+  promptCommand,
+  channelsCommand,
+} from './commands/index.js';
+import type { ServiceContext } from './service-context.js';
 
 interface AppProps {
   config: AppConfig;
@@ -158,6 +176,14 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     modelId: config.router.classifierModel,
   }));
 
+  // Phase 16：Prompts + 项目记忆 + 可观测性
+  const promptsRef = useRef(new PromptTemplateManager({ projectOverrides: true }));
+  promptsRef.current.setProjectPath(process.cwd());
+  const projectMemoryRef = useRef(new ProjectMemoryManager(process.cwd(), config.projectMemory));
+  const blackboardRef = useRef(new Blackboard());
+  const traceRef = useRef(new TraceCollector({ storageDir: undefined }));
+  const auditRef = useRef(new AuditLogger(traceRef.current.getSessionId() ?? 'app'));
+
   // 初始化工具注册表
   const registryRef = useRef(new ToolRegistry());
   if (registryRef.current.size === 0) {
@@ -258,6 +284,54 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       toolsEnabled: true,
     })
   );
+
+  // Phase 14-16：多 Agent 编排 + Worker 执行器（依赖 agentLoop）
+  const orchestratorRef = useRef(
+    new Orchestrator(
+      primaryClient as ILLMClient,
+      config.router.classifierModel,
+    ),
+  );
+  const workerExecutorRef = useRef(new WorkerExecutor(agentLoopRef.current));
+
+  // Phase 17：命令注册表（集中管理命令）
+  const commandRegistryRef = useRef(new CommandRegistry());
+  commandRegistryRef.current.register(clearCommand);
+  commandRegistryRef.current.register(helpCommand);
+  commandRegistryRef.current.register(statusCommand);
+  commandRegistryRef.current.register(memoryCommand);
+  commandRegistryRef.current.register(traceCommand);
+  commandRegistryRef.current.register(promptCommand);
+  commandRegistryRef.current.register(channelsCommand);
+
+  const buildServiceContext = useCallback((): ServiceContext => {
+    return {
+      config,
+      clientManager,
+      router: modelRouter,
+      tracker,
+      agentLoop: agentLoopRef.current,
+      checkpointWriter: writerRef.current,
+      contextManager: contextManagerRef.current,
+      branchManager: branchManagerRef.current,
+      vision: visionAssistantRef.current,
+      initAnalyzer: initAnalyzerRef.current!,
+      dream: dreamConsolidatorRef.current,
+      goalParser: new GoalParser(),
+      goalVerifier: new GoalVerifier(),
+      blackboard: blackboardRef.current,
+      orchestrator: orchestratorRef.current,
+      workerExecutor: workerExecutorRef.current,
+      trace: traceRef.current,
+      audit: auditRef.current,
+      prompts: promptsRef.current,
+      projectMemory: projectMemoryRef.current,
+      toolExecutor: adapterRef.current,
+      setToolExecutor: () => {},
+      sessionId: traceRef.current.getSessionId() ?? 'app',
+      cwd: process.cwd(),
+    };
+  }, [config, clientManager, modelRouter, tracker]);
 
   // 系统提示
   const systemPrompt = getSystemPrompt(config.general.language);
@@ -570,6 +644,30 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   }, [classifier, modelRouter, clientManager, tracker, systemPrompt]);
 
   const handleCommand = useCallback(async (text: string) => {
+    // Phase 17：先尝试通过命令注册表处理已知命令
+    const ctx = buildServiceContext();
+    (ctx as any).__commandRegistry = commandRegistryRef.current;
+    const registryResult = await commandRegistryRef.current.execute(text, ctx);
+    if (registryResult.type === 'handled') {
+      if (registryResult.messages) {
+        for (const content of registryResult.messages) {
+          if (content === '__CLEAR__') {
+            setMessages([{
+              id: nextId(),
+              role: 'system',
+              content: '对话已清空。',
+            }]);
+            conversationHistoryRef.current = [];
+            contextManagerRef.current.resetTriggers();
+          } else {
+            setMessages(prev => [...prev, { id: nextId(), role: 'system', content }]);
+          }
+        }
+      }
+      setIsProcessing(false);
+      return;
+    }
+
     const parts = text.split(' ');
     const cmd = parts[0].toLowerCase();
 
