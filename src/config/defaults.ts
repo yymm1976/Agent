@@ -54,6 +54,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   autonomy: {
     defaultMode: 'semi',
+    autoApprovePatterns: ['file_read', 'file_search', 'code_search'],
+    confirmTimeout: 30000,
   },
   sounds: {
     enabled: true,

@@ -150,6 +150,10 @@ export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 
 export const AutonomyConfigSchema = z.object({
   defaultMode: AutonomyModeSchema.default('semi'),
+  /** 无论什么模式下都自动批准的工具 pattern（如 ["file_read", "code_search"]） */
+  autoApprovePatterns: z.array(z.string()).default([]),
+  /** 确认超时时间（毫秒）。超时后按模式自动决定：auto/semi → 批准，manual → 拒绝 */
+  confirmTimeout: z.number().positive().int().default(30000),
 });
 export type AutonomyConfig = z.infer<typeof AutonomyConfigSchema>;
 
