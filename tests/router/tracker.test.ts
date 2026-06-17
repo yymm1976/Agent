@@ -31,6 +31,15 @@ describe('TokenTracker', () => {
 
   afterEach(() => {
     tracker.destroy();
+    // 再次清理文件，防止影响其他测试
+    const persistPath = join(getAppDataDir(), 'token-usage.json');
+    if (existsSync(persistPath)) {
+      try {
+        unlinkSync(persistPath);
+      } catch {
+        // 忽略
+      }
+    }
   });
 
   it('should record token usage', () => {
