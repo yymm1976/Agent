@@ -14,9 +14,15 @@ import type { ModelRouter } from '../router/router.js';
 import type { TokenTracker } from '../router/tracker.js';
 import type { AppConfig } from '../config/schema.js';
 import { ReActAgentLoop } from '../agent/loop.js';
-import { NoOpToolExecutor } from '../agent/executor.js';
 import { getSystemPrompt } from '../agent/prompts.js';
 import type { ReActEvent } from '../agent/loop-config.js';
+import { ToolRegistry } from '../tools/registry.js';
+import { ToolExecutor } from '../tools/executor.js';
+import { SecurityChecker } from '../tools/security.js';
+import { ToolRegistryAdapter } from '../tools/adapter.js';
+import { FileReadTool } from '../tools/builtin/file-read.js';
+import { FileWriteTool } from '../tools/builtin/file-write.js';
+import { FileSearchTool } from '../tools/builtin/file-search.js';
 
 interface AppProps {
   config: AppConfig;
@@ -50,9 +56,39 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   // 对话历史（用于传递给 ReAct Loop）
   const conversationHistoryRef = useRef<LLMMessage[]>([]);
 
-  // ReAct Agent Loop 实例
+  // 初始化工具注册表
+  const registryRef = useRef(new ToolRegistry());
+  if (registryRef.current.size === 0) {
+    registryRef.current.register(new FileReadTool());
+    registryRef.current.register(new FileWriteTool());
+    registryRef.current.register(new FileSearchTool());
+  }
+
+  // 初始化安全检查器
+  const securityCheckerRef = useRef(new SecurityChecker(process.cwd(), config.security));
+
+  // 初始化工具执行器
+  const toolExecutorRef = useRef(new ToolExecutor(registryRef.current));
+  toolExecutorRef.current.setSecurityChecker(securityCheckerRef.current);
+
+  // 创建桥梁适配器
+  const adapterRef = useRef(new ToolRegistryAdapter(
+    registryRef.current,
+    toolExecutorRef.current,
+    {
+      workingDirectory: process.cwd(),
+      allowedDirectories: [process.cwd()],
+      environment: process.env as Record<string, string>,
+      timeoutMs: 30000,
+    }
+  ));
+
+  // ReAct Agent Loop 实例（启用工具）
   const agentLoopRef = useRef<ReActAgentLoop>(
-    new ReActAgentLoop(new NoOpToolExecutor())
+    new ReActAgentLoop(adapterRef.current, {
+      maxIterations: 10,
+      toolsEnabled: true,
+    })
   );
 
   // 系统提示
@@ -136,22 +172,24 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
               break;
 
             case 'tool_call_start':
-              // 显示工具调用开始
-              setMessages(prev =>
-                prev.map(m =>
-                  m.id === assistantId
-                    ? { ...m, content: accumulatedContent + `\n🔧 调用工具: ${event.toolName}...` }
-                    : m
-                )
-              );
+              setMessages(prev => [...prev, {
+                id: nextId(),
+                role: 'system',
+                content: `🔧 调用工具: ${event.toolName}`,
+              }]);
               break;
 
             case 'tool_call_result':
-              // 工具结果会在下一轮 LLM 调用中使用
+              if (event.isError) {
+                setMessages(prev => [...prev, {
+                  id: nextId(),
+                  role: 'system',
+                  content: `❌ 工具 ${event.toolName} 执行失败`,
+                }]);
+              }
               break;
 
             case 'error':
-              // 显示错误信息
               setMessages(prev =>
                 prev.map(m =>
                   m.id === assistantId
