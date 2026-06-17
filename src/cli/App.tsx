@@ -2,7 +2,7 @@
 // 主应用组件：整合 ChatView + StatusBar + InputBox，管理消息状态
 // Phase 5: 使用 ReAct Agent Loop 替代直接 LLM 调用
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Box } from 'ink';
 import { ChatView, type ChatMessage } from './components/ChatView.js';
 import { StatusBar } from './components/StatusBar.js';
@@ -28,6 +28,8 @@ import { GitOpTool } from '../tools/builtin/git-op.js';
 import { WebSearchTool } from '../tools/builtin/web-search.js';
 import { CodeSearchTool } from '../tools/builtin/code-search.js';
 import { PermissionChecker } from '../tools/permission.js';
+import { MCPClientManager } from '../tools/mcp/client.js';
+import { logger } from '../utils/logger.js';
 
 interface AppProps {
   config: AppConfig;
@@ -72,6 +74,43 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     registryRef.current.register(new WebSearchTool());
     registryRef.current.register(new CodeSearchTool());
   }
+
+  // 初始化 MCP 客户端管理器
+  const mcpManagerRef = useRef(new MCPClientManager(registryRef.current));
+  const [mcpStatus, setMcpStatus] = useState('disconnected');
+
+  // 自动连接配置的 MCP servers
+  useEffect(() => {
+    async function connectMcpServers() {
+      if (!config.mcp.autoConnect) return;
+
+      const enabledServers = config.mcp.servers.filter(s => s.enabled);
+      if (enabledServers.length === 0) return;
+
+      setMcpStatus('connecting');
+      for (const server of enabledServers) {
+        const info = await mcpManagerRef.current.connect(server);
+        if (info.status === 'error') {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: `MCP server "${server.name}" 连接失败: ${info.error}`,
+          }]);
+        }
+      }
+      setMcpStatus(mcpManagerRef.current.connectedCount > 0 ? 'connected' : 'disconnected');
+    }
+
+    connectMcpServers().catch(err => {
+      logger.error('Failed to connect MCP servers', { error: String(err) });
+    });
+
+    return () => {
+      mcpManagerRef.current.disconnectAll().catch(err => {
+        logger.error('Failed to disconnect MCP servers', { error: String(err) });
+      });
+    };
+  }, [config.mcp.autoConnect, config.mcp.servers]);
 
   // 初始化权限检查器（MVP：confirm 级别自动放行）
   const permissionCheckerRef = useRef(new PermissionChecker(true));
