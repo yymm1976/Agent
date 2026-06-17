@@ -37,10 +37,22 @@ export type ReActEvent =
   | { type: 'tool_call_start'; toolName: string; toolCallId: string }
   /** 工具调用结果 */
   | { type: 'tool_call_result'; toolName: string; toolCallId: string; result: string; isError: boolean }
+  /** 工具调用需要用户确认（Phase 9 自主模式） */
+  | { type: 'approval_required'; toolName: string; toolCallId: string; args: Record<string, unknown>; reason: string }
   /** 错误（循环可能还在继续重试） */
   | { type: 'error'; error: string; usage?: TokenUsageInfo }
   /** 循环结束 */
   | { type: 'done'; content: string; usage: TokenUsageInfo };
+
+/** 工具确认回调
+ *  Phase 9：返回 Promise<boolean>，由 CLI 层的 handleSubmit 路由用户输入
+ *  - true → 工具执行
+ *  - false → 工具跳过，注入拒绝信息
+ */
+export type ConfirmToolCallback = (
+  toolName: string,
+  args: Record<string, unknown>,
+) => Promise<boolean>;
 
 /** 工具执行适配器接口
  *  Phase 5 使用最小桩实现，Phase 6 替换为完整的 ToolRegistry + ToolExecutor

@@ -23,7 +23,7 @@ import type {
   ToolCallRequest,
   ContentPart,
 } from '../router/types.js';
-import type { ReActConfig, ReActEvent, ToolExecutorAdapter } from './loop-config.js';
+import type { ReActConfig, ReActEvent, ToolExecutorAdapter, ConfirmToolCallback } from './loop-config.js';
 import { DEFAULT_REACT_CONFIG } from './loop-config.js';
 import { logger } from '../utils/logger.js';
 
@@ -41,6 +41,8 @@ export interface ReActRunParams {
   systemPrompt?: string;
   /** 取消信号 */
   signal?: AbortSignal;
+  /** 工具调用确认回调（Phase 9 自主模式） */
+  onConfirmTool?: ConfirmToolCallback;
 }
 
 /** LLM 流式调用的内部结果 */
@@ -80,6 +82,7 @@ export class ReActAgentLoop {
       conversationHistory,
       systemPrompt,
       signal,
+      onConfirmTool,
     } = params;
 
     // 构建初始消息列表
@@ -172,6 +175,41 @@ export class ReActAgentLoop {
               toolName: toolCall.name,
               toolCallId: toolCall.id,
             };
+
+            // Phase 9：自主模式下，如果提供了 onConfirmTool，暂停等待用户确认
+            let approved = true;
+            if (onConfirmTool) {
+              yield {
+                type: 'approval_required',
+                toolName: toolCall.name,
+                toolCallId: toolCall.id,
+                args: toolCall.arguments,
+                reason: '需要确认工具调用',
+              };
+              approved = await onConfirmTool(toolCall.name, toolCall.arguments);
+            }
+
+            if (!approved) {
+              // 用户拒绝：注入拒绝信息作为工具结果
+              const toolResult = `[用户拒绝了此工具调用] ${toolCall.name}`;
+              yield {
+                type: 'tool_call_result',
+                toolName: toolCall.name,
+                toolCallId: toolCall.id,
+                result: toolResult,
+                isError: true,
+              };
+              messages.push({
+                role: 'user',
+                content: [{
+                  type: 'tool_result' as const,
+                  toolUseId: toolCall.id,
+                  content: toolResult,
+                  isError: true,
+                }],
+              });
+              continue;
+            }
 
             const toolResult = await this.toolExecutor.executeTool(
               toolCall.name,
