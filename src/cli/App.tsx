@@ -1,17 +1,22 @@
 // src/cli/App.tsx
 // 主应用组件：整合 ChatView + StatusBar + InputBox，管理消息状态
+// Phase 5: 使用 ReAct Agent Loop 替代直接 LLM 调用
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { Box } from 'ink';
 import { ChatView, type ChatMessage } from './components/ChatView.js';
 import { StatusBar } from './components/StatusBar.js';
 import { InputBox } from './components/InputBox.js';
-import type { ScenarioTier } from '../router/types.js';
+import type { ScenarioTier, LLMMessage } from '../router/types.js';
 import type { LLMClientManager } from '../router/llm/index.js';
 import type { ScenarioClassifier } from '../router/classifier.js';
 import type { ModelRouter } from '../router/router.js';
 import type { TokenTracker } from '../router/tracker.js';
 import type { AppConfig } from '../config/schema.js';
+import { ReActAgentLoop } from '../agent/loop.js';
+import { NoOpToolExecutor } from '../agent/executor.js';
+import { getSystemPrompt } from '../agent/prompts.js';
+import type { ReActEvent } from '../agent/loop-config.js';
 
 interface AppProps {
   config: AppConfig;
@@ -41,6 +46,17 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   const [currentTier, setCurrentTier] = useState<ScenarioTier>('simple');
   const [isDegraded, setIsDegraded] = useState(false);
   const [todayTokensUsed, setTodayTokensUsed] = useState(0);
+
+  // 对话历史（用于传递给 ReAct Loop）
+  const conversationHistoryRef = useRef<LLMMessage[]>([]);
+
+  // ReAct Agent Loop 实例
+  const agentLoopRef = useRef<ReActAgentLoop>(
+    new ReActAgentLoop(new NoOpToolExecutor())
+  );
+
+  // 系统提示
+  const systemPrompt = getSystemPrompt(config.general.language);
 
   const handleSubmit = useCallback(async (text: string) => {
     // 添加用户消息
@@ -82,13 +98,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
         return;
       }
 
-      // 4. 构建消息列表
-      const llmMessages = [
-        { role: 'system' as const, content: '你是 RouteDev，一个智能开发助手。用中文回答。' },
-        { role: 'user' as const, content: text },
-      ];
-
-      // 5. 调用 LLM（非流式简化版本）
+      // 4. 创建助手消息（流式更新）
       const assistantId = nextId();
       const assistantMsg: ChatMessage = {
         id: assistantId,
@@ -100,26 +110,85 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       };
       setMessages(prev => [...prev, assistantMsg]);
 
+      // 5. 运行 ReAct Agent Loop
+      let accumulatedContent = '';
+      let finalUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+
       try {
-        const response = await client.complete({
-          model: routeDecision.model.id,
-          messages: llmMessages,
-          maxTokens: 4000,
-        });
+        for await (const event of agentLoopRef.current.run({
+          userMessage: text,
+          llmClient: client,
+          routeDecision,
+          conversationHistory: conversationHistoryRef.current,
+          systemPrompt,
+        })) {
+          // 处理事件
+          switch (event.type) {
+            case 'text_delta':
+              accumulatedContent += event.text;
+              setMessages(prev =>
+                prev.map(m =>
+                  m.id === assistantId
+                    ? { ...m, content: accumulatedContent }
+                    : m
+                )
+              );
+              break;
+
+            case 'tool_call_start':
+              // 显示工具调用开始
+              setMessages(prev =>
+                prev.map(m =>
+                  m.id === assistantId
+                    ? { ...m, content: accumulatedContent + `\n🔧 调用工具: ${event.toolName}...` }
+                    : m
+                )
+              );
+              break;
+
+            case 'tool_call_result':
+              // 工具结果会在下一轮 LLM 调用中使用
+              break;
+
+            case 'error':
+              // 显示错误信息
+              setMessages(prev =>
+                prev.map(m =>
+                  m.id === assistantId
+                    ? { ...m, content: accumulatedContent + `\n⚠️ ${event.error}` }
+                    : m
+                )
+              );
+              break;
+
+            case 'done':
+              finalUsage = event.usage;
+              break;
+          }
+        }
 
         // 更新 Token 统计
-        setTodayTokensUsed(prev => prev + response.usage.totalTokens);
-        tracker.record(response.usage, {
+        setTodayTokensUsed(prev => prev + finalUsage.totalTokens);
+        tracker.record(finalUsage, {
           modelId: routeDecision.model.id,
           agentId: 'default',
           stepId: 'chat',
         });
 
-        // 更新消息
+        // 更新对话历史
+        conversationHistoryRef.current.push({ role: 'user', content: text });
+        conversationHistoryRef.current.push({ role: 'assistant', content: accumulatedContent });
+
+        // 限制历史长度（保留最近 20 条）
+        if (conversationHistoryRef.current.length > 20) {
+          conversationHistoryRef.current = conversationHistoryRef.current.slice(-20);
+        }
+
+        // 完成流式输出
         setMessages(prev =>
           prev.map(m =>
             m.id === assistantId
-              ? { ...m, content: response.content, isStreaming: false }
+              ? { ...m, content: accumulatedContent, isStreaming: false }
               : m
           )
         );
@@ -142,7 +211,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     } finally {
       setIsProcessing(false);
     }
-  }, [classifier, modelRouter, clientManager, tracker]);
+  }, [classifier, modelRouter, clientManager, tracker, systemPrompt]);
 
   const handleCommand = useCallback((text: string) => {
     const parts = text.split(' ');
@@ -173,6 +242,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
             `场景等级: ${currentTier}`,
             `已降级: ${isDegraded ? '是' : '否'}`,
             `今日 Token: ${stats.total.totalTokens}`,
+            `对话历史: ${conversationHistoryRef.current.length} 条消息`,
           ].join('\n'),
         }]);
         break;
@@ -183,6 +253,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
           role: 'system',
           content: '对话已清空。',
         }]);
+        conversationHistoryRef.current = [];
         break;
 
       case '/quit':
