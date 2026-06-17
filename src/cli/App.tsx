@@ -23,6 +23,11 @@ import { ToolRegistryAdapter } from '../tools/adapter.js';
 import { FileReadTool } from '../tools/builtin/file-read.js';
 import { FileWriteTool } from '../tools/builtin/file-write.js';
 import { FileSearchTool } from '../tools/builtin/file-search.js';
+import { ShellExecTool } from '../tools/builtin/shell-exec.js';
+import { GitOpTool } from '../tools/builtin/git-op.js';
+import { WebSearchTool } from '../tools/builtin/web-search.js';
+import { CodeSearchTool } from '../tools/builtin/code-search.js';
+import { PermissionChecker } from '../tools/permission.js';
 
 interface AppProps {
   config: AppConfig;
@@ -62,13 +67,26 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     registryRef.current.register(new FileReadTool());
     registryRef.current.register(new FileWriteTool());
     registryRef.current.register(new FileSearchTool());
+    registryRef.current.register(new ShellExecTool());
+    registryRef.current.register(new GitOpTool());
+    registryRef.current.register(new WebSearchTool());
+    registryRef.current.register(new CodeSearchTool());
   }
+
+  // 初始化权限检查器（MVP：confirm 级别自动放行）
+  const permissionCheckerRef = useRef(new PermissionChecker(true));
+  permissionCheckerRef.current.addRule({ toolPattern: 'file_*', level: 'auto', description: '文件操作自动执行' });
+  permissionCheckerRef.current.addRule({ toolPattern: 'code_search', level: 'auto', description: '代码搜索自动执行' });
+  permissionCheckerRef.current.addRule({ toolPattern: 'shell_exec', level: 'confirm', description: 'Shell 命令需要确认' });
+  permissionCheckerRef.current.addRule({ toolPattern: 'git_op', level: 'confirm', description: 'Git 写操作需要确认' });
+  permissionCheckerRef.current.addRule({ toolPattern: 'web_search', level: 'confirm', description: '网络搜索需要确认' });
 
   // 初始化安全检查器
   const securityCheckerRef = useRef(new SecurityChecker(process.cwd(), config.security));
 
   // 初始化工具执行器
   const toolExecutorRef = useRef(new ToolExecutor(registryRef.current));
+  toolExecutorRef.current.setPermissionChecker(permissionCheckerRef.current);
   toolExecutorRef.current.setSecurityChecker(securityCheckerRef.current);
 
   // 创建桥梁适配器
