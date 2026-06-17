@@ -7,7 +7,7 @@ import { Box } from 'ink';
 import { ChatView, type ChatMessage } from './components/ChatView.js';
 import { StatusBar } from './components/StatusBar.js';
 import { InputBox } from './components/InputBox.js';
-import type { ScenarioTier, LLMMessage } from '../router/types.js';
+import type { ScenarioTier, LLMMessage, ILLMClient } from '../router/types.js';
 import type { LLMClientManager } from '../router/llm/index.js';
 import type { ScenarioClassifier } from '../router/classifier.js';
 import type { ModelRouter } from '../router/router.js';
@@ -35,6 +35,8 @@ import { GoalVerifier } from '../agent/goal-verifier.js';
 import type { GoalPlan } from '../agent/goal-types.js';
 import type { AutonomyMode } from '../config/schema.js';
 import { CheckpointManager } from '../harness/checkpoint-manager.js';
+import { CheckpointWriter } from '../agent/memory/checkpoint-writer.js';
+import { ContextManager } from '../agent/memory/context-manager.js';
 
 interface AppProps {
   config: AppConfig;
@@ -93,6 +95,36 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   // AbortController 用于 /pause 命令
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // Phase 11：CheckpointWriter + ContextManager
+  const checkpointModelId = config.checkpoint.modelId;
+  const checkpointProvider = config.providers.find(p =>
+    p.models.some(m => m.id === checkpointModelId)
+  );
+  const fallbackClient: ILLMClient | undefined = clientManager.listAll().values().next().value;
+  const checkpointClient: ILLMClient = (checkpointProvider
+    ? clientManager.get(checkpointProvider.id) ?? fallbackClient
+    : fallbackClient) as ILLMClient;
+
+  const writerRef = useRef(new CheckpointWriter(
+    checkpointClient,
+    checkpointModelId,
+    config.checkpoint.maxTokensPerCheckpoint,
+  ));
+
+  const currentModelConfig = config.providers
+    .flatMap(p => p.models)
+    .find(m => m.id === currentModel);
+
+  const contextManagerRef = useRef(new ContextManager(
+    {
+      contextWindow: currentModelConfig?.contextWindow ?? 128000,
+      compressionThreshold: 0.8,
+      keepRecentMessages: 6,
+      checkpointEnabled: config.checkpoint.enabled,
+    },
+    writerRef.current,
+  ));
+
   // 初始化工具注册表
   const registryRef = useRef(new ToolRegistry());
   if (registryRef.current.size === 0) {
@@ -146,6 +178,13 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   useEffect(() => {
     checkpointManagerRef.current.init().catch(err => {
       logger.warn('CheckpointManager init failed', { error: String(err) });
+    });
+  }, []);
+
+  // Phase 11：加载持久化的 memory checkpoint
+  useEffect(() => {
+    contextManagerRef.current.loadCheckpoint().catch(err => {
+      logger.warn('ContextManager loadCheckpoint failed', { error: String(err) });
     });
   }, []);
 
@@ -378,6 +417,53 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
           conversationHistoryRef.current = conversationHistoryRef.current.slice(-20);
         }
 
+        // ===== Phase 11：增量 Checkpoint + 压缩 =====
+        if (config.checkpoint.enabled) {
+          const usagePercent = tracker.getUsagePercent();
+          const triggers = config.checkpoint.triggers.map(t => ({
+            level: t.level,
+            action: t.action as 'initial' | 'incremental' | 'compress',
+          }));
+
+          const triggerAction = contextManagerRef.current.shouldTriggerCheckpoint(usagePercent, triggers);
+          if (triggerAction) {
+            const cp = await contextManagerRef.current.triggerCheckpoint(
+              triggerAction,
+              conversationHistoryRef.current,
+              usagePercent,
+            );
+            if (cp) {
+              setMessages(prev => [...prev, {
+                id: nextId(),
+                role: 'system',
+                content: `🧠 记忆已保存 (${triggerAction}): ${cp.currentIntent}`,
+              }]);
+              await contextManagerRef.current.saveCheckpoint();
+            }
+          }
+
+          // 上下文压缩检查
+          const estimatedTokens = conversationHistoryRef.current.reduce((acc, msg) => {
+            const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+            return acc + Math.ceil(text.length / 4);
+          }, 0);
+
+          if (contextManagerRef.current.shouldCompress(
+            conversationHistoryRef.current.length,
+            estimatedTokens,
+          )) {
+            const { compressed, result } = contextManagerRef.current.compress(
+              conversationHistoryRef.current,
+            );
+            conversationHistoryRef.current = compressed;
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: `📦 上下文已压缩: ${result.originalCount} → ${result.compressedCount} 条`,
+            }]);
+          }
+        }
+
         // 完成流式输出
         setMessages(prev =>
           prev.map(m =>
@@ -425,6 +511,9 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
             '  /manual             - 切换到手动模式（所有操作确认）',
             '  /goal "目标"        - 目标分解与执行（可选 --verify "验证条件"）',
             '  /pause              - 中断当前执行',
+            '  /memory show        - 查看当前记忆',
+            '  /memory write       - 手动写入记忆',
+            '  /memory clear       - 清除记忆',
             '  /checkpoint list    - 查看所有检查点',
             '  /checkpoint create  - 手动创建检查点',
             '  /rollback <id>      - 回滚到指定检查点（破坏性操作）',
@@ -628,6 +717,10 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
         const stats = tracker.getStats();
         const cpCount = checkpointManagerRef.current.count;
         const cpEnabled = checkpointManagerRef.current.isEnabled;
+        const memoryCheckpoint = contextManagerRef.current.getCheckpoint();
+        const memoryStatus = memoryCheckpoint
+          ? `有 (${memoryCheckpoint.currentIntent.slice(0, 30)})`
+          : '无';
         setMessages(prev => [...prev, {
           id: nextId(),
           role: 'system',
@@ -639,6 +732,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
             `今日 Token: ${stats.total.totalTokens}`,
             `对话历史: ${conversationHistoryRef.current.length} 条消息`,
             `检查点: ${cpCount} 个${cpEnabled ? '' : ' (未启用 / 非 Git 仓库)'}`,
+            `记忆: ${memoryStatus}`,
             `MCP: ${mcpManagerRef.current.connectedCount} 个 server, ${mcpManagerRef.current.totalToolCount} 个工具`,
           ].join('\n'),
         }]);
@@ -651,7 +745,101 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
           content: '对话已清空。',
         }]);
         conversationHistoryRef.current = [];
+        // Phase 11：重置 memory 触发状态
+        contextManagerRef.current.resetTriggers();
         break;
+
+      case '/memory': {
+        const subCmd = parts[1]?.toLowerCase();
+
+        if (subCmd === 'show' || subCmd === undefined) {
+          const checkpoint = contextManagerRef.current.getCheckpoint();
+          if (!checkpoint) {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: '还没有记忆数据。记忆会在 token 消耗达到阈值时自动创建。',
+            }]);
+          } else {
+            const lines: string[] = [
+              `🧠 当前记忆：`,
+              `  意图: ${checkpoint.currentIntent}`,
+              `  下一步: ${checkpoint.nextAction || '无'}`,
+              `  约束: ${checkpoint.workingConstraints.length > 0 ? checkpoint.workingConstraints.join('; ') : '无'}`,
+              `  当前文件: ${checkpoint.currentWorkingFiles.length > 0 ? checkpoint.currentWorkingFiles.join(', ') : '无'}`,
+              `  涉及文件: ${checkpoint.involvedFiles.length} 个`,
+              `  错误记录: ${checkpoint.errorsAndFixes.length} 条`,
+              `  设计决策: ${checkpoint.designDecisions.length} 条`,
+            ];
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: lines.join('\n'),
+            }]);
+          }
+        } else if (subCmd === 'notes') {
+          const notes = await writerRef.current.readNotes();
+          if (!notes.trim()) {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: 'notes.md 为空。',
+            }]);
+          } else {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: `📝 notes.md:\n${notes}`,
+            }]);
+          }
+        } else if (subCmd === 'write') {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: '🧠 正在手动写入记忆...',
+          }]);
+          const usagePercent = tracker.getUsagePercent();
+          const cp = await contextManagerRef.current.triggerCheckpoint(
+            'incremental',
+            conversationHistoryRef.current,
+            usagePercent,
+          );
+          if (cp) {
+            await contextManagerRef.current.saveCheckpoint();
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: `🧠 记忆已保存: ${cp.currentIntent}`,
+            }]);
+          } else {
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: '记忆写入失败。',
+            }]);
+          }
+        } else if (subCmd === 'clear') {
+          contextManagerRef.current.resetTriggers();
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: '记忆已清除。下次对话将重新开始记忆积累。',
+          }]);
+        } else {
+          setMessages(prev => [...prev, {
+            id: nextId(),
+            role: 'system',
+            content: [
+              '记忆命令：',
+              '  /memory show   - 查看当前记忆',
+              '  /memory notes  - 查看 notes.md',
+              '  /memory write  - 手动写入记忆',
+              '  /memory clear  - 清除记忆',
+            ].join('\n'),
+          }]);
+        }
+        break;
+      }
 
       case '/quit':
       case '/exit':
@@ -842,6 +1030,45 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
         conversationHistoryRef.current.push({ role: 'assistant', content: stepContent });
         if (conversationHistoryRef.current.length > 20) {
           conversationHistoryRef.current = conversationHistoryRef.current.slice(-20);
+        }
+
+        // ===== Phase 11：步骤间 checkpoint + 压缩 =====
+        if (config.checkpoint.enabled) {
+          const usagePercent = tracker.getUsagePercent();
+          const triggers = config.checkpoint.triggers.map(t => ({
+            level: t.level,
+            action: t.action as 'initial' | 'incremental' | 'compress',
+          }));
+
+          const triggerAction = contextManagerRef.current.shouldTriggerCheckpoint(usagePercent, triggers);
+          if (triggerAction) {
+            await contextManagerRef.current.triggerCheckpoint(
+              triggerAction,
+              conversationHistoryRef.current,
+              usagePercent,
+            );
+            await contextManagerRef.current.saveCheckpoint();
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: `🧠 步骤间记忆已保存 (${triggerAction})`,
+            }]);
+          }
+
+          const estimatedTokens = conversationHistoryRef.current.reduce((acc, msg) => {
+            const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+            return acc + Math.ceil(text.length / 4);
+          }, 0);
+
+          if (contextManagerRef.current.shouldCompress(conversationHistoryRef.current.length, estimatedTokens)) {
+            const { compressed } = contextManagerRef.current.compress(conversationHistoryRef.current);
+            conversationHistoryRef.current = compressed;
+            setMessages(prev => [...prev, {
+              id: nextId(),
+              role: 'system',
+              content: '📦 上下文已压缩（步骤间）',
+            }]);
+          }
         }
         setMessages(prev => [...prev, {
           id: nextId(),
