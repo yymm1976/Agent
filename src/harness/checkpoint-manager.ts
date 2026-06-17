@@ -34,10 +34,13 @@ export class CheckpointManager {
   private metadataPath: string;
   /** GoalPlan 持久化路径 */
   private goalPlanPath: string;
+  /** 可选：自定义存储目录（默认使用 APPDATA） */
+  private storageDirOverride?: string;
 
-  constructor(config: CheckpointManagerConfig) {
+  constructor(config: CheckpointManagerConfig, storageDirOverride?: string) {
     this.config = config;
     this.git = simpleGit(config.workingDirectory);
+    this.storageDirOverride = storageDirOverride;
     const { metadataPath, goalPlanPath } = this.resolveStoragePaths();
     this.metadataPath = metadataPath;
     this.goalPlanPath = goalPlanPath;
@@ -76,7 +79,7 @@ export class CheckpointManager {
       const status = await this.git.status();
       const hasChanges = status.files.length > 0;
 
-      if (!hasChanges && this.checkpoints.length > 0) {
+      if (!hasChanges) {
         logger.debug('No changes since last checkpoint, skipping');
         return null;
       }
@@ -291,8 +294,9 @@ export class CheckpointManager {
     };
   }
 
-  /** 获取存储目录 */
-  private getStorageDir(): string {
+  /** 获取存储目录（可被测试覆盖） */
+  protected getStorageDir(): string {
+    if (this.storageDirOverride) return this.storageDirOverride;
     const appData = process.env.APPDATA
       ?? (process.platform === 'darwin'
         ? path.join(os.homedir(), 'Library', 'Application Support')
