@@ -1,0 +1,86 @@
+// src/tools/builtin/file-write.ts
+// 写入或创建文件
+// 权限：confirm（需确认，但 Phase 6 暂自动放行）
+
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '../types.js';
+
+export class FileWriteTool implements ITool {
+  readonly definition: ToolDefinition = {
+    name: 'file_write',
+    description: '写入内容到文件。如果文件不存在则创建，存在则覆盖。可指定追加模式。',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: '文件路径（相对于项目根目录）',
+        },
+        content: {
+          type: 'string',
+          description: '要写入的内容',
+        },
+        append: {
+          type: 'boolean',
+          description: '是否追加模式（默认 false，覆盖写入）',
+        },
+      },
+      required: ['path', 'content'],
+    },
+    requiresApproval: true,
+    category: 'file',
+  };
+
+  validateArgs(args: Record<string, unknown>): { valid: boolean; errors: string[] } {
+    const errors: string[] = [];
+    if (!args.path || typeof args.path !== 'string') {
+      errors.push('缺少必需参数: path');
+    }
+    if (args.content === undefined || typeof args.content !== 'string') {
+      errors.push('缺少必需参数: content');
+    }
+    if (args.append !== undefined && typeof args.append !== 'boolean') {
+      errors.push('append 必须是布尔值');
+    }
+    return { valid: errors.length === 0, errors };
+  }
+
+  async execute(
+    args: Record<string, unknown>,
+    context: ToolExecutionContext,
+  ): Promise<ToolResult> {
+    const filePath = path.resolve(context.workingDirectory, args.path as string);
+    const content = args.content as string;
+    const append = (args.append as boolean) ?? false;
+
+    try {
+      const dir = path.dirname(filePath);
+      await fs.mkdir(dir, { recursive: true });
+
+      if (append) {
+        await fs.appendFile(filePath, content, 'utf-8');
+      } else {
+        await fs.writeFile(filePath, content, 'utf-8');
+      }
+
+      const stats = await fs.stat(filePath);
+      const lines = content.split('\n').length;
+
+      return {
+        success: true,
+        output: `文件${append ? '追加' : '写入'}成功: ${args.path} (${lines} 行, ${stats.size} 字节)`,
+        durationMs: 0,
+        metadata: { filePath, lines, bytes: stats.size, append },
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return {
+        success: false,
+        output: '',
+        error: `写入文件失败: ${msg}`,
+        durationMs: 0,
+      };
+    }
+  }
+}

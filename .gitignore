@@ -1,0 +1,35 @@
+# 敏感文件（证书/密钥 dump）
+p12-dump*.txt
+p12-mid.txt
+p12-v.txt
+p13-v*.txt
+install-utf8.log
+pnpm-err.log
+pnpm-out.log
+
+# 日志
+*.log
+
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+
+# 环境变量
+.env
+.env.local
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
+
+# 测试覆盖率
+coverage/
+
+# RouteDev 运行时数据
+.routedev/

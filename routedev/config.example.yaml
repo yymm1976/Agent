@@ -1,0 +1,103 @@
+# config.example.yaml
+# RouteDev 全局配置模板
+# 复制此文件到以下位置之一：
+#   Windows: %APPDATA%\RouteDev\config.yaml
+#   macOS:   ~/Library/Application Support/RouteDev/config.yaml
+#   Linux:   ~/.config/routedev/config.yaml
+
+version: 1
+
+general:
+  language: zh-CN                # zh-CN / en-US
+  theme: dark                    # dark / light
+  startupBehavior: restore       # restore / project_select
+
+# API 提供商配置
+# 支持 OpenAI 和 Anthropic 两种协议
+# apiKey 支持环境变量引用：${ENV_VAR_NAME}
+providers:
+  - id: opencode-go
+    name: OpenCode Go
+    protocol: openai
+    baseUrl: https://opencode.ai/zen/go/v1
+    apiKey: ${OPENCODE_API_KEY}
+
+  # 如需 Anthropic 协议：
+  # - id: opencode-go-anthropic
+  #   name: OpenCode Go (Anthropic)
+  #   protocol: anthropic
+  #   baseUrl: https://opencode.ai/zen/go/v1
+  #   apiKey: ${OPENCODE_API_KEY}
+
+# 路由配置
+router:
+  # 四级分类路由规则
+  rules:
+    - tier: simple
+      modelId: deepseek-v4-flash
+    - tier: medium
+      modelId: minimax-m3
+    - tier: complex
+      modelId: qwen3.7-plus
+    - tier: reasoning
+      modelId: kimi-k2.7
+      fallbackModelId: deepseek-v4-pro
+
+  # Token 预算
+  budget:
+    mode: track_only             # track_only / enforce
+    dailyLimit: 500000           # 日 token 上限
+
+  # 分类器使用的模型（应选最便宜的）
+  classifierModel: deepseek-v4-flash
+
+  # 用户偏好级别
+  # saving: 优先省钱，倾向使用便宜模型
+  # balanced: 平衡成本和质量
+  # premium: 优先质量，倾向使用强模型
+  userPreference: balanced
+
+# 增量 Checkpoint 配置
+checkpoint:
+  enabled: true
+  triggers:
+    - level: 20
+      action: initial
+    - level: 45
+      action: incremental
+    - level: 70
+      action: compress
+  modelId: deepseek-v4-flash
+  maxTokensPerCheckpoint: 500
+
+# Goal 验证配置
+goalVerifier:
+  enabled: true
+  modelId: kimi-k2.7
+  maxTokensPerVerification: 1000
+  autoVerify: true
+
+# 安全配置
+security:
+  directoryBoundary: true
+  commandBlacklist: ["rm -rf", "format", "del /s"]
+  commandWhitelist: []
+  sensitiveFiles: [".env", "credentials.json", "*.key"]
+  sensitiveFilePolicy: readonly    # readonly / deny
+  networkConfirm: true
+
+# 自主度默认值
+autonomy:
+  defaultMode: semi                # auto / semi / manual
+
+# 提示音
+sounds:
+  enabled: true
+  completion: default
+  error: warning
+  approval: notification
+
+# 更新
+updates:
+  checkOnStartup: true
+  autoUpdate: false

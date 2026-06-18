@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+.env
+.DS_Store
+Thumbs.db
+# vitest 覆盖率
+coverage/
+# 编辑器
+.vscode/
+.idea/
