@@ -28,7 +28,7 @@ Thumbs.db
 .vscode/
 .idea/
 
-# 测试覆盖率
+# vitest 覆盖率
 coverage/
 
 # RouteDev 运行时数据
