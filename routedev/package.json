@@ -1,6 +1,6 @@
 {
   "name": "routedev",
-  "version": "3.8.0",
+  "version": "3.8.1",
   "description": "按任务复杂度自动路由模型的开发助手",
   "license": "AGPL-3.0",
   "type": "module",
@@ -27,7 +27,8 @@
     "typecheck:desktop": "tsc --noEmit -p desktop/tsconfig.desktop.json",
     "perf:gate": "tsx scripts/perf-gate.ts",
     "predist:electron": "tsx scripts/clean-release.ts",
-    "dist:electron:safe": "tsx scripts/build-with-retry.ts"
+    "dist:electron:safe": "tsx scripts/build-with-retry.ts",
+    "lint:descriptions": "tsx scripts/lint-descriptions.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.2",

@@ -111,6 +111,8 @@ export interface ServiceContext {
   durableExecutor?: DurableExecutor;
   /** Phase 30：Token Profiler（可观测性，可选） */
   profiler?: TokenProfiler;
+  /** Phase 48 Task 3：调度引擎实例（定时任务执行） */
+  scheduleEngine?: import('../scheduler/engine.js').ScheduleEngine;
 }
 
 /**
@@ -159,6 +161,7 @@ export function createServiceContext(deps: ServiceContextDeps): ServiceContext {
     ...(deps.permissionEngine ? { permissionEngine: deps.permissionEngine } : {}),
     ...(deps.durableExecutor ? { durableExecutor: deps.durableExecutor } : {}),
     ...(deps.profiler ? { profiler: deps.profiler } : {}),
+    ...(deps.scheduleEngine ? { scheduleEngine: deps.scheduleEngine } : {}),
   };
   return ctx;
 }
@@ -200,6 +203,8 @@ export interface ServiceContextDeps {
   durableExecutor?: DurableExecutor;
   /** Phase 30：Token Profiler（可观测性，可选） */
   profiler?: TokenProfiler;
+  /** Phase 48 Task 3：调度引擎实例 */
+  scheduleEngine?: import('../scheduler/engine.js').ScheduleEngine;
   /** 可选的工具执行器更新回调（用于运行时替换） */
   setToolExecutor?: (executor: ToolExecutorAdapter) => void;
 }

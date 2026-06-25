@@ -16,6 +16,9 @@ import type {
 } from './trace-types.js';
 import { logger } from '../utils/logger.js';
 import { getAppDataDir, ensureDir } from '../utils/paths.js';
+// Phase 48 Task 6：接入 TrajectoryAggregator，让 harness 与 /trace 命令共享同一实例
+import { TrajectoryAggregator } from '../observability/trajectory-aggregator.js';
+import type { TrajectoryBundle } from '../observability/trajectory-exporter.js';
 
 const DEFAULT_CONFIG: TraceCollectorConfig = {
   enabled: true,
@@ -49,8 +52,17 @@ export class TraceCollector {
   /** P4：跟踪未完成的异步写入，供 flush() 等待 */
   private pendingWrites: Promise<void>[] = [];
 
+  /**
+   * Phase 48 Task 6：共享的 TrajectoryAggregator 实例
+   * - harness 在 endSession 时把当前会话的 bundle 推入
+   * - /trace summary 命令通过 getTrajectoryAggregator() 读取累积结果
+   * - 两套实现共享同一实例，避免数据割裂
+   */
+  private readonly trajectoryAggregator: TrajectoryAggregator;
+
   constructor(config?: Partial<TraceCollectorConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.trajectoryAggregator = new TrajectoryAggregator();
   }
 
   /** 设置 span 回调（GUI 桥接用） */
@@ -352,6 +364,11 @@ export class TraceCollector {
     this.currentSession.spanCount = this.spans.length;
     if (totalUsage) this.currentSession.totalUsage = totalUsage;
 
+    // Phase 48 Task 6：会话结束前，把当前会话构造为 TrajectoryBundle 推入共享 aggregator
+    // 这样 /trace summary 命令可以从 aggregator 直接读到包含当前会话的累积数据，
+    // 不必依赖磁盘 JSONL 的异步 flush（避免陷阱 #48）
+    this.pushCurrentSessionToAggregator();
+
     try {
       await this.flushToDisk();
       logger.debug('Trace session ended', {
@@ -366,6 +383,69 @@ export class TraceCollector {
 
     this.currentSession = null;
     this.spans = [];
+  }
+
+  /**
+   * Phase 48 Task 6：获取共享的 TrajectoryAggregator 实例
+   *
+   * /trace summary 命令应使用此方法获取 aggregator，而不是 new TrajectoryAggregator()，
+   * 以确保 harness 累积的数据与 /trace 命令读取的数据一致。
+   */
+  getTrajectoryAggregator(): TrajectoryAggregator {
+    return this.trajectoryAggregator;
+  }
+
+  /**
+   * Phase 48 Task 6：把当前会话转换为 TrajectoryBundle 并推入 aggregator
+   *
+   * TraceCollector 不持有 AuditLogger / TokenTracker，因此构造的 bundle 仅包含
+   * traceRecords（从 spans 转换）和 tokenSummary（从 session.totalUsage 转换），
+   * auditRecords / goalSummary 留空。这足以让 aggregator 计算 totalSessions 和
+   * 工具使用 Top 5 等关键指标；完整 bundle 仍由 TrajectoryExporter 在 /trace export
+   * 时组装。
+   */
+  private pushCurrentSessionToAggregator(): void {
+    if (!this.currentSession) return;
+
+    const sessionId = this.currentSession.id;
+    const traceRecords = this.spansToTraceRecords(this.spans, sessionId);
+    const tokenSummary = this.sessionUsageToTokenStats(this.currentSession.totalUsage);
+
+    const bundle: TrajectoryBundle = {
+      sessionId,
+      exportedAt: new Date().toISOString(),
+      auditRecords: [],
+      traceRecords,
+      tokenSummary,
+      sessionInfo: this.currentSession,
+      goalSummary: undefined,
+    };
+
+    this.trajectoryAggregator.addBundle(bundle);
+  }
+
+  /** 将 spans 转换为 TraceRecord 格式（供 TrajectoryAggregator 提取 tool_call） */
+  private spansToTraceRecords(spans: TraceSpan[], sessionId: string): TraceRecord[] {
+    return spans.map(span => ({
+      timestamp: new Date(span.startTime).toISOString(),
+      sessionId,
+      spanId: span.id,
+      event: span.type,
+      data: span.payload as Record<string, unknown>,
+    }));
+  }
+
+  /** 将 session.totalUsage（TokenUsageInfo）转换为 TokenStats（仅 total 字段） */
+  private sessionUsageToTokenStats(
+    usage: TokenUsageInfo | undefined,
+  ): TrajectoryBundle['tokenSummary'] {
+    if (!usage) return null;
+    return {
+      total: usage,
+      byModel: {},
+      byAgent: {},
+      byStep: {},
+    };
   }
 
   getSessionId(): string | null {

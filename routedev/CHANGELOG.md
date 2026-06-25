@@ -2,6 +2,23 @@
 
 所有版本变更记录。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## v3.8.1 (2026-06-25) — Phase 48: 功能接线收尾与设置集成
+
+### Fixed
+- 权限双旋钮接线：app-init.ts 从 config.security.sandbox/approval 读取并应用（Phase 47 Task 4 功能在交互模式生效）
+- loadProjectDoc 接线：app-init.ts 调用 loadProjectDoc 激活多文件名 fallback（Phase 47 Task 8 功能生效）
+- ScheduleEngine 实例化：app-init.ts 创建 ScheduleEngine 并注入 ServiceContext（定时任务可实际执行）
+- AgentProfileManager 接入 spawn-agent：子 Agent 派遣读取 profile 工具白名单和系统提示词
+- TrajectoryAggregator 接入 harness：TraceCollector 整合 TrajectoryAggregator，/trace 命令共享实例
+
+### Added
+- SettingsPage 安全 Tab 新增沙箱级选择器与审批级覆盖表格
+- ProjectMemoryManager 新增 setProjectDoc/getProjectDoc 方法
+- package.json 新增 lint:descriptions npm script
+
+### Removed
+- 删除遗留的 src/cli/exec.ts（被 exec-runner.ts 替代）
+
 ## [3.8.0] - 2026-06-25
 
 ### Phase 47 — 文档瘦身 / 权限双旋钮 / 非交互模式 / 子代理审查 / Checkpoint 可视化 / 自定义命令 / fallback 兼容 / GitHub Action

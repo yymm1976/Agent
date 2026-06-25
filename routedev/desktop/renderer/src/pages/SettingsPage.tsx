@@ -13,6 +13,7 @@ import type {
   AppConfig, ProviderConfig, ModelConfig, RouterRule, SecurityConfig,
   MCPServerEntryConfig, ChannelEntryConfig, ChannelType,
   PermissionProfile, FilesystemPermissionRule, ExecutionConfig,
+  SandboxLevel, ApprovalLevel, ToolCategory,
 } from '../../../../src/config/schema.js';
 import type { ConfigSaveResult, SkillInfo, SkillPreview, MCPCatalogEntry, MCPInstallResult, ExperimentInfo, HookInfo } from '../../../shared/ipc-types.js';
 import {
@@ -108,6 +109,20 @@ const EMPTY_MODEL: ModelConfig = {
 const EMPTY_RULE: RouterRule = {
   tier: 'simple',
   modelId: '',
+};
+
+// Phase 48：沙箱级选项与默认审批级映射（与 src/tools/permission-engine.ts 的 DEFAULT_APPROVAL 保持一致）
+const SANDBOX_LEVEL_OPTIONS: SandboxLevel[] = ['read-only', 'workspace-write', 'full-access'];
+const TOOL_CATEGORIES: ToolCategory[] = ['read', 'write', 'shell', 'network', 'git-read', 'git-write', 'agent', 'mcp'];
+const DEFAULT_APPROVAL_MAP: Record<ToolCategory, ApprovalLevel> = {
+  'read': 'never-ask',
+  'write': 'on-request',
+  'shell': 'always-ask',
+  'network': 'always-ask',
+  'git-read': 'never-ask',
+  'git-write': 'always-ask',
+  'agent': 'on-request',
+  'mcp': 'on-request',
 };
 
 // 内置子 Agent Profile 模板（与 src/agents/profiles/builtin-templates.ts 保持一致）
@@ -614,6 +629,12 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
   // --- 安全配置 ---
   const updateSecurity = (patch: Partial<SecurityConfig>) => {
     updateDraft({ security: { ...draft.security, ...patch } });
+  };
+  // Phase 48：更新某个 ToolCategory 的审批级覆盖（合并到 config.security.approval）
+  const updateSecurityApproval = (category: ToolCategory, level: ApprovalLevel) => {
+    const current = { ...(draft.security.approval ?? {}) };
+    current[category] = level;
+    updateSecurity({ approval: current });
   };
 
   // --- 权限规则配置（Permission Profile） ---
@@ -2052,6 +2073,67 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
                   <p className="text-xs text-rd-textMuted">持久化偏好上限，超出时淘汰最旧条目，默认 200。</p>
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          {/* Phase 48：沙箱级与审批级覆盖（PermissionEngine 双旋钮 UI） */}
+          <Card>
+            <CardHeader>
+              <CardTitle>沙箱级与审批级覆盖</CardTitle>
+              <CardDescription>
+                Phase 47 Task 4 引入的权限双旋钮：沙箱级决定工具能执行的操作范围；
+                审批级决定是否每次询问用户。两项已通过 app-init 接线到 PermissionEngine。
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* 沙箱级选择器 */}
+              <div className="space-y-2">
+                <Label htmlFor="security-sandbox">沙箱级别</Label>
+                <Select
+                  id="security-sandbox"
+                  value={draft.security.sandbox}
+                  onChange={(e) => updateSecurity({ sandbox: e.target.value as SandboxLevel })}
+                >
+                  {SANDBOX_LEVEL_OPTIONS.map((level) => (
+                    <SelectItem key={level} value={level}>{level}</SelectItem>
+                  ))}
+                </Select>
+                <p className="text-xs text-rd-textMuted">
+                  决定工具能执行的操作范围。read-only: 仅读取；workspace-write: 读写工作区；
+                  full-access: 完全访问（含网络/Shell/Git 写）。
+                </p>
+              </div>
+
+              {/* 审批级覆盖表格：每个 ToolCategory 一个下拉选择器 */}
+              <div className="space-y-2 pt-4 border-t border-rd-border">
+                <Label>审批级别覆盖</Label>
+                <p className="text-xs text-rd-textMuted">
+                  按工具类别覆盖默认审批策略。always-ask: 每次询问；on-request: 按需询问；never-ask: 从不询问。
+                  未显式覆盖时使用 PermissionEngine 的内置默认值。
+                </p>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {TOOL_CATEGORIES.map((category) => {
+                    const currentValue = draft.security.approval?.[category] ?? DEFAULT_APPROVAL_MAP[category];
+                    return (
+                      <div key={category} className="flex items-center gap-2">
+                        <Label htmlFor={`security-approval-${category}`} className="w-24 shrink-0 text-xs">
+                          {category}
+                        </Label>
+                        <Select
+                          id={`security-approval-${category}`}
+                          value={currentValue}
+                          onChange={(e) => updateSecurityApproval(category, e.target.value as ApprovalLevel)}
+                          className="flex-1"
+                        >
+                          <SelectItem value="always-ask">always-ask</SelectItem>
+                          <SelectItem value="on-request">on-request</SelectItem>
+                          <SelectItem value="never-ask">never-ask</SelectItem>
+                        </Select>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </CardContent>
           </Card>
         </div>

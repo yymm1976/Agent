@@ -1,8 +1,8 @@
 # RouteDev — Phase 执行状态总表
 
-> **最后更新：** 2026-06-25（Phase 47 完成 v3.8.0；开发者工作流产品化与体验闭环——AGENTS.md瘦身/description规范/exec非交互/权限双旋钮/对抗审查/Checkpoint可视化/自定义命令/fallback兼容/GitHub Action）
+> **最后更新：** 2026-06-25（Phase 48 完成 v3.8.1；功能接线收尾与设置集成——权限双旋钮接线/loadProjectDoc接线/ScheduleEngine实例化/AgentProfileManager接入spawn-agent/TrajectoryAggregator接入harness/npm scripts补全/exec.ts清理）
 > **仓库 commit：** 待提交（Phase 20-32 + 0c）
-> **测试基线：** 1418 测试（Phase 30 后）；Phase 31 要求 ≥78；Phase 32 要求 ≥45（60 通过）；Phase 33 要求 ≥15；Phase 34 要求 ≥20；Phase 35 要求 ≥18；Phase 36 要求 ≥16；Phase 37 要求 ≥30（需求澄清 + 调度 + Git 实验 + 插件兼容）；Phase 38 要求 ≥35（中间件激活 + 子Agent工具化 + 知识管理增强）；Phase 40 要求 ≥30（渐进式信任 + 确定性路由 + 质量监测 + 经验适配）；Phase 46 要求 ≥35（IPC 桥接 + Hook 接线 + HTTP 客户端 + 事件修复 + 命令注册 + 死代码清理 + 集成测试，65 通过）；Phase 47 要求 ≥40（AGENTS.md瘦身 + description规范 + exec非交互 + 权限双旋钮 + 对抗审查 + Checkpoint可视化 + 自定义命令 + fallback兼容 + GitHub Action + 集成测试，256 通过）
+> **测试基线：** 1418 测试（Phase 30 后）；Phase 31 要求 ≥78；Phase 32 要求 ≥45（60 通过）；Phase 33 要求 ≥15；Phase 34 要求 ≥20；Phase 35 要求 ≥18；Phase 36 要求 ≥16；Phase 37 要求 ≥30（需求澄清 + 调度 + Git 实验 + 插件兼容）；Phase 38 要求 ≥35（中间件激活 + 子Agent工具化 + 知识管理增强）；Phase 40 要求 ≥30（渐进式信任 + 确定性路由 + 质量监测 + 经验适配）；Phase 46 要求 ≥35（IPC 桥接 + Hook 接线 + HTTP 客户端 + 事件修复 + 命令注册 + 死代码清理 + 集成测试，65 通过）；Phase 47 要求 ≥40（AGENTS.md瘦身 + description规范 + exec非交互 + 权限双旋钮 + 对抗审查 + Checkpoint可视化 + 自定义命令 + fallback兼容 + GitHub Action + 集成测试，256 通过）；Phase 48 要求 ≥5（功能接线收尾 + 设置集成 + 集成测试 + 文档同步，30 通过）
 > **维护人：** 架构师（QoderWork）
 
 ---
@@ -72,6 +72,7 @@
 | **45** | **Pi人格化交互与主动记忆落地** | **✅ DONE** | v3.6.0 | 待提交 |
 | **46** | **死代码清零与接线收尾** | **✅ DONE** | v3.7.0 | 待提交 |
 | **47** | **开发者工作流产品化与体验闭环** | **✅ DONE** | v3.8.0 | 待提交 |
+| **48** | **功能接线收尾与设置集成** | **✅ DONE** | v3.8.1 | 待提交 |
 
 ---
 

@@ -38,17 +38,46 @@ export interface AggregatedMetrics {
  *
  * 用法：
  *   const aggregator = new TrajectoryAggregator();
+ *   // 方式一：一次性传入所有 bundles
  *   const metrics = aggregator.aggregate(bundles);
+ *   // 方式二：随会话推进累积，最后聚合
+ *   aggregator.addBundle(bundle1);
+ *   aggregator.addBundle(bundle2);
+ *   const metrics2 = aggregator.aggregate();
  */
 export class TrajectoryAggregator {
+  /** Phase 48 Task 6：累积的 bundles（harness 在 endSession 时推入，/trace 命令共享读取） */
+  private accumulatedBundles: TrajectoryBundle[] = [];
+
+  /**
+   * 累积一条轨迹 bundle
+   *
+   * 设计目的：让 TraceCollector 在 endSession 时把当前会话的 bundle 推入，
+   * 之后 /trace summary 命令调用 aggregate() 即可拿到包含当前会话的聚合结果，
+   * 实现 harness 与 /trace 命令共享同一 aggregator 实例。
+   *
+   * @param bundle 单条轨迹快照
+   */
+  addBundle(bundle: TrajectoryBundle): void {
+    this.accumulatedBundles.push(bundle);
+  }
+
+  /**
+   * 读取已累积的 bundles（供 /trace 命令与磁盘读取的 bundles 合并使用）
+   */
+  getAccumulatedBundles(): TrajectoryBundle[] {
+    return [...this.accumulatedBundles];
+  }
+
   /**
    * 聚合多条轨迹
    *
-   * @param bundles 轨迹快照列表
+   * @param bundles 轨迹快照列表；不传时使用 addBundle() 累积的 bundles
    * @returns 聚合指标
    */
-  aggregate(bundles: TrajectoryBundle[]): AggregatedMetrics {
-    if (bundles.length === 0) {
+  aggregate(bundles?: TrajectoryBundle[]): AggregatedMetrics {
+    const target = bundles ?? this.accumulatedBundles;
+    if (target.length === 0) {
       return {
         totalSessions: 0,
         avgTokensPerSession: 0,
@@ -70,7 +99,7 @@ export class TrajectoryAggregator {
     const toolCounts: Map<string, number> = new Map();
     const modelUsage: Record<string, number> = {};
 
-    for (const bundle of bundles) {
+    for (const bundle of target) {
       // 统计 token
       if (bundle.tokenSummary?.total?.totalTokens) {
         totalTokens += bundle.tokenSummary.total.totalTokens;
@@ -117,7 +146,7 @@ export class TrajectoryAggregator {
     const successRate = totalGoals > 0 ? completedGoals / totalGoals : 0;
 
     const metrics: AggregatedMetrics = {
-      totalSessions: bundles.length,
+      totalSessions: target.length,
       avgTokensPerSession: sessionsWithTokens > 0 ? Math.round(totalTokens / sessionsWithTokens) : 0,
       avgDurationPerGoal: goalsWithDuration > 0 ? Math.round(totalDuration / goalsWithDuration) : 0,
       successRate,

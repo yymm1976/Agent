@@ -5,7 +5,7 @@ import type { ServiceContext } from '../service-context.js';
 import { parseTimelineEntries, renderTraceTimelineText } from '../components/TracePanel.js';
 import { outputStyleToDisclosureLevel } from '../output-style.js';
 import { TrajectoryExporter } from '../../observability/trajectory-exporter.js';
-import { TrajectoryAggregator } from '../../observability/trajectory-aggregator.js';
+// Phase 48 Task 6：TrajectoryAggregator 不再自行 new，改由 TraceCollector.getTrajectoryAggregator() 共享
 
 export const traceCommand: CommandDefinition = {
   name: 'trace',
@@ -68,22 +68,40 @@ export const traceCommand: CommandDefinition = {
         }
       }
 
-      // Phase 35 Task 4：跨会话聚合分析
+      // Phase 35 Task 4 / Phase 48 Task 6：跨会话聚合分析
       case 'summary': {
         // /trace summary——显示最近 10 个会话的聚合指标
+        // Phase 48 Task 6：使用 TraceCollector 持有的共享 aggregator 实例，
+        // 这样 harness 在 endSession 时累积的当前会话数据也能被聚合到结果中
+        const aggregator = trace.getTrajectoryAggregator();
+
+        // 先取磁盘上最近 10 个会话（已结束的）
         const sessions = await trace.listSessions(10);
-        if (sessions.length === 0) {
+        const exporter = new TrajectoryExporter(audit, trace, tracker);
+        const diskBundles = await Promise.all(
+          sessions.map(s => exporter.exportSession(s.id).catch(() => null)),
+        );
+        const validDiskBundles = diskBundles.filter(
+          (b): b is NonNullable<typeof b> => b !== null,
+        );
+
+        // 合并：harness 累积的 bundles（当前进程内的会话）+ 磁盘读取的历史会话
+        // 去重策略：accumulated 优先——它的 traceRecords.event 是 span.type（如 'tool_call'），
+        // 能被 aggregator 正确识别为工具调用；而磁盘 trace.jsonl 中是 'tool_call_start'/'tool_call_end'，
+        // 不被 aggregator 识别。同 sessionId 时优先 accumulated，避免工具统计丢失。
+        const accumulated = aggregator.getAccumulatedBundles();
+        const accumulatedSessionIds = new Set(accumulated.map(b => b.sessionId));
+        const mergedBundles = [
+          ...accumulated,
+          ...validDiskBundles.filter(b => !accumulatedSessionIds.has(b.sessionId)),
+        ];
+
+        if (mergedBundles.length === 0) {
           return { type: 'handled', messages: ['无可用会话记录'] };
         }
 
-        const exporter = new TrajectoryExporter(audit, trace, tracker);
-        const bundles = await Promise.all(
-          sessions.map(s => exporter.exportSession(s.id).catch(() => null)),
-        );
-        const validBundles = bundles.filter((b): b is NonNullable<typeof b> => b !== null);
-
-        const aggregator = new TrajectoryAggregator();
-        const metrics = aggregator.aggregate(validBundles);
+        // 显式传入合并后的 bundles，避免与累积 bundles 重复计数
+        const metrics = aggregator.aggregate(mergedBundles);
         const text = aggregator.formatAsText(metrics);
         return { type: 'handled', messages: [text] };
       }

@@ -16,9 +16,28 @@
 
 import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '../types.js';
 import { ToolRegistry } from '../registry.js';
+// Phase 48 Task 4：仅引入类型，避免运行时循环依赖
+import type { AgentProfileManager } from '../../agents/profiles/manager.js';
+import type { AgentProfile, AgentRole } from '../../agents/profiles/types.js';
 
 /** 子 Agent 类型：决定可用工具集（白名单在 app-init.ts 中维护） */
 export type SubagentType = 'general' | 'researcher' | 'coder' | 'reviewer' | 'advisor';
+
+/**
+ * SubagentType → AgentRole 映射
+ * Phase 48 Task 4：用于在 AgentProfileManager 中查找对应的 profile
+ *
+ * 映射规则：
+ *   - 'researcher' → 'researcher'
+ *   - 'coder' → 'executor'（coder 在 Agent 体系中对应 executor 角色）
+ *   - 'reviewer' → 'reviewer'
+ *   - 'general' / 'advisor'：无对应 role，不使用 profile
+ */
+const SUBAGENT_TYPE_TO_ROLE: Partial<Record<SubagentType, AgentRole>> = {
+  researcher: 'researcher',
+  coder: 'executor',
+  reviewer: 'reviewer',
+};
 
 /**
  * 子 Agent 角色到工具集白名单的映射
@@ -38,6 +57,30 @@ export const SUBAGENT_TOOL_WHITELIST: Record<SubagentType, Set<string>> = {
 };
 
 /**
+ * 根据子 Agent 类型解析对应的 AgentProfile
+ * Phase 48 Task 4
+ *
+ * 行为：
+ *   1. 未传 profileManager 或 subagentType 无对应 role（general/advisor）→ 返回 null
+ *   2. 调用 profileManager.resolveProfileForTask(role) 同步查询
+ *      （调用方应先 await profileManager.loadAll()，否则回退到内置模板）
+ *
+ * @param profileManager AgentProfileManager 实例（可选，未传时返回 null）
+ * @param subagentType 子 Agent 类型
+ * @returns 匹配的 AgentProfile 副本，或 null
+ */
+export function resolveProfileForSubagent(
+  profileManager: AgentProfileManager | undefined,
+  subagentType: SubagentType,
+): AgentProfile | null {
+  if (!profileManager) return null;
+  const role = SUBAGENT_TYPE_TO_ROLE[subagentType];
+  if (!role) return null;
+  // 同步方法：依赖 profileManager 已加载缓存
+  return profileManager.resolveProfileForTask(role);
+}
+
+/**
  * 创建子 Agent 用的 ToolRegistry（防递归 + 角色白名单过滤）
  * Phase 38 Task 2
  *
@@ -46,13 +89,21 @@ export const SUBAGENT_TOOL_WHITELIST: Record<SubagentType, Set<string>> = {
  *   2. 移除 spawn_agent（防递归：子 Agent 物理上不能再派遣孙子 Agent）
  *   3. 若 subagentType 有非空白名单，只保留白名单中的工具
  *
+ * Phase 48 Task 4：接入 AgentProfileManager
+ *   - 新增可选参数 profileManager
+ *   - 若 profileManager 提供了 profile 且 profile.allowedTools 非空，
+ *     优先使用 profile 的工具白名单（覆盖硬编码 SUBAGENT_TOOL_WHITELIST）
+ *   - 未传 profileManager 或未匹配到 profile 时行为不变（向后兼容）
+ *
  * @param parentRegistry 父 Agent 的 registry
  * @param subagentType 子 Agent 类型（默认 general）
+ * @param profileManager AgentProfileManager 实例（可选）
  * @returns 新的 ToolRegistry，已移除 spawn_agent 并按白名单过滤
  */
 export function createChildRegistry(
   parentRegistry: ToolRegistry,
   subagentType: SubagentType = 'general',
+  profileManager?: AgentProfileManager,
 ): ToolRegistry {
   const child = parentRegistry.clone();
   // 防递归：子 Agent 不能再派遣孙子 Agent
@@ -68,8 +119,13 @@ export function createChildRegistry(
     }
     return child;
   }
-  // 其他类型：按白名单过滤（非空白名单只保留白名单中的工具）
-  const whitelist = SUBAGENT_TOOL_WHITELIST[subagentType];
+  // Phase 48 Task 4：优先使用 profileManager 提供的 profile 工具白名单
+  // 未传 profileManager 或未匹配到 profile 时回退到硬编码白名单（向后兼容）
+  const profile = resolveProfileForSubagent(profileManager, subagentType);
+  const hardcodedWhitelist = SUBAGENT_TOOL_WHITELIST[subagentType];
+  const whitelist = (profile && profile.allowedTools.length > 0)
+    ? new Set(profile.allowedTools)
+    : hardcodedWhitelist;
   if (whitelist && whitelist.size > 0) {
     const namesToRemove: string[] = [];
     for (const tool of child.list()) {

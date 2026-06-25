@@ -37,7 +37,7 @@
 
 ## Top 10 核心陷阱（生产路径高频触发，违反会导致崩溃或数据丢失）
 
-> 完整 81 条陷阱（编号 1-64 + 126-142）见 `.routedev/skills/pitfalls-guide/SKILL.md`，按 Phase 分章组织。
+> 完整 84 条陷阱（编号 1-64 + 126-145）见 `.routedev/skills/pitfalls-guide/SKILL.md`，按 Phase 分章组织。
 
 1. **权限检查走 PermissionEngine 中间件**（#11）：`PermissionChecker` 已删除，所有权限决策由 `PermissionEngine` 通过 `AgentMiddlewarePipeline.onActing` 完成。`ToolExecutor.execute()` 不再做权限检查。新增工具入口必须经过 Agent Loop 中间件链路，不能直接调用 ToolExecutor
 2. **命令解析必须走 `parseCommand()` tokenize**（#14）：`SecurityChecker.checkCommand()` 与 `PermissionEngine` 的 deny 规则**必须**用 `parseCommand()` 首 token 精确匹配，**禁止** `includes()`/正则子串匹配（会被 `rmrf.sh` 等绕过）
@@ -65,9 +65,17 @@
 - **#141** GitHub Action 的 config 必须用 Base64 传输（避免 YAML 多行字符串转义问题）
 - **#142** 沙箱级切换需要刷新工具可用性缓存（避免残留的 deny/allow 状态）
 
+## Phase 48 新增陷阱（#143-145，简版）
+
+> 详细说明见 `.routedev/skills/pitfalls-guide/SKILL.md` Phase 48 章节。
+
+- **#143** 交互模式下 config.security.sandbox 必须在 createDefaultEngine 后手动应用（默认 full-access，不显式应用则配置不生效）
+- **#144** ScheduleEngine 的 onTaskTrigger 回调不能阻塞主线程（fire-and-forget，不 await，否则会卡住定时器循环）
+- **#145** AgentProfileManager 的 loadAll 是异步的，spawn-agent 需懒加载（首次调用时加载，失败 fail-open 回退到硬编码白名单）
+
 ## 完整陷阱索引
 
-完整 81 条陷阱（含 Phase 17b/0c/29/30/31/32/33/35/36/37/38/46/47 全部章节）已迁移至：
+完整 84 条陷阱（含 Phase 17b/0c/29/30/31/32/33/35/36/37/38/46/47/48 全部章节）已迁移至：
 
 **`.routedev/skills/pitfalls-guide/SKILL.md`**
 

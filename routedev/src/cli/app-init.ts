@@ -28,7 +28,9 @@ import { RepoMapTool } from '../tools/builtin/repo-map.js';
 import { TodoWriteTool } from '../tools/builtin/todo-write.js';
 import { AskUserTool } from '../tools/builtin/ask-user.js';
 import { TodoStore } from '../tools/builtin/todo-store.js';
-import { SpawnAgentTool, type SpawnAgentFunction, type SpawnAgentParams, type SubagentType, createChildRegistry, createConcurrencyLimitedSpawnFn } from '../tools/builtin/spawn-agent.js';
+import { SpawnAgentTool, type SpawnAgentFunction, type SpawnAgentParams, type SubagentType, createChildRegistry, createConcurrencyLimitedSpawnFn, resolveProfileForSubagent } from '../tools/builtin/spawn-agent.js';
+// Phase 48 Task 4：接入 AgentProfileManager，让 UI 编辑的 profile 影响子 Agent 派遣
+import { AgentProfileManager } from '../agents/profiles/manager.js';
 import { NotesTool } from '../tools/builtin/notes-tool.js';
 import { NotesManager } from '../agent/memory/notes.js';
 import { createDefaultEngine, type PermissionEngine } from '../tools/permission-engine.js';
@@ -52,7 +54,7 @@ import { TraceCollector } from '../harness/trace-collector.js';
 import { AuditLogger } from '../harness/audit-logger.js';
 import { logger } from '../utils/logger.js';
 import { PromptTemplateManager } from '../prompts/manager.js';
-import { ProjectMemoryManager } from '../memory/project-memory.js';
+import { ProjectMemoryManager, loadProjectDoc } from '../memory/project-memory.js';
 import { GoalParser } from '../agent/goal-parser.js';
 import { GoalVerifier } from '../agent/goal-verifier.js';
 import { DurableExecutor, type StepExecutor } from '../agent/durable-executor.js';
@@ -81,6 +83,9 @@ import { SkillsRouter, FilesystemDiscovery } from '../plugins/filesystem-discove
 import { LoopDetectionMiddleware } from '../agent/middleware/loop-detection.js';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
+// Phase 48 Task 6 修复：scheduler 模块静态 import（替代原 await import，避免非 async 函数中的 typecheck 错误）
+import { ScheduleStore } from '../scheduler/store.js';
+import { ScheduleEngine } from '../scheduler/engine.js';
 
 /** App 所需的全部服务依赖 */
 export interface AppDependencies {
@@ -151,6 +156,8 @@ export interface AppDependencies {
   resultSanitizer: ToolResultSanitizer;
   /** Phase 31/32 P0 接线：共享 systemPrompt ref，App.tsx 同步更新此 ref */
   sharedSystemPromptRef: { current: string };
+  /** Phase 48 Task 3：调度引擎实例（scheduler.enabled !== false 时创建） */
+  scheduleEngine?: import('../scheduler/engine.js').ScheduleEngine;
 }
 
 /**
@@ -248,6 +255,19 @@ export function createAppDependencies(
   const audit = new AuditLogger(trace.getSessionId() ?? 'app');
   const projectMemory = new ProjectMemoryManager(cwd, config.projectMemory);
 
+  // Phase 48 Task 2：接线 loadProjectDoc，激活多文件名 fallback（AGENTS.md / CLAUDE.md）
+  // 异步加载，不阻塞主流程；加载后注入 projectMemory 供 system prompt 使用
+  loadProjectDoc(cwd, config.projectDoc).then((doc) => {
+    if (doc) {
+      logger.info('ProjectDoc loaded', { length: doc.length });
+      projectMemory.setProjectDoc(doc);
+    } else {
+      logger.debug('ProjectDoc: no project document found');
+    }
+  }).catch((err) => {
+    logger.warn('ProjectDoc load failed', { error: err instanceof Error ? err.message : String(err) });
+  });
+
   // ===== 工具链 =====
   // P0-1/P0-2/P1-4/P1-5/P1-6/P1-7：注册全部内置工具
   const registry = new ToolRegistry();
@@ -341,8 +361,16 @@ export function createAppDependencies(
   /**
    * 创建子 Agent 的 spawn 函数
    * Phase 38 Task 2：使用 childRegistry 隔离工具集，不再修改共享 registry
+   * Phase 48 Task 4：接入 AgentProfileManager
+   *   - 创建闭包级 profileManager 实例（懒加载，避免启动时阻塞）
+   *   - createChildRegistry 时传入 profileManager，让 profile 工具白名单覆盖硬编码白名单
+   *   - 子 Agent systemPrompt 优先使用 profile.systemPrompt（> options.systemPrompt > 默认值）
    */
   const createSpawnAgentFn = (): SpawnAgentFunction => {
+    // Phase 48 Task 4：闭包级 AgentProfileManager 实例，所有 spawn 调用共享
+    const profileManager = new AgentProfileManager(cwd);
+    let profileManagerLoaded = false;
+
     return async (params, options) => {
       // 向后兼容：字符串参数转换为对象
       const normalizedParams: SpawnAgentParams = typeof params === 'string'
@@ -369,9 +397,28 @@ export function createAppDependencies(
         let inputTokens = 0;
         let outputTokens = 0;
 
+        // Phase 48 Task 4：首次调用时加载 AgentProfileManager
+        // 失败时仅记录警告，回退到硬编码白名单（fail-open，不阻塞 spawn）
+        if (!profileManagerLoaded) {
+          try {
+            await profileManager.loadAll();
+          } catch (err) {
+            logger.warn('AgentProfileManager.loadAll 失败，回退到硬编码白名单', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          profileManagerLoaded = true;
+        }
+
+        // Phase 48 Task 4：解析子 Agent 对应的 profile（可能为 null）
+        // - profile 非空时，createChildRegistry 会用 profile.allowedTools 覆盖硬编码白名单
+        // - 同时下方会优先使用 profile.systemPrompt 作为子 Agent 系统提示词
+        const profile = resolveProfileForSubagent(profileManager, subagentType);
+
         // Phase 38 Task 2：创建子 Agent 专用 registry（防递归 + 角色白名单过滤）
         // 不再在共享 registry 上 register/unregister，消除竞态条件
-        const childRegistry = createChildRegistry(registry, subagentType);
+        // Phase 48 Task 4：传入 profileManager，让 profile 工具白名单生效
+        const childRegistry = createChildRegistry(registry, subagentType, profileManager);
 
         // 为子 Agent 创建专用 adapter（使用 childRegistry，实现工具集物理隔离）
         const childToolExecutor = new ToolExecutor(childRegistry);
@@ -389,20 +436,35 @@ export function createAppDependencies(
 
         // 创建临时 Agent Loop 实例，使用指定的 maxIterations
         // 透传 autoApprovePatterns，保持子 Agent 与主 Agent 一致的自动批准策略
+        // Phase 48 Task 4：maxIterations 优先使用 profile.maxSteps（若 profile 存在）
+        const profileMaxSteps = profile?.maxSteps && profile.maxSteps > 0
+          ? profile.maxSteps
+          : undefined;
         const childLoop = new ReActAgentLoop(childGuardedAdapter, {
-          maxIterations: normalizedParams.maxIterations ?? options?.maxIterations ?? 20,
+          maxIterations: normalizedParams.maxIterations
+            ?? options?.maxIterations
+            ?? profileMaxSteps
+            ?? 20,
           toolsEnabled: true,
           parallelToolExecution: true,
           autoApprovePatterns: config.autonomy?.autoApprovePatterns ?? [],
         });
         childLoop.setMiddlewarePipeline(pluginSystem.middlewarePipeline);
 
+        // Phase 48 Task 4：systemPrompt 优先级
+        //   1. options.systemPrompt（调用方显式覆盖，最高优先级）
+        //   2. profile.systemPrompt（AgentProfileManager 解析的 profile）
+        //   3. 默认提示词（兜底）
+        const childSystemPrompt = options?.systemPrompt
+          ?? profile?.systemPrompt
+          ?? '你是一个专注的子 Agent，负责完成分配给你的独立子任务。';
+
         for await (const event of childLoop.run({
           userMessage: normalizedParams.prompt,
           llmClient: primaryClient,
           routeDecision,
           conversationHistory: [],
-          systemPrompt: options?.systemPrompt ?? '你是一个专注的子 Agent，负责完成分配给你的独立子任务。',
+          systemPrompt: childSystemPrompt,
         })) {
           switch (event.type) {
             case 'text_delta':
@@ -760,6 +822,15 @@ export function createAppDependencies(
 
   // ===== 权限引擎 =====
   const permissionEngine = createDefaultEngine();
+  // Phase 48 Task 1：从配置应用沙箱级与审批级覆盖（交互模式生效）
+  if (config.security?.sandbox) {
+    permissionEngine.setSandboxLevel(config.security.sandbox);
+  }
+  if (config.security?.approval) {
+    for (const [category, level] of Object.entries(config.security.approval)) {
+      permissionEngine.setApproval(category as never, level);
+    }
+  }
 
   // ===== 多 Agent =====
   const orchestrator = new Orchestrator(primaryClient, config.router.classifierModel);
@@ -1236,6 +1307,47 @@ export function createAppDependencies(
       });
   }
 
+  // Phase 48 Task 3：ScheduleEngine 实例化与启动
+  // Phase 48 Task 6 修复：原代码在非 async 函数中使用 `await import`，导致 typecheck 失败。
+  // 改为顶层静态 import（scheduler 模块无顶层副作用，安全）。
+  // 若未来 createAppDependencies 改为 async，可恢复 `await import` 写法以支持延迟加载。
+  let scheduleEngine: import('../scheduler/engine.js').ScheduleEngine | undefined;
+  if (config.scheduler?.enabled !== false) {
+    const scheduleStorePath = path.join(cwd, '.routedev', 'schedule-tasks.json');
+    const scheduleStore = new ScheduleStore(scheduleStorePath);
+    scheduleEngine = new ScheduleEngine({
+      store: scheduleStore,
+      onTaskTrigger: async (task) => {
+        logger.info('Schedule triggered', { taskId: task.id, name: task.name });
+        // 将定时任务目标注入 AgentLoop 执行
+        try {
+          const routeDecision = {
+            model: config.providers[0]?.models[0],
+            providerId: primaryProviderId,
+            fallbackUsed: false,
+            originalTier: config.providers[0]?.models[0]?.tier ?? 'medium',
+            degraded: false,
+          };
+          if (primaryClient && routeDecision.model) {
+            for await (const _event of agentLoop.run({
+              userMessage: task.goal,
+              llmClient: primaryClient,
+              routeDecision,
+              conversationHistory: [],
+              systemPrompt: `定时任务: ${task.name}`,
+            })) {
+              // 消费事件流
+            }
+          }
+        } catch (err) {
+          logger.error('Schedule task failed', { taskId: task.id, error: err instanceof Error ? err.message : String(err) });
+        }
+      },
+    });
+    scheduleEngine.start();
+    logger.info('ScheduleEngine started', { checkInterval: '60s' });
+  }
+
   return {
     registry,
     mcpManager,
@@ -1282,5 +1394,7 @@ export function createAppDependencies(
     resultSanitizer,
     // Phase 31/32 P0 接线：共享 systemPrompt ref，App.tsx 同步更新此 ref 让 ExecutionOrchestrator/UnifiedReviewer 获取最新系统提示词
     sharedSystemPromptRef,
+    // Phase 48 Task 3：调度引擎实例
+    scheduleEngine,
   };
 }

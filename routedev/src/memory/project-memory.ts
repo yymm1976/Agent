@@ -205,10 +205,22 @@ export class ProjectMemoryManager {
   private projectPath: string;
   private config: ProjectMemoryConfig;
   private decisionsCache: DecisionRecord[] = [];
+  /** Phase 48：加载的项目文档内容（AGENTS.md / CLAUDE.md fallback） */
+  private projectDoc: string | null = null;
 
   constructor(projectPath: string, config: ProjectMemoryConfig) {
     this.projectPath = projectPath;
     this.config = config;
+  }
+
+  /** Phase 48 Task 2：设置项目文档内容（由 loadProjectDoc 异步加载后注入） */
+  setProjectDoc(doc: string): void {
+    this.projectDoc = doc;
+  }
+
+  /** Phase 48 Task 2：获取项目文档内容（供 system prompt 注入） */
+  getProjectDoc(): string | null {
+    return this.projectDoc;
   }
 
   /** 获取 .routedev 目录路径 */
