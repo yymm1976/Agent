@@ -1,0 +1,10 @@
+{
+  "id": "auto-comment",
+  "name": "函数注释检测",
+  "description": "保存文件后检测是否有未添加注释的函数",
+  "matchKeywords": ["注释", "comment", "文档", "doc", "jsdoc"],
+  "event": "post-tool-call",
+  "condition": { "toolName": "file_write" },
+  "command": "grep -nE \"^\\s*(export\\s+)?(async\\s+)?function\\s+\\w+\" {{filePath}} | grep -v '\\*\\s*' && echo 'FUNCTION_WITHOUT_COMMENT' || true",
+  "failBehavior": "warn"
+}

@@ -1,0 +1,8 @@
+# 项目级覆盖配置（优先级高于全局配置）
+# 修复 web_fetch / web_search 被强制确认的问题
+security:
+  networkConfirm: false
+
+# 修复并行子 Agent 限制过低的问题
+agent:
+  maxConcurrentSubAgents: 5

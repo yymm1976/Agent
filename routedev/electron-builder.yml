@@ -1,0 +1,44 @@
+appId: com.routedev.app
+productName: RouteDev
+copyright: Copyright © 2026
+asar: true
+directories:
+  # 固定输出目录，避免 release-v12/release-v13 并存导致误启动旧版本
+  output: release-v3
+  buildResources: build
+files:
+  - out/main/**/*
+  - out/preload/**/*
+  - out/renderer/**/*
+  - package.json
+# 将托盘图标打包到 resources 目录，供主进程在运行时通过 process.resourcesPath 访问
+extraResources:
+  - from: build/icon.png
+    to: icon.png
+    filter: ['**/*']
+extraMetadata:
+  main: out/main/index.js
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  signAndEditExecutable: false
+  icon: build/icon.ico
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+mac:
+  target:
+    - dmg
+  icon: build/icon.icns
+linux:
+  target:
+    - AppImage
+    - deb
+  icon: build/icon.png
+
+
+

@@ -1,0 +1,296 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   RouteDev 主题系统：通过 [data-theme] 属性切换四套配色
+   - white: 浅色（默认，白底深字）
+   - black: 深色（黑底浅字）
+   - gray:  灰色调（中性灰底）
+   - blue:  蓝色调（深蓝底，主色亮蓝）
+   字体大小通过 --rd-font-size 控制，影响 root font-size
+   ============================================================ */
+
+:root {
+  --rd-font-size: 14px;
+  --rd-background: #0b0d10;
+  --rd-surface: #111418;
+  --rd-surface-hover: #181c22;
+  --rd-surface-highlight: #202631;
+  /* 边框弱化：几乎看不见，靠 surface 与 background 色差体现边界 */
+  --rd-border: #14181d;
+  --rd-border-hover: #1c2128;
+  --rd-tree-line: #1c1f25;
+  --rd-primary: #8b8dff;
+  --rd-primary-hover: #a5a6ff;
+  --rd-primary-foreground: #ffffff;
+  --rd-text: #f4f6fa;
+  /* 注释小字调浅：降低对比度，更不显眼 */
+  --rd-text-muted: #8b94a3;
+  --rd-text-subtle: #5f6878;
+  --rd-danger: #fb7185;
+  --rd-danger-hover: #fda4af;
+  --rd-danger-foreground: #ffffff;
+  --rd-warning: #fbbf24;
+  --rd-success: #34d399;
+  --rd-success-foreground: #ffffff;
+}
+
+/* === 白色主题（默认） === */
+[data-theme='white'] {
+  --rd-background: #ffffff;
+  --rd-surface: #f8fafc;
+  --rd-surface-hover: #f1f5f9;
+  --rd-surface-highlight: #e2e8f0;
+  /* 边框弱化：几乎看不见 */
+  --rd-border: #f1f5f9;
+  --rd-border-hover: #e2e8f0;
+  --rd-tree-line: #e2e8f0;
+
+  --rd-primary: #4f46e5;
+  --rd-primary-hover: #4338ca;
+  --rd-primary-foreground: #ffffff;
+
+  --rd-text: #0f172a;
+  /* 注释小字调浅 */
+  --rd-text-muted: #6b7280;
+  --rd-text-subtle: #9ca3af;
+
+  --rd-danger: #dc2626;
+  --rd-danger-hover: #b91c1c;
+  --rd-danger-foreground: #ffffff;
+  --rd-warning: #f59e0b;
+  --rd-success: #16a34a;
+  --rd-success-foreground: #ffffff;
+}
+
+/* === 黑色主题 === */
+[data-theme='black'] {
+  --rd-background: #0b0d10;
+  --rd-surface: #111418;
+  --rd-surface-hover: #181c22;
+  --rd-surface-highlight: #202631;
+  /* 边框弱化：几乎看不见 */
+  --rd-border: #14181d;
+  --rd-border-hover: #1c2128;
+  --rd-tree-line: #1c1f25;
+
+  --rd-primary: #8b8dff;
+  --rd-primary-hover: #a5a6ff;
+  --rd-primary-foreground: #ffffff;
+
+  --rd-text: #f4f6fa;
+  /* 注释小字调浅 */
+  --rd-text-muted: #8b94a3;
+  --rd-text-subtle: #5f6878;
+
+  --rd-danger: #fb7185;
+  --rd-danger-hover: #fda4af;
+  --rd-danger-foreground: #ffffff;
+  --rd-warning: #f59e0b;
+  --rd-success: #22c55e;
+  --rd-success-foreground: #ffffff;
+}
+
+/* === 灰色主题 === */
+[data-theme='gray'] {
+  --rd-background: #1e2126;
+  --rd-surface: #262a31;
+  --rd-surface-hover: #2e333b;
+  --rd-surface-highlight: #383d47;
+  /* 边框弱化：几乎看不见 */
+  --rd-border: #2a2e35;
+  --rd-border-hover: #333942;
+  --rd-tree-line: #363b45;
+
+  --rd-primary: #8b8dff;
+  --rd-primary-hover: #a5a6ff;
+  --rd-primary-foreground: #ffffff;
+
+  --rd-text: #f0f1f3;
+  /* 注释小字调浅 */
+  --rd-text-muted: #868a94;
+  --rd-text-subtle: #5a5e68;
+
+  --rd-danger: #fb7185;
+  --rd-danger-hover: #fda4af;
+  --rd-danger-foreground: #ffffff;
+  --rd-warning: #f59e0b;
+  --rd-success: #22c55e;
+  --rd-success-foreground: #ffffff;
+}
+
+/* === 蓝色主题 === */
+[data-theme='blue'] {
+  --rd-background: #1a2332;
+  --rd-surface: #232f42;
+  --rd-surface-hover: #2d3a50;
+  --rd-surface-highlight: #38465f;
+  /* 边框弱化：几乎看不见 */
+  --rd-border: #26303f;
+  --rd-border-hover: #303c4e;
+  --rd-tree-line: #35465f;
+
+  --rd-primary: #7b9fd4;
+  --rd-primary-hover: #9bb8e0;
+  --rd-primary-foreground: #ffffff;
+
+  --rd-text: #e8edf3;
+  /* 注释小字调浅 */
+  --rd-text-muted: #7e8ba0;
+  --rd-text-subtle: #5a6678;
+
+  --rd-danger: #fb7185;
+  --rd-danger-hover: #fda4af;
+  --rd-danger-foreground: #ffffff;
+  --rd-warning: #fbbf24;
+  --rd-success: #34d399;
+  --rd-success-foreground: #ffffff;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    @apply h-full w-full overflow-hidden;
+  }
+
+  /* 字体大小通过 root font-size 控制，Tailwind rem 单位自动缩放 */
+  html {
+    font-size: var(--rd-font-size);
+  }
+
+  body {
+    @apply bg-rd-background text-rd-text antialiased;
+  }
+
+  /* 滚动条：完全隐藏但保留滚动能力（页面仍可滚动，只是不显示右侧滚动条） */
+  ::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Firefox：隐藏滚动条 */
+  * {
+    scrollbar-width: none;
+  }
+}
+
+@layer components {
+  /* === 按钮 === */
+  /* 移除 focus ring：避免 Tab 键在按钮上显示选中框（用户明确不希望 Tab 键产生选中效果） */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-rdSm bg-rd-primary px-5 py-2.5 text-sm font-semibold text-rd-primaryForeground shadow-rdSm transition-all hover:bg-rd-primaryHover hover:shadow-rdMd hover:-translate-y-0.5 active:translate-y-0 outline-none disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-rdSm border border-rd-border bg-rd-background px-5 py-2.5 text-sm font-semibold text-rd-text shadow-rdSm transition-all hover:bg-rd-surfaceHover hover:border-rd-borderHover hover:shadow-rdMd outline-none disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-rdSm bg-rd-danger px-5 py-2.5 text-sm font-semibold text-rd-dangerForeground shadow-rdSm transition-all hover:bg-rd-dangerHover hover:shadow-rdMd outline-none disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-rdSm px-4 py-2.5 text-sm font-semibold text-rd-textMuted transition-colors hover:bg-rd-surface hover:text-rd-text outline-none disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* === 输入框 === */
+  .input-field {
+    @apply w-full rounded-rdSm bg-rd-surface px-4 py-2.5 text-sm text-rd-text shadow-rdSm transition-all placeholder:text-rd-textSubtle focus-visible:outline-none focus-visible:border-rd-borderHover hover:bg-rd-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* === 卡片 === */
+  .card {
+    @apply rounded-rdLg bg-rd-surface shadow-rdSm;
+  }
+
+  .card-hover {
+    @apply rounded-rdLg bg-rd-surface shadow-rdSm transition-all hover:shadow-rdMd hover:-translate-y-0.5;
+  }
+
+  /* === 标签 === */
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full border border-rd-border bg-rd-surface px-3 py-1 text-xs font-semibold text-rd-textMuted;
+  }
+
+  .badge-primary {
+    @apply inline-flex items-center gap-1 rounded-full bg-rd-primary/10 px-3 py-1 text-xs font-semibold text-rd-primary border border-rd-primary/20;
+  }
+
+  .badge-success {
+    @apply inline-flex items-center gap-1 rounded-full bg-rd-success/10 px-3 py-1 text-xs font-semibold text-rd-success border border-rd-success/20;
+  }
+
+  .badge-danger {
+    @apply inline-flex items-center gap-1 rounded-full bg-rd-danger/10 px-3 py-1 text-xs font-semibold text-rd-danger border border-rd-danger/20;
+  }
+
+  /* === 分隔线 === */
+  .divider {
+    @apply h-px w-full bg-rd-border;
+  }
+}
+
+@keyframes rdFadeScaleIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes rdFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes rdFadeScaleOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+}
+
+@keyframes rdFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes rdPanelSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.rd-modal-backdrop-enter {
+  animation: rdFadeIn 180ms ease-out both;
+}
+
+.rd-modal-enter,
+.rd-popover-enter {
+  animation: rdFadeScaleIn 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.rd-modal-backdrop-exit {
+  animation: rdFadeOut 180ms ease-in both;
+}
+
+.rd-modal-exit {
+  animation: rdFadeScaleOut 180ms ease-in both;
+}
+
+.rd-panel-slide-in {
+  animation: rdPanelSlideIn 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}

@@ -1,0 +1,10 @@
+{
+  "id": "import-check",
+  "name": "未使用 import 检测",
+  "description": "保存文件后检测是否有未使用的 import 语句",
+  "matchKeywords": ["import", "未使用", "unused", "eslint", "no-unused-vars"],
+  "event": "post-tool-call",
+  "condition": { "toolName": "file_write" },
+  "command": "npx eslint --rule '{\"no-unused-vars\": \"error\"}' {{filePath}}",
+  "failBehavior": "warn"
+}

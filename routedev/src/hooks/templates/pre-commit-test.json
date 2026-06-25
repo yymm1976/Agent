@@ -1,0 +1,10 @@
+{
+  "id": "pre-commit-test",
+  "name": "提交前测试",
+  "description": "提交代码前自动运行 npm test",
+  "matchKeywords": ["提交前", "pre-commit", "测试", "test", "npm test"],
+  "event": "pre-step",
+  "condition": {},
+  "command": "npm test",
+  "failBehavior": "block"
+}

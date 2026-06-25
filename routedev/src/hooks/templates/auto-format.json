@@ -1,0 +1,10 @@
+{
+  "id": "auto-format",
+  "name": "自动格式化",
+  "description": "保存文件后自动运行 prettier/eslint --fix",
+  "matchKeywords": ["格式化", "format", "prettier", "eslint"],
+  "event": "post-tool-call",
+  "condition": { "toolName": "file_write" },
+  "command": "npx prettier --write {{filePath}}",
+  "failBehavior": "warn"
+}

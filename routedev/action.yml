@@ -1,0 +1,33 @@
+name: 'RouteDev AI Coding'
+description: '在 GitHub Actions 中运行 RouteDev 执行 AI 编程任务（代码审查、自动修复、文档生成等）'
+author: 'RouteDev'
+
+inputs:
+  prompt:
+    description: '任务描述（必填）。例如："审查本次 PR 的代码质量并给出改进建议"'
+    required: true
+  work-mode:
+    description: '工作模式：read-only（只读分析，适用于 PR 审查）/ workspace-write（读写工作区，适用于自动修复）/ full-access（全部权限，谨慎使用）'
+    required: false
+    default: 'workspace-write'
+  allowed-tools:
+    description: '工具白名单（逗号分隔，留空表示允许全部）。例如："file_read,file_search,code_search"'
+    required: false
+    default: ''
+  config:
+    description: 'config.yaml 内容的 Base64 编码（避免 YAML 转义问题）。API Key 不要写入 config，通过 secrets 环境变量传入'
+    required: false
+    default: ''
+
+outputs:
+  result:
+    description: '执行结果 JSON（包含 status/exitCode/content 等字段）'
+    value: ${{ steps.routedev-exec.outputs.result }}
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'cpu'
+  color: 'purple'

@@ -1,0 +1,94 @@
+# .github/workflows/routedev-example.yml
+# Phase 47 Task 9：RouteDev GitHub Action 示例 workflow
+#
+# 场景：PR 代码审查
+#   - trigger: pull_request
+#   - 使用 read-only 工作模式（不修改代码，仅分析）
+#   - API Key 通过 secrets.ROUTEDEV_API_KEY 注入
+#   - 审查结果以评论形式发布到 PR
+
+name: RouteDev PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# 权限最小化：PR 审查只需要 pull-requests: write（发评论）
+# 不要授予 contents: write（避免 RouteDev 修改代码）
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    name: AI Code Review
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 检出代码（PR 头部 commit）
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 完整历史，便于 RouteDev 分析变更上下文
+
+      # 2. 安装 Node.js 20（RouteDev 运行时要求）
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # 3. 运行 RouteDev 执行 PR 审查
+      #    work-mode: read-only —— 只读分析，不修改代码
+      #    API Key 通过环境变量 ROUTEDEV_API_KEY 传入（不写入 config）
+      - name: RouteDev Review
+        id: routedev-exec
+        uses: ./
+        env:
+          ROUTEDEV_API_KEY: ${{ secrets.ROUTEDEV_API_KEY }}
+        with:
+          prompt: |
+            审查 PR #${{ github.event.pull_request.number }} 的代码变更：
+            1. 检查代码质量（命名、结构、可读性）
+            2. 检查潜在 bug 和安全问题
+            3. 检查测试覆盖
+            4. 给出改进建议
+            输出格式：JSON，包含 { "summary": "...", "issues": [...], "suggestions": [...] }
+          work-mode: 'read-only'
+          allowed-tools: 'file_read,file_search,code_search,list_directory'
+          # config 可选：通过 Base64 传入自定义配置
+          # config: ${{ secrets.ROUTEDEV_CONFIG_BASE64 }}
+
+      # 4. 解析审查结果并发布评论
+      - name: Post Review Comment
+        if: steps.routedev-exec.outputs.result != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = JSON.parse('${{ steps.routedev-exec.outputs.result }}');
+            if (result.status !== 'success') {
+              core.setFailed(`RouteDev 审查失败: ${result.stderr}`);
+              return;
+            }
+
+            // 解析 stdout 中的 JSONL 事件流，提取最终答案
+            const lines = result.stdout.trim().split('\n');
+            let review = null;
+            for (const line of lines) {
+              try {
+                const event = JSON.parse(line);
+                if (event.type === 'done' && event.content) {
+                  review = event.content;
+                }
+              } catch {}
+            }
+
+            if (!review) {
+              review = '⚠️ RouteDev 未返回审查结果';
+            }
+
+            // 发布 PR 评论
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## 🤖 RouteDev AI 审查结果\n\n${review}`,
+            });

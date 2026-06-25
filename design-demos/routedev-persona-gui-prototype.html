@@ -1,0 +1,1411 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RouteDev Persona GUI Prototype</title>
+  <style>
+    :root {
+      --rd-background: #f8f9fb;
+      --rd-surface: #ffffff;
+      --rd-surface-hover: #f3f4f6;
+      --rd-surface-highlight: #eef2ff;
+      --rd-border: #e5e7eb;
+      --rd-border-hover: #d1d5db;
+      --rd-primary: #4f46e5;
+      --rd-primary-hover: #4338ca;
+      --rd-primary-foreground: #ffffff;
+      --rd-text: #111827;
+      --rd-text-muted: #6b7280;
+      --rd-text-subtle: #9ca3af;
+      --rd-danger: #ef4444;
+      --rd-warning: #f59e0b;
+      --rd-success: #10b981;
+      --rd-radius: 0.75rem;
+      --rd-radius-sm: 0.5rem;
+      --rd-radius-lg: 1rem;
+      --rd-shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.05);
+      --rd-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+      --rd-shadow-md: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.05);
+    }
+    [data-theme="gray"] {
+      --rd-background: #f3f4f6;
+      --rd-surface: #f9fafb;
+      --rd-surface-hover: #e5e7eb;
+      --rd-surface-highlight: #e5e7eb;
+      --rd-border: #d1d5db;
+      --rd-text: #1f2937;
+    }
+    [data-theme="blue"] {
+      --rd-background: #eff6ff;
+      --rd-surface: #ffffff;
+      --rd-surface-hover: #dbeafe;
+      --rd-surface-highlight: #dbeafe;
+      --rd-border: #bfdbfe;
+      --rd-primary: #2563eb;
+      --rd-primary-hover: #1d4ed8;
+      --rd-text: #1e3a8a;
+    }
+    [data-theme="black"] {
+      --rd-background: #0b0c0f;
+      --rd-surface: #15161b;
+      --rd-surface-hover: #1f2128;
+      --rd-surface-highlight: #1e1b4b;
+      --rd-border: #27272a;
+      --rd-border-hover: #3f3f46;
+      --rd-text: #f3f4f6;
+      --rd-text-muted: #a1a1aa;
+      --rd-text-subtle: #71717a;
+    }
+    * { box-sizing: border-box; }
+    html, body, #app { height: 100%; margin: 0; }
+    body {
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--rd-background);
+      color: var(--rd-text);
+      overflow: hidden;
+    }
+    .app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+    .titlebar {
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      background: var(--rd-surface);
+      border-bottom: 1px solid var(--rd-border);
+      user-select: none;
+    }
+    .layout { display: flex; height: 100%; overflow: hidden; padding: 0 12px 12px; gap: 12px; }
+    .sidebar {
+      width: 220px;
+      flex-shrink: 0;
+      background: var(--rd-surface);
+      border-radius: var(--rd-radius-lg);
+      border: 1px solid var(--rd-border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .main {
+      flex: 1;
+      min-width: 0;
+      background: var(--rd-surface);
+      border-radius: var(--rd-radius-lg);
+      border: 1px solid var(--rd-border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+    .rightPanel {
+      width: 300px;
+      flex-shrink: 0;
+      background: var(--rd-surface);
+      border-radius: var(--rd-radius-lg);
+      border: 1px solid var(--rd-border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .sidebar.collapsed {
+      width: 48px;
+      align-items: center;
+    }
+    .rightPanel.collapsed {
+      width: 48px;
+      align-items: center;
+    }
+    .sidebar.collapsed .sidebarInner,
+    .rightPanel.collapsed .rightPanelInner { display: none; }
+    .sidebar.collapsed .sidebarCollapsed,
+    .rightPanel.collapsed .rightPanelCollapsed { display: flex; }
+    .sidebarCollapsed,
+    .rightPanelCollapsed {
+      display: none;
+      width: 100%;
+      flex-direction: column;
+      align-items: center;
+      padding: 12px 0;
+      gap: 8px;
+    }
+    .collapseBtn {
+      width: 28px;
+      height: 28px;
+      border-radius: var(--rd-radius-sm);
+      border: none;
+      background: transparent;
+      color: var(--rd-text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+    .collapseBtn:hover { background: var(--rd-surface-hover); color: var(--rd-primary); }
+    .scroll { overflow-y: auto; scrollbar-width: none; }
+    .scroll::-webkit-scrollbar { display: none; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: var(--rd-radius-sm);
+      border: 1px solid var(--rd-border);
+      background: var(--rd-surface);
+      color: var(--rd-text);
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.15s;
+    }
+    .btn:hover { background: var(--rd-surface-hover); }
+    .btn-primary { background: var(--rd-primary); color: var(--rd-primary-foreground); border-color: var(--rd-primary); }
+    .btn-primary:hover { background: var(--rd-primary-hover); }
+    .btn-ghost { background: transparent; border-color: transparent; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      border: 1px solid var(--rd-border);
+      background: var(--rd-surface);
+      color: var(--rd-text-muted);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .chip:hover { border-color: var(--rd-primary); color: var(--rd-primary); }
+    .message { max-width: 92%; padding: 12px 14px; border-radius: var(--rd-radius); font-size: 14px; line-height: 1.6; }
+    .message.user { align-self: flex-end; background: var(--rd-primary); color: var(--rd-primary-foreground); }
+    .message.assistant { align-self: flex-start; background: var(--rd-surface-hover); color: var(--rd-text); }
+    .statusBar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      margin: 8px 14px 0;
+      border-radius: var(--rd-radius-sm);
+      background: var(--rd-surface-highlight);
+      border: 1px solid var(--rd-border);
+      font-size: 12px;
+      color: var(--rd-text-muted);
+      cursor: pointer;
+    }
+    .toolSummary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .toolSummaryItem {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      background: var(--rd-surface);
+      border: 1px solid var(--rd-border);
+      font-size: 12px;
+    }
+    .subAgentCard {
+      margin: 8px 14px 0;
+      padding: 10px 12px;
+      border-radius: var(--rd-radius);
+      background: var(--rd-surface-hover);
+      border: 1px solid var(--rd-border);
+      cursor: pointer;
+    }
+    .memoryBadge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      background: var(--rd-surface);
+      border: 1px solid var(--rd-border);
+      font-size: 11px;
+      color: var(--rd-text-muted);
+      margin-top: 8px;
+      cursor: pointer;
+    }
+    .discoveryOverlay {
+      position: absolute;
+      inset: 0;
+      background: var(--rd-background);
+      z-index: 50;
+      display: none;
+      flex-direction: column;
+      padding: 32px;
+      overflow-y: auto;
+    }
+    .discoveryOverlay.open { display: flex; }
+    .discoveryGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; margin-top: 16px; }
+    .discoveryCard {
+      padding: 20px;
+      border-radius: var(--rd-radius-lg);
+      background: var(--rd-surface);
+      border: 1px solid var(--rd-border);
+      box-shadow: var(--rd-shadow-sm);
+      cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .discoveryCard:hover { transform: translateY(-2px); box-shadow: var(--rd-shadow-md); }
+    .tabRow { display: flex; gap: 4px; padding: 6px; border-bottom: 1px solid var(--rd-border); }
+    .tab { padding: 6px 10px; border-radius: var(--rd-radius-sm); font-size: 12px; color: var(--rd-text-muted); cursor: pointer; }
+    .tab.active { background: var(--rd-surface-highlight); color: var(--rd-primary); font-weight: 500; }
+    @keyframes pulse-soft {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .pulse { animation: pulse-soft 1.5s ease-in-out infinite; }
+    @keyframes slide-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .slide-in { animation: slide-in 0.25s ease-out forwards; }
+    @keyframes progress-fill {
+      from { width: 0%; }
+      to { width: 100%; }
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+    .typewriter-cursor {
+      display: inline-block;
+      width: 2px;
+      height: 1.1em;
+      background: var(--rd-primary);
+      margin-left: 2px;
+      vertical-align: text-bottom;
+      animation: blink 1s step-end infinite;
+    }
+    .thinking-progress {
+      height: 3px;
+      background: var(--rd-border);
+      border-radius: 2px;
+      margin: 6px 14px 0;
+      overflow: hidden;
+    }
+    .thinking-progress-bar {
+      height: 100%;
+      width: 40%;
+      background: linear-gradient(90deg, transparent, var(--rd-primary), transparent);
+      border-radius: 2px;
+      opacity: 0.7;
+      animation: progress-indeterminate 1.3s ease-in-out infinite;
+    }
+    @keyframes progress-indeterminate {
+      0% { transform: translateX(-180%); }
+      100% { transform: translateX(420%); }
+    }
+    .thinking-steps {
+      margin: 8px 14px 0;
+      padding: 10px 12px;
+      border-radius: var(--rd-radius);
+      background: var(--rd-surface-hover);
+      border: 1px solid var(--rd-border);
+      font-size: 12px;
+      color: var(--rd-text-muted);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .thinking-step {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      opacity: 0.45;
+      transition: all 0.3s;
+    }
+    .thinking-step.active { opacity: 1; color: var(--rd-text); }
+    .thinking-step.done { opacity: 0.75; }
+    .step-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--rd-text-subtle);
+      transition: all 0.3s;
+    }
+    .thinking-step.active .step-dot { background: var(--rd-primary); box-shadow: 0 0 0 3px rgba(79,70,229,0.15); }
+    .thinking-step.done .step-dot { background: var(--rd-success); }
+    .tool-log-entry {
+      padding: 10px;
+      border-radius: var(--rd-radius-sm);
+      background: var(--rd-surface-hover);
+      border: 1px solid var(--rd-border);
+      font-size: 12px;
+      margin-bottom: 6px;
+      opacity: 0;
+      animation: slide-in 0.25s ease-out forwards;
+    }
+    .tool-log-entry.running { border-color: var(--rd-primary); background: var(--rd-surface-highlight); }
+    .tool-log-entry.success { border-color: var(--rd-success); background: rgba(16,185,129,0.06); }
+    .todo-list {
+      margin: 8px 14px 0;
+      padding: 10px 12px;
+      border-radius: var(--rd-radius);
+      background: var(--rd-surface-hover);
+      border: 1px solid var(--rd-border);
+      font-size: 12px;
+    }
+    .todo-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 0;
+      color: var(--rd-text-muted);
+      transition: all 0.3s;
+    }
+    .todo-item.done { color: var(--rd-text); }
+    .todo-check {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+      border: 1.5px solid var(--rd-text-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+    .todo-item.done .todo-check {
+      background: var(--rd-success);
+      border-color: var(--rd-success);
+      color: white;
+    }
+    .hidden { display: none !important; }
+    .icon { display: inline-flex; align-items: center; justify-content: center; }
+    .icon svg { display: block; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="titlebar">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-weight:600;font-size:13px;">RouteDev</span>
+        <span style="color:var(--rd-text-muted);font-size:12px;">routedev / router-refactor</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <select id="personaSelect" style="font-size:12px;padding:2px 6px;border-radius:var(--rd-radius-sm);border:1px solid var(--rd-border);background:var(--rd-surface);color:var(--rd-text);">
+          <option value="collaborator">协作者</option>
+          <option value="mentor">导师</option>
+          <option value="hacker">极客</option>
+        </select>
+        <div id="themeButtons" style="display:flex;gap:2px;">
+          <button class="btn btn-ghost theme-btn" data-theme="white" style="padding:2px 8px;font-size:11px;">白</button>
+          <button class="btn btn-ghost theme-btn" data-theme="gray" style="padding:2px 8px;font-size:11px;">灰</button>
+          <button class="btn btn-ghost theme-btn" data-theme="blue" style="padding:2px 8px;font-size:11px;">蓝</button>
+          <button class="btn btn-ghost theme-btn" data-theme="black" style="padding:2px 8px;font-size:11px;">黑</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="layout">
+      <!-- 左侧边栏 -->
+      <div class="sidebar" id="leftSidebar">
+        <div class="sidebarInner">
+          <div style="padding:14px;border-bottom:1px solid var(--rd-border);display:flex;align-items:center;justify-content:space-between;">
+            <div>
+              <div style="font-weight:700;font-size:16px;">RouteDev</div>
+              <div style="font-size:11px;color:var(--rd-text-muted);margin-top:2px;">v3.6.0 · Phase 45</div>
+            </div>
+            <button class="collapseBtn" id="collapseLeft" title="收起侧边栏">
+              <span class="icon" data-icon="chevron-left" data-size="16"></span>
+            </button>
+          </div>
+          <div class="scroll" style="flex:1;padding:10px;">
+            <div style="font-size:11px;color:var(--rd-text-muted);margin-bottom:8px;padding-left:6px;">当前项目</div>
+            <div style="padding:8px;border-radius:var(--rd-radius-sm);background:var(--rd-surface-highlight);font-size:13px;font-weight:500;">routedev / router-refactor</div>
+            <div style="margin-top:16px;font-size:11px;color:var(--rd-text-muted);margin-bottom:8px;padding-left:6px;">快捷入口</div>
+            <button class="btn btn-ghost" id="openDiscovery" style="width:100%;justify-content:flex-start;margin-bottom:4px;">
+              <span class="icon" data-icon="compass" data-size="14"></span> 发现页
+            </button>
+            <button class="btn btn-ghost" style="width:100%;justify-content:flex-start;margin-bottom:4px;">
+              <span class="icon" data-icon="plus-circle" data-size="14"></span> 新建任务
+            </button>
+            <button class="btn btn-ghost" style="width:100%;justify-content:flex-start;">
+              <span class="icon" data-icon="settings" data-size="14"></span> 设置
+            </button>
+          </div>
+        </div>
+        <div class="sidebarCollapsed">
+          <button class="collapseBtn" id="expandLeft" title="展开侧边栏">
+            <span class="icon" data-icon="chevron-right" data-size="18"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 主内容区 -->
+      <div class="main">
+        <div id="discovery" class="discoveryOverlay">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <div>
+              <div style="font-size:24px;font-weight:700;">发现</div>
+              <div style="font-size:13px;color:var(--rd-text-muted);margin-top:4px;">根据你的项目与习惯，推荐下一步</div>
+            </div>
+            <button class="btn" id="closeDiscovery"><span class="icon" data-icon="x" data-size="16"></span> 关闭</button>
+          </div>
+          <div style="font-size:13px;font-weight:600;margin-top:16px;">推荐任务</div>
+          <div class="discoveryGrid">
+            <div class="discoveryCard" data-prompt="补全路由规则单元测试">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                <span class="icon" data-icon="file-code" data-size="18" style="color:var(--rd-primary);"></span>
+                <span style="font-weight:600;">补全路由规则单元测试</span>
+              </div>
+              <div style="font-size:12px;color:var(--rd-text-muted);">检测到 router 模块近期有变更但测试覆盖不足</div>
+            </div>
+            <div class="discoveryCard" data-prompt="检查新依赖的安全风险">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                <span class="icon" data-icon="shield" data-size="18" style="color:var(--rd-primary);"></span>
+                <span style="font-weight:600;">检查新依赖的安全风险</span>
+              </div>
+              <div style="font-size:12px;color:var(--rd-text-muted);">package.json 新增 2 个未审计依赖</div>
+            </div>
+            <div class="discoveryCard" data-prompt="生成 API 文档">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                <span class="icon" data-icon="book-open" data-size="18" style="color:var(--rd-primary);"></span>
+                <span style="font-weight:600;">生成 API 文档</span>
+              </div>
+              <div style="font-size:12px;color:var(--rd-text-muted);">从 TypeScript 类型推断生成 README 表格</div>
+            </div>
+            <div class="discoveryCard" data-prompt="开启分支实验">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                <span class="icon" data-icon="git-branch" data-size="18" style="color:var(--rd-primary);"></span>
+                <span style="font-weight:600;">开启分支实验</span>
+              </div>
+              <div style="font-size:12px;color:var(--rd-text-muted);">同时探索两种错误处理方案</div>
+            </div>
+          </div>
+          <div style="font-size:13px;font-weight:600;margin-top:24px;">最近对话</div>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
+            <div style="padding:12px;border-radius:var(--rd-radius);background:var(--rd-surface);border:1px solid var(--rd-border);cursor:pointer;">
+              <div style="font-size:13px;font-weight:500;">routedev</div>
+              <div style="font-size:11px;color:var(--rd-text-muted);margin-top:2px;">3 分钟前 · 5 条消息</div>
+            </div>
+            <div style="padding:12px;border-radius:var(--rd-radius);background:var(--rd-surface);border:1px solid var(--rd-border);cursor:pointer;">
+              <div style="font-size:13px;font-weight:500;">neoforge-mod</div>
+              <div style="font-size:11px;color:var(--rd-text-muted);margin-top:2px;">20 分钟前 · 12 条消息</div>
+            </div>
+            <div style="padding:12px;border-radius:var(--rd-radius);background:var(--rd-surface);border:1px solid var(--rd-border);cursor:pointer;">
+              <div style="font-size:13px;font-weight:500;">docs-site</div>
+              <div style="font-size:11px;color:var(--rd-text-muted);margin-top:2px;">1 小时前 · 8 条消息</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="scroll" style="flex:1;padding:16px 20px;">
+          <div id="chatMessages" style="display:flex;flex-direction:column;gap:10px;">
+            <!-- 用户消息 -->
+            <div style="display:flex;align-items:flex-end;gap:8px;">
+              <div style="width:28px;height:28px;border-radius:50%;background:var(--rd-surface-hover);display:flex;align-items:center;justify-content:center;font-size:12px;">你</div>
+              <div class="message user">给 router 的新规则补一下单元测试</div>
+            </div>
+
+            <!-- 助手消息 -->
+            <div style="display:flex;align-items:flex-start;gap:8px;">
+              <div style="width:28px;height:28px;border-radius:50%;background:var(--rd-primary);color:var(--rd-primary-foreground);display:flex;align-items:center;justify-content:center;font-size:12px;">
+                <span class="icon" data-icon="bot" data-size="14"></span>
+              </div>
+              <div style="flex:1;min-width:0;">
+                <div class="message assistant">
+                  <div style="font-weight:500;margin-bottom:4px;">好的，我先看一下现有实现和测试结构。</div>
+                  <div style="font-size:13px;color:var(--rd-text-muted);">已按你的偏好使用中文注释。</div>
+                  <div class="memoryBadge" id="memoryBadge">
+                    <span class="icon" data-icon="brain" data-size="11"></span> 已应用偏好：中文注释
+                  </div>
+                </div>
+
+                <!-- 思考状态条 -->
+                <div class="statusBar" id="reasoningBar">
+                  <span class="icon" id="reasoningChevron" data-icon="chevron-down" data-size="14"></span>
+                  <span>需求分析 → 查找相关文件 → 生成测试</span>
+                  <span style="margin-left:auto;display:flex;align-items:center;gap:4px;">
+                    <span class="icon" data-icon="clock" data-size="12"></span> 1.2s
+                  </span>
+                </div>
+                <div id="reasoningDetail" class="hidden" style="margin:8px 14px 0;padding:12px;border-radius:var(--rd-radius);background:var(--rd-surface-hover);border:1px solid var(--rd-border);font-size:12px;color:var(--rd-text-muted);">
+                  <div style="margin-bottom:6px;">1. 识别变更：src/router/config.ts 新增了一条 medium 复杂度路由规则。</div>
+                  <div style="margin-bottom:6px;">2. 查找测试：tests/router/classifier.test.ts 已有简单/中等案例，缺少边界值。</div>
+                  <div>3. 生成计划：补充 3 个测试用例，覆盖 budget 阈值与 fallback 触发。</div>
+                </div>
+
+                <!-- 工具调用摘要 -->
+                <div class="statusBar" id="toolBar" style="background:var(--rd-surface-hover);">
+                  <span class="icon" id="toolChevron" data-icon="chevron-down" data-size="14"></span>
+                  <div class="toolSummary">
+                    <span class="toolSummaryItem"><span class="icon" data-icon="file-text" data-size="12"></span> 读取 2 个文件</span>
+                    <span class="toolSummaryItem"><span class="icon" data-icon="edit-3" data-size="12"></span> 写入 1 个文件</span>
+                  </div>
+                  <span id="toolToggleText" style="margin-left:auto;font-size:11px;">展开</span>
+                </div>
+                <div id="toolDetail" class="hidden" style="margin:8px 14px 0;display:flex;flex-direction:column;gap:8px;">
+                  <div style="padding:10px;border-radius:var(--rd-radius-sm);background:var(--rd-surface-hover);border:1px solid var(--rd-border);font-size:12px;">
+                    <div style="display:flex;justify-content:space-between;">
+                      <span style="font-weight:500;">file_read</span>
+                      <span style="color:var(--rd-text-muted);">0.3s</span>
+                    </div>
+                    <div style="color:var(--rd-text-muted);margin-top:4px;">src/router/config.ts</div>
+                  </div>
+                  <div style="padding:10px;border-radius:var(--rd-radius-sm);background:var(--rd-surface-hover);border:1px solid var(--rd-border);font-size:12px;">
+                    <div style="display:flex;justify-content:space-between;">
+                      <span style="font-weight:500;">file_read</span>
+                      <span style="color:var(--rd-text-muted);">0.2s</span>
+                    </div>
+                    <div style="color:var(--rd-text-muted);margin-top:4px;">tests/router/classifier.test.ts</div>
+                  </div>
+                  <div style="padding:10px;border-radius:var(--rd-radius-sm);background:rgba(16,185,129,0.08);border:1px solid var(--rd-success);font-size:12px;">
+                    <div style="display:flex;justify-content:space-between;">
+                      <span style="font-weight:500;">file_write</span>
+                      <span style="color:var(--rd-success);">完成</span>
+                    </div>
+                    <div style="color:var(--rd-text-muted);margin-top:4px;">src/router/new-rule.test.ts</div>
+                  </div>
+                </div>
+
+                <!-- 子 Agent 卡片 -->
+                <div class="subAgentCard" id="subAgentCard">
+                  <div style="display:flex;align-items:center;justify-content:space-between;">
+                    <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;">
+                      <span class="icon" data-icon="users" data-size="14"></span>
+                      <span>2 个子 Agent 正在协作</span>
+                    </div>
+                    <span class="icon" id="subChevron" data-icon="chevron-down" data-size="14"></span>
+                  </div>
+                  <div id="subAgentDetail" class="hidden" style="margin-top:10px;display:flex;flex-direction:column;gap:8px;">
+                    <div style="padding:10px;border-radius:var(--rd-radius-sm);background:var(--rd-surface);border:1px solid var(--rd-border);font-size:12px;">
+                      <div style="display:flex;justify-content:space-between;">
+                        <span style="font-weight:500;">researcher</span>
+                        <span style="color:var(--rd-success);">已完成</span>
+                      </div>
+                      <div style="color:var(--rd-text-muted);margin-top:4px;">返回 2 个相关文件引用</div>
+                    </div>
+                    <div style="padding:10px;border-radius:var(--rd-radius-sm);background:var(--rd-surface);border:1px solid var(--rd-border);font-size:12px;">
+                      <div style="display:flex;justify-content:space-between;">
+                        <span style="font-weight:500;">executor</span>
+                        <span style="color:var(--rd-primary);display:flex;align-items:center;gap:4px;"><span class="icon pulse" data-icon="loader-2" data-size="12"></span> 运行中</span>
+                      </div>
+                      <div style="color:var(--rd-text-muted);margin-top:4px;">正在生成测试代码…</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 最终回复 -->
+                <div class="message assistant" style="margin-top:12px;">
+                  <div>已生成 <code style="background:rgba(79,70,229,0.12);padding:1px 4px;border-radius:4px;">src/router/new-rule.test.ts</code>，包含 3 个边界用例。</div>
+                  <div style="margin-top:8px;color:var(--rd-text-muted);font-size:13px;">需要我运行测试并展示结果吗？</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 快捷芯片：3 个预设覆盖解释 / 编码 / 搜索+待办 -->
+        <div style="padding:0 20px 8px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="chip quick-chip" data-prompt="解释一下项目架构">解释项目架构</button>
+          <button class="chip quick-chip" data-prompt="为 router 新规则添加单元测试">添加单元测试</button>
+          <button class="chip quick-chip" data-prompt="搜索最新方案并列一下待办">搜索方案 & 待办</button>
+        </div>
+
+        <!-- 输入区 -->
+        <div style="padding:0 20px 16px;">
+          <div style="display:flex;gap:8px;align-items:flex-end;">
+            <div style="flex:1;position:relative;">
+              <textarea id="chatInput" placeholder="输入指令，或按住语音按钮说话…" style="width:100%;min-height:52px;max-height:120px;padding:12px 40px 12px 14px;border-radius:var(--rd-radius-lg);border:1px solid var(--rd-border);background:var(--rd-surface);color:var(--rd-text);font-size:14px;resize:none;outline:none;"></textarea>
+              <button id="voiceBtn" style="position:absolute;right:10px;bottom:10px;width:28px;height:28px;border-radius:50%;border:1px solid var(--rd-border);background:var(--rd-surface);color:var(--rd-text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+                <span class="icon" data-icon="mic" data-size="14"></span>
+              </button>
+            </div>
+            <button class="btn btn-primary" id="sendBtn" style="height:52px;padding:0 18px;border-radius:var(--rd-radius-lg);">
+              <span class="icon" data-icon="send" data-size="16"></span>
+            </button>
+          </div>
+          <div id="recordingHint" class="hidden" style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--rd-primary);">
+            <span style="width:6px;height:6px;border-radius:50%;background:var(--rd-primary);" class="pulse"></span>
+            正在收音… 松开结束
+          </div>
+        </div>
+      </div>
+
+      <!-- 右侧面板 -->
+      <div class="rightPanel" id="rightPanel">
+        <div class="rightPanelInner">
+          <div class="tabRow">
+            <div class="tab active" data-tab="任务">任务</div>
+            <div class="tab" data-tab="工具">工具</div>
+            <div class="tab" data-tab="子 Agent">子 Agent</div>
+            <div class="tab" data-tab="上下文">上下文</div>
+            <button class="collapseBtn" id="collapseRight" title="收起右侧面板" style="margin-left:auto;">
+              <span class="icon" data-icon="chevron-right" data-size="16"></span>
+            </button>
+          </div>
+          <div class="panelContent scroll">
+            <div id="panel-任务">
+            <div style="font-size:12px;color:var(--rd-text-muted);margin-bottom:8px;">待办</div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div style="padding:10px;border-radius:var(--rd-radius-sm);background:var(--rd-surface-hover);font-size:13px;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span class="icon" data-icon="circle-check" data-size="14" style="color:var(--rd-success);"></span>
+                  <span>分析路由规则变更</span>
+                </div>
+              </div>
+              <div style="padding:10px;border-radius:var(--rd-radius-sm);background:var(--rd-surface-highlight);font-size:13px;border:1px solid var(--rd-border);">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span class="icon pulse" data-icon="loader-2" data-size="14"></span>
+                  <span>生成新单元测试</span>
+                </div>
+              </div>
+            </div>
+            <div style="font-size:12px;color:var(--rd-text-muted);margin-top:16px;margin-bottom:8px;">产物</div>
+            <div style="padding:10px;border-radius:var(--rd-radius-sm);background:var(--rd-surface-hover);font-size:12px;">
+              <div style="color:var(--rd-text-muted);">src/router/new-rule.test.ts</div>
+            </div>
+          </div>
+          <div id="panel-工具" class="hidden">
+            <div style="font-size:13px;color:var(--rd-text-muted);">点击主界面工具摘要展开详情</div>
+          </div>
+          <div id="panel-子 Agent" class="hidden">
+            <div style="padding:10px;border-radius:var(--rd-radius-sm);border:1px solid var(--rd-border);background:var(--rd-surface-hover);margin-bottom:8px;">
+              <div style="display:flex;align-items:center;gap:6px;font-weight:500;">
+                <span class="icon" data-icon="search" data-size="14"></span> researcher
+              </div>
+              <div style="font-size:11px;color:var(--rd-text-muted);margin-top:4px;">已返回 2 个相关文件引用</div>
+            </div>
+            <div style="padding:10px;border-radius:var(--rd-radius-sm);border:1px solid var(--rd-border);background:var(--rd-surface-hover);">
+              <div style="display:flex;align-items:center;gap:6px;font-weight:500;">
+                <span class="icon" data-icon="code" data-size="14"></span> executor
+              </div>
+              <div style="font-size:11px;color:var(--rd-text-muted);margin-top:4px;">正在生成测试代码…</div>
+            </div>
+          </div>
+          <div id="panel-上下文" class="hidden">
+            <div style="font-size:12px;color:var(--rd-text-muted);margin-bottom:8px;">已注入偏好：</div>
+            <div style="padding:8px;border-radius:var(--rd-radius-sm);background:var(--rd-surface-hover);margin-bottom:6px;">注释语言：中文</div>
+            <div style="padding:8px;border-radius:var(--rd-radius-sm);background:var(--rd-surface-hover);">技术栈：TypeScript + React</div>
+          </div>
+        </div>
+        </div>
+        <div class="rightPanelCollapsed">
+          <button class="collapseBtn" id="expandRight" title="展开右侧面板">
+            <span class="icon" data-icon="chevron-left" data-size="18"></span>
+          </button>
+          <span style="writing-mode:vertical-rl;font-size:10px;color:var(--rd-text-muted);letter-spacing:2px;">监控</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 内联 SVG 图标库（避免外部 CDN 被拦截）
+    const ICONS = {
+      "compass": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>`,
+      "plus-circle": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>`,
+      "settings": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`,
+      "chevron-down": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`,
+      "chevron-up": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>`,
+      "chevron-left": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>`,
+      "chevron-right": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`,
+      "clock": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+      "file-text": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>`,
+      "edit-3": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`,
+      "users": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+      "bot": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>`,
+      "brain": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/></svg>`,
+      "search": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
+      "code": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
+      "globe": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`,
+      "circle-check": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="9 12 12 15 16 10"/></svg>`,
+      "circle": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="12" r="6"/></svg>`,
+      "loader-2": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>`,
+      "check": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
+      "file-code": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 13 11 15 15 11"/></svg>`,
+      "shield": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`,
+      "book-open": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>`,
+      "git-branch": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>`,
+      "x": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
+      "mic": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`,
+      "send": `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`
+    };
+
+    function renderIcons() {
+      document.querySelectorAll('.icon[data-icon]').forEach(el => {
+        const name = el.getAttribute('data-icon');
+        const size = el.getAttribute('data-size') || '16';
+        if (ICONS[name]) {
+          el.innerHTML = ICONS[name];
+          const svg = el.querySelector('svg');
+          if (svg) {
+            svg.setAttribute('width', size);
+            svg.setAttribute('height', size);
+          }
+        }
+      });
+    }
+
+    // 主题切换
+    function setTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      document.querySelectorAll('.theme-btn').forEach(btn => {
+        btn.style.color = btn.getAttribute('data-theme') === theme ? 'var(--rd-primary)' : 'var(--rd-text-muted)';
+      });
+    }
+
+    // 右侧面板 Tab 切换
+    function setRightTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => {
+        t.classList.toggle('active', t.getAttribute('data-tab') === tab);
+      });
+      ['任务', '工具', '子 Agent', '上下文'].forEach(name => {
+        const panel = document.getElementById('panel-' + name);
+        if (panel) panel.classList.toggle('hidden', name !== tab);
+      });
+    }
+
+    // 侧边栏折叠 / 展开
+    function setLeftCollapsed(collapsed) {
+      document.getElementById('leftSidebar').classList.toggle('collapsed', collapsed);
+    }
+    function setRightCollapsed(collapsed) {
+      document.getElementById('rightPanel').classList.toggle('collapsed', collapsed);
+    }
+
+    // 动态消息流模拟
+    let isProcessing = false;
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+    function addUserMessage(text) {
+      const container = document.getElementById('chatMessages');
+      const wrapper = document.createElement('div');
+      wrapper.style.cssText = 'display:flex;align-items:flex-end;gap:8px;';
+      wrapper.innerHTML = `
+        <div style="width:28px;height:28px;border-radius:50%;background:var(--rd-surface-hover);display:flex;align-items:center;justify-content:center;font-size:12px;">你</div>
+        <div class="message user">${escapeHtml(text)}</div>
+      `;
+      container.appendChild(wrapper);
+      container.scrollTop = container.scrollHeight;
+    }
+    function matchScenario(text) {
+      const t = text.toLowerCase();
+      if (t.includes('搜索') || t.includes('search') || t.includes('待办') || t.includes('todo')) return 'search';
+      if (t.includes('测试') || t.includes('test')) return 'test';
+      if (t.includes('解释') || t.includes('架构') || t.includes('explain')) return 'explain';
+      if (t.includes('审查') || t.includes('review')) return 'review';
+      if (t.includes('安全') || t.includes('依赖') || t.includes('risk')) return 'security';
+      if (t.includes('文档') || t.includes('api') || t.includes('doc')) return 'doc';
+      if (t.includes('分支') || t.includes('实验') || t.includes('experiment')) return 'branch';
+      return 'default';
+    }
+    function presetResponse(scenario) {
+      const map = {
+        test: {
+          intro: '好的，我先看一下现有实现和测试结构。',
+          reasoning: ['分析变更范围', '查找相关测试', '生成边界用例'],
+          tools: [
+            { type: 'read', target: 'src/router/config.ts', duration: 0.3 },
+            { type: 'read', target: 'tests/router/classifier.test.ts', duration: 0.2 },
+            { type: 'write', target: 'src/router/new-rule.test.ts', duration: 0.4 }
+          ],
+          subAgents: [
+            { role: 'researcher', status: 'done', task: '返回相关文件引用' },
+            { role: 'executor', status: 'running', task: '生成测试代码' }
+          ],
+          todos: [
+            { text: '定位变更文件', done: true },
+            { text: '补全边界用例', done: false },
+            { text: '写入测试文件', done: false }
+          ],
+          final: '已生成 <code style="background:rgba(79,70,229,0.12);padding:1px 4px;border-radius:4px;">src/router/new-rule.test.ts</code>，包含 3 个边界用例。需要我运行测试吗？',
+          task: '生成新单元测试',
+          artifact: 'src/router/new-rule.test.ts'
+        },
+        explain: {
+          intro: '我来梳理一下当前项目的核心架构。',
+          reasoning: ['扫描入口文件', '识别模块依赖', '构建调用链路', '整理待办'],
+          tools: [
+            { type: 'read', target: 'src/main.ts', duration: 0.2 },
+            { type: 'read', target: 'src/router/index.ts', duration: 0.2 },
+            { type: 'read', target: 'src/executor/index.ts', duration: 0.2 },
+            { type: 'read', target: 'src/memory/index.ts', duration: 0.2 }
+          ],
+          subAgents: [
+            { role: 'researcher', status: 'running', task: '扫描模块依赖' }
+          ],
+          todos: [
+            { text: '读取入口与核心模块', done: true },
+            { text: '输出架构分层说明', done: false }
+          ],
+          final: '项目核心由三层组成：路由层（Router）负责模型分发，执行层（Executor）处理工具调用，记忆层（Memory）持久化上下文。需要我展开某一层吗？',
+          task: '解释项目架构',
+          artifact: 'architecture-map.md'
+        },
+        search: {
+          intro: '我先去网上搜索最新方案，再帮你整理待办。',
+          reasoning: ['解析查询意图', '调用搜索引擎', '筛选权威来源', '生成待办清单'],
+          tools: [
+            { type: 'network', target: 'search: Pi Agent 最新动态 2026', duration: 0.8 },
+            { type: 'network', target: 'fetch: inflection.ai blog', duration: 0.6 },
+            { type: 'read', target: 'project-memory.md', duration: 0.2 }
+          ],
+          subAgents: [
+            { role: 'researcher', status: 'done', task: '检索并总结 3 篇来源' },
+            { role: 'planner', status: 'running', task: '拆解可执行任务' }
+          ],
+          todos: [
+            { text: '搜索 Pi Agent 最新动态', done: true },
+            { text: '总结可借鉴特性', done: true },
+            { text: '写入 Phase-45 待办', done: false }
+          ],
+          final: '已搜索到 3 条相关来源，整理出 5 项可落地特性。待办已写入 <code style="background:rgba(79,70,229,0.12);padding:1px 4px;border-radius:4px;">Phase-45 任务板</code>，要现在查看吗？',
+          task: '搜索方案并整理待办',
+          artifact: 'Phase-45 任务板'
+        },
+        review: {
+          intro: '我先拉取当前分支的变更再做审查。',
+          reasoning: ['获取 diff', '识别关键改动', '对照规范检查'],
+          tools: [
+            { type: 'read', target: 'git diff HEAD~1', duration: 0.3 },
+            { type: 'read', target: 'src/router/config.ts', duration: 0.2 },
+            { type: 'read', target: 'src/executor/loop.ts', duration: 0.2 },
+            { type: 'exec', target: 'npm run lint', duration: 0.5 }
+          ],
+          subAgents: [
+            { role: 'researcher', status: 'done', task: '汇总变更范围' },
+            { role: 'reviewer', status: 'running', task: '输出审查结论' }
+          ],
+          todos: [
+            { text: '拉取 diff', done: true },
+            { text: '检查代码规范', done: false },
+            { text: '生成 review 报告', done: false }
+          ],
+          final: '审查完成：发现 2 处建议修改——缺少错误处理、变量命名可更清晰。已生成 review 报告。',
+          task: '代码审查',
+          artifact: 'review-report.md'
+        },
+        security: {
+          intro: '我检查一下新增依赖的安全风险。',
+          reasoning: ['读取 package.json', '查询漏洞数据库', '评估影响范围'],
+          tools: [
+            { type: 'read', target: 'package.json', duration: 0.2 },
+            { type: 'network', target: 'npm audit registry', duration: 0.7 }
+          ],
+          subAgents: [
+            { role: 'researcher', status: 'running', task: '查询漏洞数据库' }
+          ],
+          todos: [
+            { text: '读取依赖列表', done: true },
+            { text: '比对 CVE 数据库', done: false },
+            { text: '输出修复建议', done: false }
+          ],
+          final: '检查完成：2 个新依赖中 1 个存在低危 CVE，建议升级到 patched 版本。',
+          task: '依赖安全检查',
+          artifact: 'security-report.md'
+        },
+        doc: {
+          intro: '我来从类型定义生成 API 文档。',
+          reasoning: ['扫描类型文件', '提取接口签名', '格式化表格'],
+          tools: [
+            { type: 'read', target: 'src/types/router.ts', duration: 0.2 },
+            { type: 'read', target: 'src/types/executor.ts', duration: 0.2 },
+            { type: 'read', target: 'src/types/memory.ts', duration: 0.2 },
+            { type: 'write', target: 'README.md', duration: 0.3 }
+          ],
+          subAgents: [
+            { role: 'researcher', status: 'done', task: '提取接口签名' },
+            { role: 'executor', status: 'running', task: '格式化文档表格' }
+          ],
+          todos: [
+            { text: '扫描类型定义', done: true },
+            { text: '生成接口表格', done: false },
+            { text: '写入 README', done: false }
+          ],
+          final: '已生成 README 表格，包含 12 个接口的入参、返回值和示例。',
+          task: '生成 API 文档',
+          artifact: 'README.md'
+        },
+        branch: {
+          intro: '我为你开启一个分支实验，同时探索两种方案。',
+          reasoning: ['定义实验目标', '切分任务', '并行执行', '对比结果'],
+          tools: [
+            { type: 'read', target: 'src/utils/async.ts', duration: 0.2 },
+            { type: 'exec', target: 'git checkout -b exp/callback', duration: 0.3 },
+            { type: 'exec', target: 'git checkout -b exp/promise', duration: 0.3 }
+          ],
+          subAgents: [
+            { role: 'researcher', status: 'done', task: '定义实验假设' },
+            { role: 'executor', status: 'running', task: '实现两种方案' },
+            { role: 'reviewer', status: 'running', task: '对比代码质量' }
+          ],
+          todos: [
+            { text: '切分实验任务', done: true },
+            { text: '并行实现方案 A/B', done: false },
+            { text: '输出对比结论', done: false }
+          ],
+          final: '实验 A（回调方案）与实验 B（Promise 方案）均已完成，B 方案代码更少、可读性更高。',
+          task: '分支实验',
+          artifact: 'experiment-result.md'
+        },
+        default: {
+          intro: '我理解了，让我先分析一下。',
+          reasoning: ['理解需求', '检索上下文', '制定计划'],
+          tools: [
+            { type: 'read', target: 'project-memory.md', duration: 0.2 }
+          ],
+          subAgents: [
+            { role: 'researcher', status: 'running', task: '检索相关上下文' }
+          ],
+          todos: [
+            { text: '理解用户意图', done: true },
+            { text: '检索项目上下文', done: false },
+            { text: '制定执行计划', done: false }
+          ],
+          final: '已根据你的需求完成初步分析，下一步可以细化具体实现。'
+        }
+      };
+      return map[scenario] || map.default;
+    }
+    // 文字流淌 / 打字机效果
+    function typeWrite(element, text, speed, onDone) {
+      element.innerHTML = '';
+      const cursor = document.createElement('span');
+      cursor.className = 'typewriter-cursor';
+      element.appendChild(cursor);
+      let i = 0;
+      const timer = setInterval(() => {
+        if (i < text.length) {
+          cursor.before(document.createTextNode(text.charAt(i)));
+          i++;
+        } else {
+          clearInterval(timer);
+          cursor.remove();
+          if (onDone) onDone();
+        }
+      }, speed);
+    }
+    function typeWriteHtml(container, source, speed, onDone) {
+      container.innerHTML = '';
+      const cursor = document.createElement('span');
+      cursor.className = 'typewriter-cursor';
+      container.appendChild(cursor);
+      const text = source.textContent;
+      let i = 0;
+      const timer = setInterval(() => {
+        if (i < text.length) {
+          cursor.before(document.createTextNode(text.charAt(i)));
+          i++;
+        } else {
+          clearInterval(timer);
+          cursor.remove();
+          container.innerHTML = source.innerHTML;
+          if (onDone) onDone();
+        }
+      }, speed);
+    }
+
+    function finishFlow(resp) {
+      isProcessing = false;
+      document.getElementById('sendBtn').disabled = false;
+      document.getElementById('sendBtn').style.opacity = '1';
+      if (resp.task) {
+        setRightTab('任务');
+        setRightCollapsed(false);
+      }
+    }
+
+    // 思考状态：步骤高亮 + 进度条
+    function showReasoning(flow, uid, resp, container) {
+      const reasoningBar = document.createElement('div');
+      reasoningBar.className = 'statusBar slide-in';
+      reasoningBar.id = 'reasoningBar-' + uid;
+      reasoningBar.innerHTML = `
+        <span class="icon pulse" data-icon="loader-2" data-size="12"></span>
+        <span id="reasoningText-${uid}">正在思考…</span>
+        <span style="margin-left:auto;font-size:11px;color:var(--rd-primary);">思考中</span>
+      `;
+      flow.appendChild(reasoningBar);
+
+      const progress = document.createElement('div');
+      progress.className = 'thinking-progress slide-in';
+      progress.innerHTML = `<div class="thinking-progress-bar running" id="thinkingProgress-${uid}"></div>`;
+      flow.appendChild(progress);
+
+      const steps = document.createElement('div');
+      steps.className = 'thinking-steps slide-in';
+      steps.id = 'thinkingSteps-' + uid;
+      steps.innerHTML = resp.reasoning.map((r, i) => `
+        <div class="thinking-step" id="step-${uid}-${i}">
+          <span class="step-dot"></span>
+          <span>${escapeHtml(r)}</span>
+        </div>
+      `).join('');
+      flow.appendChild(steps);
+
+      renderIcons();
+      container.scrollTop = container.scrollHeight;
+
+      let stage = 0;
+      const stepInterval = setInterval(() => {
+        if (stage < resp.reasoning.length) {
+          for (let j = 0; j < resp.reasoning.length; j++) {
+            const step = document.getElementById('step-' + uid + '-' + j);
+            step.classList.remove('active', 'done');
+            if (j < stage) step.classList.add('done');
+            if (j === stage) step.classList.add('active');
+          }
+          document.getElementById('reasoningText-' + uid).textContent = resp.reasoning[stage];
+          stage++;
+        } else {
+          clearInterval(stepInterval);
+          for (let j = 0; j < resp.reasoning.length; j++) {
+            const step = document.getElementById('step-' + uid + '-' + j);
+            step.classList.remove('active');
+            step.classList.add('done');
+          }
+          document.getElementById('reasoningText-' + uid).textContent = '思考完成';
+          const loader = reasoningBar.querySelector('.pulse');
+          if (loader) loader.classList.remove('pulse');
+          setTimeout(() => showTools(flow, uid, resp, container), 300);
+        }
+      }, 650);
+    }
+
+    // 工具调用：逐个出现，带 running / success 状态
+    function showTools(flow, uid, resp, container) {
+      const toolBar = document.createElement('div');
+      toolBar.className = 'statusBar slide-in';
+      toolBar.id = 'toolBar-' + uid;
+      toolBar.style.background = 'var(--rd-surface-hover)';
+      toolBar.innerHTML = `
+        <span class="icon pulse" data-icon="loader-2" data-size="12"></span>
+        <span id="toolSummaryText-${uid}">正在调用工具…</span>
+        <span id="toolToggleText-${uid}" style="margin-left:auto;font-size:11px;">展开</span>
+      `;
+      flow.appendChild(toolBar);
+
+      const toolDetail = document.createElement('div');
+      toolDetail.id = 'toolDetail-' + uid;
+      toolDetail.className = 'hidden';
+      toolDetail.style.cssText = 'margin:8px 14px 0;display:flex;flex-direction:column;gap:6px;';
+      flow.appendChild(toolDetail);
+
+      toolBar.addEventListener('click', () => toggleExpand('toolChevron-' + uid, 'toolDetail-' + uid, 'toolToggleText-' + uid, '展开', '收起'));
+      renderIcons();
+      container.scrollTop = container.scrollHeight;
+
+      const iconMap = { read: 'file-text', write: 'edit-3', exec: 'code', network: 'globe' };
+      const labelMap = { read: '读取', write: '写入', exec: '执行', network: '网络' };
+      let completed = 0;
+
+      resp.tools.forEach((tool, idx) => {
+        setTimeout(() => {
+          const entry = document.createElement('div');
+          entry.className = 'tool-log-entry running';
+          entry.id = `tool-${uid}-${idx}`;
+          entry.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="display:flex;align-items:center;gap:6px;font-weight:500;">
+                <span class="icon" data-icon="${iconMap[tool.type]}" data-size="12"></span>
+                ${labelMap[tool.type]} ${escapeHtml(tool.target)}
+              </span>
+              <span style="font-size:11px;color:var(--rd-primary);display:flex;align-items:center;gap:4px;">
+                <span class="icon pulse" data-icon="loader-2" data-size="10"></span> 调用中
+              </span>
+            </div>
+          `;
+          toolDetail.appendChild(entry);
+          renderIcons();
+          container.scrollTop = container.scrollHeight;
+
+          setTimeout(() => {
+            entry.classList.remove('running');
+            entry.classList.add('success');
+            entry.innerHTML = `
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="display:flex;align-items:center;gap:6px;font-weight:500;">
+                  <span class="icon" data-icon="${iconMap[tool.type]}" data-size="12"></span>
+                  ${labelMap[tool.type]} ${escapeHtml(tool.target)}
+                </span>
+                <span style="font-size:11px;color:var(--rd-success);">${tool.duration}s · 完成</span>
+              </div>
+            `;
+            renderIcons();
+            completed++;
+            if (completed === resp.tools.length) {
+              toolBar.innerHTML = `
+                <span class="icon" id="toolChevron-${uid}" data-icon="chevron-down" data-size="14"></span>
+                <span id="toolSummaryText-${uid}">完成 ${resp.tools.length} 次工具调用</span>
+                <span id="toolToggleText-${uid}" style="margin-left:auto;font-size:11px;">展开</span>
+              `;
+              toolBar.addEventListener('click', () => toggleExpand('toolChevron-' + uid, 'toolDetail-' + uid, 'toolToggleText-' + uid, '展开', '收起'));
+              renderIcons();
+              setTimeout(() => showSubAgents(flow, uid, resp, container), 300);
+            }
+          }, 700 + idx * 180);
+        }, idx * 420);
+      });
+    }
+
+    // 子 Agent 协作卡片：按顺序逐个激活 / 完成
+    function showSubAgents(flow, uid, resp, container) {
+      const subCard = document.createElement('div');
+      subCard.className = 'subAgentCard slide-in';
+      subCard.id = 'subAgentCard-' + uid;
+      subCard.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;">
+            <span class="icon" data-icon="users" data-size="14"></span>
+            <span id="subAgentTitle-${uid}">${resp.subAgents.length} 个子 Agent 等待中</span>
+          </div>
+          <span class="icon" id="subChevron-${uid}" data-icon="chevron-down" data-size="14"></span>
+        </div>
+        <div id="subAgentDetail-${uid}" class="hidden" style="margin-top:10px;display:flex;flex-direction:column;gap:8px;">
+          ${resp.subAgents.map((agent, i) => `
+            <div class="subAgentRow-${uid}" style="padding:10px;border-radius:var(--rd-radius-sm);background:var(--rd-surface);border:1px solid var(--rd-border);font-size:12px;transition:all 0.3s;" id="subAgent-${uid}-${i}">
+              <div style="display:flex;justify-content:space-between;">
+                <span style="font-weight:500;display:flex;align-items:center;gap:6px;">
+                  <span class="icon subAgentDot-${uid}" data-icon="circle" data-size="8" style="color:var(--rd-text-subtle);transition:all 0.3s;"></span>
+                  ${agent.role}
+                </span>
+                <span class="subAgentStatus-${uid}" style="color:var(--rd-text-subtle);display:flex;align-items:center;gap:4px;">等待中</span>
+              </div>
+              <div style="color:var(--rd-text-muted);margin-top:4px;">${agent.task}</div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+      flow.appendChild(subCard);
+      subCard.addEventListener('click', () => toggleExpand('subChevron-' + uid, 'subAgentDetail-' + uid, null, '', ''));
+      renderIcons();
+      container.scrollTop = container.scrollHeight;
+
+      let current = 0;
+      function activateNext() {
+        if (current >= resp.subAgents.length) {
+          document.getElementById('subAgentTitle-' + uid).textContent = `${resp.subAgents.length} 个子 Agent 协作完成`;
+          renderIcons();
+          setTimeout(() => showTodos(flow, uid, resp, container), 400);
+          return;
+        }
+
+        const cell = document.getElementById('subAgent-' + uid + '-' + current);
+        cell.style.borderColor = 'var(--rd-primary)';
+        cell.style.background = 'var(--rd-surface-highlight)';
+        cell.style.boxShadow = '0 0 0 1px rgba(79,70,229,0.1)';
+        const dot = cell.querySelector('.subAgentDot-' + uid);
+        dot.setAttribute('data-icon', 'loader-2');
+        dot.style.color = 'var(--rd-primary)';
+        dot.classList.add('pulse');
+        const status = cell.querySelector('.subAgentStatus-' + uid);
+        status.style.color = 'var(--rd-primary)';
+        status.innerHTML = '<span class="icon pulse" data-icon="loader-2" data-size="10"></span> 运行中';
+        renderIcons();
+        container.scrollTop = container.scrollHeight;
+
+        setTimeout(() => {
+          cell.style.borderColor = 'var(--rd-success)';
+          cell.style.background = 'rgba(16,185,129,0.06)';
+          cell.style.boxShadow = 'none';
+          dot.setAttribute('data-icon', 'circle-check');
+          dot.style.color = 'var(--rd-success)';
+          dot.classList.remove('pulse');
+          status.style.color = 'var(--rd-success)';
+          status.innerHTML = '<span class="icon" data-icon="circle-check" data-size="12"></span> 已完成';
+          renderIcons();
+          current++;
+          setTimeout(activateNext, 320);
+        }, 900 + Math.random() * 500);
+      }
+
+      setTimeout(activateNext, 300);
+    }
+
+    // 待办清单：动态逐项勾选
+    function showTodos(flow, uid, resp, container) {
+      if (!resp.todos || resp.todos.length === 0) {
+        showFinal(flow, uid, resp, container);
+        return;
+      }
+      const todoList = document.createElement('div');
+      todoList.className = 'todo-list slide-in';
+      todoList.id = 'todoList-' + uid;
+      todoList.innerHTML = `
+        <div style="font-weight:500;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+          <span class="icon" data-icon="circle-check" data-size="12"></span> 待办清单
+        </div>
+        ${resp.todos.map((todo, i) => `
+          <div class="todo-item" id="todo-${uid}-${i}">
+            <span class="todo-check"><span class="icon" data-icon="check" data-size="10"></span></span>
+            <span>${escapeHtml(todo.text)}</span>
+          </div>
+        `).join('')}
+      `;
+      flow.appendChild(todoList);
+      renderIcons();
+      container.scrollTop = container.scrollHeight;
+
+      let idx = 0;
+      const todoInterval = setInterval(() => {
+        if (idx < resp.todos.length) {
+          const item = document.getElementById('todo-' + uid + '-' + idx);
+          item.classList.add('done');
+          idx++;
+          renderIcons();
+        } else {
+          clearInterval(todoInterval);
+          setTimeout(() => showFinal(flow, uid, resp, container), 400);
+        }
+      }, 480);
+    }
+
+    // 最终回复：带 HTML 的打字机收尾
+    function showFinal(flow, uid, resp, container) {
+      const final = document.createElement('div');
+      final.className = 'message assistant slide-in';
+      final.style.marginTop = '12px';
+      final.innerHTML = `<div id="finalText-${uid}"></div>`;
+      flow.appendChild(final);
+      container.scrollTop = container.scrollHeight;
+
+      const temp = document.createElement('div');
+      temp.innerHTML = resp.final;
+      typeWriteHtml(document.getElementById('finalText-' + uid), temp, 18, () => finishFlow(resp));
+    }
+
+    function simulateAgentFlow(inputText) {
+      if (isProcessing) return;
+      const text = inputText.trim();
+      if (!text) return;
+      isProcessing = true;
+      document.getElementById('sendBtn').disabled = true;
+      document.getElementById('sendBtn').style.opacity = '0.6';
+
+      addUserMessage(text);
+      document.getElementById('chatInput').value = '';
+
+      const scenario = matchScenario(text);
+      const resp = presetResponse(scenario);
+      const container = document.getElementById('chatMessages');
+      const uid = Date.now();
+
+      const wrapper = document.createElement('div');
+      wrapper.style.cssText = 'display:flex;align-items:flex-start;gap:8px;';
+      wrapper.innerHTML = `
+        <div style="width:28px;height:28px;border-radius:50%;background:var(--rd-primary);color:var(--rd-primary-foreground);display:flex;align-items:center;justify-content:center;font-size:12px;">
+          <span class="icon" data-icon="bot" data-size="14"></span>
+        </div>
+        <div class="assistantFlow" style="flex:1;min-width:0;"></div>
+      `;
+      container.appendChild(wrapper);
+      const flow = wrapper.querySelector('.assistantFlow');
+      container.scrollTop = container.scrollHeight;
+
+      const introMsg = document.createElement('div');
+      introMsg.className = 'message assistant slide-in';
+      introMsg.innerHTML = `<div style="font-weight:500;margin-bottom:4px;" id="introText-${uid}"></div>`;
+      flow.appendChild(introMsg);
+      renderIcons();
+      typeWrite(document.getElementById('introText-' + uid), resp.intro, 22, () => {
+        showReasoning(flow, uid, resp, container);
+      });
+    }
+    function sendMessage() {
+      const input = document.getElementById('chatInput');
+      simulateAgentFlow(input.value);
+    }
+
+    // 展开 / 折叠
+    function toggleExpand(chevronId, detailId, toggleTextId, openText, closeText) {
+      const detail = document.getElementById(detailId);
+      const chevron = document.getElementById(chevronId);
+      const text = toggleTextId ? document.getElementById(toggleTextId) : null;
+      const isHidden = detail.classList.toggle('hidden');
+      chevron.setAttribute('data-icon', isHidden ? 'chevron-down' : 'chevron-up');
+      if (text) text.textContent = isHidden ? openText : closeText;
+      renderIcons();
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      renderIcons();
+      setTheme('white');
+
+      // 侧边栏折叠/展开
+      document.getElementById('collapseLeft').addEventListener('click', () => setLeftCollapsed(true));
+      document.getElementById('expandLeft').addEventListener('click', () => setLeftCollapsed(false));
+      document.getElementById('collapseRight').addEventListener('click', () => setRightCollapsed(true));
+      document.getElementById('expandRight').addEventListener('click', () => setRightCollapsed(false));
+
+      // 主题按钮
+      document.querySelectorAll('.theme-btn').forEach(btn => {
+        btn.addEventListener('click', () => setTheme(btn.getAttribute('data-theme')));
+      });
+
+      // 右侧面板 Tab
+      document.querySelectorAll('.tab').forEach(tab => {
+        tab.addEventListener('click', () => setRightTab(tab.getAttribute('data-tab')));
+      });
+
+      // 思考展开
+      document.getElementById('reasoningBar').addEventListener('click', () => {
+        toggleExpand('reasoningChevron', 'reasoningDetail', null, '', '');
+      });
+
+      // 工具展开
+      document.getElementById('toolBar').addEventListener('click', () => {
+        toggleExpand('toolChevron', 'toolDetail', 'toolToggleText', '展开', '收起');
+      });
+
+      // 子 Agent 展开
+      document.getElementById('subAgentCard').addEventListener('click', () => {
+        toggleExpand('subChevron', 'subAgentDetail', null, '', '');
+      });
+
+      // 发现页
+      document.getElementById('openDiscovery').addEventListener('click', () => {
+        document.getElementById('discovery').classList.add('open');
+      });
+      document.getElementById('closeDiscovery').addEventListener('click', () => {
+        document.getElementById('discovery').classList.remove('open');
+      });
+      document.querySelectorAll('.discoveryCard').forEach(card => {
+        card.addEventListener('click', () => {
+          document.getElementById('discovery').classList.remove('open');
+          simulateAgentFlow(card.getAttribute('data-prompt'));
+        });
+      });
+
+      // 快捷芯片（点击后直接触发流程）
+      document.querySelectorAll('.quick-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          simulateAgentFlow(chip.getAttribute('data-prompt'));
+        });
+      });
+
+      // 发送按钮 + 回车
+      document.getElementById('sendBtn').addEventListener('click', sendMessage);
+      document.getElementById('chatInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+
+      // 记忆徽章跳转上下文 Tab
+      document.getElementById('memoryBadge').addEventListener('click', () => setRightTab('上下文'));
+
+      // 语音按钮
+      const voiceBtn = document.getElementById('voiceBtn');
+      const recordingHint = document.getElementById('recordingHint');
+      voiceBtn.addEventListener('mousedown', () => {
+        voiceBtn.style.background = 'var(--rd-primary)';
+        voiceBtn.style.color = 'var(--rd-primary-foreground)';
+        recordingHint.classList.remove('hidden');
+      });
+      function stopRecording() {
+        voiceBtn.style.background = 'var(--rd-surface)';
+        voiceBtn.style.color = 'var(--rd-text-muted)';
+        recordingHint.classList.add('hidden');
+      }
+      voiceBtn.addEventListener('mouseup', stopRecording);
+      voiceBtn.addEventListener('mouseleave', stopRecording);
+    });
+  </script>
+</body>
+</html>
