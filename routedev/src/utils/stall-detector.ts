@@ -48,6 +48,9 @@ export class StallDetector {
         }
       }
     }, this.config.checkIntervalMs);
+    // M5 修复：调用 .unref() 让定时器不阻止 Node.js 进程退出
+    // 原实现未调用 .unref()，导致所有任务完成后进程仍无法自然退出
+    this.timer.unref();
   }
 
   stop(): void {

@@ -103,12 +103,12 @@ describe('verify.ts 模块', () => {
   });
 
   describe('runAllChecks（跳过测试套件）', () => {
-    it('返回包含 8 项检查的 VerifyReport', async () => {
+    it('返回包含 9 项检查的 VerifyReport', async () => {
       const report = await runAllChecks({ skipTestSuite: true });
-      expect(report.results).toHaveLength(8);
-      expect(report.total).toBe(8);
+      expect(report.results).toHaveLength(9);
+      expect(report.total).toBe(9);
       expect(report.passed).toBeGreaterThanOrEqual(0);
-      expect(report.passed).toBeLessThanOrEqual(8);
+      expect(report.passed).toBeLessThanOrEqual(9);
       expect(report.allPassed).toBe(report.passed === report.total);
     });
 
@@ -123,10 +123,11 @@ describe('verify.ts 模块', () => {
       }
     });
 
-    it('序号从 1 到 8 连续', async () => {
+    it('序号从 1 到 8 连续（含 10 = description lint）', async () => {
       const report = await runAllChecks({ skipTestSuite: true });
       const indices = report.results.map((r) => r.index);
-      expect(indices).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+      // Phase 47 Task 2 新增 checkDescriptionLint（index=10），插入到 checkTestSuite 之前
+      expect(indices).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 10]);
     });
   });
 });

@@ -25,6 +25,8 @@ export interface GoalStep {
   startedAt?: number;
   /** 步骤结束（完成/失败/跳过）时间戳（毫秒） */
   completedAt?: number;
+  /** 步骤执行过程中修改的文件列表（Phase 32 Task 1.4：供 CompletionGate 验证使用） */
+  modifiedFiles?: string[];
 }
 
 /** 计划步骤别名（蓝图称 PlanStep，与 GoalStep 等价） */

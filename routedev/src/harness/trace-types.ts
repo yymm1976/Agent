@@ -129,7 +129,12 @@ export type AuditAction =
   | 'channel_message_out'
   | 'permission_change'
   | 'config_change'
-  | 'notification';
+  | 'notification'
+  // Phase 34：过程评测指标汇总
+  | 'trajectory_summary'
+  // Phase 35 Task 2：会话生命周期事件（内置钩子写入）
+  | 'session_start'
+  | 'session_end';
 
 /** 审计记录 */
 export interface AuditRecord {
@@ -145,6 +150,38 @@ export interface AuditRecord {
     approved: boolean;
     reason?: string;
   };
+}
+
+/** Phase 34：Trajectory 级过程评测汇总 */
+export interface TrajectorySummary {
+  /** 任务/会话标识 */
+  taskId: string;
+  /** 总输入 token */
+  totalInputTokens: number;
+  /** 总输出 token */
+  totalOutputTokens: number;
+  /** 总 token 数 */
+  totalTokens: number;
+  /** 估算成本（美元，未配置价格时为 0） */
+  totalCost: number;
+  /** 工具调用次数 */
+  toolCallCount: number;
+  /** LLM 调用次数 */
+  llmCallCount: number;
+  /** 重试次数（基于 error 事件或 react_iteration 中 consecutiveErrors 语义） */
+  retryCount: number;
+  /** 首次成功率（无 retry 即成功 = 1，否则按 1/(retry+1) 估算） */
+  firstAttemptSuccessRate: number;
+  /** 执行耗时（毫秒） */
+  durationMs: number;
+  /** 是否成功完成 */
+  success: boolean;
+  /** 终止原因：completed / error / cancelled / max_iterations */
+  terminationReason: 'completed' | 'error' | 'cancelled' | 'max_iterations';
+  /** 使用的模型 id */
+  modelId?: string;
+  /** 场景等级 */
+  tier?: string;
 }
 
 /** TraceCollector 配置 */

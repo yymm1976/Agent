@@ -9,3 +9,23 @@ coverage/
 # 编辑器
 .vscode/
 .idea/
+# Electron 构建产物
+out/
+build/
+release/
+release-v*/
+release2/
+# Electron 打包输出
+*.exe
+*.dmg
+*.AppImage
+*.deb
+*.blockmap
+# CodeGraph 索引
+.codegraph/
+# 测试输出文件
+tests_output*.txt
+tests_output*_err.txt
+# 临时文件
+tmp_*.mjs
+.routedev/

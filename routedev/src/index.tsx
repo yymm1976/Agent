@@ -13,12 +13,13 @@ import { ModelRouter } from './router/router.js';
 import { buildRouterConfig } from './router/config.js';
 import { App } from './cli/App.js';
 import { startServer } from './cli/server.js';
-import { parseArgs, printHelp, printVersion } from './cli/args.js';
+import { parseArgs, parseExecArgs, printHelp, printVersion } from './cli/args.js';
 import { getVersion } from './cli/splash.js';
 import { validateProviders, formatValidationMessages } from './utils/provider-validator.js';
 
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const args = parseArgs(argv);
 
   if (args.version) {
     printVersion();
@@ -38,6 +39,16 @@ async function main(): Promise<void> {
   if (args.command === 'config' && args.subArgs[0] === 'validate') {
     const { validateConfigCommand } = await import('./cli/commands/config.js');
     await validateConfigCommand(args.subArgs[1]);
+    return;
+  }
+
+  // Phase 47 Task 3：exec 子命令优先检查（非交互执行模式）
+  // 支持工具白名单、工作模式权限、总超时，进度走 stderr / 结果走 stdout
+  const execArgs = parseExecArgs(argv);
+  if (execArgs) {
+    const { runExec } = await import('./cli/exec-runner.js');
+    const exitCode = await runExec(execArgs);
+    process.exit(exitCode);
     return;
   }
 
@@ -78,7 +89,9 @@ async function main(): Promise<void> {
     });
 
     // 初始化路由器（Phase 0c：传入 providers 配置，provider 推断优先从配置读取）
-    const modelRouter = new ModelRouter(routerConfig, tracker, config.providers);
+    // CONCERN 修复：传入 execution 配置，使熔断器参数可配置
+    // Phase 42：传入 reasoningMode，让 fast/balanced/accurate 影响 tier 选择
+    const modelRouter = new ModelRouter(routerConfig, tracker, config.providers, undefined, config.execution, config.reasoningMode);
 
     logger.info('RouteDev started', {
       version: getVersion(),

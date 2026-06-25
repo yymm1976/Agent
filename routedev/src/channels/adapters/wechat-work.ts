@@ -17,6 +17,20 @@ export interface WeChatWorkConfig extends ChannelConfig {
   };
 }
 
+/**
+ * 带超时的 fetch 封装：使用 AbortController 在指定毫秒后中止请求
+ * 防止企业微信 API 网络挂起导致调用方无限等待
+ */
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class WeChatWorkAdapter implements ChannelAdapter {
   readonly type: ChannelType = 'wechat-work';
   readonly config: WeChatWorkConfig;
@@ -29,9 +43,12 @@ export class WeChatWorkAdapter implements ChannelAdapter {
 
   constructor(config: WeChatWorkConfig) {
     this.config = config;
-    if (config.options.encodingAESKey) {
+    // C11 修复：支持从环境变量读取密钥，代码中不硬编码任何密钥
+    // 配置优先，环境变量作为后备
+    const aesKey = config.options.encodingAESKey ?? process.env.WECOM_ENCODING_AES_KEY;
+    if (aesKey) {
       // EncodingAESKey 是 Base64 编码的 43 字符，解码后是 32 字节密钥
-      this.aesKey = Buffer.from(config.options.encodingAESKey + '=', 'base64');
+      this.aesKey = Buffer.from(aesKey + '=', 'base64');
     }
   }
 
@@ -48,7 +65,9 @@ export class WeChatWorkAdapter implements ChannelAdapter {
   }
 
   isRunning(): boolean {
-    return !!this.config.options.corpId && !!this.config.options.corpSecret;
+    // C11 修复：支持从环境变量读取 corpId/corpSecret
+    return !!(this.config.options.corpId ?? process.env.WECOM_CORP_ID)
+      && !!(this.config.options.corpSecret ?? process.env.WECOM_CORP_SECRET);
   }
 
   onMessage(handler: ChannelMessageHandler): void {
@@ -60,9 +79,14 @@ export class WeChatWorkAdapter implements ChannelAdapter {
       return { text: '', success: false, error: 'no handler' };
     }
 
-    // 应用渠道回复（实际上 onMessage 已被外部调用，这里保留占位）
+    // 调用企业微信 API 实际发送消息（isGroup 参数保留以匹配接口签名，企业微信当前仅支持单聊推送）
+    void isGroup; // eslint-disable-line @typescript-eslint/no-unused-expressions
+    const ok = await this.sendToUser(targetId, text);
     this.messagesProcessed++;
     this.lastMessageAt = Date.now();
+    if (!ok) {
+      return { text: '', success: false, error: '企业微信 API 发送失败' };
+    }
     return { text, success: true };
   }
 
@@ -77,7 +101,8 @@ export class WeChatWorkAdapter implements ChannelAdapter {
 
   /** 验证企业微信签名 */
   verifySignature(body: string, signature: string, timestamp: string): boolean {
-    const token = this.config.options.token;
+    // C11 修复：Token 优先从配置读取，其次从环境变量读取，代码中不硬编码任何密钥
+    const token = this.config.options.token ?? process.env.WECOM_WEBHOOK_TOKEN;
     if (!token) {
       // 生产模式：签名密钥未配置时拒绝请求，避免静默放行
       // 开发模式：降级放行（保留开发便利），但记录警告
@@ -131,7 +156,8 @@ export class WeChatWorkAdapter implements ChannelAdapter {
       return decrypted;
     } catch (error) {
       logger.warn('WeChatWork: decrypt failed', { error: String(error) });
-      return encrypted;
+      // Minor 修复：解密失败返回空字符串而非密文，避免后续 XML 解析异常
+      return '';
     }
   }
 
@@ -188,7 +214,9 @@ export class WeChatWorkAdapter implements ChannelAdapter {
 
   /** 刷新 access_token（实际调用企业微信 API） */
   async refreshAccessToken(): Promise<string | null> {
-    const { corpId, corpSecret } = this.config.options;
+    // C11 修复：支持从环境变量读取 corpId/corpSecret，代码中不硬编码
+    const corpId = this.config.options.corpId ?? process.env.WECOM_CORP_ID;
+    const corpSecret = this.config.options.corpSecret ?? process.env.WECOM_CORP_SECRET;
     if (!corpId || !corpSecret) return null;
 
     // 脱敏日志：不记录完整 URL（含 corpSecret）
@@ -199,7 +227,7 @@ export class WeChatWorkAdapter implements ChannelAdapter {
       // 注意：企业微信 API 仅支持 GET query 传参，无法改用 POST body
       // 确保所有错误处理路径不记录完整 URL
       const url = `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${encodeURIComponent(corpId)}&corpsecret=${encodeURIComponent(corpSecret)}`;
-      const response = await fetch(url);
+      const response = await fetchWithTimeout(url);
       const data = await response.json() as { access_token?: string; expires_in?: number; errcode?: number };
 
       if (data.access_token && data.expires_in) {
@@ -234,7 +262,7 @@ export class WeChatWorkAdapter implements ChannelAdapter {
     const agentIdNum = isNaN(rawAgentId) ? 0 : rawAgentId;
 
     try {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${token}`,
         {
           method: 'POST',

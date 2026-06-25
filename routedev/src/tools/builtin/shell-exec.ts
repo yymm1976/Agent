@@ -33,7 +33,7 @@ export class ShellExecTool implements ITool {
 
   readonly definition: ToolDefinition = {
     name: 'shell_exec',
-    description: '执行 Shell 命令。返回命令的标准输出和标准错误。超时时间由 context 控制。',
+    description: '当用户需要执行 shell 命令、运行构建脚本、或调用系统工具时，使用此工具。执行前会进行环境变量白名单过滤与熔断保护。',
     parameters: {
       type: 'object',
       properties: {
@@ -77,6 +77,21 @@ export class ShellExecTool implements ITool {
       : context.workingDirectory;
     const timeoutMs = (args.timeoutMs as number) ?? context.timeoutMs ?? 30000;
 
+    // C3 修复：校验 cwd 在允许目录内，防止通过绝对路径 workingDirectory 逃逸到任意目录
+    const allowedDirs = context.allowedDirectories ?? [context.workingDirectory];
+    const isCwdAllowed = allowedDirs.some(dir => {
+      const rel = path.relative(dir, cwd);
+      return !rel.startsWith('..') && !path.isAbsolute(rel);
+    });
+    if (!isCwdAllowed) {
+      return {
+        success: false,
+        output: '',
+        error: `工作目录 "${args.workingDirectory}" 不在允许范围内`,
+        durationMs: 0,
+      };
+    }
+
     // 用 resilientExecute 包装：熔断器保护 + 可选重试
     // shell 命令默认不重试（maxRetries=0），仅启用熔断器防止连续失败
     try {
@@ -111,9 +126,11 @@ export class ShellExecTool implements ITool {
       let killed = false;
 
       // 根据平台选择 shell
+      // Windows 上使用 PowerShell：兼容 cmd 命令且原生支持 cmdlet（Remove-Item/Get-ChildItem 等）
+      // 避免 LLM 生成 PowerShell 命令时在 cmd.exe 中乱码或报错
       const isWin = process.platform === 'win32';
-      const shell = isWin ? 'cmd.exe' : '/bin/sh';
-      const shellArgs = isWin ? ['/c', command] : ['-c', command];
+      const shell = isWin ? 'powershell.exe' : '/bin/sh';
+      const shellArgs = isWin ? ['-NoProfile', '-NonInteractive', '-Command', command] : ['-c', command];
 
       // Phase 29 Task 3：环境变量白名单过滤
       // 仅允许白名单内的变量被子进程覆盖，防止 env 注入攻击
@@ -126,12 +143,14 @@ export class ShellExecTool implements ITool {
         }
       }
 
+      const startTime = Date.now();
       const child = spawn(shell, shellArgs, {
         cwd,
         env: { ...process.env, ...filteredEnv },
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: timeoutMs,
+        // M5 修复：移除 spawn 的 timeout 选项，仅保留手动 setTimeout（含 SIGKILL 兜底）
+        // 避免 spawn timeout 与手动 setTimeout 同时触发 SIGTERM 的竞态
       });
 
       const timeout = setTimeout(() => {
@@ -165,7 +184,7 @@ export class ShellExecTool implements ITool {
           success: false,
           output: '',
           error: `启动命令失败: ${error.message}`,
-          durationMs: 0,
+          durationMs: Date.now() - startTime,
         });
       });
 
@@ -177,7 +196,7 @@ export class ShellExecTool implements ITool {
             success: false,
             output: stdout,
             error: `命令执行超时（>${timeoutMs}ms）`,
-            durationMs: 0,
+            durationMs: Date.now() - startTime,
           });
           return;
         }
@@ -192,7 +211,7 @@ export class ShellExecTool implements ITool {
           success: code === 0,
           output,
           error: code !== 0 && !stderr ? `命令退出码非零: ${code}` : undefined,
-          durationMs: 0,
+          durationMs: Date.now() - startTime,
           metadata: { exitCode: code, signal },
         });
       });

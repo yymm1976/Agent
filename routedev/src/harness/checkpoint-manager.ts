@@ -16,6 +16,7 @@ import crypto from 'node:crypto';
 import type {
   Checkpoint,
   CheckpointDiff,
+  CheckpointLLMClient,
   CheckpointManagerConfig,
   CreateCheckpointOptions,
   GoalPlan,
@@ -24,6 +25,9 @@ import { logger } from '../utils/logger.js';
 
 /** Git commit 消息前缀（用于区分自动检查点和用户提交） */
 const CHECKPOINT_PREFIX = '[routedev-checkpoint]';
+
+/** 摘要生成超时时间（陷阱 #138：必须设超时，避免 LLM 卡住阻塞检查点流程） */
+const SUMMARY_TIMEOUT_MS = 3000;
 
 export class CheckpointManager {
   private git: SimpleGit;
@@ -36,6 +40,10 @@ export class CheckpointManager {
   private goalPlanPath: string;
   /** 可选：自定义存储目录（默认使用 APPDATA） */
   private storageDirOverride?: string;
+  /** 可选：摘要生成用的 LLM 客户端（未注入时降级为原始 description） */
+  private llmClient?: CheckpointLLMClient;
+  /** 摘要生成使用的模型 ID */
+  private llmModel?: string;
 
   constructor(config: CheckpointManagerConfig, storageDirOverride?: string) {
     this.config = config;
@@ -108,19 +116,42 @@ export class CheckpointManager {
         description,
         filesSnapshot,
         isAutoCreated: options.isAutoCreated ?? true,
+        stats: {
+          filesChanged: filesSnapshot.length,
+          tokensUsed: options.tokensUsed ?? 0,
+        },
       };
 
+      // 先持久化 checkpoint（安全网优先——Checkpoint 创建不能被摘要生成阻塞）
+      // 即使后续摘要生成失败/超时，checkpoint 本身已保存到磁盘
       this.checkpoints.push(checkpoint);
       await this.saveMetadata();
 
       // 自动清理：保留最近 N 个
       await this.prune();
 
+      // 然后生成语义化摘要（3 秒超时，失败/超时降级为原始 description）
+      // 注意：摘要生成在 checkpoint 持久化之后，即使失败也不影响 checkpoint 本身
+      try {
+        const summary = await this.generateSummary(description);
+        if (summary && summary !== description) {
+          checkpoint.summary = summary;
+          // 摘要更新后重新持久化（失败不影响 checkpoint 本身）
+          await this.saveMetadata();
+        }
+      } catch (error) {
+        logger.warn('Checkpoint summary generation failed, using description as fallback', {
+          id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
       logger.info('Checkpoint created', {
         id,
         commit: commitResult.commit.slice(0, 7),
         files: filesSnapshot.length,
         auto: checkpoint.isAutoCreated,
+        hasSummary: !!checkpoint.summary,
       });
 
       return checkpoint;
@@ -134,6 +165,66 @@ export class CheckpointManager {
   /** 列出所有检查点 */
   list(): Checkpoint[] {
     return [...this.checkpoints];
+  }
+
+  /**
+   * 注入 LLM 客户端用于语义化摘要生成（可选）
+   * 不注入时 generateSummary() 会降级为返回原始 description
+   */
+  setLLMClient(client: CheckpointLLMClient | undefined, model: string): void {
+    this.llmClient = client;
+    this.llmModel = model;
+    logger.debug('CheckpointManager LLM client set', {
+      hasClient: !!client,
+      model,
+    });
+  }
+
+  /**
+   * 生成语义化摘要
+   * - LLM 可用时：调用 LLM 生成不超过 30 字的中文摘要
+   * - LLM 不可用 / 超时 / 失败时：降级为原始 description（陷阱 #138）
+   *
+   * 注意：本方法不会抛出异常，调用方无需 try/catch
+   * @param description 原始检查点描述
+   * @returns 语义化摘要（失败时返回原始 description）
+   */
+  async generateSummary(description: string): Promise<string> {
+    // 无 LLM 客户端或模型 ID 时，降级为原始 description
+    if (!this.llmClient || !this.llmModel) {
+      return description;
+    }
+
+    try {
+      // 陷阱 #138：必须设超时，避免 LLM 卡住阻塞检查点流程
+      // 使用 Promise.race 实现 3 秒超时，超时后降级为原始 description
+      const result = await Promise.race([
+        this.llmClient!.complete({
+          model: this.llmModel!,
+          messages: [
+            { role: 'user', content: `请为以下检查点生成简洁的中文摘要（不超过30字）：\n${description}` },
+          ],
+          systemPrompt: '你是一个检查点摘要生成器。根据检查点描述生成简洁的中文摘要，不超过30字。直接返回摘要文本，不要任何额外说明、引号或标点符号前缀。',
+          maxTokens: 50,
+          temperature: 0,
+          timeoutMs: SUMMARY_TIMEOUT_MS,
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Summary generation timeout after ${SUMMARY_TIMEOUT_MS}ms`)), SUMMARY_TIMEOUT_MS),
+        ),
+      ]);
+
+      const summary = result.content.trim();
+      // 空摘要或与原始描述相同则视为降级
+      if (!summary) return description;
+      return summary;
+    } catch (error) {
+      // 陷阱 #138：超时或失败时降级为原始 description，不抛出异常
+      logger.warn('Checkpoint summary generation failed, falling back to description', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return description;
+    }
   }
 
   /** 获取检查点之间的差异 */
@@ -204,22 +295,33 @@ export class CheckpointManager {
     // 如果有未提交的更改，git reset --hard 会丢失这些更改，因此中止回滚
     try {
       const status = await this.git.status();
+      // 修复：扩展检查覆盖所有 simple-git StatusResult 字段，避免漏判 staged/renamed/created/conflicted 等状态
       const hasUncommitted = status.modified.length > 0
         || status.not_added.length > 0
-        || status.deleted.length > 0;
+        || status.deleted.length > 0
+        || status.staged.length > 0
+        || status.renamed.length > 0
+        || status.created.length > 0
+        || status.conflicted.length > 0;
 
       if (hasUncommitted) {
         logger.error('回滚中止：工作区有未提交的更改。请先 stash 或 commit 后再回滚。', {
           modified: status.modified.length,
           not_added: status.not_added.length,
           deleted: status.deleted.length,
+          staged: status.staged.length,
+          renamed: status.renamed.length,
+          created: status.created.length,
+          conflicted: status.conflicted.length,
         });
         return false;
       }
     } catch (error) {
+      // 安全修复：状态检查失败时 fail-closed，中止回滚
+      // 原行为仅 warn 后继续执行 git reset --hard，可能丢失用户未提交的更改
       const msg = error instanceof Error ? error.message : String(error);
-      logger.warn('Failed to check working directory status, proceeding with rollback', { error: msg });
-      // 状态检查失败时不阻断回滚（可能是 git 临时问题），但记录警告
+      logger.error('回滚中止：工作区状态检查失败，拒绝执行 reset --hard（防止丢失未提交更改）', { error: msg });
+      return false;
     }
 
     try {
@@ -308,11 +410,20 @@ export class CheckpointManager {
 
   // ===== 元数据持久化 =====
 
+  /**
+   * 修复：按项目隔离检查点元数据，避免多项目共用导致串项目污染
+   * 用 workingDirectory 的简单 hash 作为 projectId
+   */
+  private getProjectId(): string {
+    return crypto.createHash('md5').update(this.config.workingDirectory).digest('hex').slice(0, 12);
+  }
+
   /** 解析元数据文件路径（可被测试覆盖） */
   protected resolveStoragePaths(): { metadataPath: string; goalPlanPath: string } {
     const dir = this.getStorageDir();
     return {
-      metadataPath: path.join(dir, 'metadata.json'),
+      // 修复：元数据文件名加入 projectId，按项目隔离
+      metadataPath: path.join(dir, `metadata-${this.getProjectId()}.json`),
       goalPlanPath: path.join(dir, 'current-goal.json'),
     };
   }

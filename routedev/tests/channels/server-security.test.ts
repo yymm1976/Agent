@@ -213,7 +213,8 @@ describe('WebhookServer Security', () => {
 
     it('should track rate limit per client IP', async () => {
       // 使用 X-Forwarded-For 模拟不同客户端 IP
-      server = new WebhookServer({ port: 19919 });
+      // I18 修复：需启用 trustProxy 才会信任 X-Forwarded-For 头
+      server = new WebhookServer({ port: 19919, trustProxy: true });
       await server.start();
 
       // 客户端 A 发送 30 次请求（应全部成功）

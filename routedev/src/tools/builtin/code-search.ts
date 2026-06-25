@@ -12,7 +12,7 @@ import { walkDir, isIgnoredPath, matchGlob } from './search-utils.js';
 export class CodeSearchTool implements ITool {
   readonly definition: ToolDefinition = {
     name: 'code_search',
-    description: '搜索代码内容。优先使用 ripgrep（如可用），否则回退到 JS 实现。支持正则表达式。',
+    description: '当用户需要按正则搜索代码内容、定位某个模式的实现位置时，使用此工具。优先使用 ripgrep，回退到 JS 实现以兼容无 rg 环境。',
     parameters: {
       type: 'object',
       properties: {

@@ -18,13 +18,16 @@ export class MCPTool implements ITool {
     client: Client,
     serverEntry: MCPServerEntry,
   ) {
-    const schemaProperties = (mcpToolDef.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+    const inputSchema = mcpToolDef.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
+    const schemaProperties = inputSchema.properties ?? {};
     this.definition = {
       name: namespacedName,
       description: `[MCP:${serverEntry.name}] ${mcpToolDef.description ?? ''}`,
       parameters: {
         type: 'object',
         properties: schemaProperties,
+        // Phase 32 Task 4.1：保留 required 字段，供 validateArgs 做必填参数检查
+        required: inputSchema.required ?? [],
       },
       requiresApproval: true,
       category: 'mcp',
@@ -43,9 +46,42 @@ export class MCPTool implements ITool {
     const schema = this.definition.parameters;
     const required = (schema.required as string[]) ?? [];
 
+    // 1. 必填参数存在性检查（原有）
     for (const key of required) {
       if (!(key in args)) {
         errors.push(`缺少必需参数: ${key}`);
+      }
+    }
+
+    // 2. Phase 32 Task 4.1：类型检查（新增）
+    //    根据 JSON Schema 的 properties.<key>.type 检查实际参数类型
+    //    支持：string/number/boolean/array/object/null
+    //    type 为 'any' 或未声明时跳过（向后兼容）
+    const properties = (schema.properties ?? {}) as Record<string, { type?: string | string[] }>;
+    for (const [key, value] of Object.entries(args)) {
+      const propSchema = properties[key];
+      if (!propSchema?.type) continue;
+
+      // JSON Schema type 可以是字符串或字符串数组（联合类型）
+      const expectedTypes = Array.isArray(propSchema.type) ? propSchema.type : [propSchema.type];
+      if (expectedTypes.includes('any')) continue;
+
+      // 推断实际类型（array 需在 object 之前判断，因为 typeof [] === 'object'）
+      let actualType: string;
+      if (Array.isArray(value)) {
+        actualType = 'array';
+      } else if (value === null) {
+        actualType = 'null';
+      } else {
+        actualType = typeof value;
+        // JSON Schema 的 integer 对应 JS 的 number
+        if (actualType === 'number' && Number.isInteger(value) && expectedTypes.includes('integer')) {
+          actualType = 'integer';
+        }
+      }
+
+      if (!expectedTypes.includes(actualType)) {
+        errors.push(`参数 ${key} 期望类型 ${expectedTypes.join('|')}，实际为 ${actualType}`);
       }
     }
 

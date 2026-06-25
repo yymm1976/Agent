@@ -34,6 +34,13 @@ export interface ToolExecutionContext {
   environment: Record<string, string>;
   /** 超时时间（毫秒） */
   timeoutMs: number;
+  /**
+   * 可选：用户确认回调
+   * 当安全检查返回 requiresConfirmation=true 时，executor 会调用此回调请求用户确认
+   * 返回 true 表示用户同意执行，false 表示拒绝
+   * 未提供时：requiresConfirmation=true 的工具会被拒绝执行（安全默认）
+   */
+  requestConfirmation?: (reason: string) => Promise<boolean>;
 }
 
 /** 工具执行结果 */
@@ -77,8 +84,13 @@ export interface ITool {
 
 /** 工具注册表接口 */
 export interface IToolRegistry {
-  /** 注册工具 */
-  register(tool: ITool): void;
+  /**
+   * 注册工具
+   * M1 修复：支持 forceOverwrite 参数控制重复注册行为
+   * @param tool 要注册的工具
+   * @param forceOverwrite 是否强制覆盖（默认 true；设为 false 时重复注册抛异常）
+   */
+  register(tool: ITool, forceOverwrite?: boolean): void;
 
   /** 注销工具 */
   unregister(name: string): void;
@@ -116,14 +128,18 @@ export interface SecurityCheckResult {
 
 /** 安全检查器接口 */
 export interface ISecurityChecker {
-  /** 检查文件路径是否安全 */
-  checkFilePath(filePath: string, context: ToolExecutionContext): SecurityCheckResult;
+  /** 检查文件路径是否安全
+   * @param filePath 文件路径
+   * @param context 工具执行上下文
+   * @param isWrite 是否为写入操作（影响 Permission Profile 的 read/write 规则判定，默认 false）
+   */
+  checkFilePath(filePath: string, context: ToolExecutionContext, isWrite?: boolean): SecurityCheckResult;
 
   /** 检查命令是否安全 */
   checkCommand(command: string, context: ToolExecutionContext): SecurityCheckResult;
 
-  /** 检查网络请求是否安全 */
-  checkNetworkRequest(url: string): SecurityCheckResult;
+  /** 检查网络请求是否安全（C1/C2 修复：async 以支持 DNS 解析防 SSRF） */
+  checkNetworkRequest(url: string): Promise<SecurityCheckResult>;
 }
 
 // ============================================================

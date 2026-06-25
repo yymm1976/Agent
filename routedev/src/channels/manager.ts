@@ -15,16 +15,19 @@ export class ChannelManager {
   private router: MessageRouter | null = null;
   private server: WebhookServer | null = null;
   private port: number;
+  private devModeAuth: boolean;
   private cleanupInterval: NodeJS.Timeout | null = null;
 
-  constructor(port: number) {
+  constructor(port: number, devModeAuth: boolean = false) {
     this.port = port;
+    this.devModeAuth = devModeAuth;
   }
 
   /** 初始化所有已配置的渠道 */
   initializeAdapters(entries: ChannelEntryConfig[], router: MessageRouter): void {
     this.router = router;
-    this.server = new WebhookServer({ port: this.port });
+    // I4 修复：将 devModeAuth 传递给 WebhookServer
+    this.server = new WebhookServer({ port: this.port, devModeAuth: this.devModeAuth });
 
     for (const entry of entries) {
       if (!entry.enabled) {
@@ -34,7 +37,8 @@ export class ChannelManager {
 
       try {
         const adapter = this.createAdapter(entry, router);
-        this.adapters.set(entry.type, adapter);
+        // 按 entry.id 存储（而非 entry.type），允许同一类型注册多个实例
+        this.adapters.set(entry.id, adapter);
         this.server.registerAdapter(adapter);
         logger.info('Channel adapter created', { id: entry.id, type: entry.type });
       } catch (error) {

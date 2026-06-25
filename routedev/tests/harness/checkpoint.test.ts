@@ -29,7 +29,7 @@ function createTempRepo(): string {
   return dir;
 }
 
-function makeManager(workingDirectory: string): CheckpointManager {
+function makeManager(workingDirectory: string): { manager: CheckpointManager; storageDir: string } {
   const config: CheckpointManagerConfig = {
     enabled: true,
     maxCheckpoints: 5,
@@ -37,21 +37,35 @@ function makeManager(workingDirectory: string): CheckpointManager {
   };
   // 使用每个测试独立的存储目录，避免元数据冲突
   const storageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'routedev-cp-store-'));
-  return new CheckpointManager(config, storageDir);
+  const manager = new CheckpointManager(config, storageDir);
+  return { manager, storageDir };
 }
 
 describe.skipIf(!HAS_GIT)('CheckpointManager', () => {
   let tempDir: string;
+  let storageDir: string;
   let manager: CheckpointManager;
 
   beforeEach(async () => {
     tempDir = createTempRepo();
-    manager = makeManager(tempDir);
+    const result = makeManager(tempDir);
+    storageDir = result.storageDir;
+    manager = result.manager;
     await manager.init();
   });
 
   afterEach(() => {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    // Windows 下 git 进程可能仍锁定目录，使用重试 + try/catch 避免 EBUSY 导致级联失败
+    for (const dir of [tempDir, storageDir]) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+          break;
+        } catch {
+          // EBUSY/EPERM：最后一次尝试仍失败则忽略，让 OS 在后续清理
+        }
+      }
+    }
   });
 
   it('should initialize successfully in a git repo', () => {
@@ -91,7 +105,7 @@ describe.skipIf(!HAS_GIT)('CheckpointManager', () => {
     expect(list.length).toBe(3);
     expect(list[0].description).toBe('cp 1');
     expect(list[2].description).toBe('cp 3');
-  });
+  }, 20000);
 
   it('should rollback to a checkpoint', async () => {
     fs.writeFileSync(path.join(tempDir, 'a.txt'), 'a1');
@@ -110,7 +124,7 @@ describe.skipIf(!HAS_GIT)('CheckpointManager', () => {
     const list = manager.list();
     expect(list.length).toBe(1);
     expect(list[0].id).toBe(cp1!.id);
-  });
+  }, 20000);
 
   it('should fail to rollback to non-existent checkpoint', async () => {
     const success = await manager.rollback('nonexistent');
@@ -157,7 +171,12 @@ describe.skipIf(!HAS_GIT)('CheckpointManager', () => {
   it('should prune checkpoints beyond maxCheckpoints', async () => {
     // maxCheckpoints: 5
     for (let i = 0; i < 8; i++) {
-      fs.writeFileSync(path.join(tempDir, `file-${i}.txt`), `content ${i}`);
+      const filePath = path.join(tempDir, `file-${i}.txt`);
+      // 使用 fd + fsync 确保文件写入落盘，避免并行模式下 git.status 看不到新文件
+      const fd = fs.openSync(filePath, 'w');
+      fs.writeFileSync(fd, `content ${i}`);
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
       await manager.create({ description: `cp ${i}` });
     }
     // 创建 8 个后，应保留最近 5 个
@@ -165,14 +184,18 @@ describe.skipIf(!HAS_GIT)('CheckpointManager', () => {
     const list = manager.list();
     expect(list[0].description).toBe('cp 3');
     expect(list[4].description).toBe('cp 7');
-  });
+  }, 30000); // 并行模式下 git 操作慢，需更长超时
 
   it('should track files snapshot', async () => {
-    fs.writeFileSync(path.join(tempDir, 'a.txt'), 'a');
-    fs.writeFileSync(path.join(tempDir, 'b.txt'), 'b');
+    for (const name of ['a.txt', 'b.txt']) {
+      const fd = fs.openSync(path.join(tempDir, name), 'w');
+      fs.writeFileSync(fd, name[0]);
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
+    }
     const cp = await manager.create({ description: 'multi-file' });
     expect(cp!.filesSnapshot.length).toBeGreaterThanOrEqual(2);
     expect(cp!.filesSnapshot).toContain('a.txt');
     expect(cp!.filesSnapshot).toContain('b.txt');
-  });
+  }, 15000);
 });

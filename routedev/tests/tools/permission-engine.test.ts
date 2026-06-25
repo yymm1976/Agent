@@ -248,13 +248,15 @@ describe('PermissionEngine', () => {
       expect(patterns).toContain('web_search');
     });
 
-    it('DEFAULT_AUTO_RULES 包含 file_read / file_* / glob / code_search', () => {
+    it('DEFAULT_AUTO_RULES 包含 file_read / file_search / glob / code_search', () => {
       // Phase 0c 修复：合并了原 PermissionChecker 的规则
+      // C3 修复：file_* 已从 auto 移除，避免自动放行 file_write/file_edit 等危险操作
       const patterns = DEFAULT_AUTO_RULES.map(r => r.toolPattern);
       expect(patterns).toContain('file_read');
-      expect(patterns).toContain('file_*');
+      expect(patterns).toContain('file_search');
       expect(patterns).toContain('glob');
       expect(patterns).toContain('code_search');
+      expect(patterns).not.toContain('file_*');
     });
   });
 
@@ -294,14 +296,14 @@ describe('PermissionEngine', () => {
   // 验证原 PermissionChecker 的规则在 PermissionEngine 中生效
   // ============================================================
   describe('Phase 0c: 原 PermissionChecker 规则迁移回归', () => {
-    it('file_write 命中 file_* auto 规则 → auto', () => {
-      // 原 App.tsx: permissionChecker.addRule({ toolPattern: 'file_*', level: 'auto' })
+    it('file_write 不再命中 file_* auto 规则 → confirm', () => {
+      // C3 修复：file_* 已从 auto 移除，破坏性文件操作必须走 confirm
       const engine = createDefaultEngine();
       const result = engine.check('file_write', { path: '/tmp/test.txt' }, 'manual');
-      expect(result.decision).toBe('auto');
+      expect(result.decision).toBe('confirm');
     });
 
-    it('file_search 命中 file_* auto 规则 → auto', () => {
+    it('file_search 命中 file_search auto 规则 → auto', () => {
       const engine = createDefaultEngine();
       const result = engine.check('file_search', { pattern: '*.ts' }, 'manual');
       expect(result.decision).toBe('auto');

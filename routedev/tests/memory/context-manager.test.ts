@@ -43,6 +43,8 @@ function createManager(writer: CheckpointWriter, opts: { enabled?: boolean; wind
       compressionThreshold: opts.threshold ?? 0.8,
       keepRecentMessages: opts.keep ?? 2,
       checkpointEnabled: opts.enabled ?? true,
+      // 单元测试使用低注入阈值，避免 PPR 分数在小图上达不到生产默认 0.7
+      memory: { inference: true, autoLearn: true, injectThreshold: 0 },
     },
     writer,
   );

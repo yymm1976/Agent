@@ -16,6 +16,10 @@ export interface WebhookServerConfig {
   verbose?: boolean;
   /** Bearer Token 认证（未配置时为开发模式，跳过认证） */
   authToken?: string;
+  /** I4 修复：开发模式是否要求认证（读取 config.security?.devModeAuth ?? false） */
+  devModeAuth?: boolean;
+  /** I18 修复：是否信任 X-Forwarded-For 头（反代场景才应启用，直连时禁用防伪造） */
+  trustProxy?: boolean;
 }
 
 /** 速率限制令牌桶配置 */
@@ -45,6 +49,8 @@ export class WebhookServer {
   /** 速率限制：按 clientIp 维护令牌桶 */
   private rateLimit = new Map<string, TokenBucket>();
   private rateLimitConfig: RateLimitConfig = DEFAULT_RATE_LIMIT;
+  /** rateLimit 定期清理定时器（在 stop() 中清除，防止泄漏） */
+  private cleanupInterval: NodeJS.Timeout | null = null;
 
   constructor(config: WebhookServerConfig) {
     this.config = {
@@ -77,11 +83,30 @@ export class WebhookServer {
         logger.info('WebhookServer started', { port: this.config.port });
         resolve();
       });
+
+      // I17 修复：定期清理过期 rateLimit 条目（1 小时无活动），防止 Map 无界增长
+      this.cleanupInterval = setInterval(() => {
+        const now = Date.now();
+        for (const [ip, bucket] of this.rateLimit) {
+          if (now - bucket.lastRefill > 3600_000) {
+            this.rateLimit.delete(ip);
+          }
+        }
+      }, 600_000);
+      // I15 修复：使用前检查 cleanupInterval 是否为 null，防止 setInterval 返回异常时崩溃
+      if (this.cleanupInterval) {
+        this.cleanupInterval.unref();
+      }
     });
   }
 
   /** 停止服务器 */
   stop(): Promise<void> {
+    // 清理 rateLimit 定时器，防止泄漏
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
     return new Promise(resolve => {
       if (this.server) {
         this.server.close(() => {
@@ -142,8 +167,18 @@ export class WebhookServer {
 
     // 验证签名（由 adapter 实现）
     if (typeof (adapter as unknown as { verifySignature?: (body: string, signature: string, timestamp: string) => boolean }).verifySignature === 'function') {
-      const signature = (req.headers['msg_signature'] as string) ?? '';
-      const timestamp = (req.headers['timestamp'] as string) ?? '';
+      // 安全修复：不同渠道使用不同的签名 header，原行为硬编码企业微信 header 名
+      // Slack 发送 X-Slack-Signature / X-Slack-Request-Timestamp，企业微信发送 msg_signature / timestamp
+      let signature: string;
+      let timestamp: string;
+      if (channelType === 'slack') {
+        signature = (req.headers['x-slack-signature'] as string) ?? '';
+        timestamp = (req.headers['x-slack-request-timestamp'] as string) ?? '';
+      } else {
+        // 企业微信及其他渠道使用 msg_signature / timestamp
+        signature = (req.headers['msg_signature'] as string) ?? '';
+        timestamp = (req.headers['timestamp'] as string) ?? '';
+      }
       const valid = (adapter as unknown as { verifySignature: (body: string, signature: string, timestamp: string) => boolean }).verifySignature(body, signature, timestamp);
       if (!valid) {
         this.sendJson(res, 401, { error: 'invalid signature' });
@@ -170,7 +205,8 @@ export class WebhookServer {
         this.sendJson(res, 200, { ok: true });
       } catch (error) {
         logger.error('WebhookServer: parse failed', { error: String(error) });
-        this.sendJson(res, 500, { error: String(error) });
+        // Minor 修复：不向客户端泄露内部错误细节，仅返回通用错误消息
+        this.sendJson(res, 500, { error: 'internal server error' });
       }
     } else {
       this.sendJson(res, 501, { error: 'adapter not fully implemented' });
@@ -208,8 +244,19 @@ export class WebhookServer {
 
   /** 验证 Bearer Token 认证 */
   private verifyAuth(req: http.IncomingMessage): boolean {
-    // 未配置 authToken 时为开发模式，跳过认证
-    if (!this.config.authToken) return true;
+    // 未配置 authToken 时：开发模式放行，生产环境拒绝
+    if (!this.config.authToken) {
+      if (process.env.NODE_ENV === 'production') {
+        logger.error('Webhook authToken 未配置，生产环境拒绝请求');
+        return false;
+      }
+      // I4 修复：devModeAuth 为 true 时，开发模式也要求认证
+      if (this.config.devModeAuth) {
+        logger.error('Webhook devModeAuth 启用，开发模式也要求认证（authToken 未配置）');
+        return false;
+      }
+      return true; // 开发模式放行
+    }
 
     const authHeader = req.headers['authorization'];
     if (typeof authHeader !== 'string') return false;
@@ -231,6 +278,11 @@ export class WebhookServer {
 
   /** 令牌桶速率限制检查 */
   private checkRateLimit(clientIp: string): boolean {
+    // I17 修复：限制 rateLimit Map 大小，防止每个唯一 clientIp 创建条目导致无界增长
+    if (this.rateLimit.size >= 10000 && !this.rateLimit.has(clientIp)) {
+      logger.warn('Rate limit map full, rejecting new IP', { clientIp });
+      return false;
+    }
     const now = Date.now();
     const bucket = this.rateLimit.get(clientIp);
 
@@ -262,10 +314,13 @@ export class WebhookServer {
 
   /** 从请求中提取客户端 IP（兼容反向代理） */
   private getClientIp(req: http.IncomingMessage): string {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string' && forwarded.length > 0) {
-      // 取第一个 IP（最原始的客户端 IP）
-      return forwarded.split(',')[0].trim();
+    // I18 修复：仅在 trustProxy 启用时信任 X-Forwarded-For，防止直连场景下客户端伪造此头绕过速率限制
+    if (this.config.trustProxy) {
+      const forwarded = req.headers['x-forwarded-for'];
+      if (typeof forwarded === 'string' && forwarded.length > 0) {
+        // 取第一个 IP（最原始的客户端 IP）
+        return forwarded.split(',')[0].trim();
+      }
     }
     return req.socket.remoteAddress ?? 'unknown';
   }

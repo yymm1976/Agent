@@ -85,6 +85,42 @@ security:
   sensitiveFiles: [".env", "credentials.json", "*.key"]
   sensitiveFilePolicy: readonly    # readonly / deny
   networkConfirm: true
+  # Phase 47 Task 4：沙箱级与审批级双旋钮
+  # sandbox: 决定工具能做多少（确定性 deny）
+  #   read-only: 仅允许读取类工具（file_read, file_search, glob 等）
+  #   workspace-write: 允许读取 + 工作区写入 + shell + git 读取（默认）
+  #   full-access: 允许所有类别（含网络、git 写、子 Agent、MCP）
+  sandbox: workspace-write
+  # approval: 按工具类别覆盖默认审批级（可选，不配置则使用内置默认值）
+  #   always-ask: 强制询问用户（headless 模式下自动 deny）
+  #   on-request: 按规则决定（默认行为）
+  #   never-ask: 不询问（confirm 自动升级为 auto）
+  # 类别: read / write / shell / network / git-read / git-write / agent / mcp
+  # approval:
+  #   write: never-ask        # 写入类工具不再询问
+  #   shell: always-ask       # Shell 命令强制询问
+  #   network: on-request     # 网络工具按规则决定
+
+# Phase 36 Task 1：MCP 服务器配置
+# codebase-memory-mcp 是纯 C 实现的代码智能 MCP 服务器（tree-sitter 解析 158 种语言）
+# 安装方式：运行 scripts/setup-codebase-memory.sh 自动下载对应平台二进制文件
+# 安装后取消下方注释即可启用
+mcp:
+  autoConnect: true
+  servers:
+    # codebase-memory-mcp：代码智能（调用链/影响分析/死代码检测）
+    # 提供 14 个 MCP 工具，命名空间为 mcp__codebase-memory__<toolName>
+    # 首次使用前需运行：bash scripts/setup-codebase-memory.sh
+    - id: codebase-memory
+      name: Codebase Memory
+      enabled: false                # 安装二进制后改为 true
+      config:
+        transport: stdio
+        command: codebase-memory    # 需在 PATH 中，或使用完整路径
+        args: ["--stdio"]
+        # 可选：指定索引数据库路径
+        # env:
+        #   CODEBASE_MEMORY_DB: ~/.routedev/codebase-memory.db
 
 # 自主度默认值
 autonomy:
@@ -101,3 +137,46 @@ sounds:
 updates:
   checkOnStartup: true
   autoUpdate: false
+
+# Phase 30：可观测性与上下文优化
+# tokenTracking 默认开启（可观测性不应是实验性的）
+# conciseThinking 为实验性功能，默认关闭，启用前请阅读 Phase 30 文档
+optimization:
+  tokenTracking:
+    enabled: true                # 分组件记录 token 用量（系统提示词/对话历史/工具定义/工具返回/用户消息）
+    persistSession: true         # 会话结束时写入 .routedev/token-logs/
+    outputDir: ".routedev/token-logs"
+  conciseThinking:
+    enabled: false               # 实验性：简洁思考约束（输出纪律 + 工具返回裁剪）
+  # Phase 31：统一工作流编排
+  workflow:
+    unifiedPipeline: true        # 统一流水线开关（关闭后回退到原有 chat/goal/compose 三路径）
+    autoRequirements: true       # 自动需求确认（medium+confidence≥0.7 自动确认，complex 主动追问）
+    reviewOnComplete: true       # 任务完成后执行代码审查
+    reviewMode: 'builtin'        # 审查模式：builtin（内置 reviewer Worker）| ocr（外部 open-code-review）| none
+    reviewModel: 'auto'          # 审查模型：auto（路由器选择）或指定模型 ID
+    reviewStrictness: 'medium'   # 审查严格度：low | medium | high
+  # Phase 31：生产安全防护
+  safety:
+    readBeforeWrite: true        # 先读后写强制（file_write 前必须 file_read，新建文件例外）
+    maxToolOutputChars: 16000    # 工具输出最大字符数（超过智能截断，优先保留错误区域）
+    completionGate: true         # 完成门开关（独立运行 typecheck/lint/tests 验证）
+    gateTimeout: 180000          # 验证门总超时（毫秒，默认 3 分钟）
+    gateRetry: 1                 # 验证失败重试次数
+
+# Phase 47 Task 8：项目文档配置（AGENTS.md / CLAUDE.md 多文件名 fallback）
+# 加载优先级：
+#   1. AGENTS.override.md 存在时，跳过 AGENTS.md，只加载 override + AGENTS.local.md
+#      （陷阱 #140：override 语义是「跳过」而非「合并」）
+#   2. 否则加载 AGENTS.md + AGENTS.local.md（合并，local 在后覆盖）
+#   3. 以上都不存在时，fallback 到 CLAUDE.md + CLAUDE.local.md
+# maxBytes 默认 32768（32KiB），超过则截断并 warn，对齐 Codex 上限
+projectDoc:
+  filenames:
+    - AGENTS.md
+    - AGENTS.local.md
+    - AGENTS.override.md
+  fallbackFilenames:
+    - CLAUDE.md
+    - CLAUDE.local.md
+  maxBytes: 32768

@@ -1,6 +1,6 @@
 {
   "name": "routedev",
-  "version": "0.0.1",
+  "version": "3.8.0",
   "description": "按任务复杂度自动路由模型的开发助手",
   "license": "AGPL-3.0",
   "type": "module",
@@ -11,14 +11,23 @@
     "node": ">=20.0.0",
     "pnpm": ">=10.0.0"
   },
+  "main": "out/main/index.js",
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
     "start": "node dist/index.js",
+    "start:gui": "electron .",
+    "dev:electron": "electron-vite dev",
+    "build:electron": "electron-vite build",
+    "preview:electron": "electron-vite preview",
+    "dist:electron": "electron-vite build && electron-builder",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "perf:gate": "tsx scripts/perf-gate.ts"
+    "typecheck:desktop": "tsc --noEmit -p desktop/tsconfig.desktop.json",
+    "perf:gate": "tsx scripts/perf-gate.ts",
+    "predist:electron": "tsx scripts/clean-release.ts",
+    "dist:electron:safe": "tsx scripts/build-with-retry.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.2",
@@ -27,7 +36,10 @@
     "ink": "^7.0.6",
     "openai": "^6.42.0",
     "react": "^19.2.7",
+    "react-is": "^19.2.7",
     "simple-git": "^3.36.0",
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "^0.22.6",
     "winston": "^3.19.0",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
@@ -35,10 +47,29 @@
   "devDependencies": {
     "@types/node": "^25.9.3",
     "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/react-syntax-highlighter": "^15.5.13",
+    "@vitejs/plugin-react": "^4.7.0",
+    "autoprefixer": "^10.5.0",
+    "cross-env": "^10.1.0",
+    "electron": "^30.5.1",
+    "electron-builder": "^25.1.8",
+    "electron-updater": "^6.8.9",
+    "electron-vite": "^2.3.0",
+    "lucide-react": "^0.577.0",
+    "postcss": "^8.5.15",
+    "react-dom": "^19.2.7",
+    "react-markdown": "^10.1.0",
+    "react-syntax-highlighter": "^16.1.1",
+    "recharts": "^3.8.1",
+    "remark-gfm": "^4.0.1",
+    "tailwindcss": "^3.4.19",
     "tsup": "^8.5.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.9"
+    "vite": "^6.4.3",
+    "vitest": "^4.1.9",
+    "zustand": "^5.0.14"
   },
   "packageManager": "pnpm@11.7.0+sha512.19cc852c120c7125760f2443ee6be0ca5b40f9f50598de1a09a1f177503e010e57c23c77646e01e761de59bf874fb22a3398c33ab9691fc13eb946b6f0f4d620"
 }

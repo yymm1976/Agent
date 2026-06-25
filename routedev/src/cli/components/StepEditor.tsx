@@ -5,6 +5,7 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { GoalPlan, PlanStep } from '../../agent/goal-types.js';
+import type { OutputStyle } from '../../config/schema.js';
 import { StepCard } from './StepCard.js';
 
 export interface StepEditorProps {
@@ -14,6 +15,8 @@ export interface StepEditorProps {
   onConfirm: (steps: PlanStep[]) => void;
   /** 用户取消的回调 */
   onCancel: () => void;
+  /** Phase 34 P1：输出样式，控制 StepCard 描述截断与附加信息，默认 standard */
+  outputStyle?: OutputStyle;
 }
 
 /** 编辑器内部状态 */
@@ -126,7 +129,7 @@ export function reduce(state: StepEditorState, action: StepEditorAction): StepEd
   }
 }
 
-export function StepEditor({ plan, onConfirm, onCancel }: StepEditorProps) {
+export function StepEditor({ plan, onConfirm, onCancel, outputStyle = 'standard' }: StepEditorProps) {
   const [state, setState] = useState<StepEditorState>(() => createInitialState(plan));
 
   useInput((char, key) => {
@@ -179,6 +182,7 @@ export function StepEditor({ plan, onConfirm, onCancel }: StepEditorProps) {
             index={i + 1}
             isSelected={i === state.cursorIndex}
             total={state.steps.length}
+            outputStyle={outputStyle}
           />
         ))}
       </Box>

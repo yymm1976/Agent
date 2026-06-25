@@ -51,6 +51,12 @@ export interface GoalVerifierOptions {
    * 启用后用独立 LLM 客户端尝试推翻结论
    */
   adversarial?: AdversarialOptions;
+  /**
+   * Phase 30：Token 用量回调（可选）
+   * 主验证和对抗性验证的 LLM 调用后各回调一次
+   * 用于修复 goal-runner 验证步骤 token 记录缺失
+   */
+  onUsage?: (usage: TokenUsageInfo, source: 'main' | 'adversarial') => void;
 }
 
 export class GoalVerifier {
@@ -96,6 +102,10 @@ export class GoalVerifier {
     });
 
     const response = await llmClient.complete(requestOptions);
+    // Phase 30：回调主验证的 token 用量
+    if (options.onUsage) {
+      try { options.onUsage(response.usage, 'main'); } catch { /* 回调失败不影响主流程 */ }
+    }
     const result = this.parseResult(response.content, confidenceThreshold);
 
     // Phase 21 Task 4：对抗性验证（可选）
@@ -107,6 +117,11 @@ export class GoalVerifier {
           this.buildResultSummary(plan, result),
           adversarial.adversarialClient,
           adversarial.threshold ?? 0.5,
+          undefined,
+          // Phase 30：回调对抗性验证的 token 用量
+          options.onUsage
+            ? (usage) => { try { options.onUsage!(usage, 'adversarial'); } catch { /* 非阻塞 */ } }
+            : undefined,
         );
         if (challenges.length > 0) {
           result.challenges = challenges;
@@ -145,6 +160,7 @@ export class GoalVerifier {
     adversarialClient: ILLMClient,
     threshold = 0.5,
     model = 'fast',
+    onUsage?: (usage: TokenUsageInfo) => void,
   ): Promise<Challenge[]> {
     const prompt = [
       '你是严格审查员。尝试推翻以下结论。',
@@ -166,6 +182,11 @@ export class GoalVerifier {
       messages: [{ role: 'user', content: prompt }],
       maxTokens: 1024,
     });
+
+    // Phase 30：回调对抗性验证的 token 用量
+    if (onUsage) {
+      try { onUsage(response.usage); } catch { /* 回调失败不影响主流程 */ }
+    }
 
     try {
       const jsonStr = this.extractJson(response.content) || response.content;

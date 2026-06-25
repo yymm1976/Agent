@@ -58,8 +58,21 @@ const COLOR256_VALUES: Record<SemanticColor, string> = {
 /**
  * 检测终端是否支持 truecolor
  * COLORTERM=truecolor 或 COLORTERM=24bit 表示支持
+ * NO_COLOR 环境变量存在时强制禁用颜色（https://no-color.org/）
+ * FORCE_COLOR 环境变量可强制启用
  */
 function supportsTruecolor(): boolean {
+  // NO_COLOR 标准优先级最高
+  if (process.env.NO_COLOR !== undefined) return false;
+  // FORCE_COLOR=0 禁用，FORCE_COLOR=1/2/3 启用
+  const forceColor = process.env.FORCE_COLOR;
+  if (forceColor === '0') return false;
+  if (forceColor !== undefined) {
+    // FORCE_COLOR 设置时，仅当级别 >=3 才视为 truecolor
+    return forceColor === '3' || forceColor === '2' || forceColor === '1';
+  }
+  // 非 TTY 环境默认不启用
+  if (process.stdout.isTTY === false) return false;
   const colorterm = process.env.COLORTERM ?? '';
   return colorterm === 'truecolor' || colorterm === '24bit';
 }

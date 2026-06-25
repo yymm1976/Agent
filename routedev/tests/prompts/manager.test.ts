@@ -133,7 +133,7 @@ describe('PromptTemplateManager', () => {
         conversationContext: 'ctx',
       });
       expect(out).toContain('语言：zh');
-      expect(out).toContain('自主模式：auto');
+      expect(out).toContain('自主度：auto'); // Phase 30：模板用词从"自主模式"改为"自主度"
     });
 
     it('should replace missing variables with empty string', async () => {

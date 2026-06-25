@@ -3,23 +3,78 @@
 
 import { homedir } from 'os';
 import { join } from 'path';
-import { mkdirSync, existsSync } from 'fs';
+import { mkdirSync, existsSync, writeFileSync, unlinkSync } from 'fs';
+
+/**
+ * 探测目录是否可写
+ */
+function isWritable(dir: string): boolean {
+  try {
+    mkdirSync(dir, { recursive: true });
+    const probe = join(dir, `.write-probe-${process.pid}`);
+    writeFileSync(probe, '');
+    try { unlinkSync(probe); } catch { /* 忽略 */ }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 构建平台对应的候选数据目录链（按优先级排序）
+ * Windows 上某些安全软件/受控文件夹访问会按"可执行文件"拦截写入，
+ * 导致未签名的 Electron 进程无法写入 %APPDATA%，即便普通 node 进程可写。
+ * 因此提供多个候选，在进程内逐一探测，挑第一个真正可写的目录，保证落地成功。
+ */
+function getCandidateDirs(): string[] {
+  const platform = process.platform;
+  if (platform === 'win32') {
+    const roaming = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming');
+    const local = process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local');
+    const temp = process.env.TEMP || process.env.TMP || join(local, 'Temp');
+    return [
+      join(roaming, 'RouteDev'),
+      join(local, 'RouteDev'),
+      join(temp, 'RouteDev'),
+      join(homedir(), '.routedev'),
+    ];
+  }
+  if (platform === 'darwin') {
+    return [
+      join(homedir(), 'Library', 'Application Support', 'RouteDev'),
+      join(homedir(), '.routedev'),
+    ];
+  }
+  return [
+    join(homedir(), '.config', 'routedev'),
+    join(homedir(), '.routedev'),
+  ];
+}
 
 /**
  * RouteDev 全局数据目录
- * Windows: %APPDATA%/RouteDev
- * macOS:   ~/Library/Application Support/RouteDev
- * Linux:   ~/.config/routedev
+ * 在当前进程内逐一探测候选目录，返回第一个可写的目录。
+ * 探测在调用进程（Electron 主进程）内执行，因此结果准确反映该进程的真实写权限。
  */
+let cachedAppDataDir: string | null = null;
+
 export function getAppDataDir(): string {
-  const platform = process.platform;
-  if (platform === 'win32') {
-    return join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'RouteDev');
-  } else if (platform === 'darwin') {
-    return join(homedir(), 'Library', 'Application Support', 'RouteDev');
-  } else {
-    return join(homedir(), '.config', 'routedev');
+  if (cachedAppDataDir) return cachedAppDataDir;
+  const candidates = getCandidateDirs();
+  let chosen: string | null = null;
+  for (const candidate of candidates) {
+    if (isWritable(candidate)) {
+      chosen = candidate;
+      break;
+    }
   }
+  // 全部不可写时退回第一个候选（让后续写入抛出明确错误）
+  const dir = chosen ?? candidates[0];
+  if (chosen && chosen !== candidates[0]) {
+    console.warn(`[paths] 首选数据目录不可写，已回落到: ${dir}`);
+  }
+  cachedAppDataDir = dir;
+  return dir;
 }
 
 /**

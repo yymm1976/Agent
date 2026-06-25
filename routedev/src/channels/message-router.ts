@@ -40,6 +40,8 @@ export class MessageRouter {
   private userContexts = new Map<string, UserContext>();
   private config: MessageRouterConfig;
   private deps: MessageRouterDeps;
+  /** I8 修复：用户上下文最大数量上限（LRU 淘汰） */
+  private readonly maxUserContexts = 10000;
 
   constructor(config: MessageRouterConfig, deps: MessageRouterDeps) {
     this.config = config;
@@ -52,6 +54,10 @@ export class MessageRouter {
     // 1. 获取或创建用户上下文
     let ctx = this.userContexts.get(userId);
     if (!ctx) {
+      // I8 修复：达到上限时淘汰最旧的用户上下文（LRU）
+      if (this.userContexts.size >= this.maxUserContexts) {
+        this.evictOldestContext();
+      }
       ctx = {
         userId,
         channelType: message.channelType,
@@ -91,7 +97,6 @@ export class MessageRouter {
     try {
       const classification = await this.deps.classifier.classify({
         query: message.text,
-        context: {},
       });
       const routing = await this.deps.router.route(classification);
       modelId = routing.model.id;
@@ -169,6 +174,28 @@ export class MessageRouter {
       logger.info('Cleaned up expired user contexts', { count: removed });
     }
     return removed;
+  }
+
+  /**
+   * I8 修复：淘汰最旧的用户上下文（LRU 策略）
+   * 当 userContexts 达到上限时调用，移除 lastActiveAt 最早的条目
+   */
+  private evictOldestContext(): void {
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+    for (const [userId, ctx] of this.userContexts) {
+      if (ctx.lastActiveAt < oldestTime) {
+        oldestTime = ctx.lastActiveAt;
+        oldestKey = userId;
+      }
+    }
+    if (oldestKey) {
+      this.userContexts.delete(oldestKey);
+      logger.warn('Evicted oldest user context (LRU, cap reached)', {
+        userId: oldestKey,
+        cap: this.maxUserContexts,
+      });
+    }
   }
 
   /** 长回复分段（适配渠道字符限制） */

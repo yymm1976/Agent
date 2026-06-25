@@ -70,8 +70,9 @@ export class Blackboard {
   getSnapshot(): BlackboardSnapshot {
     return {
       currentGoal: this.currentGoal ? { ...this.currentGoal } : null,
-      completedSteps: [...this.completedSteps],
-      projectFacts: [...this.projectFacts],
+      // 深拷贝元素，避免 worker 篡改黑板内部状态
+      completedSteps: this.completedSteps.map(e => ({ ...e, source: { ...e.source } })),
+      projectFacts: this.projectFacts.map(e => ({ ...e, source: { ...e.source } })),
     };
   }
 

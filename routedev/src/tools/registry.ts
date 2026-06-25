@@ -9,9 +9,19 @@ import { logger } from '../utils/logger.js';
 export class ToolRegistry implements IToolRegistry {
   private tools = new Map<string, ITool>();
 
-  register(tool: ITool): void {
+  /**
+   * 注册工具
+   * M1 修复：默认重复注册时记录警告但仍覆盖（保持向后兼容）
+   * @param tool 要注册的工具
+   * @param forceOverwrite 是否强制覆盖（默认 true，保持向后兼容；设为 false 时重复注册抛异常）
+   */
+  register(tool: ITool, forceOverwrite = true): void {
     const name = tool.definition.name;
     if (this.tools.has(name)) {
+      if (!forceOverwrite) {
+        // M1 修复：forceOverwrite=false 时抛异常，防止意外覆盖
+        throw new Error(`Tool "${name}" already registered (forceOverwrite=false)`);
+      }
       logger.warn(`Tool "${name}" already registered, overwriting`, {
         category: tool.definition.category,
         requiresApproval: tool.definition.requiresApproval,
@@ -55,5 +65,20 @@ export class ToolRegistry implements IToolRegistry {
   /** 获取工具总数 */
   get size(): number {
     return this.tools.size;
+  }
+
+  /**
+   * 创建注册表的浅拷贝（工具对象共享引用，但 Map 独立）
+   * Phase 38 Task 2：用于子 Agent 工具集隔离
+   *   - 父 Agent registry 不受子 Agent 工具增删影响
+   *   - 子 Agent 在 clone 上 unregister('spawn_agent') 阻断递归
+   *   - 工具对象本身共享引用（避免重复实例化开销）
+   */
+  clone(): ToolRegistry {
+    const copy = new ToolRegistry();
+    for (const [name, tool] of this.tools) {
+      copy.tools.set(name, tool);
+    }
+    return copy;
   }
 }

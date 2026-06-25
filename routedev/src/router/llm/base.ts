@@ -45,7 +45,10 @@ export abstract class BaseLLMClient implements ILLMClient {
 
   /** 检查客户端是否就绪 */
   isReady(): boolean {
-    return !!this.apiKey && this.apiKey.length > 0;
+    // 修复：拒绝 placeholder API Key，与 router.ts isModelAvailable() 保持一致
+    return !!this.apiKey
+      && this.apiKey.length > 0
+      && this.apiKey !== 'placeholder';
   }
 
   /** 非流式调用（子类实现） */

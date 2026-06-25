@@ -209,6 +209,7 @@ export default {
       version: '1.0.0',
       type: 'tool' as const,
       entry: 'index.js',
+      permissions: ['registry' as const],
     };
     // 用 loadPlugin 需要 import，这里直接注入：模拟已加载状态
     // 改用动态 import 方式：写文件后加载

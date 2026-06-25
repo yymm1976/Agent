@@ -30,7 +30,8 @@ describe('TelegramAdapter', () => {
       id: 'tg1',
       type: 'telegram',
       enabled: true,
-      options: { botToken: 'token' },
+      // S10：使用符合校验格式的 token（数字:字母数字_-= 组合，≥35 字符）
+      options: { botToken: '123456789:AAEhBP0av28-ExampleTokenForTestingXyz' },
     });
     await adapter.start();
     expect(adapter.isRunning()).toBe(true);
@@ -43,7 +44,7 @@ describe('TelegramAdapter', () => {
       id: 'tg1',
       type: 'telegram',
       enabled: true,
-      options: { botToken: 'token' },
+      options: { botToken: '123456789:AAEhBP0av28-ExampleTokenForTestingXyz' },
     });
 
     fetchMock
@@ -74,7 +75,7 @@ describe('TelegramAdapter', () => {
 
     expect(handler).toHaveBeenCalledWith(expect.objectContaining({ text: 'hello' }));
     expect(fetchMock).toHaveBeenLastCalledWith(
-      'https://api.telegram.org/bottoken/sendMessage',
+      'https://api.telegram.org/bot123456789:AAEhBP0av28-ExampleTokenForTestingXyz/sendMessage',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining('hi back'),

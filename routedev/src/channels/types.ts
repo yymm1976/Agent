@@ -1,7 +1,7 @@
 // src/channels/types.ts
 // 渠道集成层类型定义
 
-export type ChannelType = 'wechat-work' | 'telegram' | 'slack' | 'discord';
+export type ChannelType = 'wechat-work' | 'telegram' | 'slack';
 
 export interface ChannelMessage {
   /** 消息 ID（渠道侧） */
@@ -84,6 +84,6 @@ export interface ChannelConfig {
   type: ChannelType;
   /** 是否启用 */
   enabled: boolean;
-  /** 渠道特定配置（access_token, corpid 等） */
-  options: Record<string, string>;
+  /** 渠道特定配置（access_token, corpid, pollIntervalMs 等） */
+  options: Record<string, unknown>;
 }

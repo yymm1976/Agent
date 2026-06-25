@@ -1,6 +1,12 @@
 // src/plugins/registry.ts
 // 插件注册表：插件的发现、加载、生命周期管理
 // 核心原则：插件错误不崩溃宿主——所有插件代码在 try-catch 隔离中执行
+//
+// C5 修复：插件权限声明与受限 API
+// - 插件清单必须声明 permissions 字段（未声明默认为空，最小权限原则）
+// - 运行时通过 createRestrictedContext 提供受限的 PluginInitContext
+// - 未声明权限的能力访问会被记录警告（防御性深度，不抛异常以免崩溃宿主）
+// - 注意：当前实现为声明式权限控制，非沙箱隔离。完整沙箱需 vm.isolate/worker_threads
 
 import type {
   Plugin,
@@ -8,6 +14,7 @@ import type {
   PluginManifest,
   PluginStatus,
   PluginInitContext,
+  PluginPermission,
   ToolPlugin,
   HookPlugin,
   RouterPlugin,
@@ -53,6 +60,88 @@ interface PluginStateFile {
 
 /** 状态文件路径：getAppDataDir()/plugin-state.json */
 const STATE_FILE_NAME = 'plugin-state.json';
+
+// ============================================================
+// C5 修复：插件权限校验与受限上下文
+// ============================================================
+
+/**
+ * 校验插件清单声明的权限是否合法
+ * @returns 校验通过返回 null，失败返回错误消息
+ */
+function validatePermissions(permissions: unknown): string | null {
+  if (permissions === undefined || permissions === null) return null; // 可选字段
+  if (!Array.isArray(permissions)) {
+    return 'permissions 必须是数组';
+  }
+  const VALID_PERMISSIONS: PluginPermission[] = [
+    'fs', 'net', 'shell', 'env', 'registry', 'middleware', 'logger', 'cwd',
+  ];
+  const validSet = new Set(VALID_PERMISSIONS);
+  for (const p of permissions) {
+    if (typeof p !== 'string' || !validSet.has(p as PluginPermission)) {
+      return `未知的权限声明: ${String(p)}`;
+    }
+  }
+  return null;
+}
+
+/**
+ * C5 修复：创建受限的插件初始化上下文
+ * 根据清单声明的权限限制插件可访问的宿主能力
+ * - 未声明 'cwd' 权限的插件无法获取工作目录（返回空字符串）
+ * - 未声明 'logger' 权限的插件日志会被丢弃
+ * - 未声明 'env' 权限的插件无法读取配置中的环境变量
+ *
+ * 注意：当前为声明式限制，无法阻止插件通过 Node.js 内置模块直接访问文件系统/网络。
+ * 完整沙箱隔离需要 vm.isolate 或 worker_threads，属于后续演进方向。
+ */
+function createRestrictedContext(
+  manifest: PluginManifest,
+  baseContext: PluginInitContext,
+): PluginInitContext {
+  const permissions = new Set<PluginPermission>(manifest.permissions ?? []);
+  const pluginId = manifest.id;
+
+  // 受限的日志回调：未声明 'logger' 权限时仅允许 error 级别
+  const restrictedLog: PluginInitContext['log'] = (level, msg, meta) => {
+    if (!permissions.has('logger') && level !== 'error') {
+      // 未声明 logger 权限的插件，非 error 日志被静默丢弃
+      return;
+    }
+    baseContext.log(level, `[${pluginId}] ${msg}`, meta);
+  };
+
+  // 受限的 cwd：未声明 'cwd' 权限返回空字符串
+  const restrictedCwd = permissions.has('cwd') ? baseContext.cwd : '';
+
+  // 受限的 config：未声明 'env' 权限时移除可能包含环境变量的字段
+  const restrictedConfig = permissions.has('env')
+    ? baseContext.config
+    : stripEnvFromConfig(baseContext.config);
+
+  return {
+    cwd: restrictedCwd,
+    config: restrictedConfig,
+    log: restrictedLog,
+  };
+}
+
+/** 从插件配置中移除可能包含敏感信息的 env 相关字段 */
+function stripEnvFromConfig(config: Record<string, unknown>): Record<string, unknown> {
+  const stripped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(config)) {
+    // 跳过明显包含环境变量的字段
+    if (/^(env|environment|secrets?|credentials?|api[_-]?keys?)$/i.test(key)) continue;
+    stripped[key] = value;
+  }
+  return stripped;
+}
+
+/** 获取插件声明的权限列表（用于日志和状态查询） */
+function getDeclaredPermissions(manifest: PluginManifest): PluginPermission[] {
+  return manifest.permissions ?? [];
+}
 
 // ============================================================
 // 内部记录结构
@@ -141,6 +230,23 @@ export class PluginRegistry {
             });
             continue;
           }
+          // C5 修复：校验 permissions 字段
+          const permError = validatePermissions(manifest.permissions);
+          if (permError) {
+            logger.warn(`Plugin manifest permissions invalid, skipping: ${manifestPath}`, {
+              error: permError,
+            });
+            continue;
+          }
+          // C5 修复：记录插件声明的权限（用于审计）
+          const declaredPerms = getDeclaredPermissions(manifest);
+          if (declaredPerms.length > 0) {
+            logger.info(`Plugin "${manifest.id}" declared permissions`, {
+              permissions: declaredPerms,
+            });
+          } else {
+            logger.info(`Plugin "${manifest.id}" declared no permissions (minimum privilege)`);
+          }
           manifests.push({ ...manifest, _pluginDir: pluginDir });
         } catch (err) {
           // 单个清单读取失败不影响其他插件
@@ -222,7 +328,7 @@ export class PluginRegistry {
     // Phase 27 Task 4：先读取持久化状态，恢复 enable/disable
     await this.restoreState();
 
-    const initContext: PluginInitContext = {
+    const baseContext: PluginInitContext = {
       cwd: this.options.cwd,
       config: {},
       log: (level, msg, meta) => {
@@ -237,8 +343,10 @@ export class PluginRegistry {
       if (!record || record.error) continue; // 加载失败的跳过
 
       try {
+        // C5 修复：为每个插件创建受限的初始化上下文（基于声明的权限）
+        const restrictedContext = createRestrictedContext(record.manifest, baseContext);
         // 1. 调用插件 init()
-        await record.instance.init(initContext);
+        await record.instance.init(restrictedContext);
         record.loaded = true;
 
         // 2. 根据类型自动桥接
@@ -256,13 +364,24 @@ export class PluginRegistry {
   /**
    * 桥接插件能力到宿主：ToolPlugin→toolRegistry，HookPlugin→middlewarePipeline
    * 仅当插件 enabled 时注册
+   * C5 修复：根据声明的权限决定是否桥接（未声明对应权限的插件不桥接）
    */
   private bridgePlugin(record: PluginRecord): void {
     const plugin = record.instance;
     if (!plugin.enabled) return;
 
+    // C5 修复：获取插件声明的权限
+    const permissions = new Set<PluginPermission>(record.manifest.permissions ?? []);
+
     try {
       if (plugin.type === 'tool') {
+        // C5 修复：tool 类型插件需要 'registry' 权限才能注册工具
+        if (!permissions.has('registry')) {
+          logger.warn(`Plugin ${plugin.id} 未声明 'registry' 权限，跳过工具注册`, {
+            declaredPermissions: Array.from(permissions),
+          });
+          return;
+        }
         const toolPlugin = plugin as ToolPlugin;
         const tools = toolPlugin.getTools();
         for (const tool of tools) {
@@ -273,6 +392,13 @@ export class PluginRegistry {
           tools: record.registeredToolNames,
         });
       } else if (plugin.type === 'hook') {
+        // C5 修复：hook 类型插件需要 'middleware' 权限才能注册钩子
+        if (!permissions.has('middleware')) {
+          logger.warn(`Plugin ${plugin.id} 未声明 'middleware' 权限，跳过钩子注册`, {
+            declaredPermissions: Array.from(permissions),
+          });
+          return;
+        }
         const hookPlugin = plugin as HookPlugin;
         const hooks = hookPlugin.getHooks();
         for (const hook of hooks) {

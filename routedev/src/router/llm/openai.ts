@@ -19,7 +19,6 @@ import type {
   LLMMessage,
   ToolCallRequest,
   TokenUsageInfo,
-  ContentPart,
 } from '../types.js';
 import { LLMError } from '../types.js';
 import { logger } from '../../utils/logger.js';
@@ -122,6 +121,13 @@ export class OpenAIClient extends BaseLLMClient {
           yield { type: 'text_delta', text: delta.content };
         }
 
+        const reasoningDelta = (delta as Record<string, unknown>).reasoning_content
+          ?? (delta as Record<string, unknown>).reasoning
+          ?? (delta as Record<string, unknown>).thinking;
+        if (typeof reasoningDelta === 'string' && reasoningDelta) {
+          yield { type: 'reasoning_delta', text: reasoningDelta };
+        }
+
         // 工具调用增量
         if (delta?.tool_calls) {
           for (const toolCall of delta.tool_calls) {
@@ -214,6 +220,26 @@ export class OpenAIClient extends BaseLLMClient {
       params.tools = tools;
     }
 
+    // P2-10：OpenAI 通过 prompt_cache_key 启用 Prompt 缓存
+    // 同一 cache_key 的请求会复用前缀缓存，降低 token 消耗
+    if (options.enableCache) {
+      // 使用 model 名作为 cache key 的基础，确保同模型的请求复用缓存
+      (params as unknown as Record<string, unknown>).prompt_cache_key = `routedev-${options.model}`;
+    }
+
+    // P2-11：结构化输出（response_format json_schema）
+    // OpenAI 支持通过 response_format 强制模型输出符合 JSON Schema 的内容
+    if (options.responseFormat && options.responseFormat.type === 'json_schema') {
+      (params as unknown as Record<string, unknown>).response_format = {
+        type: 'json_schema',
+        json_schema: {
+          name: options.responseFormat.jsonSchema.name,
+          schema: options.responseFormat.jsonSchema.schema,
+          strict: options.responseFormat.jsonSchema.strict ?? false,
+        },
+      };
+    }
+
     // 流式时需要 stream_options 才能获取 usage
     if (stream) {
       params.stream_options = { include_usage: true };
@@ -224,6 +250,13 @@ export class OpenAIClient extends BaseLLMClient {
 
   /**
    * 转换消息格式（统一格式 → OpenAI 格式）
+   *
+   * OpenAI/DeepSeek API 对消息格式的要求：
+   * - tool_use（工具调用请求）：必须作为 role: assistant 消息的 tool_calls 字段
+   * - tool_result（工具调用结果）：必须作为独立的 role: tool 消息，不能嵌套在其他消息的 content 里
+   *
+   * 修复前 bug：tool_result 被错误地 push 到 content 数组里，导致 DeepSeek 报
+   * "missing field type" 错误（400 Bad Request）
    */
   private convertMessages(
     messages: LLMMessage[],
@@ -240,62 +273,71 @@ export class OpenAIClient extends BaseLLMClient {
       if (typeof msg.content === 'string') {
         result.push({ role: msg.role, content: msg.content } as ChatCompletionMessageParam);
       } else if (Array.isArray(msg.content)) {
-        // 多模态内容
-        const converted = this.convertContentParts(msg.content, msg.role);
-        result.push(converted as ChatCompletionMessageParam);
+        // 多模态内容：分离 tool_use / tool_result / text / image
+        const textParts: string[] = [];
+        const imageParts: Array<{ type: 'image_url'; image_url: { url: string } }> = [];
+        const toolCalls: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> = [];
+        const toolResults: Array<{ tool_call_id: string; content: string }> = [];
+
+        for (const part of msg.content) {
+          switch (part.type) {
+            case 'text':
+              textParts.push(part.text);
+              break;
+            case 'tool_use':
+              toolCalls.push({
+                id: part.id,
+                type: 'function',
+                function: {
+                  name: part.name,
+                  arguments: JSON.stringify(part.arguments),
+                },
+              });
+              break;
+            case 'tool_result':
+              // tool_result 必须作为独立的 role: tool 消息，不能嵌套在 content 里
+              toolResults.push({
+                tool_call_id: part.toolUseId,
+                content: part.content,
+              });
+              break;
+            case 'image':
+              imageParts.push({
+                type: 'image_url',
+                image_url: {
+                  url: `data:${part.source.mediaType};base64,${part.source.data}`,
+                },
+              });
+              break;
+          }
+        }
+
+        // 1) 如果有 tool_calls：生成 role: assistant 消息（含 tool_calls）
+        if (toolCalls.length > 0) {
+          // OpenAI 要求 assistant 消息有 content 字段（可为 null）
+          const assistantContent = textParts.length > 0 ? textParts.join('\n') : null;
+          const assistantMsg = {
+            role: 'assistant' as const,
+            content: assistantContent,
+            tool_calls: toolCalls,
+          };
+          result.push(assistantMsg as ChatCompletionMessageParam);
+        } else if (textParts.length > 0 || imageParts.length > 0) {
+          // 2) 普通多模态消息（text + image）
+          const content: unknown[] = [];
+          for (const t of textParts) content.push({ type: 'text', text: t });
+          for (const img of imageParts) content.push(img);
+          result.push({ role: msg.role, content } as ChatCompletionMessageParam);
+        }
+
+        // 3) tool_result 作为独立的 role: tool 消息（每个 tool_result 一条消息）
+        for (const tr of toolResults) {
+          result.push({ role: 'tool', ...tr } as ChatCompletionMessageParam);
+        }
       }
     }
 
     return result;
-  }
-
-  /**
-   * 转换内容块
-   */
-  private convertContentParts(
-    parts: ContentPart[],
-    role: 'user' | 'assistant' | 'system',
-  ): { role: string; content: unknown[] } | { role: string; tool_calls: unknown[] } {
-    const content: unknown[] = [];
-    const toolCalls: unknown[] = [];
-
-    for (const part of parts) {
-      switch (part.type) {
-        case 'text':
-          content.push({ type: 'text', text: part.text });
-          break;
-        case 'tool_use':
-          toolCalls.push({
-            id: part.id,
-            type: 'function',
-            function: {
-              name: part.name,
-              arguments: JSON.stringify(part.arguments),
-            },
-          });
-          break;
-        case 'tool_result':
-          content.push({
-            role: 'tool',
-            tool_call_id: part.toolUseId,
-            content: part.content,
-          });
-          break;
-        case 'image':
-          content.push({
-            type: 'image_url',
-            image_url: {
-              url: `data:${part.source.mediaType};base64,${part.source.data}`,
-            },
-          });
-          break;
-      }
-    }
-
-    if (toolCalls.length > 0) {
-      return { role: 'assistant', tool_calls: toolCalls };
-    }
-    return { role, content };
   }
 
   /**
@@ -337,10 +379,17 @@ export class OpenAIClient extends BaseLLMClient {
       // OpenAI SDK 6.x: tool_calls 可能是 function 类型或 custom 类型
       // 安全访问 function 属性
       const fn = (tc as { function?: { name: string; arguments?: string } }).function;
+      // Minor 修复：LLM 返回非法 JSON 时优雅降级为空对象，而非整个请求失败
+      let parsedArgs: Record<string, unknown> = {};
+      try {
+        parsedArgs = JSON.parse(fn?.arguments || '{}');
+      } catch {
+        // 非法 JSON 降级为空对象，让上层工具执行时报参数错误（比整个请求崩溃更优雅）
+      }
       return {
         id: tc.id,
         name: fn?.name || '',
-        arguments: JSON.parse(fn?.arguments || '{}'),
+        arguments: parsedArgs,
       };
     });
   }

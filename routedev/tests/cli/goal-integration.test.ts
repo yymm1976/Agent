@@ -38,7 +38,18 @@ function createMockDeps(requestPlanEditResult: PlanStep[] | null) {
   const mockClassifier = { classify: vi.fn(async () => ({ tier: 'simple', confidence: 0.9 })) };
   const mockRouter = { route: vi.fn(async () => mockRoute) };
   const mockClientManager = { get: vi.fn(() => mockClient) };
-  const mockTracker = { record: vi.fn(), getStats: vi.fn(() => ({ total: { totalTokens: 0 } })), getUsagePercent: vi.fn(() => 0) };
+  const mockTracker = {
+    record: vi.fn(),
+    getStats: vi.fn(() => ({ total: { totalTokens: 0 } })),
+    getUsagePercent: vi.fn(() => 0),
+    // Phase 31/32 P0 接线：任务级 Token 预算 API
+    startTask: vi.fn(),
+    recordTaskUsage: vi.fn(() => 'ok'),
+    endTask: vi.fn(),
+    getTaskUsagePercent: vi.fn(() => 0),
+    isTaskActive: vi.fn(() => false),
+    checkBudget: vi.fn(() => true),
+  };
   const mockAgentLoop = {
     run: async function* () { yield { type: 'done' as const, content: 'done', usage: mockUsage }; },
     updateToolExecutor: vi.fn(),
@@ -71,7 +82,7 @@ function createMockDeps(requestPlanEditResult: PlanStep[] | null) {
       checkpointManager: mockCheckpointManager as any,
       contextManager: mockContextManager as any,
       config: { checkpoint: { enabled: false }, router: { budget: { mode: 'track_only' as const, dailyLimit: 500000 } } } as any,
-      systemPrompt: '',
+      systemPromptRef: { current: '' },
       conversationHistoryRef: { current: [] as LLMMessage[] },
       pendingConfirmRef: { current: null },
       abortControllerRef: { current: null },

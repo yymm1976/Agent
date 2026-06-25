@@ -31,6 +31,23 @@ function makeWorkModeCommand(name: string, mode: WorkMode): CommandDefinition {
     name,
     description: `切换到${info.label}模式`,
     handler: async (_args, ctx) => {
+      // 任务1：/compose next 手动推进 Compose 管线阶段
+      if (mode === 'compose' && _args.trim() === 'next') {
+        const pipeline = ctx.workModeController.getComposePipeline();
+        const currentPhase = ctx.workModeController.getComposePhase();
+        if (!currentPhase) {
+          return {
+            type: 'handled' as const,
+            messages: ['⚠️ 当前不在 Compose 模式，请先使用 /compose 进入'],
+          };
+        }
+        const newPhase = pipeline.advance();
+        return {
+          type: 'handled' as const,
+          messages: [`➡️ Compose 阶段已推进: ${currentPhase} → ${newPhase}`],
+        };
+      }
+
       ctx.commandBridge.setWorkMode(mode);
       return {
         type: 'handled',

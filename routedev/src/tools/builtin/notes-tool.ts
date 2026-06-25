@@ -20,7 +20,7 @@ import { NotesManager } from '../../agent/memory/notes.js';
 export class NotesTool implements ITool {
   readonly definition: ToolDefinition = {
     name: 'notes',
-    description: '将笔记追加到 notes.md（Agent 唯一写通道）。用于记录发现、决策、错误、待办等。CheckpointWriter 会在 checkpoint 时读取并分类。',
+    description: '当用户需要记录发现、决策、错误或待办事项到 notes.md 时，使用此工具。这是 Agent 唯一的写通道，CheckpointWriter 会在 checkpoint 时读取并分类。',
     parameters: {
       type: 'object',
       properties: {

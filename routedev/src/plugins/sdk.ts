@@ -49,9 +49,49 @@ function wrapTool(def: SimpleToolDef): ITool {
     async execute(args, context) {
       return def.execute(args, context);
     },
-    validateArgs(_args) {
-      // SDK 工具默认总是有效，插件作者可自行实现更严格的校验
-      return { valid: true, errors: [] };
+    validateArgs(args) {
+      // B11：基于 JSON Schema 的声明式参数校验
+      // 从 def.parameters.required 检查必填字段，从 properties 检查类型
+      const errors: string[] = [];
+      const schema = def.parameters;
+
+      // 检查 required 字段
+      if (schema.required && Array.isArray(schema.required)) {
+        for (const field of schema.required) {
+          if (args[field] === undefined || args[field] === null) {
+            errors.push(`缺少必需参数: ${field}`);
+          }
+        }
+      }
+
+      // 检查 properties 中声明的类型
+      if (schema.properties && typeof schema.properties === 'object') {
+        for (const [field, schemaDef] of Object.entries(schema.properties)) {
+          const value = args[field];
+          if (value === undefined || value === null) continue; // 非必填且未提供，跳过
+
+          const expectedType = (schemaDef as { type?: string }).type;
+          if (!expectedType) continue;
+
+          // JSON Schema type → JS typeof 映射
+          let actualType = typeof value;
+          if (expectedType === 'integer' && (actualType !== 'number' || !Number.isInteger(value))) {
+            errors.push(`参数 ${field} 必须是整数，实际为 ${actualType}`);
+          } else if (expectedType === 'number' && actualType !== 'number') {
+            errors.push(`参数 ${field} 必须是数字，实际为 ${actualType}`);
+          } else if (expectedType === 'string' && actualType !== 'string') {
+            errors.push(`参数 ${field} 必须是字符串，实际为 ${actualType}`);
+          } else if (expectedType === 'boolean' && actualType !== 'boolean') {
+            errors.push(`参数 ${field} 必须是布尔值，实际为 ${actualType}`);
+          } else if (expectedType === 'array' && !Array.isArray(value)) {
+            errors.push(`参数 ${field} 必须是数组，实际为 ${actualType}`);
+          } else if (expectedType === 'object' && (actualType !== 'object' || Array.isArray(value))) {
+            errors.push(`参数 ${field} 必须是对象，实际为 ${actualType}`);
+          }
+        }
+      }
+
+      return { valid: errors.length === 0, errors };
     },
   };
 }

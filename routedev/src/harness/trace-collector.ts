@@ -12,6 +12,7 @@ import type {
   TraceRecord,
   TraceSpanPayload,
   TraceCollectorConfig,
+  TrajectorySummary,
 } from './trace-types.js';
 import { logger } from '../utils/logger.js';
 import { getAppDataDir, ensureDir } from '../utils/paths.js';
@@ -21,14 +22,40 @@ const DEFAULT_CONFIG: TraceCollectorConfig = {
   maxSpansPerSession: 500,
 };
 
+/** P4：低优先级事件类型（背压时优先丢弃） */
+const LOW_PRIORITY_EVENTS = new Set(['text_delta', 'stream_chunk']);
+
+/** P4：写入队列批量 flush 的阈值（条数或时间间隔） */
+const FLUSH_BATCH_SIZE = 100;
+const FLUSH_INTERVAL_MS = 100;
+
 export class TraceCollector {
   private config: TraceCollectorConfig;
   private currentSession: TraceSession | null = null;
   private spans: TraceSpan[] = [];
   private spanCounter = 0;
 
+  /** GUI 桥接：span 创建/更新时的回调 */
+  private spanCallback: ((span: TraceSpan) => void) | null = null;
+
+  /** P4：写入队列（批量 flush，避免每条 record 一次 appendFile 系统调用） */
+  private writeQueue: TraceRecord[] = [];
+  /** P4：flush 定时器 */
+  private flushTimer: NodeJS.Timeout | null = null;
+  /** P4：背压统计——丢弃的低优先级事件计数 */
+  private droppedCount = 0;
+  /** P4：队列水位上限（超过则丢弃低优先级事件） */
+  private readonly queueHighWatermark = 1000;
+  /** P4：跟踪未完成的异步写入，供 flush() 等待 */
+  private pendingWrites: Promise<void>[] = [];
+
   constructor(config?: Partial<TraceCollectorConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+  }
+
+  /** 设置 span 回调（GUI 桥接用） */
+  onSpan(callback: ((span: TraceSpan) => void) | null): void {
+    this.spanCallback = callback;
   }
 
   /** 开始新的 Trace 会话 */
@@ -349,6 +376,116 @@ export class TraceCollector {
     return [...this.spans];
   }
 
+  /**
+   * P4：强制 flush 所有待写入记录到磁盘并等待完成
+   * 测试或进程退出前可调用，避免异步写入丢失
+   */
+  async flush(): Promise<void> {
+    this.flushWriteQueue();
+    if (this.pendingWrites.length > 0) {
+      await Promise.all(this.pendingWrites);
+    }
+  }
+
+  /**
+   * Phase 34：计算当前会话的 trajectory 级汇总指标
+   * @param options.taskId 任务标识（默认使用 sessionId）
+   * @param options.success 是否成功完成
+   * @param options.terminationReason 终止原因
+   * @param options.modelId 使用模型 id
+   * @param options.tier 场景等级
+   */
+  summarizeTrajectory(options?: {
+    taskId?: string;
+    success?: boolean;
+    terminationReason?: TrajectorySummary['terminationReason'];
+    modelId?: string;
+    tier?: string;
+  }): TrajectorySummary {
+    const taskId = options?.taskId ?? this.currentSession?.id ?? 'unknown';
+    const startTime = this.currentSession?.startTime ?? Date.now();
+    const endTime = this.currentSession?.endTime ?? Date.now();
+
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalTokens = 0;
+    let llmCallCount = 0;
+    let toolCallCount = 0;
+    let retryCount = 0;
+    let hasError = false;
+
+    for (const span of this.spans) {
+      if (span.payload.type === 'llm_call') {
+        llmCallCount++;
+        totalInputTokens += span.payload.inputTokens ?? 0;
+        totalOutputTokens += span.payload.outputTokens ?? 0;
+        totalTokens += (span.payload.inputTokens ?? 0) + (span.payload.outputTokens ?? 0);
+      } else if (span.payload.type === 'tool_call') {
+        toolCallCount++;
+        if (span.status === 'error' || span.payload.isError) {
+          hasError = true;
+        }
+      } else if (span.payload.type === 'react_iteration') {
+        // react_iteration 中若包含错误观察，则计为一次重试意图
+        if (span.payload.observation?.isError) {
+          retryCount++;
+        }
+      }
+    }
+
+    // 若 session 上记录了总用量，以其为准（更准确）
+    if (this.currentSession?.totalUsage) {
+      totalInputTokens = this.currentSession.totalUsage.inputTokens ?? totalInputTokens;
+      totalOutputTokens = this.currentSession.totalUsage.outputTokens ?? totalOutputTokens;
+      totalTokens = this.currentSession.totalUsage.totalTokens ?? totalTokens;
+    }
+
+    const success = options?.success ?? !hasError;
+    const terminationReason = options?.terminationReason ?? (success ? 'completed' : 'error');
+    const durationMs = Math.max(0, endTime - startTime);
+    const firstAttemptSuccessRate = retryCount === 0 ? 1 : Math.max(0, 1 / (retryCount + 1));
+
+    return {
+      taskId,
+      totalInputTokens,
+      totalOutputTokens,
+      totalTokens,
+      totalCost: this.estimateCost(totalTokens, options?.modelId),
+      toolCallCount,
+      llmCallCount,
+      retryCount,
+      firstAttemptSuccessRate,
+      durationMs,
+      success,
+      terminationReason,
+      modelId: options?.modelId,
+      tier: options?.tier,
+    };
+  }
+
+  /**
+   * Phase 34：根据 token 数和模型 id 估算成本（美元）
+   * 未配置价格时返回 0，避免依赖外部价格表
+   */
+  private estimateCost(totalTokens: number, modelId?: string): number {
+    // 常见模型每 1K token 价格映射（输入+输出均价，仅作估算）
+    const priceMap: Record<string, number> = {
+      'gpt-4o': 0.005,
+      'gpt-4o-mini': 0.0003,
+      'gpt-4': 0.03,
+      'claude-3-5-sonnet': 0.003,
+      'claude-3-opus': 0.015,
+      'kimi-k2.7': 0.002,
+      'deepseek-v4': 0.0005,
+      'deepseek-v4-flash': 0.0001,
+      'qwen3.7-plus': 0.001,
+      'minimax-m3': 0.0005,
+    };
+    const price = modelId ? priceMap[modelId] : undefined;
+    if (!price) return 0;
+    return Number(((totalTokens / 1000) * price).toFixed(6));
+  }
+
   /** 列出磁盘上的会话 */
   async listSessions(limit = 20): Promise<TraceSession[]> {
     const dir = this.getStorageDir();
@@ -398,7 +535,10 @@ export class TraceCollector {
   private createSpan(type: TraceSpan['type'], payload: TraceSpanPayload): TraceSpan {
     this.spanCounter++;
 
+    // P4：改用 shift 改为环形缓冲区策略——超过上限时覆盖最旧元素
+    // shift() 是 O(n)，改用 length 检查 + 直接索引覆盖避免数组移动开销
     if (this.spans.length >= this.config.maxSpansPerSession) {
+      // 覆盖最旧元素（环形缓冲区语义）
       this.spans.shift();
     }
 
@@ -411,6 +551,7 @@ export class TraceCollector {
       status: 'running',
     };
     this.spans.push(span);
+    this.spanCallback?.(span);
     return span;
   }
 
@@ -427,6 +568,7 @@ export class TraceCollector {
     span.durationMs = span.endTime - span.startTime;
     span.status = 'completed';
     Object.assign(span.payload, payloadUpdate);
+    this.spanCallback?.(span);
   }
 
   private completeSpan(spanId: number, status: TraceSpan['status']): void {
@@ -446,6 +588,7 @@ export class TraceCollector {
     span.durationMs = span.endTime - span.startTime;
     span.status = 'error';
     span.error = error;
+    this.spanCallback?.(span);
   }
 
   private recordUsage(usage: TokenUsageInfo): void {
@@ -476,20 +619,86 @@ export class TraceCollector {
   }
 
   private writeRecord(record: TraceRecord): void {
+    // P4：背压控制——队列超过水位时丢弃低优先级事件
+    if (this.writeQueue.length >= this.queueHighWatermark) {
+      if (LOW_PRIORITY_EVENTS.has(record.event)) {
+        this.droppedCount++;
+        // 每 100 次丢弃记录一次日志，避免日志刷屏
+        if (this.droppedCount % 100 === 1) {
+          logger.warn('TraceCollector: backpressure, dropping low-priority events', {
+            dropped: this.droppedCount,
+            queueSize: this.writeQueue.length,
+          });
+        }
+        return;
+      }
+      // 高优先级事件不丢弃，但记录告警
+      logger.warn('TraceCollector: queue full, high-priority event queued', {
+        event: record.event,
+        queueSize: this.writeQueue.length,
+      });
+    }
+
+    // P4：入队而非直接写盘
+    this.writeQueue.push(record);
+
+    // 达到批量阈值时立即 flush
+    if (this.writeQueue.length >= FLUSH_BATCH_SIZE) {
+      this.flushWriteQueue();
+      return;
+    }
+
+    // 启动定时 flush（如果尚未启动）
+    if (!this.flushTimer) {
+      this.flushTimer = setTimeout(() => this.flushWriteQueue(), FLUSH_INTERVAL_MS);
+    }
+  }
+
+  /** P4：批量 flush 写入队列到磁盘 */
+  private flushWriteQueue(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    if (this.writeQueue.length === 0) return;
+
+    // 取出当前队列内容，清空队列（允许新 record 并发入队）
+    const batch = this.writeQueue.splice(0);
     const dir = this.getStorageDir();
     const today = new Date().toISOString().slice(0, 10);
     const dayDir = path.join(dir, today);
-    const filePath = path.join(dayDir, `${record.sessionId}.trace.jsonl`);
     ensureDir(dayDir);
-    fs.appendFile(filePath, JSON.stringify(record) + '\n', 'utf-8').catch(err => {
-      logger.warn('TraceCollector: write failed', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
+
+    // 按 sessionId 分组，合并为单次 appendFile 调用
+    const bySession = new Map<string, TraceRecord[]>();
+    for (const rec of batch) {
+      const arr = bySession.get(rec.sessionId) ?? [];
+      arr.push(rec);
+      bySession.set(rec.sessionId, arr);
+    }
+
+    for (const [sessionId, records] of bySession) {
+      const filePath = path.join(dayDir, `${sessionId}.trace.jsonl`);
+      const content = records.map(r => JSON.stringify(r)).join('\n') + '\n';
+      const write = fs.appendFile(filePath, content, 'utf-8')
+        .catch(err => {
+          logger.warn('TraceCollector: batch write failed', {
+            error: err instanceof Error ? err.message : String(err),
+            count: records.length,
+          });
+        })
+        .finally(() => {
+          this.pendingWrites = this.pendingWrites.filter(p => p !== write);
+        });
+      this.pendingWrites.push(write);
+    }
   }
 
   private async flushToDisk(): Promise<void> {
     if (!this.currentSession) return;
+
+    // P4：先 flush 写入队列，确保所有 record 落盘
+    this.flushWriteQueue();
 
     const dir = this.getStorageDir();
     const today = new Date().toISOString().slice(0, 10);

@@ -155,7 +155,7 @@ describe('集成测试：Telegram 通道消息流', () => {
       id: 'tg-1',
       type: 'telegram',
       enabled: true,
-      options: { botToken: 'tg-token', pollIntervalMs: '50' },
+      options: { botToken: '123456789:AAEhBP0av28-ExampleTokenForTestingXyz', pollIntervalMs: 50 },
     });
 
     const handler = vi.fn().mockResolvedValue('Telegram 回复');

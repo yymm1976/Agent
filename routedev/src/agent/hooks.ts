@@ -1,11 +1,12 @@
 // src/agent/hooks.ts
 // HookRunner 生命周期钩子系统（Phase 24 Task 4）
 // 蓝图 Section 9.3：四种生命周期钩子（pre-step / post-step / on-error / on-complete）
+// Phase 31 Task 6.7：扩展工具级钩子（pre-tool-call / post-tool-call / on-session-start / on-session-end）
 //
 // 与 AgentMiddlewarePipeline 的区别：
 //   - Middleware 关注 Agent Loop 内部（LLM 调用、工具执行）
-//   - Hook 关注步骤层（任务步骤的开始/结束/出错）
-//   - 调用者不同：Middleware 由 ReActAgentLoop 调用，Hook 由 Orchestrator/DurableExecutor 调用
+//   - Hook 关注步骤层（任务步骤的开始/结束/出错）+ 工具层（工具调用前后）
+//   - 调用者不同：Middleware 由 ReActAgentLoop 调用，Hook 由 Orchestrator/DurableExecutor/Loop 调用
 
 import { logger } from '../utils/logger.js';
 import type { TraceCollector } from '../harness/trace-collector.js';
@@ -14,8 +15,33 @@ import type { TraceCollector } from '../harness/trace-collector.js';
 // 类型定义
 // ============================================================
 
-/** 钩子事件类型 */
-export type HookEvent = 'pre-step' | 'post-step' | 'on-error' | 'on-complete';
+/**
+ * 钩子事件类型
+ *
+ * 步骤级事件（Phase 24）：
+ *   - pre-step：步骤执行前触发
+ *   - post-step：步骤成功完成后触发
+ *   - on-error：步骤执行出错时触发
+ *   - on-complete：所有步骤完成后触发一次
+ *
+ * 工具级事件（Phase 31 Task 6.7，学习 pi-mono）：
+ *   - pre-tool-call：工具调用前触发，可 skip/abort
+ *   - post-tool-call：工具调用后触发，可 retry/modifiedResult
+ *
+ * 会话级事件（Phase 31 Task 6.7）：
+ *   - on-session-start：会话开始时触发
+ *   - on-session-end：会话结束时触发
+ */
+export type HookEvent =
+  | 'pre-step'
+  | 'post-step'
+  | 'on-error'
+  | 'on-complete'
+  | 'pre-tool-call'
+  | 'post-tool-call'
+  | 'on-session-start'
+  | 'on-session-end'
+  | 'on-model-call';
 
 /** 钩子上下文 */
 export interface HookContext {
@@ -29,6 +55,14 @@ export interface HookContext {
   error?: StepError;
   /** 项目路径 */
   projectPath: string;
+  /** Phase 31 Task 6.7：工具名（pre-tool-call / post-tool-call 时有值） */
+  toolName?: string;
+  /** Phase 31 Task 6.7：工具参数（pre-tool-call 时有值） */
+  toolArgs?: Record<string, unknown>;
+  /** Phase 31 Task 6.7：工具执行结果（post-tool-call 时有值） */
+  toolResult?: string;
+  /** Phase 31 Task 6.7：工具执行耗时毫秒（post-tool-call 时有值） */
+  toolDuration?: number;
 }
 
 /** 步骤结果（简化版，与 DurableExecutor 共享） */
@@ -45,14 +79,40 @@ export interface StepError {
   stack?: string;
 }
 
-/** 钩子返回结果 */
+/**
+ * 钩子返回结果
+ *
+ * Phase 31 Task 6.7 扩展：
+ *   - pre-tool-call 返回 skip：跳过此工具调用，返回预设结果（modifiedResult 作为预设结果）
+ *   - pre-tool-call 返回 abort：中止整个任务（不只是跳过该工具）
+ *   - post-tool-call 返回 retry：重新执行工具（会再次触发 pre-tool-call——注意避免无限递归）
+ *   - post-tool-call 返回 modifiedResult：替换工具结果（用于后处理，如脱敏、格式化）
+ *
+ * deny 语义（借鉴 Open Interpreter）：
+ *   - pre-tool-call 返回 deny：拒绝单次工具调用，但不中止整个任务
+ *   - deny 时通过 reason 字段说明拒绝原因，该原因会作为工具结果返回给 LLM
+ *   - 与 skip 的区别：skip 用 modifiedToolResult 作为预设结果，deny 用 reason 作为拒绝原因
+ *   - LLM 收到拒绝原因后可以自主调整策略（换工具或换参数）
+ */
 export interface HookResult {
-  /** 动作：继续 / 中止 / 重试 / 跳过 */
-  action: 'continue' | 'abort' | 'retry' | 'skip';
+  /** 动作：继续 / 中止 / 重试 / 跳过 / 拒绝 / 警告 */
+  action: 'continue' | 'abort' | 'retry' | 'skip' | 'deny' | 'warn';
   /** 附加消息（用于日志） */
   message?: string;
   /** 修改后的步骤结果（post-step 时可修改） */
   modifiedResult?: StepResult;
+  /**
+   * Phase 31 Task 6.7：工具调用的预设结果
+   * - pre-tool-call 返回 skip 时，作为工具的返回值
+   * - post-tool-call 返回时，替换原始工具结果
+   */
+  modifiedToolResult?: string;
+  /**
+   * deny 语义的拒绝原因（借鉴 Open Interpreter）
+   * - pre-tool-call 返回 deny 时，此字段作为工具结果返回给 LLM
+   * - LLM 收到拒绝原因后可以自主调整策略
+   */
+  reason?: string;
 }
 
 /** 钩子处理器 */
@@ -154,16 +214,22 @@ export class HookRunner {
       return { action: 'continue' };
     }
 
-    // 动作严格度排序：abort > retry > skip > continue
+    // 动作严格度排序：abort > retry > skip/deny > warn > continue
+    // deny 与 skip 同级：两者都跳过当前工具调用但不中止任务
+    // warn 与 continue 同级：只记录警告，不中止任务
     const severity: Record<HookResult['action'], number> = {
       abort: 3,
       retry: 2,
       skip: 1,
+      deny: 1,
+      warn: 0,
       continue: 0,
     };
 
     let finalResult: HookResult = { action: 'continue' };
     let lastModifiedResult: StepResult | undefined;
+    let lastModifiedToolResult: string | undefined;
+    let lastDenyReason: string | undefined;
 
     for (const hook of list) {
       // 记录钩子执行 span
@@ -184,6 +250,16 @@ export class HookRunner {
         // 收集 modifiedResult（post-step 可修改结果）
         if (result.modifiedResult) {
           lastModifiedResult = result.modifiedResult;
+        }
+
+        // Phase 31 Task 6.7：收集 modifiedToolResult（pre/post-tool-call 可修改工具结果）
+        if (result.modifiedToolResult !== undefined) {
+          lastModifiedToolResult = result.modifiedToolResult;
+        }
+
+        // 收集 deny 的拒绝原因（最后一个 deny 钩子的 reason 胜出）
+        if (result.action === 'deny' && result.reason) {
+          lastDenyReason = result.reason;
         }
 
         // 合并结果：取最严格的动作
@@ -223,6 +299,14 @@ export class HookRunner {
     // 附加修改后的结果
     if (lastModifiedResult) {
       finalResult.modifiedResult = lastModifiedResult;
+    }
+    // Phase 31 Task 6.7：附加修改后的工具结果
+    if (lastModifiedToolResult !== undefined) {
+      finalResult.modifiedToolResult = lastModifiedToolResult;
+    }
+    // 附加 deny 的拒绝原因
+    if (lastDenyReason !== undefined) {
+      finalResult.reason = lastDenyReason;
     }
 
     return finalResult;

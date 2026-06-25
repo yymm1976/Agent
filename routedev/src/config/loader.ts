@@ -1,6 +1,6 @@
 // src/config/loader.ts
 // 配置加载器：YAML 解析 + 环境变量替换 + 全局/项目级配置合并 + Schema 验证
-// 加载优先级：项目级 .routedev.yaml > 全局 config.yaml > Schema 内部默认值
+// 加载优先级：项目级 .routedev.yaml > 全局 config.yaml > Schema 默认值
 
 import { readFileSync, existsSync } from 'fs';
 import { parse as parseYaml } from 'yaml';
@@ -51,7 +51,9 @@ function processEnvVars(obj: unknown): unknown {
 
 /**
  * 深度合并两个对象（source 覆盖 target）
- * 数组不合并，直接替换——避免"全局黑名单 + 项目黑名单合并"的歧义
+ * I11 修复：数组改为合并去重（concat + Set 去重），而非直接替换。
+ *   - 非稀疏数组：concat 后用 Set 去重（基本类型按值去重，对象按 JSON 序列化去重）
+ *   - 稀疏数组：保持替换行为（稀疏数组语义不明确，合并不安全）
  */
 function deepMerge<T extends Record<string, unknown>>(target: T, source: Partial<T>): T {
   const result = { ...target };
@@ -72,11 +74,50 @@ function deepMerge<T extends Record<string, unknown>>(target: T, source: Partial
         targetVal as Record<string, unknown>,
         sourceVal as Record<string, unknown>,
       ) as T[keyof T];
+    } else if (Array.isArray(sourceVal) && Array.isArray(targetVal)) {
+      // I11 修复：数组合并去重
+      // 稀疏数组（含 empty slot）保持替换行为；非稀疏数组合并去重
+      const isSparse = (arr: unknown[]): boolean => arr.length !== Object.keys(arr).length;
+      if (isSparse(sourceVal) || isSparse(targetVal)) {
+        // 稀疏数组：直接替换
+        result[key] = sourceVal as T[keyof T];
+      } else {
+        // 非稀疏数组：concat + Set 去重
+        const merged = mergeArraysUnique(targetVal as unknown[], sourceVal as unknown[]);
+        result[key] = merged as T[keyof T];
+      }
     } else if (sourceVal !== undefined) {
-      // 其它情况（基本类型、数组、null）：直接用 source 的值
+      // 其它情况（基本类型、null、一方为数组另一方不是）：直接用 source 的值
       result[key] = sourceVal as T[keyof T];
     }
   }
+  return result;
+}
+
+/**
+ * I11 修复：合并两个数组并去重
+ * - 基本类型（string/number/boolean/null/undefined）：按值去重
+ * - 对象/数组：按 JSON 序列化去重
+ */
+function mergeArraysUnique(a: unknown[], b: unknown[]): unknown[] {
+  const seen = new Set<string>();
+  const result: unknown[] = [];
+  const addItem = (item: unknown): void => {
+    let key: string;
+    if (item === null || typeof item !== 'object') {
+      // 基本类型直接用值作为 key
+      key = `${typeof item}:${String(item)}`;
+    } else {
+      // 对象/数组用 JSON 序列化作为 key
+      key = JSON.stringify(item);
+    }
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  };
+  for (const item of a) addItem(item);
+  for (const item of b) addItem(item);
   return result;
 }
 
@@ -90,17 +131,101 @@ function loadYamlFile(filePath: string): Record<string, unknown> | null {
   }
 
   const content = readFileSync(filePath, 'utf-8');
-  const parsed = parseYaml(content);
+
+  // 文件为空或只有空白：返回空对象，让 loadConfig 使用默认值
+  if (!content.trim()) {
+    return {};
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(content);
+  } catch (err) {
+    // YAML 解析失败（文件损坏）：返回空对象，避免启动崩溃
+    console.warn(`[config] 配置文件解析失败，使用默认配置: ${filePath}`, err);
+    return {};
+  }
 
   if (parsed === null || parsed === undefined) {
     return {};
   }
 
   if (typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`[config] Invalid config file format: ${filePath}`);
+    // 格式无效但不崩溃：返回空对象，让 loadConfig 使用默认值
+    console.warn(`[config] 配置文件格式无效，使用默认配置: ${filePath}`);
+    return {};
   }
 
   return parsed as Record<string, unknown>;
+}
+
+/**
+ * 尝试从 .bak 备份文件恢复全局配置
+ * 当主配置文件 Zod 验证失败时调用，重新走一遍合并+验证流程
+ * 返回验证通过的完整配置，或 null 表示无可用备份
+ */
+function tryLoadBackup(globalPath: string, projectPath?: string): AppConfig | null {
+  const backupPath = `${globalPath}.bak`;
+  if (!existsSync(backupPath)) {
+    return null;
+  }
+
+  try {
+    const content = readFileSync(backupPath, 'utf-8');
+    if (!content.trim()) return null;
+
+    const parsed = parseYaml(content);
+    if (parsed === null || parsed === undefined) return null;
+    if (typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+
+    // 重新走合并流程：默认值 + 备份全局配置 + 项目级配置
+    let backupConfig: Record<string, unknown> = { ...DEFAULT_CONFIG } as unknown as Record<string, unknown>;
+    backupConfig = deepMerge(backupConfig, parsed as Record<string, unknown>);
+
+    if (projectPath) {
+      const projectConfigPath = getProjectConfigPath(projectPath);
+      const projectConfig = loadYamlFile(projectConfigPath);
+      if (projectConfig) {
+        backupConfig = deepMerge(backupConfig, projectConfig);
+      }
+    }
+
+    backupConfig = processEnvVars(backupConfig) as Record<string, unknown>;
+    // 空字符串处理已移至 schema 层的 preprocess，不再全局 sanitize
+
+    const backupResult = AppConfigSchema.safeParse(backupConfig);
+    if (backupResult.success) {
+      console.warn('[config] 主配置验证失败，已从 .bak 备份恢复配置');
+      return backupResult.data;
+    }
+  } catch {
+    // 备份恢复失败，返回 null 让调用方抛出原始错误
+  }
+  return null;
+}
+
+/**
+ * 配置迁移：对旧版本默认值的破坏性变更做自动修正。
+ * 注意：仅当旧值等于旧默认值时才覆盖，避免覆盖用户显式设置。
+ */
+function migrateConfig(config: Record<string, unknown>): Record<string, unknown> {
+  // v3.0.0 修复：security.networkConfirm 旧默认值为 true，导致 web_search/web_fetch
+  // 每次都需要用户确认。新版默认 false，对旧配置做一次性迁移。
+  const security = config.security as Record<string, unknown> | undefined;
+  if (security && security.networkConfirm === true) {
+    // 安全默认值变更：自动关闭全局网络确认，避免基础网络工具无法使用
+    security.networkConfirm = false;
+    console.warn('[config] 自动迁移：security.networkConfirm 由 true 调整为 false（v3.0.0 默认策略变更）');
+  }
+
+  // v3.0.0 修复：agent.maxConcurrentSubAgents 旧默认值为 3，改为 5
+  const agent = config.agent as Record<string, unknown> | undefined;
+  if (agent && agent.maxConcurrentSubAgents === 3) {
+    agent.maxConcurrentSubAgents = 5;
+    console.warn('[config] 自动迁移：agent.maxConcurrentSubAgents 由 3 调整为 5（v3.0.0 默认策略变更）');
+  }
+
+  return config;
 }
 
 /**
@@ -122,7 +247,11 @@ export function loadConfig(options?: {
     config = deepMerge(config, globalConfig);
   }
 
-  // 3. 合并项目级配置（如果有）
+  // 3. 配置迁移（旧版本默认值的一次性修正）
+  // 注意：迁移只在全局配置层面执行，项目级配置的显式设置优先级更高，不应被迁移覆盖
+  config = migrateConfig(config);
+
+  // 4. 合并项目级配置（如果有）——优先级高于全局配置和迁移结果
   if (options?.projectPath) {
     const projectPath = getProjectConfigPath(options.projectPath);
     const projectConfig = loadYamlFile(projectPath);
@@ -131,13 +260,18 @@ export function loadConfig(options?: {
     }
   }
 
-  // 4. 环境变量替换（仅处理字符串值）
+  // 5. 环境变量替换（仅处理字符串值）
   config = processEnvVars(config) as Record<string, unknown>;
 
-  // 5. Zod schema 验证
+  // 6. Zod schema 验证（空字符串处理已移至 schema 层的 preprocess，避免全局 sanitize 导致必需字段误转 undefined）
   const result = AppConfigSchema.safeParse(config);
 
   if (!result.success) {
+    // 验证失败：尝试从 .bak 备份恢复，避免配置丢失导致应用不可用
+    const recovered = tryLoadBackup(globalPath, options?.projectPath);
+    if (recovered) {
+      return recovered;
+    }
     const errors = result.error.issues.map(
       (issue) => `  - ${issue.path.join('.')}: ${issue.message}`
     ).join('\n');
@@ -165,7 +299,9 @@ export function validateConfigFile(filePath: string): {
       return { valid: false, errors: [`File not found: ${filePath}`], warnings };
     }
 
-    const result = AppConfigSchema.safeParse(raw);
+    // 修复：校验前先替换环境变量，避免误判含 ${VAR} 的合法配置
+    const processed = processEnvVars(raw);
+    const result = AppConfigSchema.safeParse(processed);
     if (!result.success) {
       for (const issue of result.error.issues) {
         errors.push(`${issue.path.join('.')}: ${issue.message}`);

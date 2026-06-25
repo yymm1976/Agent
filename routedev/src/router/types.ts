@@ -110,14 +110,21 @@ export interface ClassificationResult {
   source: 'rule' | 'llm';
 }
 
+/** 分类器上下文（Phase 32 Task 4.6：为 LLM 分类提供项目背景信息） */
+export interface ClassificationContext {
+  /** 项目类型（如 nodejs/java-maven/unknown） */
+  projectType?: string;
+  /** 最近使用的工具列表 */
+  recentTools?: string[];
+  /** 是否有未提交的 git 更改 */
+  hasGitChanges?: boolean;
+}
+
 /** 分类器输入 */
 export interface ClassificationInput {
   query: string;
-  context?: {
-    projectType?: string;
-    recentTools?: string[];
-    hasGitChanges?: boolean;
-  };
+  /** Phase 32 Task 4.6：可选的上下文信息，帮助 LLM 分类器做出更准确的判断 */
+  context?: ClassificationContext;
 }
 
 // ============================================================
@@ -132,6 +139,13 @@ export interface RoutingResult {
   originalTier: ScenarioTier;
   degraded: boolean;
   degradationReason?: string;
+  /**
+   * Phase 32 Task 2：是否启用 Prompt 缓存
+   * 默认 true——所有通过路由器发起的 LLM 调用自动启用缓存
+   * Anthropic 使用 cache_control，OpenAI 使用 prompt_cache_key
+   * 调用方应将此字段透传到 LLMRequestOptions.enableCache
+   */
+  enableCache?: boolean;
 }
 
 /** 路由降级原因 */
@@ -168,6 +182,17 @@ export interface LLMRequestOptions {
   temperature?: number;
   stream?: boolean;
   timeoutMs?: number;
+  /** P2-10：是否启用 Prompt 缓存（Anthropic 使用 cache_control，OpenAI 使用 prompt_cache_key） */
+  enableCache?: boolean;
+  /** P2-11：结构化输出格式（OpenAI 使用 response_format json_schema） */
+  responseFormat?: {
+    type: 'json_schema';
+    jsonSchema: {
+      name: string;
+      schema: Record<string, unknown>;
+      strict?: boolean;
+    };
+  };
 }
 
 /** 工具定义（传给 LLM 的 function schema） */
@@ -189,6 +214,7 @@ export interface LLMResponse {
 /** 流式响应事件 */
 export type LLMStreamEvent =
   | { type: 'text_delta'; text: string }
+  | { type: 'reasoning_delta'; text: string }
   | { type: 'tool_call_start'; toolCall: { id: string; name: string } }
   | { type: 'tool_call_delta'; toolCallId: string; argumentsDelta: string }
   | { type: 'tool_call_end'; toolCallId: string }
@@ -296,4 +322,5 @@ export interface RouterConfig {
   budget: TokenBudget;
   classifierModel: string;
   userPreference: 'saving' | 'balanced' | 'premium';
+  fallbackChain?: string[];
 }

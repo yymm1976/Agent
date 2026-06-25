@@ -21,6 +21,8 @@ import type { GoalPlan, PlanStep } from '../agent/goal-types.js';
 import type { WorkMode } from '../agent/work-modes.js';
 import { logger } from '../utils/logger.js';
 import { CommandRegistry } from './command-registry.js';
+import { loadCustomCommands } from './custom-commands.js';
+import * as path from 'node:path';
 import { createGoalRunner } from './goal-runner.js';
 import { createChatRunner } from './chat-runner.js';
 import { renderSplash, getVersion } from './splash.js';
@@ -32,11 +34,29 @@ import {
   autoCommand, semiCommand, manualCommand, pauseCommand, checkpointCommand, rollbackCommand, goalCommand,
   branchCommand, initCommand, dreamCommand, quitCommand, clearCommand, helpCommand, statusCommand, traceCommand,
   promptCommand, channelsCommand, costCommand, historyCommand, pluginCommand, diffCommand,
-  buildCommand, planCommand, composeCommand, resumeCommand,
+  buildCommand, planCommand, composeCommand, resumeCommand, tokenCommand,
+  // Phase 31 Task 7.3：注册已定义但未注册的命令
+  memoryCommand, permissionsCommand, configCommand,
+  // Phase 34：输出样式切换命令
+  outputStyleCommand,
+  // Phase 36 Task 3：技术债管理命令
+  techDebtCommand,
+  // /swarm 群组多 Agent 协作 + /btw 临时问答
+  swarmCommand, btwCommand,
+  // Phase 47 Task 5：/review 独立子代理对抗性审查
+  reviewCommand,
+  // Phase 46 Task 5：注册已定义但未注册的命令
+  clarifyCommand, experimentCommand, qualityCommand, scheduleCommand, trustCommand,
 } from './commands/index.js';
 import { initPluginSystem, registerPermissionMiddleware } from './plugin-init.js';
 import { createAppDependencies } from './app-init.js';
 import { createServiceContext, type ServiceContext, type CommandBridge } from './service-context.js';
+// Phase 32 Task 2.4：接入 CacheStatsTracker（缓存命中统计）
+import { CacheStatsTracker } from '../router/cache-optimizer.js';
+// Phase 31/32 P0 接线：development 完整流水线所需依赖
+import { GoalParser } from '../agent/goal-parser.js';
+import type { ClassificationResult, RoutingResult, ILLMClient } from '../router/types.js';
+import type { RequirementsSummary, ClarifyingQuestion } from '../agent/task-orchestrator-types.js';
 
 interface AppProps {
   config: AppConfig;
@@ -44,6 +64,21 @@ interface AppProps {
   classifier: ScenarioClassifier;
   modelRouter: ModelRouter;
   tracker: TokenTracker;
+}
+
+/**
+ * Phase 31/32 P0 接线：development 流水线上下文
+ * 在需求确认→计划生成→复杂度分析→执行编排→统一审查各阶段间传递状态
+ */
+interface DevelopmentContext {
+  userInput: string;
+  classification: ClassificationResult;
+  routeDecision: RoutingResult;
+  llmClient: ILLMClient;
+  /** 需求摘要（阶段2产出，阶段3注入 GoalParser） */
+  requirements?: RequirementsSummary;
+  /** 用户对澄清问题的回答（第二轮 gather 时传入） */
+  collectedAnswers?: ClarifyingQuestion[];
 }
 
 let messageIdCounter = 0;
@@ -64,6 +99,8 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   const [todayTokensUsed, setTodayTokensUsed] = useState(0);
   const [mcpStatus, setMcpStatus] = useState('disconnected');
   const [idleHintShown, setIdleHintShown] = useState(false);
+  // Phase 34：outputStyle 提升到 UI 状态，支持运行时切换
+  const [outputStyle, setOutputStyleState] = useState(config.ui.outputStyle);
 
   // ===== refs：UI 状态 =====
   const conversationHistoryRef = useRef<LLMMessage[]>([]);
@@ -75,27 +112,60 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   const configRef = useRef(config);
   const lastInputTimeRef = useRef(Date.now());
 
+  // Phase 31/32 P0 接线：development 流水线多轮交互状态
+  // - developmentContextRef：存储当前 development 任务的上下文（在需求确认→计划→执行→审查各阶段间传递）
+  // - awaitingRequirementsAnswerRef：等待用户回答澄清问题
+  // - awaitingRequirementsConfirmRef：等待用户确认需求摘要
+  const developmentContextRef = useRef<DevelopmentContext | null>(null);
+  const awaitingRequirementsAnswerRef = useRef<{ questions: ClarifyingQuestion[] } | null>(null);
+  const awaitingRequirementsConfirmRef = useRef<{ summary: RequirementsSummary } | null>(null);
+
   // ===== refs：服务依赖（Phase 0c：通过 createAppDependencies 一次性创建） =====
-  const depsRef = useRef(createAppDependencies(config, clientManager, currentModel));
+  // Phase 32 Task 1：传入 classifier/modelRouter/tracker 以实例化 Phase 31 模块
+  const depsRef = useRef(createAppDependencies(config, clientManager, currentModel, process.cwd(), classifier, modelRouter, tracker));
   const deps = depsRef.current;
+
+  // Phase 32 Task 2.4：注入 CacheStatsTracker 到 TokenTracker
+  // 让 tracker.record() 自动记录缓存命中数据（Layer 5：会话级累计计数器）
+  // 使用 useRef 确保 CacheStatsTracker 只创建一次，与 tracker 生命周期一致
+  const cacheStatsTrackerRef = useRef(new CacheStatsTracker());
+  useEffect(() => {
+    tracker.setCacheStatsTracker(cacheStatsTrackerRef.current);
+  }, [tracker]);
   const autonomyModeRef = useRef(autonomyMode);
   autonomyModeRef.current = autonomyMode;
   const commandBridgeRef = useRef<{ requestConfirm: (p: string) => Promise<boolean> } | null>(null);
   // Phase 21：注册 PermissionEngine 中间件（deny 规则不可绕过）
   registerPermissionMiddleware(deps.middlewarePipeline, deps.permissionEngine, autonomyModeRef, commandBridgeRef);
 
-  // 初始化分支管理器
-  deps.branchManager.initFromHistory(conversationHistoryRef.current);
+  // 初始化分支管理器：移入 useEffect，避免每次渲染都调用
+  useEffect(() => {
+    deps.branchManager.initFromHistory(conversationHistoryRef.current);
+  }, [conversationHistoryRef.current.length]);
 
-  // 命令注册表（注册所有 23 个命令）
+  // 命令注册表（注册所有 26 个命令，含 Phase 31 Task 7.3 新增的 3 个）
   const commandRegistryRef = useRef(new CommandRegistry());
-  const commandsRegistered = useRef(false);
-  if (!commandsRegistered.current) {
-    commandsRegistered.current = true;
-    [autoCommand, semiCommand, manualCommand, pauseCommand, checkpointCommand, rollbackCommand, goalCommand, branchCommand, initCommand, dreamCommand, quitCommand, clearCommand, helpCommand, statusCommand, traceCommand, promptCommand, channelsCommand, costCommand, historyCommand, pluginCommand, diffCommand, buildCommand, planCommand, composeCommand, resumeCommand].forEach(c => commandRegistryRef.current.register(c));
-  }
+  useEffect(() => {
+    [autoCommand, semiCommand, manualCommand, pauseCommand, checkpointCommand, rollbackCommand, goalCommand, branchCommand, initCommand, dreamCommand, quitCommand, clearCommand, helpCommand, statusCommand, traceCommand, promptCommand, channelsCommand, costCommand, historyCommand, pluginCommand, diffCommand, buildCommand, planCommand, composeCommand, resumeCommand, tokenCommand, memoryCommand, permissionsCommand, configCommand, outputStyleCommand, techDebtCommand, swarmCommand, btwCommand, reviewCommand, clarifyCommand, experimentCommand, qualityCommand, scheduleCommand, trustCommand].forEach(c => commandRegistryRef.current.register(c));
 
-  const systemPrompt = getSystemPrompt(config.general.language);
+    // Phase 47 Task 7：加载自定义 Slash 命令（.routedev/commands/ 目录）
+    // 命名空间隔离：自定义命令与内置命令同名时，内置命令优先，自定义命令被忽略并 logger.warn（陷阱 #139）
+    const commandsDir = path.join(process.cwd(), '.routedev', 'commands');
+    const customCommands = loadCustomCommands(commandsDir);
+    for (const cmd of customCommands) {
+      if (commandRegistryRef.current.has(cmd.name)) {
+        logger.warn(`Custom command /${cmd.name} conflicts with built-in command, ignored`, { name: cmd.name });
+        continue;
+      }
+      commandRegistryRef.current.register(cmd);
+    }
+  }, []);
+
+  // Phase 30 Task 5：systemPrompt 改为 ref 模式
+  // - 初始值用 getSystemPrompt() fallback，保证首次渲染即可用
+  // - useEffect 中异步调用 PromptTemplateManager.render() 更新 ref.current
+  // - runner 持有 ref，每次 LLM 调用时读取 systemPromptRef.current，支持热更新
+  const systemPromptRef = useRef(getSystemPrompt(config.general.language));
 
   // CommandBridge：命令通过回调影响 UI
   const commandBridge: CommandBridge = {
@@ -113,8 +183,14 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     exit: () => { logger.info('Session ended — goodbye', { sessionId: deps.trace.getSessionId() }); deps.pluginRegistry.destroyAll().catch(err => logger.warn('Plugin destroyAll failed', { error: String(err) })).finally(() => process.exit(0)); },
     startGoal: (text: string) => { goalRunnerRef.current.handleGoalCommand(`/goal ${text}`).catch(err => { logger.error('Goal command failed', { error: String(err) }); setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `❌ /goal 命令失败: ${err instanceof Error ? err.message : String(err)}` }]); }); },
     getState: () => ({ currentModel, currentTier, isDegraded, autonomyMode, conversationHistoryLength: conversationHistoryRef.current.length, mcpConnectedCount: deps.mcpManager.connectedCount, mcpTotalToolCount: deps.mcpManager.totalToolCount }),
+    setOutputStyle: (style) => { setOutputStyleState(style); configRef.current.ui.outputStyle = style; },
+    getConversationHistory: () => conversationHistoryRef.current.slice(),
   };
   commandBridgeRef.current = commandBridge; // Phase 21：供 PermissionEngine 中间件使用
+
+  // 修复：将 commandBridge 的确认回调注入工具执行器，
+  // 使 requiresConfirmation 的工具（写操作、网络等）能正常弹出确认对话框。
+  deps.adapter.setRequestConfirmation(commandBridge.requestConfirm);
 
   // GoalRunner（目标分解与执行）
   const goalRunnerRef = useRef(createGoalRunner({
@@ -122,12 +198,16 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     agentLoop: deps.agentLoop,
     checkpointManager: deps.checkpointManager,
     contextManager: deps.contextManager,
-    config, systemPrompt,
+    config, systemPromptRef,
     conversationHistoryRef, pendingConfirmRef, abortControllerRef,
     currentPlanRef, awaitingGoalConfirmRef,
     addSystemMessage: (content: string) => setMessages(prev => [...prev, { id: nextId(), role: 'system', content }]),
     requestPlanEdit: (plan: GoalPlan) => commandBridge.requestPlanEdit(plan),
     setIsProcessing, nextId,
+    setTodayTokensUsed,
+    profiler: deps.profiler ?? undefined,
+    // Phase 32 Task 1.4：接入 CompletionGate（独立代码验证门）
+    completionGate: deps.completionGate,
   }));
 
   // ChatRunner（非命令聊天执行）
@@ -136,10 +216,16 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     agentLoop: deps.agentLoop,
     contextManager: deps.contextManager,
     visionAssistant: deps.visionAssistant,
-    config, systemPrompt,
+    config, systemPromptRef,
     conversationHistoryRef, pendingConfirmRef, abortControllerRef,
     setMessages, setIsProcessing, setCurrentModel, setCurrentTier,
     setIsDegraded, setTodayTokensUsed, nextId,
+    profiler: deps.profiler ?? undefined,
+    // Phase 34：注入 Trace/Audit，用于 trajectory 过程评测汇总
+    trace: deps.trace,
+    audit: deps.audit,
+    // Phase 34：运行时 outputStyle 读取（支持 /output-style 切换）
+    getOutputStyle: () => outputStyle,
   }));
 
   // 构建 ServiceContext（Phase 0c：通过 createServiceContext 单一入口装配）
@@ -171,6 +257,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       cwd: process.cwd(),
       pluginRegistry: deps.pluginRegistry,
       durableExecutor: deps.durableExecutor,
+      profiler: deps.profiler ?? undefined,
     });
   }, [config, clientManager, modelRouter, tracker, commandBridge, deps]);
 
@@ -245,6 +332,49 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     };
   }, [config.mcp.autoConnect, config.mcp.servers, config.channels.entries, clientManager, deps]);
 
+  // Phase 30 Task 5：异步渲染系统提示词，更新 systemPromptRef.current
+  // - 通过 PromptTemplateManager 支持项目级/用户级覆盖
+  // - 渲染失败时保留 fallback（getSystemPrompt 返回的初始值），不阻断启动
+  // - 依赖 config 和 autonomyMode：自主度或语言变化时重新渲染
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        // 收集渲染上下文（动态字段留空，由 runner 在每次调用时补充）
+        const projectRules = (await deps.projectMemory.readRules().catch(() => null)) ?? '';
+        const projectMemorySummary = (await deps.projectMemory.getSummary().catch(() => '') ) ?? '';
+        const blackboardSummary = deps.blackboard.formatForPrompt();
+        const context = {
+          language: config.general.language,
+          autonomyMode,
+          projectRules,
+          projectMemory: projectMemorySummary,
+          blackboard: blackboardSummary,
+          availableTools: '',
+          conversationContext: '',
+          routeDecision: '',
+          entityState: '',
+          conciseThinking: '',
+          cwd: process.cwd(),
+        };
+        const rendered = await deps.prompts.render('main.system', context);
+        if (!cancelled && rendered) {
+          systemPromptRef.current = rendered;
+          // Phase 31/32 P0 接线：同步共享 systemPromptRef，让 ExecutionOrchestrator/UnifiedReviewer 获取最新系统提示词
+          deps.sharedSystemPromptRef.current = rendered;
+          logger.debug('System prompt rendered via PromptTemplateManager', {
+            length: rendered.length,
+            source: 'template',
+          });
+        }
+      } catch (err) {
+        // 渲染失败保留 fallback，不阻断功能
+        logger.warn('PromptTemplateManager render failed, using fallback', { error: String(err) });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [config.general.language, autonomyMode, deps.prompts, deps.projectMemory, deps.blackboard]);
+
   // Phase 22：插件系统初始化——独立 useEffect，依赖 [] 仅运行一次
     useEffect(() => {
       initPluginSystem(deps.pluginRegistry).catch(err => logger.warn('Plugin init failed', { error: String(err) }));
@@ -267,6 +397,135 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       }, 5000);
       return () => clearInterval(interval);
     }, [isProcessing, confirmDialog, editingPlan, idleHintShown]);
+
+    // Phase 31/32 P0 接线：development 流水线辅助函数
+    // 使用 ref 持有函数引用，避免 useCallback 依赖链膨胀，同时确保总是调用最新版本
+    const runRequirementsGathererRef = useRef<(ctx: DevelopmentContext) => Promise<void>>(async () => {});
+    const runDevelopmentPipelineRef = useRef<(ctx: DevelopmentContext, stage: 'planning' | 'execution' | 'review') => Promise<void>>(async () => {});
+
+    /**
+     * 运行需求收集器——处理 gather() 异步生成器的事件
+     * - questions → 显示问题，设置 awaitingRequirementsAnswerRef，等待用户回答
+     * - summary → 显示摘要，设置 awaitingRequirementsConfirmRef，等待用户确认
+     * - skipped → 直接进入计划生成阶段
+     */
+    runRequirementsGathererRef.current = async (ctx: DevelopmentContext) => {
+      for await (const event of deps.requirementsGatherer.gather({
+        userInput: ctx.userInput,
+        classification: ctx.classification,
+        llmClient: ctx.llmClient,
+        routeDecision: ctx.routeDecision,
+        collectedAnswers: ctx.collectedAnswers,
+      })) {
+        if (event.type === 'questions') {
+          // 显示澄清问题，等待用户回答
+          developmentContextRef.current = ctx;
+          awaitingRequirementsAnswerRef.current = { questions: event.questions };
+          const questionsText = event.questions
+            .map(q => `Q${q.id}: ${q.question}${q.options ? `\n  选项: ${q.options.join(' / ')}` : ''}`)
+            .join('\n');
+          setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `📝 需要澄清以下问题：\n${questionsText}\n\n请回答以上问题：` }]);
+          return; // 退出循环，等待用户回答后再次调用 gather()
+        }
+        if (event.type === 'summary') {
+          // 显示需求摘要，等待用户确认
+          developmentContextRef.current = ctx;
+          ctx.requirements = event.summary;
+          awaitingRequirementsConfirmRef.current = { summary: event.summary };
+          const summaryText = [
+            `目标: ${event.summary.goal}`,
+            event.summary.scope.length > 0 ? `范围: ${event.summary.scope.join(', ')}` : '',
+            event.summary.constraints.length > 0 ? `约束: ${event.summary.constraints.join('; ')}` : '',
+            event.summary.acceptanceCriteria.length > 0 ? `验收标准: ${event.summary.acceptanceCriteria.join('; ')}` : '',
+            `预估复杂度: ${event.summary.estimatedComplexity}`,
+          ].filter(Boolean).join('\n');
+          setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `📋 需求摘要：\n${summaryText}\n\n确认执行？[y/n]` }]);
+          return; // 退出循环，等待用户确认
+        }
+        if (event.type === 'skipped') {
+          setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `⏭ 需求确认已跳过：${event.reason}` }]);
+          // 继续后续阶段
+        }
+      }
+      // gather() 结束（skipped 或无事件）→ 直接进入计划生成
+      await runDevelopmentPipelineRef.current(ctx, 'planning');
+    };
+
+    /**
+     * 运行 development 流水线——从指定阶段开始执行
+     * - planning: GoalParser 生成计划 → StepEditor 编辑 → 复杂度分析 → 执行 → 审查
+     * - execution: 直接执行（计划已就绪）
+     * - review: 直接审查（执行已完成）
+     */
+    runDevelopmentPipelineRef.current = async (ctx: DevelopmentContext, stage: 'planning' | 'execution' | 'review') => {
+      try {
+        if (stage === 'planning') {
+          // ===== 阶段3：计划生成 =====
+          setMessages(prev => [...prev, { id: nextId(), role: 'system', content: '📋 正在生成执行计划...' }]);
+          const parser = new GoalParser();
+          const plan = await parser.parse(ctx.requirements?.goal ?? ctx.userInput, {
+            routeDecision: ctx.routeDecision,
+            llmClient: ctx.llmClient,
+            requirements: ctx.requirements,
+          });
+
+          // 通过 StepEditor 让用户编辑步骤
+          setMessages(prev => [...prev, { id: nextId(), role: 'system', content: '📋 计划已生成，请在编辑器中审查和修改步骤...' }]);
+          const editedSteps = await commandBridge.requestPlanEdit(plan);
+          if (editedSteps === null) {
+            setMessages(prev => [...prev, { id: nextId(), role: 'system', content: '❌ 已取消任务' }]);
+            setIsProcessing(false);
+            return;
+          }
+          plan.steps = editedSteps;
+          currentPlanRef.current = plan;
+
+          // ===== 阶段3b：复杂度分析 =====
+          setMessages(prev => [...prev, { id: nextId(), role: 'system', content: '🔬 正在分析步骤复杂度...' }]);
+          const complexityMap = await deps.complexityAnalyzer.analyze({
+            steps: plan.steps,
+            requirements: ctx.requirements ?? { goal: ctx.userInput, scope: [], constraints: [], acceptanceCriteria: [], estimatedComplexity: 'medium' },
+            llmClient: ctx.llmClient,
+            routeDecision: ctx.routeDecision,
+          });
+          const multiAgentSteps = Array.from(complexityMap.values()).filter(c => c.needsSubAgent).length;
+          setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `📊 复杂度分析完成：${plan.steps.length} 个步骤，${multiAgentSteps > 0 ? `${multiAgentSteps} 个需要子 Agent，将使用多 Agent 模式` : '全部使用单 Agent 模式'}` }]);
+
+          // ===== 阶段4：执行编排 =====
+          setMessages(prev => [...prev, { id: nextId(), role: 'system', content: '🚀 开始执行...' }]);
+          const executionResult = await deps.executionOrchestrator.execute({
+            plan,
+            complexityMap,
+            llmClient: ctx.llmClient,
+            routeDecision: ctx.routeDecision,
+            conversationHistory: conversationHistoryRef.current,
+          });
+
+          const successCount = executionResult.results.filter(r => r.success).length;
+          setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `📦 执行完成：${successCount}/${executionResult.results.length} 步骤成功（${executionResult.mode === 'multi' ? '多 Agent' : '单 Agent'} 模式）` }]);
+
+          // ===== 阶段5：统一审查 =====
+          setMessages(prev => [...prev, { id: nextId(), role: 'system', content: '🔍 开始统一审查...' }]);
+          const reviewResult = await deps.unifiedReviewer.review({
+            plan,
+            executionResults: executionResult.results,
+            llmClient: ctx.llmClient,
+            routeDecision: ctx.routeDecision,
+            conversationHistory: conversationHistoryRef.current,
+          });
+
+          const icon = reviewResult.passed ? '🎉' : '⚠️';
+          setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `${icon} 任务完成。审查${reviewResult.passed ? '通过' : '未通过'}：${reviewResult.summary}` }]);
+        }
+      } catch (err) {
+        logger.error('Development pipeline failed', { error: String(err) });
+        setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `❌ 任务执行失败: ${err instanceof Error ? err.message : String(err)}` }]);
+      } finally {
+        // 清理 development 上下文
+        developmentContextRef.current = null;
+        setIsProcessing(false);
+      }
+    };
 
     const handleSubmit = useCallback(async (text: string) => {
     // 重置空闲提示计时器
@@ -299,6 +558,53 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       return;
     }
 
+    // Phase 31/32 P0 接线：development 流水线多轮交互——需求确认
+    // 2a. 等待用户回答澄清问题
+    if (awaitingRequirementsAnswerRef.current) {
+      const pending = awaitingRequirementsAnswerRef.current;
+      awaitingRequirementsAnswerRef.current = null;
+      const ctx = developmentContextRef.current;
+      if (!ctx) {
+        logger.error('DevelopmentContext missing while awaiting requirements answer');
+        setIsProcessing(false);
+        return;
+      }
+      // 将用户回答解析为 ClarifyingQuestion（options 字段存自由回答）
+      const answers: ClarifyingQuestion[] = pending.questions.map(q => ({
+        id: q.id,
+        question: q.question,
+        options: [text],
+      }));
+      ctx.collectedAnswers = answers;
+      setMessages(prev => [...prev, { id: nextId(), role: 'user', content: text }]);
+      // 重新调用 gather()，这次传入 collectedAnswers → 生成摘要
+      await runRequirementsGathererRef.current(ctx);
+      return;
+    }
+    // 2b. 等待用户确认需求摘要
+    if (awaitingRequirementsConfirmRef.current) {
+      const pending = awaitingRequirementsConfirmRef.current;
+      awaitingRequirementsConfirmRef.current = null;
+      const ctx = developmentContextRef.current;
+      developmentContextRef.current = null;
+      if (!ctx) {
+        logger.error('DevelopmentContext missing while awaiting requirements confirm');
+        setIsProcessing(false);
+        return;
+      }
+      const approved = /^[yY]/.test(text.trim());
+      setMessages(prev => [...prev, { id: nextId(), role: 'user', content: text }]);
+      if (approved) {
+        setMessages(prev => [...prev, { id: nextId(), role: 'system', content: '✅ 需求已确认，开始生成计划...' }]);
+        ctx.requirements = pending.summary;
+        await runDevelopmentPipelineRef.current(ctx, 'planning');
+      } else {
+        setMessages(prev => [...prev, { id: nextId(), role: 'system', content: '❌ 已取消任务' }]);
+        setIsProcessing(false);
+      }
+      return;
+    }
+
     // 3. 添加用户消息
     setMessages(prev => [...prev, { id: nextId(), role: 'user', content: text }]);
 
@@ -319,16 +625,119 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
         setIsProcessing(false);
         return;
       }
+      // Phase 47 Task 7：passthrough 结果——已注册命令（如自定义命令）返回渲染后的 prompt
+      // 将渲染后的输入发送给 Agent（通过 ChatRunner）
+      const commandName = text.slice(1).split(/\s/)[0];
+      if (commandRegistryRef.current.has(commandName)) {
+        setIsProcessing(true);
+        await chatRunnerRef.current.runChat(result.input);
+        return;
+      }
       // 未知命令
       setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `未知命令: ${text.split(' ')[0]}。输入 /help 查看可用命令。` }]);
       setIsProcessing(false);
       return;
     }
 
-    // 5. 非命令输入 → 委托给 ChatRunner
+    // 5. 非命令输入 → Phase 32 Task 1：先经过 TaskOrchestrator 分发
     setIsProcessing(true);
-    await chatRunnerRef.current.runChat(text);
+    // unifiedPipeline 开关：默认 true 走统一流水线，false 时回退到原 ChatRunner 直达
+    const unifiedPipelineEnabled = config.optimization?.workflow?.unifiedPipeline !== false;
+    if (unifiedPipelineEnabled) {
+      try {
+        const action = await deps.taskOrchestrator.handle(text);
+        await dispatchOrchestratorAction(action);
+      } catch (err) {
+        logger.error('TaskOrchestrator handle failed, fallback to ChatRunner', { error: String(err) });
+        await chatRunnerRef.current.runChat(text);
+      }
+    } else {
+      // 回退路径：unifiedPipeline 为 false 时保持原行为
+      await chatRunnerRef.current.runChat(text);
+    }
   }, [buildServiceContext, commandBridge]);
+
+  /**
+   * Phase 31/32 P0 接线：分发 TaskOrchestrator 返回的 Action
+   *
+   * OrchestratorAction 类型：
+   *   - direct_chat: quick_answer 短路，直达 ChatRunner
+   *   - pipeline_start (planning): 走 /plan 命令路径
+   *   - pipeline_start (development): 走完整流水线——需求确认→计划生成→复杂度分析→执行编排→统一审查
+   *   - 其余类型（requirements_question/plan_ready/execution_progress/review_result/completed）
+   *     由 TaskOrchestrator 内部状态机驱动，当前阶段不主动触发
+   */
+  const dispatchOrchestratorAction = useCallback(async (action: import('../agent/task-orchestrator-types.js').OrchestratorAction): Promise<void> => {
+    switch (action.type) {
+      case 'direct_chat':
+        // quick_answer 短路：直达 ChatRunner，无额外 LLM 调用
+        await chatRunnerRef.current.runChat(action.input);
+        return;
+      case 'pipeline_start':
+        // planning 意图：走 /plan 命令路径
+        if (action.intent === 'planning') {
+          const ctx = buildServiceContext();
+          const result = await commandRegistryRef.current.execute(`/plan ${action.input}`, ctx);
+          if (result.type === 'handled' && result.messages) {
+            for (const content of result.messages) {
+              if (content === '__CLEAR__') {
+                commandBridge.clearChat();
+              } else {
+                setMessages(prev => [...prev, { id: nextId(), role: 'system', content }]);
+              }
+            }
+          }
+          setIsProcessing(false);
+          return;
+        }
+        // Phase 31/32 P0 接线：development 意图——走完整流水线
+        if (action.intent === 'development') {
+          const task = deps.taskOrchestrator.getCurrentTask();
+          if (!task || !task.routing) {
+            // 上下文缺失，回退到 ChatRunner
+            logger.warn('Development pipeline: TaskContext or routing missing, fallback to ChatRunner');
+            await chatRunnerRef.current.runChat(action.input);
+            return;
+          }
+          const llmClient = clientManager.get(task.routing.providerId);
+          if (!llmClient || !llmClient.isReady()) {
+            setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `❌ 错误: 提供商 ${task.routing.providerId} 不可用` }]);
+            setIsProcessing(false);
+            return;
+          }
+          // 构建 development 上下文
+          const devCtx: DevelopmentContext = {
+            userInput: action.input,
+            classification: task.classification,
+            routeDecision: task.routing,
+            llmClient,
+          };
+          // 检查是否应跳过需求确认
+          if (deps.taskOrchestrator.shouldSkipRequirements(action.input, task.classification)) {
+            // 跳过需求确认，直接进入计划生成
+            setMessages(prev => [...prev, { id: nextId(), role: 'system', content: '⏭ 跳过需求确认，直接执行...' }]);
+            await runDevelopmentPipelineRef.current(devCtx, 'planning');
+          } else {
+            // 启动需求确认阶段
+            setMessages(prev => [...prev, { id: nextId(), role: 'system', content: '📝 开始需求确认...' }]);
+            await runRequirementsGathererRef.current(devCtx);
+          }
+          return;
+        }
+        // 其他 intent（explicit_goal 等）：回退到 ChatRunner
+        await chatRunnerRef.current.runChat(action.input);
+        return;
+      case 'requirements_question':
+      case 'plan_ready':
+      case 'execution_progress':
+      case 'review_result':
+      case 'completed':
+        // 这些类型由 TaskOrchestrator 状态机后续阶段触发，当前不处理
+        logger.warn('OrchestratorAction type not yet handled in dispatch', { type: action.type });
+        setIsProcessing(false);
+        return;
+    }
+  }, [buildServiceContext, commandBridge, deps.taskOrchestrator, clientManager]);
 
   /** 关闭确认对话框并通知结果 */
   function closeConfirm(approved: boolean) {
@@ -344,8 +753,8 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   return (
     <Box flexDirection="column" height="100%">
       <Box flexDirection="column" flexGrow={1} paddingX={1}>
-        <ChatView messages={messages} />
-        {editingPlan && <StepEditor plan={editingPlan} onConfirm={(s) => { pendingPlanEditRef.current?.resolve(s); pendingPlanEditRef.current = null; setEditingPlan(null); }} onCancel={() => { pendingPlanEditRef.current?.resolve(null); pendingPlanEditRef.current = null; setEditingPlan(null); }} />}
+        <ChatView messages={messages} outputStyle={outputStyle} />
+        {editingPlan && <StepEditor plan={editingPlan} outputStyle={outputStyle} onConfirm={(s) => { pendingPlanEditRef.current?.resolve(s); pendingPlanEditRef.current = null; setEditingPlan(null); }} onCancel={() => { pendingPlanEditRef.current?.resolve(null); pendingPlanEditRef.current = null; setEditingPlan(null); }} />}
         {confirmDialog && (
           <ConfirmDialog
             operation={confirmDialog.prompt}
@@ -365,6 +774,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
           autonomyMode={autonomyMode}
           workMode={workMode}
           composeSummary={workMode === 'compose' ? { phase: deps.workModeController.getComposePhase() ?? 'requirements', progress: `${(['requirements', 'coding', 'testing', 'review'].indexOf(deps.workModeController.getComposePhase() ?? 'requirements') + 1)}/4` } : null}
+          outputStyle={outputStyle}
         />
       </Box>
       <Box paddingX={1}>

@@ -62,6 +62,8 @@ describe('WeChatWorkAdapter', () => {
     it('should return success', async () => {
       const adapter = new WeChatWorkAdapter(makeConfig());
       adapter.onMessage(async () => 'reply');
+      // 修复：mock sendToUser 避免调用真实企业微信 API
+      vi.spyOn(adapter as any, 'sendToUser').mockResolvedValue(true);
       const result = await adapter.sendResponse('user-1', 'reply text', false);
       expect(result.success).toBe(true);
     });
@@ -72,12 +74,24 @@ describe('WeChatWorkAdapter', () => {
       expect(result.success).toBe(false);
       expect(result.error).toBe('no handler');
     });
+
+    it('should return failure when sendToUser fails', async () => {
+      const adapter = new WeChatWorkAdapter(makeConfig());
+      adapter.onMessage(async () => 'reply');
+      // sendToUser 返回 false 时应报失败
+      vi.spyOn(adapter as any, 'sendToUser').mockResolvedValue(false);
+      const result = await adapter.sendResponse('user-1', 'reply text', false);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('发送失败');
+    });
   });
 
   describe('getStatus', () => {
     it('should return status', async () => {
       const adapter = new WeChatWorkAdapter(makeConfig());
       adapter.onMessage(async () => 'r');
+      // 修复：mock sendToUser 避免调用真实企业微信 API
+      vi.spyOn(adapter as any, 'sendToUser').mockResolvedValue(true);
       await adapter.sendResponse('u1', 'r', false);
       const status = adapter.getStatus();
       expect(status.type).toBe('wechat-work');
@@ -111,7 +125,8 @@ describe('WeChatWorkAdapter', () => {
 
   describe('parseWebhook', () => {
     it('should parse valid XML message', () => {
-      const adapter = new WeChatWorkAdapter(makeConfig());
+      // 不配置 AES key，使 decryptMessage 直接返回原文（XML 字符串），便于测试 XML 解析逻辑
+      const adapter = new WeChatWorkAdapter({ ...makeConfig(), options: { ...makeConfig().options, encodingAESKey: undefined } });
       const xml = `<xml>
 <ToUserName><![CDATA[bot]]></ToUserName>
 <FromUserName><![CDATA[user1]]></FromUserName>

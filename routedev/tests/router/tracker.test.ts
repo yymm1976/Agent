@@ -4,12 +4,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { TokenTracker } from '../../src/router/tracker.js';
 import type { TokenBudget, TokenUsageInfo } from '../../src/router/types.js';
-import { unlinkSync, existsSync } from 'fs';
-import { join } from 'path';
-import { getAppDataDir } from '../../src/utils/paths.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 
 describe('TokenTracker', () => {
   let tracker: TokenTracker;
+  let tmpDir: string;
   const budget: TokenBudget = {
     mode: 'enforce',
     dailyLimit: 10000,
@@ -17,28 +18,17 @@ describe('TokenTracker', () => {
   };
 
   beforeEach(() => {
-    // 清理持久化文件以确保测试隔离
-    const persistPath = join(getAppDataDir(), 'token-usage.json');
-    if (existsSync(persistPath)) {
-      try {
-        unlinkSync(persistPath);
-      } catch {
-        // 忽略
-      }
-    }
-    tracker = new TokenTracker(budget);
+    // 使用独立临时目录作为持久化路径，避免与其他测试并行时互相污染
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'routedev-tracker-test-'));
+    tracker = new TokenTracker(budget, { persistPath: path.join(tmpDir, 'token-usage.json') });
   });
 
   afterEach(() => {
     tracker.destroy();
-    // 再次清理文件，防止影响其他测试
-    const persistPath = join(getAppDataDir(), 'token-usage.json');
-    if (existsSync(persistPath)) {
-      try {
-        unlinkSync(persistPath);
-      } catch {
-        // 忽略
-      }
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // 忽略清理失败
     }
   });
 

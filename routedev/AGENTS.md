@@ -1,6 +1,6 @@
 # RouteDev — Agent 全局入口
 
-> 任何 Agent 接手本项目前必读。详细代码索引见 `CODEMAP.md`。
+> 任何 Agent 接手本项目前必读。详细代码索引见 `CODEMAP.md`，完整陷阱速查见 `.routedev/skills/pitfalls-guide/SKILL.md`。
 
 ## 技术栈
 - **语言：** TypeScript 6.x（strict 模式，ESM）
@@ -35,27 +35,40 @@
 - **路径别名：** `@/*` → `src/*`（tsconfig paths）
 - **导入后缀：** ESM 强制 `.js` 后缀（即使源文件是 `.ts`）
 
-## 陷阱警告（Phase 17b + Phase 0c 执行经验）
-1. `ModelRouter.route()` 接受 `ClassificationResult`，不是 `ScenarioTier`
-2. `LLMClientManager.listAll()` 返回 `Map<string, ILLMClient>`，不是数组
-3. `Checkpoint` 用 `description + timestamp`，没有 `tag + createdAt`
-4. `BranchManager.switchBranch()`，不是 `switchToBranch()`
-5. `DreamConsolidator.consolidate()` 需要传 `CheckpointData` 参数
-6. `TokenTracker.getStats()` 返回 `TokenStats`，没有 `getTodayUsage()`
-7. `src/tools/executor.ts` 是 `ToolExecutor` 实现类（含 SecurityChecker 调用与 executeSafe），实际工具执行走 `ToolRegistryAdapter`；Phase 0c 后**不再**做权限检查（权限已迁移到 PermissionEngine 中间件）
-8. `AuditLogger.log()` 签名是 `(action, target, details, result?, agentId?, confirmation?)`，不是单对象参数
-9. `VisionAssistant` 是 class（值导入），不能用 `import type`
-10. `createServiceContext()` 是 App 装配单一入口（Phase 0c 后已激活，不再是死代码），接受 `ServiceContextDeps` 对象参数；服务实例由 `createAppDependencies()` 工厂集中创建
+## Top 10 核心陷阱（生产路径高频触发，违反会导致崩溃或数据丢失）
 
-## Phase 0c 新增陷阱
-11. **权限检查走 PermissionEngine 中间件**：`PermissionChecker`（`src/tools/permission.ts`）已删除，所有权限决策由 `PermissionEngine` 通过 `AgentMiddlewarePipeline.onActing` 中间件完成。`ToolExecutor.execute()` 不再做权限检查，仅保留 `SecurityChecker`（路径/命令黑名单等安全检查 ≠ 权限检查）。新增工具入口必须经过 Agent Loop 的中间件链路，不能直接调用 ToolExecutor
-12. **Provider 路由优先从配置读取**：`ModelRouter.inferProviderId()` 拆为两步 — `findProviderFromConfig()` 优先遍历 `providers[].models[]` 匹配，`heuristicInferProviderId()` 仅作后备。新增 provider 时务必在配置 `providers[].models[]` 中声明 model.id/model.name，否则会落入启发式推断（关键词：gpt/claude/gemini/o4/tongyi/kimi/moonshot/glm/chatglm）
-13. **App.tsx 装配已收敛**：服务实例创建移至 `src/cli/app-init.ts` 的 `createAppDependencies()`，App.tsx 只负责 React 状态与 UI 渲染（≤300 行）。新增服务应扩展 `AppDependencies` 接口与 `createAppDependencies()` 工厂，不要在 App.tsx 内联初始化
+> 完整 81 条陷阱（编号 1-64 + 126-142）见 `.routedev/skills/pitfalls-guide/SKILL.md`，按 Phase 分章组织。
 
-## Phase 29 新增陷阱（安全加固）
-14. **命令解析必须走 `parseCommand()` tokenize**：`src/tools/command-parser.ts` 提供 `parseCommand(command: string): ParsedCommand`，将 shell 命令解析为结构化 `{ command, args, hasPipe, hasSubstitution, hasRedirect, raw }`。`SecurityChecker.checkCommand()` 与 `PermissionEngine` 的 deny 规则（rm -rf /、find -delete、dd of=/dev/）**必须**使用 `parseCommand()` 的首 token 精确匹配，**禁止**用 `includes()`/正则子串匹配（会被 `rmrf.sh`、`find-delete.sh` 等绕过）。新增命令类 deny 规则时，先 `parseCommand` 再判断 `parsed.command` 与 `parsed.args`
-15. **签名验证生产模式拒绝降级**：`WeChatWorkAdapter.verifySignature()` 与 `SlackAdapter.verifySignature()` 在 `NODE_ENV=production` 时，token/signingSecret 未配置**必须返回 false**（拒绝处理），仅在开发模式放行并 `logger.warn`。新增渠道适配器必须遵循此模式，禁止"未配置即放行"的降级
-16. **环境变量替换 fail-fast**：`src/config/loader.ts` 的 `replaceEnvVars()` 在引用了未设置的环境变量时**抛出 `ConfigValidationError`**，不再保留 `${VAR}` 占位符。配置文件中所有 `${VAR}` 必须在 `.env` 或系统环境变量中定义，否则配置加载失败
-17. **Shell 子进程环境变量白名单**：`src/tools/builtin/shell-exec.ts` 通过 `ALLOWED_ENV_KEYS` 白名单过滤 `context.environment`，仅允许 `NODE_ENV/PATH/HOME/USER/LANG/LC_ALL/TERM/SHELL/EDITOR/PAGER/GIT_*` 等安全变量。`LD_PRELOAD`/`NODE_OPTIONS`/`ELECTRON_RUN_AS_NODE` 等危险变量会被静默忽略并 `logger.warn`。新增需要向子进程传递环境变量的工具，必须先加入白名单
-18. **Rollback 前置工作区检查**：`CheckpointManager.rollback()` 在执行 `git checkout` 前**必须**检查 `git status` 工作区是否干净（modified/not_added/deleted 全为空），有未提交更改时**中止回滚**并 `logger.error`。禁止在有未提交更改时强制回滚（会丢失用户工作）
-19. **LLM 客户端 API Key 缺失时 client=null**：`OpenAIClient`/`AnthropicClient` 在 `apiKey` 为空时**不构造客户端**（`this.client = null`，`this._isReady = false`），`complete()`/`stream()` 调用时抛 `LLMError`。禁止用 `'placeholder'` 构造假客户端。`ModelRouter.isModelAvailable()` 检查 `provider.apiKey` 非空且非 `'placeholder'`
+1. **权限检查走 PermissionEngine 中间件**（#11）：`PermissionChecker` 已删除，所有权限决策由 `PermissionEngine` 通过 `AgentMiddlewarePipeline.onActing` 完成。`ToolExecutor.execute()` 不再做权限检查。新增工具入口必须经过 Agent Loop 中间件链路，不能直接调用 ToolExecutor
+2. **命令解析必须走 `parseCommand()` tokenize**（#14）：`SecurityChecker.checkCommand()` 与 `PermissionEngine` 的 deny 规则**必须**用 `parseCommand()` 首 token 精确匹配，**禁止** `includes()`/正则子串匹配（会被 `rmrf.sh` 等绕过）
+3. **环境变量替换 fail-fast**（#16）：`replaceEnvVars()` 引用未设置的环境变量时**抛出 `ConfigValidationError`**，不再保留 `${VAR}` 占位符。配置中所有 `${VAR}` 必须在 `.env` 或系统环境变量中定义
+4. **Rollback 前置工作区检查**（#18）：`CheckpointManager.rollback()` 在 `git checkout` 前**必须**检查 `git status` 工作区是否干净，有未提交更改时**中止回滚**（强制回滚会丢失用户工作）
+5. **TaskOrchestrator 是 App.tsx 的新调度层**（#23）：所有非命令输入先经过它，由它判定 intent（quick_answer/development/explicit_goal/planning）并分发。`quick_answer` 短路直达 ChatRunner，`development` 走完整流水线
+6. **ReadTracker 追踪的是绝对路径**（#27）：`file_read` 和 `file_write` 传入的路径必须 `normalize` 后比对。新建文件不受 read-before-write 限制（通过 `fs.access()` 检查存在性）
+7. **HookRunner 在 app-init.ts 中必须传入 TraceCollector**（#45）：`new HookRunner()` 后必须调用 `setTraceCollector(trace)`，否则钩子执行不产生 span 记录。`DurableExecutor` 也必须传入同一 `hookRunner` 实例
+8. **Tool/Skill 的 description 写法决定 80% 匹配效果**（#54）：description 必须写给模型看（包含触发场景、适用条件），不是简短标题。实测同一工具描述写法差异可达 30 个百分点准确率
+9. **中间件阶段顺序不可随意调整**（#60）：`onSystemPrompt → onModelCall → onReasoning → onActing → onAgent` 是 ReAct 循环自然顺序。把 `onAgent` 提前到 `onActing` 之前，会话级 Token 统计会漏掉最后一次工具调用
+10. **子 Agent 的 ToolRegistry 是父 Agent 的浅拷贝**（#62）：`spawn_agent` 通过 `registry.clone()` 复制父 Agent 的 ToolRegistry 但移除 `spawn_agent`。子 Agent 工具集在创建时确定，父 Agent 后续注册的新工具子 Agent 看不到
+
+## Phase 47 新增陷阱（#133-142，简版）
+
+> 详细说明见 `.routedev/skills/pitfalls-guide/SKILL.md` Phase 47 章节。
+
+- **#133** AGENTS.md 瘦身后必须保留 Top 10 核心陷阱在正文，完整索引迁移至 SKILL.md
+- **#134** description lint 不能阻断开发流程（过渡期 warning，不返回 error）
+- **#135** routedev exec 必须设总超时（默认 5 分钟），headless 下 always-ask 自动 deny
+- **#136** 沙箱级判断必须在审批级之前（deny 优先于 never-ask）
+- **#137** /review 子代理必须用 read-only 沙箱（工具白名单不是确定性兜底）
+- **#138** Checkpoint 语义化摘要的 LLM 调用必须设超时（3 秒）与降级（返回原始 description）
+- **#139** 自定义命令的模板变量替换必须一次性（不递归，$1 中的 {{...}} 不展开）
+- **#140** AGENTS.override.md 的语义是「跳过」而非「合并」（存在 override 时跳过 base）
+- **#141** GitHub Action 的 config 必须用 Base64 传输（避免 YAML 多行字符串转义问题）
+- **#142** 沙箱级切换需要刷新工具可用性缓存（避免残留的 deny/allow 状态）
+
+## 完整陷阱索引
+
+完整 81 条陷阱（含 Phase 17b/0c/29/30/31/32/33/35/36/37/38/46/47 全部章节）已迁移至：
+
+**`.routedev/skills/pitfalls-guide/SKILL.md`**
+
+涉及 PermissionEngine、AgentLoop、Checkpoint、Blackboard、HookRunner、MCPClientManager、ToolExecutor、TaskOrchestrator、ReadTracker、LoopDetection、ConflictDetector、DurableExecutor、WorkerExecutor、TraceCollector、ToolResultSanitizer、ScheduleEngine、Git Worktree、KnowledgeGraph、spawn_agent 等模块时，务必先查阅该 Skill 文件对应章节。

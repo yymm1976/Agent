@@ -8,6 +8,7 @@ import { Box, Text } from 'ink';
 import type { ScenarioTier } from '../../router/types.js';
 import type { PluginRegistry } from '../../plugins/registry.js';
 import type { ThemeColors, ThemePlugin } from '../../plugins/types.js';
+import type { OutputStyle } from '../../config/schema.js';
 import {
   getColor,
   getTierLabel,
@@ -27,6 +28,8 @@ interface StatusBarProps {
   durableSnapshot?: { lastStepCompleted: number; totalSteps: number; status: string } | null;
   /** 插件注册表（Phase 27 Task 3：可选，用于读取 ThemePlugin 配色） */
   pluginRegistry?: PluginRegistry;
+  /** Phase 34 P1：输出样式，控制状态栏信息密度，默认 standard */
+  outputStyle?: OutputStyle;
 }
 
 /** ThemeColors 字段到 SemanticColor 的映射（仅覆盖有对应关系的颜色） */
@@ -93,6 +96,7 @@ export function StatusBar({
   composeSummary,
   durableSnapshot,
   pluginRegistry,
+  outputStyle = 'standard',
 }: StatusBarProps) {
   // Phase 27 Task 3：组件初始化时检查 ThemePlugin，获取主题颜色
   const themeColors = useMemo<Partial<ThemeColors> | undefined>(() => {
@@ -107,6 +111,13 @@ export function StatusBar({
   const errorColor = getColorWithTheme('error', themeColors);     // 降级红色
   const accentColor = getColorWithTheme('accent', themeColors);   // 编排高亮
 
+  // Phase 34 P1：根据 outputStyle 控制字段可见性
+  // minimal：仅模型 + 等级 + 降级标志
+  // standard：minimal + Token + 自主 + 模式
+  // verbose：standard + 编排摘要 + 执行快照
+  const showTokenAndMode = outputStyle !== 'minimal';
+  const showOrchestration = outputStyle === 'verbose';
+
   return (
     <Box flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1}>
       <Box>
@@ -115,22 +126,26 @@ export function StatusBar({
         <Text color={labelColor}> │ </Text>
         <Text color={tierColor} bold>[{getTierLabel(currentTier)}]</Text>
         {isDegraded && <Text color={errorColor}> ⚠ 已降级</Text>}
-        <Text color={labelColor}> │ </Text>
-        <Text color={labelColor}>Token: </Text>
-        <Text>{formatTokenCount(todayTokensUsed)}</Text>
-        <Text color={labelColor}> │ </Text>
-        <Text color={labelColor}>自主: </Text>
-        <Text>{autonomyMode}</Text>
-        <Text color={labelColor}> │ </Text>
-        <Text color={labelColor}>模式: </Text>
-        <Text>{workMode}</Text>
-        {composeSummary && (
+        {showTokenAndMode && (
+          <>
+            <Text color={labelColor}> │ </Text>
+            <Text color={labelColor}>Token: </Text>
+            <Text>{formatTokenCount(todayTokensUsed)}</Text>
+            <Text color={labelColor}> │ </Text>
+            <Text color={labelColor}>自主: </Text>
+            <Text>{autonomyMode}</Text>
+            <Text color={labelColor}> │ </Text>
+            <Text color={labelColor}>模式: </Text>
+            <Text>{workMode}</Text>
+          </>
+        )}
+        {showOrchestration && composeSummary && (
           <>
             <Text color={labelColor}> │ </Text>
             <Text color={accentColor}>编排: {composeSummary.phase} {composeSummary.progress}</Text>
           </>
         )}
-        {durableSnapshot && (
+        {showOrchestration && durableSnapshot && (
           <>
             <Text color={labelColor}> │ </Text>
             <Text color={modelColor}>执行: {durableSnapshot.lastStepCompleted}/{durableSnapshot.totalSteps}</Text>

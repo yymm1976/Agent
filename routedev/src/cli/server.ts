@@ -43,7 +43,9 @@ export async function startServer(
     llmClient: classifierClient,
     classifierModel: routerConfig.classifierModel,
   });
-  const modelRouter = new ModelRouter(routerConfig, tracker, config.providers);
+  // CONCERN 修复：传入 execution 配置，使熔断器参数可配置
+  // Phase 42：传入 reasoningMode，让 fast/balanced/accurate 影响 tier 选择
+  const modelRouter = new ModelRouter(routerConfig, tracker, config.providers, undefined, config.execution, config.reasoningMode);
 
   // 4. MessageRouter
   const primaryModel: ModelConfig = config.providers[0]?.models[0] ?? {

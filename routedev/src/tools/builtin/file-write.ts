@@ -5,11 +5,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '../types.js';
+import { checkPathBoundary } from './search-utils.js';
 
 export class FileWriteTool implements ITool {
   readonly definition: ToolDefinition = {
     name: 'file_write',
-    description: '写入内容到文件。如果文件不存在则创建，存在则覆盖。可指定追加模式。',
+    description: '当用户需要创建新文件或覆盖写入文件内容时，使用此工具。支持追加模式，写入前会校验路径安全性。',
     parameters: {
       type: 'object',
       properties: {
@@ -53,6 +54,17 @@ export class FileWriteTool implements ITool {
     const filePath = path.resolve(context.workingDirectory, args.path as string);
     const content = args.content as string;
     const append = (args.append as boolean) ?? false;
+
+    // C1 修复：内部路径边界校验（防御性深度防御）
+    const boundaryError = checkPathBoundary(filePath, context);
+    if (boundaryError) {
+      return {
+        success: false,
+        output: '',
+        error: boundaryError,
+        durationMs: 0,
+      };
+    }
 
     try {
       const dir = path.dirname(filePath);

@@ -304,20 +304,27 @@ export class Orchestrator {
       if (!Array.isArray(parsed) || parsed.length === 0) return null;
 
       const result: StepDependency[] = [];
+      // I21 修复：使用实际的 GoalStep.id 而非 idx+1，确保 stepId 与 GoalStep.id 格式一致
+      // 原 bug：parseAnalysis 用 i+1 作为 stepId，但 GoalStep.id 可能是 LLM 提供的任意数字，
+      // 导致 stepId 与 GoalStep.id 不匹配，后续执行时无法正确关联步骤
+      const validStepIds = new Set(steps.map(s => s.id));
       for (let i = 0; i < steps.length; i++) {
-        const item = parsed.find((p: any) => Number(p.stepId) === i + 1) ?? parsed[i];
+        const stepId = steps[i].id;
+        const item = parsed.find((p: any) => Number(p.stepId) === stepId) ?? parsed[i];
         if (!item) {
           result.push({
-            stepId: i + 1,
-            dependsOn: i > 0 ? [i] : [],
+            stepId,
+            dependsOn: i > 0 ? [steps[i - 1].id] : [],
             assignedRole: 'coder',
             likelyFiles: [],
           });
           continue;
         }
         result.push({
-          stepId: i + 1,
-          dependsOn: Array.isArray(item.dependsOn) ? item.dependsOn.map(Number) : [],
+          stepId,
+          dependsOn: Array.isArray(item.dependsOn)
+            ? item.dependsOn.map(Number).filter((id: number) => validStepIds.has(id))
+            : [],
           assignedRole: VALID_ROLES.includes(item.assignedRole) ? item.assignedRole : 'coder',
           likelyFiles: Array.isArray(item.likelyFiles) ? item.likelyFiles : [],
         });
@@ -362,19 +369,18 @@ export class Orchestrator {
       }
     }
 
-    // 处理循环依赖（fallback：追加未访问节点）
-    // Phase 29 Task 4：检测到环时添加警告日志（修复 B13）
-    // 原行为是静默追加，调用方完全不知道依赖图有环，可能导致执行顺序错误
+    // I20 修复：检测到循环时发出警告，跳过循环节点（不追加），避免拓扑排序混乱
+    // 原 bug：循环节点被追加到 order 末尾，顺序取决于 dependencies 数组顺序，
+    //         导致拓扑排序结果混乱，可能违反依赖关系执行
+    // 修复：使用 Kahn 算法已正确排序的节点保留，循环节点跳过（不抛错，仅警告）
     if (order.length < dependencies.length) {
       const cycleSteps = dependencies
         .filter(dep => !order.includes(dep.stepId))
         .map(dep => dep.stepId);
-      logger.warn(`依赖图存在循环，以下步骤的执行顺序可能不正确: [${cycleSteps.join(', ')}]`);
-
-      // 仍然追加（保持现有行为，不阻断执行），但调用方可通过日志感知
-      for (const dep of dependencies) {
-        if (!order.includes(dep.stepId)) order.push(dep.stepId);
-      }
+      logger.warn(
+        `依赖图存在循环，跳过以下步骤（不参与执行顺序）: [${cycleSteps.join(', ')}]`,
+      );
+      // 不追加循环节点，避免执行顺序混乱
     }
 
     return order;

@@ -4,5 +4,6 @@
   "version": "1.0.0",
   "description": "示例工具插件（用于集成测试）",
   "type": "tool",
-  "entry": "index.js"
+  "entry": "index.js",
+  "permissions": ["registry"]
 }

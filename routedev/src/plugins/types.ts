@@ -111,6 +111,21 @@ export interface RouterPlugin extends Plugin {
 // 插件清单（routedev-plugin.json）
 // ============================================================
 
+/**
+ * C5 修复：插件权限声明
+ * 插件必须在清单中声明所需权限，未声明的能力运行时不可使用
+ * 这是一种声明式权限控制，配合运行时检查提供防御性深度
+ */
+export type PluginPermission =
+  | 'fs'        // 文件系统读写
+  | 'net'       // 网络访问（HTTP/HTTPS/WebSocket）
+  | 'shell'     // 子进程执行
+  | 'env'       // 环境变量读取
+  | 'registry'  // 工具注册表访问（注册/注销工具）
+  | 'middleware'// 中间件管线访问（注册钩子）
+  | 'logger'    // 宿主日志系统访问
+  | 'cwd';      // 工作目录读取
+
 /** 插件清单：声明插件元数据与入口 */
 export interface PluginManifest {
   id: string;
@@ -125,6 +140,12 @@ export interface PluginManifest {
   configSchema?: Record<string, unknown>;
   /** 所需最小宿主版本（可选） */
   minHostVersion?: string;
+  /**
+   * C5 修复：插件所需权限声明
+   * 未声明时默认为空数组（最小权限原则）
+   * 运行时会根据声明限制插件可访问的宿主能力
+   */
+  permissions?: PluginPermission[];
 }
 
 // ============================================================

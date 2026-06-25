@@ -211,8 +211,20 @@ export class AnthropicClient extends BaseLLMClient {
     };
 
     // Anthropic 的 system prompt 是独立参数，不在 messages 中
+    // P2-10：启用 cache_control 实现 Prompt 缓存（减少重复请求的 token 消耗）
     if (options.systemPrompt) {
-      params.system = options.systemPrompt;
+      if (options.enableCache) {
+        // 带缓存的 system prompt：使用文本块数组 + cache_control
+        params.system = [
+          {
+            type: 'text',
+            text: options.systemPrompt,
+            cache_control: { type: 'ephemeral' },
+          },
+        ];
+      } else {
+        params.system = options.systemPrompt;
+      }
     }
 
     if (options.temperature !== undefined) {
@@ -220,7 +232,16 @@ export class AnthropicClient extends BaseLLMClient {
     }
 
     if (tools) {
-      params.tools = tools;
+      // Phase 32 Task 2.2：tools 定义也加 cache_control 标记，最大化 Anthropic 缓存命中
+      // system prompt 和 tools 是会话级稳定的，加 cache_control 后可跨请求复用
+      if (options.enableCache) {
+        params.tools = tools.map(tool => ({
+          ...tool,
+          cache_control: { type: 'ephemeral' },
+        }));
+      } else {
+        params.tools = tools;
+      }
     }
 
     return params;

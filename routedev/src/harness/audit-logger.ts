@@ -8,9 +8,38 @@ import type {
   AuditRecord,
   AuditAction,
   AuditLoggerConfig,
+  TrajectorySummary,
 } from './trace-types.js';
 import { logger } from '../utils/logger.js';
 import { getAppDataDir, ensureDir } from '../utils/paths.js';
+
+/** Phase 40 Task 3：质量元数据（附加到审计记录） */
+export interface QualityMetadata {
+  source: 'implicit' | 'explicit';
+  signalType: string;
+  severity: 'low' | 'medium' | 'high';
+  modelId?: string;
+  knowledgeNodeId?: string;
+}
+
+/** Phase 40 Task 3：扩展的审计动作类型（包含质量信号与用户反馈） */
+export type ExtendedAuditAction = AuditAction | 'user_feedback' | 'quality_signal';
+
+/** Phase 40 Task 3：扩展的审计记录（带 qualityMetadata） */
+export interface QualityAuditRecord extends AuditRecord {
+  qualityMetadata?: QualityMetadata;
+}
+
+/** Phase 40 Task 3：质量信号统一接口（兼容 QualitySignal 与 FeedbackSignal） */
+export interface LoggableQualitySignal {
+  source: 'implicit' | 'explicit';
+  signalType: string;
+  severity: 'low' | 'medium' | 'high';
+  modelId?: string;
+  knowledgeNodeId?: string;
+  timestamp: number;
+  context?: Record<string, unknown>;
+}
 
 const DEFAULT_CONFIG: AuditLoggerConfig = {
   enabled: true,
@@ -34,6 +63,7 @@ export class AuditLogger {
     result: AuditRecord['result'] = 'success',
     agentId = 'main',
     confirmation?: AuditRecord['confirmation'],
+    qualityMetadata?: QualityMetadata,
   ): void {
     if (!this.config.enabled) return;
 
@@ -47,6 +77,11 @@ export class AuditLogger {
       result,
       confirmation,
     };
+
+    // Phase 40 Task 3：附加质量元数据（如果提供）
+    if (qualityMetadata) {
+      (record as QualityAuditRecord).qualityMetadata = qualityMetadata;
+    }
 
     this.writeRecord(record);
   }
@@ -99,6 +134,20 @@ export class AuditLogger {
     this.log('blackboard_write', key, { sourceRole, stepId });
   }
 
+  /**
+   * Phase 34：记录 trajectory 级过程评测汇总
+   * 触发点：任务完成、失败、取消、达到最大迭代次数时
+   */
+  logTrajectorySummary(summary: TrajectorySummary): void {
+    this.log(
+      'trajectory_summary',
+      summary.taskId,
+      { summary },
+      summary.success ? 'success' : 'failure',
+      'main',
+    );
+  }
+
   logChannelMessage(
     direction: 'in' | 'out',
     channelType: string,
@@ -107,6 +156,40 @@ export class AuditLogger {
   ): void {
     const action: AuditAction = direction === 'in' ? 'channel_message_in' : 'channel_message_out';
     this.log(action, channelType, { sender, textLength });
+  }
+
+  /**
+   * Phase 40 Task 3：记录质量信号或用户反馈信号
+   * 自动判定 action 类型：
+   *   - source === 'explicit' → 'user_feedback'
+   *   - source === 'implicit' → 'quality_signal'
+   */
+  logQualitySignal(signal: LoggableQualitySignal): void {
+    if (!this.config.enabled) return;
+
+    const action: ExtendedAuditAction =
+      signal.source === 'explicit' ? 'user_feedback' : 'quality_signal';
+    const qualityMetadata: QualityMetadata = {
+      source: signal.source,
+      signalType: signal.signalType,
+      severity: signal.severity,
+      ...(signal.modelId !== undefined ? { modelId: signal.modelId } : {}),
+      ...(signal.knowledgeNodeId !== undefined ? { knowledgeNodeId: signal.knowledgeNodeId } : {}),
+    };
+
+    // 使用类型断言绕过 AuditAction 限制（trace-types.ts 不在本任务修改范围）
+    this.log(
+      action as unknown as AuditAction,
+      signal.signalType,
+      {
+        timestamp: signal.timestamp,
+        ...(signal.context ?? {}),
+      },
+      signal.severity === 'high' ? 'failure' : 'success',
+      'main',
+      undefined,
+      qualityMetadata,
+    );
   }
 
   /** 清理过期的审计文件 */

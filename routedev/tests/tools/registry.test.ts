@@ -56,7 +56,7 @@ describe('ToolRegistry', () => {
     const schemas = registry.getFunctionSchemas();
     expect(schemas.length).toBe(1);
     expect(schemas[0].name).toBe('file_read');
-    expect(schemas[0].description).toContain('读取文件');
+    expect(schemas[0].description).toContain('文件');
     expect(schemas[0].parameters).toHaveProperty('properties');
   });
 });

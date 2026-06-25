@@ -106,6 +106,10 @@ export interface ContextManagerConfig {
   keepRecentMessages: number;
   /** Checkpoint 是否启用 */
   checkpointEnabled: boolean;
+  /** Phase 38 Task 4.2：项目工作目录，用于定位知识图谱持久化路径 */
+  cwd?: string;
+  /** Phase 45：记忆配置（推理/自动学习/注入阈值） */
+  memory?: import('../../config/schema.js').MemoryConfig;
 }
 
 /** 上下文压缩结果 */

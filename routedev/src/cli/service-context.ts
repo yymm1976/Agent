@@ -3,10 +3,12 @@
 // 蓝图 17.1：集中管理 config / clientManager / router / tracker / agents / trace / audit / prompts / projectMemory
 // Phase 17b：新增 CommandBridge（命令与 UI 桥接）+ checkpointManager + mcpManager
 
-import type { AppConfig, AutonomyMode } from '../config/schema.js';
+import type { AppConfig, AutonomyMode, OutputStyle } from '../config/schema.js';
 import type { LLMClientManager } from '../router/llm/index.js';
 import type { ModelRouter } from '../router/router.js';
 import type { TokenTracker } from '../router/tracker.js';
+import type { LLMMessage } from '../router/types.js';
+import type { TokenProfiler } from '../agent/token-profiler.js';
 import type { ReActAgentLoop } from '../agent/loop.js';
 import type { CheckpointWriter } from '../agent/memory/checkpoint-writer.js';
 import type { ContextManager } from '../agent/memory/context-manager.js';
@@ -63,6 +65,10 @@ export interface CommandBridge {
     mcpConnectedCount: number;
     mcpTotalToolCount: number;
   };
+  /** Phase 34：运行时切换输出样式 */
+  setOutputStyle: (style: OutputStyle) => void;
+  /** 获取当前对话历史（只读，供 /btw 等命令传递上下文给子 Agent） */
+  getConversationHistory?: () => LLMMessage[];
 }
 
 export interface ServiceContext {
@@ -103,6 +109,8 @@ export interface ServiceContext {
   permissionEngine?: import('../tools/permission-engine.js').PermissionEngine;
   /** 持久化执行器（Phase 27 Task 6：/resume 命令使用） */
   durableExecutor?: DurableExecutor;
+  /** Phase 30：Token Profiler（可观测性，可选） */
+  profiler?: TokenProfiler;
 }
 
 /**
@@ -150,6 +158,7 @@ export function createServiceContext(deps: ServiceContextDeps): ServiceContext {
     ...(deps.commandRegistry ? { commandRegistry: deps.commandRegistry } : {}),
     ...(deps.permissionEngine ? { permissionEngine: deps.permissionEngine } : {}),
     ...(deps.durableExecutor ? { durableExecutor: deps.durableExecutor } : {}),
+    ...(deps.profiler ? { profiler: deps.profiler } : {}),
   };
   return ctx;
 }
@@ -189,6 +198,8 @@ export interface ServiceContextDeps {
   permissionEngine?: import('../tools/permission-engine.js').PermissionEngine;
   /** 持久化执行器（Phase 27 Task 6：/resume 命令使用） */
   durableExecutor?: DurableExecutor;
+  /** Phase 30：Token Profiler（可观测性，可选） */
+  profiler?: TokenProfiler;
   /** 可选的工具执行器更新回调（用于运行时替换） */
   setToolExecutor?: (executor: ToolExecutorAdapter) => void;
 }

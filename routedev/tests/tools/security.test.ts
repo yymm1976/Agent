@@ -37,15 +37,16 @@ describe('SecurityChecker', () => {
     const checker = new SecurityChecker(process.cwd(), makeSecurityConfig());
     const result = checker.checkFilePath(path.join(os.homedir(), 'secret.txt'), dummyContext);
     expect(result.allowed).toBe(false);
-    expect(result.reason).toContain('不在项目目录');
+    // P1-8 后使用 resolveSecurePath，reason 文案为"路径不在允许目录内"
+    expect(result.reason).toContain('不在允许目录');
   });
 
-  it('should allow reading sensitive files with readonly policy', () => {
+  it('should allow sensitive files with readonly policy but require confirmation', () => {
     const checker = new SecurityChecker(process.cwd(), makeSecurityConfig('readonly'));
     const result = checker.checkFilePath(path.join(process.cwd(), '.env'), dummyContext);
-    // readonly 策略下，isWriteOperation 默认返回 true，所以写入会被拒绝
-    // 当前 SecurityChecker 无法区分读写操作，统一按写入拒绝
-    expect(result.allowed).toBe(false);
+    // I16 修复：readonly 策略允许访问但需确认（而非与 deny 行为相同）
+    expect(result.allowed).toBe(true);
+    expect(result.requiresConfirmation).toBe(true);
   });
 
   it('should deny sensitive files with deny policy', () => {
@@ -66,7 +67,9 @@ describe('SecurityChecker', () => {
     const config = makeSecurityConfig();
     config.commandBlacklist = ['rm -rf'];
     const checker = new SecurityChecker(process.cwd(), config);
-    const result = checker.checkCommand('rm -rf /', dummyContext);
+    // 注意：'rm -rf /' 会被 7 层 Bash 安全检查先拦截（reason 含"删除根目录"），
+    // 这里用 'rm -rf somefile' 避开 Bash 安全检查，专门验证黑名单功能
+    const result = checker.checkCommand('rm -rf somefile', dummyContext);
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain('黑名单');
   });
@@ -87,22 +90,22 @@ describe('SecurityChecker', () => {
     expect(checker.checkCommand('ls -la', dummyContext).allowed).toBe(false);
   });
 
-  it('should require confirmation for network requests', () => {
+  it('should require confirmation for network requests', async () => {
     const checker = new SecurityChecker(process.cwd(), makeSecurityConfig());
-    const result = checker.checkNetworkRequest('https://example.com');
+    const result = await checker.checkNetworkRequest('https://example.com');
     expect(result.allowed).toBe(true);
     expect(result.requiresConfirmation).toBe(true);
   });
 
-  it('should deny invalid URLs', () => {
+  it('should deny invalid URLs', async () => {
     const checker = new SecurityChecker(process.cwd(), makeSecurityConfig());
-    const result = checker.checkNetworkRequest('not-a-url');
+    const result = await checker.checkNetworkRequest('not-a-url');
     expect(result.allowed).toBe(false);
   });
 
-  it('should deny local network addresses', () => {
+  it('should deny local network addresses', async () => {
     const checker = new SecurityChecker(process.cwd(), makeSecurityConfig());
-    expect(checker.checkNetworkRequest('http://localhost:3000').allowed).toBe(false);
-    expect(checker.checkNetworkRequest('http://127.0.0.1:8080').allowed).toBe(false);
+    expect((await checker.checkNetworkRequest('http://localhost:3000')).allowed).toBe(false);
+    expect((await checker.checkNetworkRequest('http://127.0.0.1:8080')).allowed).toBe(false);
   });
 });

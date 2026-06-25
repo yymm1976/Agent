@@ -26,12 +26,15 @@ import { CheckpointWriter } from './checkpoint-writer.js';
 import type { CheckpointLevel } from './types.js';
 import { KnowledgeGraph } from './graph.js';
 import type { GraphNode, GraphEdge, NodeType } from './graph.js';
+import type { MemoryConfig } from '../../config/schema.js';
 import { ContextCompactor } from '../context-compaction.js';
 import { logger } from '../../utils/logger.js';
 import { estimateTokens } from '../../utils/token-estimate.js';
 import { join } from 'node:path';
 import { writeFile, readFile, mkdir } from 'node:fs/promises';
 import { getAppDataDir, ensureDir } from '../../utils/paths.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 // ============================================================
 // Phase 21 Task 5：压缩事件类型
@@ -78,10 +81,21 @@ export class ContextManager {
   private compactor: ContextCompactor | null = null;
   /** Phase 21 Task 5：压缩回调列表 */
   private compressionCallbacks: CompressionCallback[] = [];
+  /** Phase 38 Task 4.2：图谱持久化 throttle 定时器 */
+  private graphSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  /** C5 修复：trailing flush 标记——throttle 窗口内有新更新时为 true */
+  private graphSavePending = false;
+  /** Phase 38 Task 4.2：throttle 延迟（毫秒） */
+  private static readonly GRAPH_SAVE_DEBOUNCE_MS = 500;
+  /** Phase 45：记忆配置（推理/自动学习/注入阈值） */
+  private memoryConfig: MemoryConfig;
 
   constructor(config: ContextManagerConfig, writer: CheckpointWriter) {
     this.config = config;
     this.writer = writer;
+    this.memoryConfig = config.memory ?? { inference: true, autoLearn: true, injectThreshold: 0.7 };
+    // Phase 38 Task 4.2：从磁盘加载知识图谱
+    this.loadGraphFromDisk();
   }
 
   /** 设置上下文压缩器（启用 compactIfNeeded 功能） */
@@ -536,16 +550,102 @@ export class ContextManager {
 
   /**
    * 召回相关记忆：用知识图谱的双路径召回按查询相关性排序记忆
+   * Phase 45：根据 config.memory.inference 控制是否启用推理，
+   * 并根据 config.memory.injectThreshold 过滤低于阈值的记忆节点。
    * @param query 查询字符串（按关键词匹配）
    * @returns 召回的节点列表（按分数降序）
    */
   recallMemories(query: string): Array<{ node: GraphNode; score: number; path: 'precise' | 'generalized' | 'both' }> {
-    return this.knowledgeGraph.recall(query);
+    // 禁用推理时不返回任何记忆
+    if (!this.memoryConfig.inference) {
+      return [];
+    }
+    const memories = this.knowledgeGraph.recall(query);
+    // 应用注入阈值过滤，只返回相关度足够的记忆
+    return memories.filter(m => m.score >= this.memoryConfig.injectThreshold);
   }
 
   /** 获取内部知识图谱（用于测试和 DreamConsolidator 共享） */
   getKnowledgeGraph(): KnowledgeGraph {
     return this.knowledgeGraph;
+  }
+
+  // ============================================================
+  // Phase 38 Task 4.2：知识图谱持久化
+  // ============================================================
+
+  /** 知识图谱持久化文件路径 */
+  private getGraphPath(): string {
+    const cwd = this.config.cwd ?? '.';
+    return path.join(cwd, '.routedev', 'memory', 'knowledge-graph.json');
+  }
+
+  /** 从磁盘加载知识图谱（文件不存在或损坏时保持空图谱） */
+  private loadGraphFromDisk(): void {
+    const graphPath = this.getGraphPath();
+    try {
+      const data = fs.readFileSync(graphPath, 'utf-8');
+      this.knowledgeGraph = KnowledgeGraph.fromJSON(data);
+      logger.debug('知识图谱已从磁盘加载', { path: graphPath });
+    } catch {
+      // 文件不存在或损坏，保持空图谱
+    }
+  }
+
+  /**
+   * 保存知识图谱到磁盘（C5 修复：throttle + trailing flush）
+   *
+   * C5 修复：原 debounce 在快速连续更新时会丢失中间数据（每次调用都重置定时器，
+   * 导致持续更新时永不保存）。改为 throttle + trailing flush：
+   *   - leading edge：首次调用启动 500ms 定时器
+   *   - throttle 窗口内的后续调用标记 pending，不重置定时器
+   *   - 定时器触发后执行保存，若 pending 为 true 则再启动一轮（trailing flush）
+   * 这样确保：1) 每 500ms 至多保存一次（不频繁写入）2) 最后一次更新一定被保存
+   *
+   * 保存时机：
+   *   - improve() 后
+   *   - forget() 后
+   *   - ingestToGraph() 后（在 /dream handler 中触发）
+   *   - 会话结束 hook 中
+   */
+  saveGraphToDisk(): void {
+    // throttle：定时器已运行时，标记 pending（trailing flush 会处理）
+    if (this.graphSaveTimer) {
+      this.graphSavePending = true;
+      return;
+    }
+    // leading edge：启动定时器
+    this.graphSaveTimer = setTimeout(() => {
+      this.doSaveGraphToDisk();
+      this.graphSaveTimer = null;
+      // trailing flush：throttle 窗口内有新更新，再保存一次确保最终状态落地
+      if (this.graphSavePending) {
+        this.graphSavePending = false;
+        this.saveGraphToDisk();
+      }
+    }, ContextManager.GRAPH_SAVE_DEBOUNCE_MS);
+  }
+
+  /** 立即同步保存（跳过 throttle，用于会话结束等必须落地的场景） */
+  flushGraphToDisk(): void {
+    if (this.graphSaveTimer) {
+      clearTimeout(this.graphSaveTimer);
+      this.graphSaveTimer = null;
+    }
+    this.graphSavePending = false;
+    this.doSaveGraphToDisk();
+  }
+
+  /** 实际执行保存 */
+  private doSaveGraphToDisk(): void {
+    const graphPath = this.getGraphPath();
+    try {
+      fs.mkdirSync(path.dirname(graphPath), { recursive: true });
+      fs.writeFileSync(graphPath, this.knowledgeGraph.toJSON(), 'utf-8');
+      logger.debug('知识图谱已保存到磁盘', { path: graphPath });
+    } catch (e) {
+      logger.warn('保存知识图谱失败', { error: String(e) });
+    }
   }
 
   /**
@@ -557,8 +657,15 @@ export class ContextManager {
    * - designDecisions → decision
    * - miscNotes → fact
    * 同 ID 节点会更新 validatedCount + updatedAt
+   *
+   * Phase 45：根据 config.memory.autoLearn 控制是否自动从 checkpoint 学习。
+   * 关闭时直接跳过，避免自动污染知识图谱。
    */
   private ingestCheckpointToGraph(cp: CheckpointData): void {
+    // 自动学习关闭时不从 checkpoint 提取知识
+    if (!this.memoryConfig.autoLearn) {
+      return;
+    }
     const now = Date.now();
     const added: GraphNode[] = [];
 

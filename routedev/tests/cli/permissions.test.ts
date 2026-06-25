@@ -46,10 +46,10 @@ describe('/permissions 命令 (Phase 24 Task 5)', () => {
       const engine = createDefaultEngine();
       const output = renderPermissionsOutput(engine);
 
-      // DENY 层应显示 4 条（Phase 29 新增 deny-find-delete 和 deny-dd-device）
+      // DENY 层应显示 10 条（Phase 29 新增 deny-find-delete 和 deny-dd-device；C6 新增 deny-file-edit-system-dirs；Phase 40 新增 5 条 Windows 危险命令）
       const denyLine = output.find(l => l.includes('DENY 规则'));
       expect(denyLine).toBeDefined();
-      expect(denyLine).toContain('共 4 条');
+      expect(denyLine).toContain('共 10 条');
 
       // CONFIRM 层应显示 3 条
       const confirmLine = output.find(l => l.includes('CONFIRM 规则'));

@@ -4,6 +4,7 @@
 
 import type { LLMMessage } from '../router/types.js';
 import crypto from 'node:crypto';
+import { logger } from '../utils/logger.js';
 
 /** 分支节点 */
 export interface BranchNode {
@@ -36,6 +37,10 @@ export class BranchManager {
   private activeBranchKey: string | null = null;
   /** initFromHistory 时记录每条消息对应的节点 ID（按 history 顺序） */
   private historyNodeIds: string[] = [];
+  /** P6：节点 Map 上限（超出时归档早期非活跃节点） */
+  private readonly maxNodes = 5000;
+  /** P6：分支 Map 上限 */
+  private readonly maxBranches = 100;
 
   /** 从对话历史初始化分支结构（追加一个虚拟根节点） */
   initFromHistory(history: LLMMessage[]): void {
@@ -151,6 +156,12 @@ export class BranchManager {
       children: [],
       timestamp: Date.now(),
     };
+
+    // P6：节点上限检查——超过时清理最早的非活跃、非根节点
+    if (this.nodes.size >= this.maxNodes) {
+      this.evictOldNodes();
+    }
+
     this.nodes.set(id, node);
 
     if (parentId) {
@@ -215,17 +226,29 @@ export class BranchManager {
     return lastId ?? this.activeBranchId;
   }
 
-  /** 切换到指定分支（支持前缀匹配） */
+  /** 切换到指定分支（支持前缀匹配，歧义时报错） */
   switchBranch(branchId: string): LLMMessage[] | null {
     // 精确匹配
     let branch = this.branches.get(branchId);
     if (branch) return this.switchToBranch(branchId);
 
-    // 前缀匹配
-    for (const [id, b] of this.branches) {
-      if (id.startsWith(branchId) || id.slice(0, 4) === branchId) {
-        return this.switchToBranch(id);
+    // B15：前缀匹配——收集所有命中项，歧义时报错
+    const matches: string[] = [];
+    for (const id of this.branches.keys()) {
+      if (id.startsWith(branchId)) {
+        matches.push(id);
       }
+    }
+    if (matches.length === 1) {
+      return this.switchToBranch(matches[0]);
+    }
+    if (matches.length > 1) {
+      // B15：多个分支匹配同一前缀，报错避免不确定行为
+      logger.warn('BranchManager: ambiguous branch prefix, multiple matches', {
+        prefix: branchId,
+        matches: matches.slice(0, 5),
+      });
+      return null;
     }
     return null;
   }
@@ -296,6 +319,51 @@ export class BranchManager {
     this.activeBranchId = null;
     this.activeBranchKey = null;
     this.historyNodeIds = [];
+  }
+
+  /** P6：淘汰早期非活跃节点（保留活跃分支路径上的节点） */
+  private evictOldNodes(): void {
+    // 收集活跃分支路径上的所有节点 ID（不可淘汰）
+    const protectedIds = new Set<string>();
+    if (this.activeBranchId) {
+      let cur: string | null = this.activeBranchId;
+      while (cur) {
+        protectedIds.add(cur);
+        const node = this.nodes.get(cur);
+        cur = node?.parentId ?? null;
+      }
+    }
+
+    // 按时间排序，淘汰最早的非保护节点（保留最近 maxNodes/2 个）
+    const candidates: Array<{ id: string; timestamp: number }> = [];
+    for (const [id, node] of this.nodes) {
+      if (!protectedIds.has(id) && node.message.role !== 'system') {
+        candidates.push({ id, timestamp: node.timestamp });
+      }
+    }
+    candidates.sort((a, b) => a.timestamp - b.timestamp);
+
+    const evictCount = Math.min(candidates.length, Math.floor(this.maxNodes / 2));
+    for (let i = 0; i < evictCount; i++) {
+      const nodeId = candidates[i].id;
+      const node = this.nodes.get(nodeId);
+      if (node) {
+        // 从父节点的 children 中移除引用
+        if (node.parentId) {
+          const parent = this.nodes.get(node.parentId);
+          if (parent) {
+            parent.children = parent.children.filter(c => c !== nodeId);
+          }
+        }
+        this.nodes.delete(nodeId);
+      }
+    }
+    // 同步清理 historyNodeIds 中已淘汰的节点
+    this.historyNodeIds = this.historyNodeIds.filter(id => this.nodes.has(id));
+
+    if (evictCount > 0) {
+      logger.debug('BranchManager: evicted old nodes', { count: evictCount, remaining: this.nodes.size });
+    }
   }
 
   private generateId(): string {

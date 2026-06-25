@@ -6,6 +6,8 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { getColor } from '../design-system.js';
+import type { OutputStyle } from '../../config/schema.js';
+import { outputStyleToDisclosureLevel } from '../output-style.js';
 
 /** 披露层级：1 摘要 / 2 关键细节 / 3 完整数据 */
 export type DisclosureLevel = 1 | 2 | 3;
@@ -29,6 +31,8 @@ export interface DisclosureProps {
   level?: DisclosureLevel;
   /** 层级变化回调 */
   onLevelChange?: (level: DisclosureLevel) => void;
+  /** Phase 34：输出样式，用于自动映射默认披露层级 */
+  outputStyle?: OutputStyle;
 }
 
 /** DisclosureLevel：渐进披露容器 */
@@ -37,8 +41,13 @@ export function DisclosureLevel({
   defaultLevel = 1,
   level: controlledLevel,
   onLevelChange,
+  outputStyle,
 }: DisclosureProps) {
-  const [internalLevel, setInternalLevel] = useState<DisclosureLevel>(defaultLevel);
+  // Phase 34：若提供 outputStyle，用它映射默认层级；否则尊重 defaultLevel
+  const resolvedDefault = outputStyle
+    ? outputStyleToDisclosureLevel(outputStyle)
+    : defaultLevel;
+  const [internalLevel, setInternalLevel] = useState<DisclosureLevel>(resolvedDefault);
   const level = controlledLevel ?? internalLevel;
   const hasL2 = content.l2 !== undefined && content.l2.length > 0;
   const hasL3 = content.l3 !== undefined && content.l3.length > 0;

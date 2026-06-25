@@ -22,6 +22,25 @@ export interface Checkpoint {
   filesSnapshot: string[];
   /** 是否自动创建（vs 用户手动 /checkpoint） */
   isAutoCreated: boolean;
+  /** 语义化摘要（LLM 生成，可选。不可用时回退到 description） */
+  summary?: string;
+  /** 统计信息 */
+  stats?: { filesChanged: number; tokensUsed: number };
+}
+
+/**
+ * 检查点摘要生成用的 LLM 客户端接口（最小化依赖，避免直接耦合 router 模块）
+ * 与 ILLMClient.complete() 子集兼容
+ */
+export interface CheckpointLLMClient {
+  complete(options: {
+    model: string;
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+    systemPrompt?: string;
+    maxTokens?: number;
+    temperature?: number;
+    timeoutMs?: number;
+  }): Promise<{ content: string }>;
 }
 
 /** 检查点差异（两个检查点之间的变更） */
@@ -56,6 +75,8 @@ export interface CreateCheckpointOptions {
   goalId?: string;
   /** 是否自动创建 */
   isAutoCreated?: boolean;
+  /** 本次检查点累计的 token 用量（用于 stats.tokensUsed） */
+  tokensUsed?: number;
 }
 
 // 重新导出 GoalPlan 类型便于引用

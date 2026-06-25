@@ -11,7 +11,7 @@ import { walkDir, isIgnoredPath, matchGlob } from './search-utils.js';
 export class FileSearchTool implements ITool {
   readonly definition: ToolDefinition = {
     name: 'file_search',
-    description: '搜索文件。支持按内容搜索（grep）或按文件名模式（glob）查找。返回匹配的文件路径和行号。',
+    description: '当用户需要按文件名模式查找文件或按内容关键词搜索文件时，使用此工具。返回匹配的文件路径与行号。',
     parameters: {
       type: 'object',
       properties: {

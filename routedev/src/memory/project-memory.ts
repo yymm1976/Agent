@@ -16,11 +16,190 @@ import type {
   ProjectMemoryStatus,
   DecisionRecord,
 } from '../prompts/types.js';
+import type { ProjectDocConfig } from '../config/schema.js';
 import { logger } from '../utils/logger.js';
 import { ensureDir } from '../utils/paths.js';
 
 const DECISION_PATTERN = /## (.+?)\n\n([\s\S]*?)\n---\n/g;
 const MAX_DECISIONS_CACHE = 1000;
+
+// ============================================================
+// Phase 47 Task 8：项目文档（AGENTS.md / CLAUDE.md）多文件名 fallback 加载
+// ============================================================
+
+/**
+ * 默认的项目文档配置（与 schema.ts / defaults.ts 保持一致）
+ * 不配置 projectDoc 时使用此默认值，保证向后兼容
+ */
+export const DEFAULT_PROJECT_DOC_CONFIG: ProjectDocConfig = {
+  filenames: ['AGENTS.md', 'AGENTS.local.md', 'AGENTS.override.md'],
+  fallbackFilenames: ['CLAUDE.md', 'CLAUDE.local.md'],
+  maxBytes: 32768,
+};
+
+/**
+ * 合并两个文档：base 在前，local 在后（local 覆盖语义）
+ * 简单拼接，中间用换行分隔
+ *
+ * @param base 基础文档内容（可为 null/空）
+ * @param local 本地覆盖文档内容（可为 null/空）
+ * @returns 合并后的文档；两者都为空时返回 null
+ */
+export function mergeDocs(base: string | null, local: string | null): string | null {
+  const parts: string[] = [];
+  if (base && base.trim()) parts.push(base.trim());
+  if (local && local.trim()) parts.push(local.trim());
+  return parts.length > 0 ? parts.join('\n\n') : null;
+}
+
+/**
+ * 截断文档到指定字节数（按 UTF-8 字节计算）
+ * 超过 maxBytes 时截断并 warn，附加截断提示
+ *
+ * @param doc 原始文档内容
+ * @param maxBytes 最大字节数（默认 32768 = 32KiB，对齐 Codex）
+ * @returns 截断后的文档（未超限则原样返回）
+ */
+export function truncateDoc(doc: string, maxBytes: number = 32768): string {
+  const buf = Buffer.byteLength(doc, 'utf-8');
+  if (buf <= maxBytes) return doc;
+
+  // 按 UTF-8 字节截断，避免截断多字节字符
+  const bufArr = Buffer.from(doc, 'utf-8');
+  // 留出截断提示的空间（约 100 字节）
+  const truncateHint = '\n\n<!-- truncated: exceeded maxBytes -->';
+  const hintBytes = Buffer.byteLength(truncateHint, 'utf-8');
+  const sliceEnd = Math.max(0, maxBytes - hintBytes);
+
+  // 向前回退到完整 UTF-8 字符边界（避免乱码）
+  let end = sliceEnd;
+  while (end > 0 && (bufArr[end] & 0xC0) === 0x80) end--;
+
+  const truncated = bufArr.subarray(0, end).toString('utf-8') + truncateHint;
+  logger.warn('ProjectDoc: 文档超过 maxBytes 已截断', {
+    originalBytes: buf,
+    maxBytes,
+    truncatedBytes: Buffer.byteLength(truncated, 'utf-8'),
+  });
+  return truncated;
+}
+
+/**
+ * 读取单个文件内容（文件不存在时返回 null）
+ */
+async function readFileOrNull(filePath: string): Promise<string | null> {
+  try {
+    return await fs.readFile(filePath, 'utf-8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 检查文件是否存在
+ */
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 加载项目文档（AGENTS.md / CLAUDE.md 多文件名 fallback）
+ *
+ * 加载优先级（陷阱 #140：override 语义是「跳过」而非「合并」）：
+ *   1. 若 filenames 中存在 override 文件（默认 AGENTS.override.md），则跳过基础文件，
+ *      只加载 override + local（local 为 filenames[1]）
+ *   2. 否则加载基础文件（filenames[0]）+ local 文件（filenames[1]），合并后返回
+ *   3. 以上都不存在时，fallback 到 fallbackFilenames（同样支持 base + local 合并）
+ *
+ * @param cwd 项目根目录
+ * @param config 项目文档配置（不传时使用默认值，向后兼容）
+ * @returns 合并并截断后的文档内容；都不存在时返回 null
+ */
+export async function loadProjectDoc(
+  cwd: string,
+  config: ProjectDocConfig = DEFAULT_PROJECT_DOC_CONFIG,
+): Promise<string | null> {
+  const {
+    filenames,
+    fallbackFilenames,
+    maxBytes,
+  } = config;
+
+  // filenames 约定：[base, local, override?, ...]
+  // 至少需要 2 个文件名（base + local），override 为第 3 个
+  const baseName = filenames[0];
+  const localName = filenames[1];
+  const overrideName = filenames[2]; // 可选
+
+  // 1. 优先检查 override 文件（陷阱 #140：override 存在时跳过 base）
+  if (overrideName) {
+    const overridePath = path.join(cwd, overrideName);
+    const overrideExists = await fileExists(overridePath);
+    if (overrideExists) {
+      const overrideContent = await readFileOrNull(overridePath);
+      // override + local 合并（local 仍在后覆盖）
+      const localPath = localName ? path.join(cwd, localName) : null;
+      const localContent = localPath ? await readFileOrNull(localPath) : null;
+      const merged = mergeDocs(overrideContent, localContent);
+      if (merged) {
+        logger.info('ProjectDoc: 加载 override + local', {
+          override: overrideName,
+          local: localName ?? null,
+        });
+        return truncateDoc(merged, maxBytes);
+      }
+    }
+  }
+
+  // 2. 尝试 base + local 合并
+  if (baseName) {
+    const basePath = path.join(cwd, baseName);
+    const baseExists = await fileExists(basePath);
+    if (baseExists) {
+      const baseContent = await readFileOrNull(basePath);
+      const localPath = localName ? path.join(cwd, localName) : null;
+      const localContent = localPath ? await readFileOrNull(localPath) : null;
+      const merged = mergeDocs(baseContent, localContent);
+      if (merged) {
+        logger.info('ProjectDoc: 加载 base + local', {
+          base: baseName,
+          local: localName ?? null,
+        });
+        return truncateDoc(merged, maxBytes);
+      }
+    }
+  }
+
+  // 3. fallback 到 fallbackFilenames（CLAUDE.md + CLAUDE.local.md）
+  const fallbackBase = fallbackFilenames[0];
+  const fallbackLocal = fallbackFilenames[1];
+  if (fallbackBase) {
+    const fallbackBasePath = path.join(cwd, fallbackBase);
+    const fallbackBaseExists = await fileExists(fallbackBasePath);
+    if (fallbackBaseExists) {
+      const fallbackBaseContent = await readFileOrNull(fallbackBasePath);
+      const fallbackLocalPath = fallbackLocal ? path.join(cwd, fallbackLocal) : null;
+      const fallbackLocalContent = fallbackLocalPath ? await readFileOrNull(fallbackLocalPath) : null;
+      const merged = mergeDocs(fallbackBaseContent, fallbackLocalContent);
+      if (merged) {
+        logger.info('ProjectDoc: fallback 加载', {
+          base: fallbackBase,
+          local: fallbackLocal ?? null,
+        });
+        return truncateDoc(merged, maxBytes);
+      }
+    }
+  }
+
+  // 4. 都不存在
+  logger.info('ProjectDoc: 未找到任何项目文档', { cwd });
+  return null;
+}
 
 export class ProjectMemoryManager {
   private projectPath: string;

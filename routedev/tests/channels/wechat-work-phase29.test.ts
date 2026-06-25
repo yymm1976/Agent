@@ -73,18 +73,24 @@ describe('WeChatWorkAdapter Phase 29 安全加固', () => {
       expect(result).toBe('encrypted-text');
     });
 
-    it('解密失败时返回原文并记录警告', () => {
+    it('解密失败时返回空字符串并记录警告（Minor 修复：避免后续 XML 解析异常）', () => {
       const adapter = new WeChatWorkAdapter(makeConfig('token'));
       // 提供无效的 base64 数据，解密会失败
       const result = adapter.decryptMessage('!!!invalid-base64!!!');
-      expect(result).toBe('!!!invalid-base64!!!');
+      // Minor 修复：解密失败返回空字符串而非密文，避免后续 XML 解析异常
+      expect(result).toBe('');
       expect(warnSpy).toHaveBeenCalled();
     });
   });
 
   describe('Task 1.5：parseInt NaN 防护', () => {
+    // 辅助函数：创建不配置 AES key 的 adapter，使 decryptMessage 直接返回原文（XML 字符串）
+    function makeNoAesKeyConfig(token?: string): any {
+      return { ...makeConfig(token), options: { ...makeConfig(token).options, encodingAESKey: undefined } };
+    }
+
     it('CreateTime 缺失时使用当前时间戳', () => {
-      const adapter = new WeChatWorkAdapter(makeConfig('token'));
+      const adapter = new WeChatWorkAdapter(makeNoAesKeyConfig('token'));
       // XML 中无 CreateTime 字段
       const xml = '<xml><Content>hello</Content><FromUserName>user1</FromUserName></xml>';
       const message = adapter.parseWebhook(xml);
@@ -93,7 +99,7 @@ describe('WeChatWorkAdapter Phase 29 安全加固', () => {
     });
 
     it('CreateTime 为非数字时使用当前时间戳', () => {
-      const adapter = new WeChatWorkAdapter(makeConfig('token'));
+      const adapter = new WeChatWorkAdapter(makeNoAesKeyConfig('token'));
       const xml = '<xml><Content>hello</Content><FromUserName>user1</FromUserName><CreateTime>abc</CreateTime></xml>';
       const message = adapter.parseWebhook(xml);
       expect(message).not.toBeNull();

@@ -57,16 +57,88 @@ export class ToolExecutor implements IToolExecutor {
       };
     }
 
-    // 3. 安全检查（对文件操作类工具检查路径）
+    // 3. 安全检查
     // 注：权限检查已迁移到 PermissionEngine 中间件，本类不再处理
-    if (this.securityChecker && this.isFileOperation(toolName, args)) {
-      const filePath = (args.path as string) ?? (args.filePath as string);
-      if (filePath) {
-        const secResult = this.securityChecker.checkFilePath(filePath, context);
+    // P1-1 修复：list_directory 也需要路径校验（防止路径逃逸）
+    // P0-1 修复：web_fetch 需要网络校验（SSRF 防护）
+    // C3 修复：透传 requiresConfirmation，未配置回调时安全默认拒绝
+    if (this.securityChecker) {
+      // 文件操作类工具：检查路径
+      if (this.isFileOperation(toolName, args)) {
+        const filePath = (args.path as string) ?? (args.filePath as string);
+        if (filePath) {
+          // 判断是否为写入操作：file_write/file_edit 为写入，其余为读取
+          // 影响 Permission Profile 的 read/write 规则判定
+          const isWrite = toolName === 'file_write' || toolName === 'file_edit';
+          const secResult = this.securityChecker.checkFilePath(filePath, context, isWrite);
+          if (!secResult.allowed) {
+            logger.warn('Tool execution denied by security', {
+              toolName,
+              filePath,
+              reason: secResult.reason,
+            });
+            return {
+              success: false,
+              output: '',
+              error: `安全检查失败: ${secResult.reason}`,
+              durationMs: Date.now() - startTime,
+            };
+          }
+          // C3 修复：敏感文件 requiresConfirmation 透传
+          if (secResult.requiresConfirmation) {
+            const confirmed = await this.requestConfirmation(context, secResult.reason ?? '敏感文件操作需确认');
+            if (!confirmed) {
+              return {
+                success: false,
+                output: '',
+                error: `用户拒绝确认: ${secResult.reason ?? '敏感文件操作'}`,
+                durationMs: Date.now() - startTime,
+              };
+            }
+          }
+        }
+      }
+
+      // 网络操作类工具：检查 URL（SSRF 防护）
+      if (this.isNetworkOperation(toolName, args)) {
+        const url = args.url as string;
+        if (url) {
+          // C2 修复：await checkNetworkRequest，确保安全检查实际执行
+          const secResult = await this.securityChecker.checkNetworkRequest(url);
+          if (!secResult.allowed) {
+            logger.warn('Tool execution denied by security (SSRF)', {
+              toolName,
+              url,
+              reason: secResult.reason,
+            });
+            return {
+              success: false,
+              output: '',
+              error: `安全检查失败: ${secResult.reason}`,
+              durationMs: Date.now() - startTime,
+            };
+          }
+          // C3 修复：网络请求 requiresConfirmation 透传
+          if (secResult.requiresConfirmation) {
+            const confirmed = await this.requestConfirmation(context, secResult.reason ?? '网络请求需确认');
+            if (!confirmed) {
+              return {
+                success: false,
+                output: '',
+                error: `用户拒绝确认: ${secResult.reason ?? '网络请求'}`,
+                durationMs: Date.now() - startTime,
+              };
+            }
+          }
+        }
+      }
+
+      // Shell 命令类工具：检查命令安全性（7层Bash安全）
+      if (toolName === 'shell_exec' && args.command) {
+        const secResult = this.securityChecker.checkCommand(args.command as string, context);
         if (!secResult.allowed) {
-          logger.warn('Tool execution denied by security', {
+          logger.warn('Tool execution denied by security (Bash)', {
             toolName,
-            filePath,
             reason: secResult.reason,
           });
           return {
@@ -75,6 +147,18 @@ export class ToolExecutor implements IToolExecutor {
             error: `安全检查失败: ${secResult.reason}`,
             durationMs: Date.now() - startTime,
           };
+        }
+        // C3 修复：含管道/命令替换的命令 requiresConfirmation 透传
+        if (secResult.requiresConfirmation) {
+          const confirmed = await this.requestConfirmation(context, secResult.reason ?? 'Shell 命令需确认');
+          if (!confirmed) {
+            return {
+              success: false,
+              output: '',
+              error: `用户拒绝确认: ${secResult.reason ?? 'Shell 命令'}`,
+              durationMs: Date.now() - startTime,
+            };
+          }
         }
       }
     }
@@ -107,9 +191,37 @@ export class ToolExecutor implements IToolExecutor {
     }
   }
 
-  /** 判断是否为文件操作类工具 */
+  /** 判断是否为文件操作类工具（P1-1：增加 list_directory） */
   private isFileOperation(toolName: string, args: Record<string, unknown>): boolean {
-    return toolName.startsWith('file_') && ('path' in args || 'filePath' in args);
+    // file_* 工具 + list_directory 都需要路径校验
+    return (toolName.startsWith('file_') || toolName === 'list_directory')
+      && ('path' in args || 'filePath' in args);
+  }
+
+  /** 判断是否为网络操作类工具（P0-1：SSRF 防护） */
+  private isNetworkOperation(toolName: string, args: Record<string, unknown>): boolean {
+    return (toolName === 'web_fetch' || toolName === 'web_search') && 'url' in args;
+  }
+
+  /**
+   * C3 修复：请求用户确认
+   * 若 context.requestConfirmation 未提供，安全默认返回 false（拒绝执行）
+   */
+  private async requestConfirmation(
+    context: ToolExecutionContext,
+    reason: string,
+  ): Promise<boolean> {
+    if (!context.requestConfirmation) {
+      // 未配置确认回调：安全默认拒绝
+      logger.warn('Tool requires confirmation but no callback configured, denying', { reason });
+      return false;
+    }
+    try {
+      return await context.requestConfirmation(reason);
+    } catch (e) {
+      logger.error('Confirmation callback threw, denying', { reason, error: String(e) });
+      return false;
+    }
   }
 
   /**

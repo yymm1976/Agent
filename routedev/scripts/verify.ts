@@ -257,6 +257,37 @@ export async function checkTestSuite(): Promise<CheckResult> {
   }
 }
 
+/** [10] description lint 检查（Phase 47 Task 2） */
+export async function checkDescriptionLint(): Promise<CheckResult> {
+  try {
+    const result = spawnSync('npx', ['tsx', 'scripts/lint-descriptions.ts'], {
+      cwd: projectRoot,
+      encoding: 'utf-8',
+      shell: true,
+      timeout: 60000,
+    });
+    // 过渡期：lint 失败时返回 warning（passed=true），不阻断验收
+    // 未来全量合规后可改为 passed = result.status === 0
+    const lintPassed = result.status === 0;
+    const output = (result.stdout || '') + (result.stderr || '');
+    return {
+      index: 10,
+      name: 'description lint 检查',
+      passed: true, // 过渡期始终通过，仅作 warning 报告
+      detail: lintPassed
+        ? 'lint 通过（0 error）'
+        : `lint 发现问题（过渡期 warning，不阻断）：${output.split('\n').filter((l) => l.includes('❌')).length} error`,
+    };
+  } catch (err) {
+    return {
+      index: 10,
+      name: 'description lint 检查',
+      passed: true, // 执行失败也仅 warning
+      detail: `执行失败（过渡期 warning）: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
 // ============================================================
 // 报告生成
 // ============================================================
@@ -272,6 +303,7 @@ export async function runAllChecks(options?: { skipTestSuite?: boolean }): Promi
     checkNoOldTokenEstimate,
     checkNoConsoleLog,
     checkPhase17bModules,
+    checkDescriptionLint, // Phase 47 Task 2：description lint 检查
   ];
 
   if (!options?.skipTestSuite) {

@@ -12,6 +12,8 @@
 
 import type { PlanStep } from './goal-types.js';
 import type { StepResult, HookRunner, HookContext } from './hooks.js';
+// 任务2：接入结构化交接文件生成器
+import { saveHandoff, type HandoffData } from './handoff.js';
 import { logger } from '../utils/logger.js';
 import { homedir } from 'node:os';
 import * as fs from 'node:fs/promises';
@@ -43,6 +45,8 @@ export interface ExecutionSnapshot {
   completedResults: StepResult[];
   /** 下一步要执行的步骤（无则 null） */
   nextStep: PlanStep | null;
+  /** B2：剩余未执行的步骤列表（resumeFrom 时循环执行） */
+  remainingSteps?: PlanStep[];
   /** 最后更新时间戳（毫秒） */
   updatedAt: number;
 }
@@ -141,9 +145,10 @@ export class DurableExecutor {
    *
    * @param plan 计划步骤列表（按顺序执行）
    * @param goal 目标描述
+   * @param parallelGroups 可选的并行组（P0-3：每组内的步骤并行执行，组间串行）
    * @returns 执行结果（含最终快照）
    */
-  async start(plan: PlanStep[], goal: string): Promise<ExecutionResult> {
+  async start(plan: PlanStep[], goal: string, parallelGroups?: number[][]): Promise<ExecutionResult> {
     if (plan.length === 0) {
       throw new Error('计划步骤列表不能为空');
     }
@@ -158,14 +163,22 @@ export class DurableExecutor {
       status: 'running',
       completedResults: [],
       nextStep: plan[0] ?? null,
+      // B2：持久化完整 plan，resumeFrom 时可循环执行剩余步骤
+      remainingSteps: plan.slice(1),
       updatedAt: Date.now(),
     };
 
+    // P0-3：如果有 parallelGroups，使用并行执行；否则串行
+    if (parallelGroups && parallelGroups.length > 0) {
+      return this.executePlanParallel(snapshot, plan, parallelGroups);
+    }
     return this.executePlan(snapshot, plan);
   }
 
   /**
    * 从断点恢复执行
+   *
+   * B2 修复：持久化完整 plan 到 remainingSteps，resumeFrom 循环执行所有剩余步骤
    *
    * @param planId 计划 ID
    * @returns 执行结果（含最终快照）
@@ -203,10 +216,6 @@ export class DurableExecutor {
       snapshot.status = 'paused';
     }
 
-    // 读取计划步骤（从快照恢复时，需要原始 plan）
-    // 注意：快照只保存 nextStep，完整 plan 需要从外部传入或持久化
-    // 这里采用简化方案：快照保存的 nextStep 即为恢复起点
-    // 完整 plan 重建需要额外存储，本实现将 nextStep 之后视为剩余 plan
     if (!snapshot.nextStep) {
       // 已无下一步，标记完成
       snapshot.status = 'completed';
@@ -214,11 +223,10 @@ export class DurableExecutor {
       return { success: true, snapshot };
     }
 
-    // 恢复执行：从 nextStep 开始
-    // 由于完整 plan 未持久化，恢复时只能执行 nextStep 这一步
-    // 调用方应在恢复后通过其他方式提供剩余步骤（如重新解析 plan）
-    // 这里执行单步并返回，让调用方决定是否继续
-    return this.executeSingleStep(snapshot, snapshot.nextStep);
+    // B2：从 nextStep 开始循环执行所有剩余步骤
+    // remainingSteps 包含 nextStep 之后的所有步骤
+    const stepsToExecute: PlanStep[] = [snapshot.nextStep, ...(snapshot.remainingSteps ?? [])];
+    return this.executeRemainingSteps(snapshot, stepsToExecute);
   }
 
   /**
@@ -327,6 +335,114 @@ export class DurableExecutor {
   // ============================================================
 
   /**
+   * 并行执行计划（P0-3：parallelGroups 真并行）
+   *
+   * 按 parallelGroups 分组执行：
+   *   - 每组内的步骤用 Promise.all 并行执行
+   *   - 组与组之间串行（等待前一组完成才执行下一组）
+   *   - 组内任一步骤失败，中止整个计划
+   *   - 每组完成后保存快照
+   */
+  private async executePlanParallel(
+    initialSnapshot: ExecutionSnapshot,
+    plan: PlanStep[],
+    parallelGroups: number[][],
+  ): Promise<ExecutionResult> {
+    const { planId } = initialSnapshot;
+
+    // 并发保护
+    if (this.runningPlans.has(planId)) {
+      return {
+        success: false,
+        snapshot: initialSnapshot,
+        error: `计划 ${planId} 正在运行中`,
+      };
+    }
+    this.runningPlans.add(planId);
+
+    let snapshot = { ...initialSnapshot };
+    // 构建 stepId → PlanStep 映射
+    const stepMap = new Map<number, PlanStep>();
+    for (const step of plan) {
+      stepMap.set(step.id, step);
+    }
+
+    try {
+      // 写入初始快照
+      await this.saveSnapshot(snapshot);
+
+      // 按组执行
+      for (const group of parallelGroups) {
+        // 获取当前组的所有步骤
+        const groupSteps: PlanStep[] = [];
+        for (const stepId of group) {
+          const step = stepMap.get(stepId);
+          if (step) groupSteps.push(step);
+        }
+
+        if (groupSteps.length === 0) continue;
+
+        // 更新 nextStep 为当前组的第一个步骤
+        snapshot.nextStep = groupSteps[0];
+
+        // 并行执行组内所有步骤
+        const results = await Promise.all(
+          groupSteps.map(step => this.runStepWithHooks(snapshot, step)),
+        );
+
+        // 检查结果
+        for (let i = 0; i < results.length; i++) {
+          const result = results[i];
+          if (!result.success) {
+            // 失败或被 abort
+            snapshot.status = result.aborted ? 'paused' : 'failed';
+            snapshot.updatedAt = Date.now();
+            await this.saveSnapshot(snapshot);
+            return {
+              success: false,
+              snapshot,
+              error: result.error,
+            };
+          }
+
+          // 步骤成功，记录结果
+          snapshot.completedResults.push(result.stepResult!);
+          snapshot.lastStepCompleted += 1;
+        }
+
+        snapshot.updatedAt = Date.now();
+        await this.saveSnapshot(snapshot);
+      }
+
+      // 全部完成
+      snapshot.nextStep = null;
+      snapshot.status = 'completed';
+      snapshot.updatedAt = Date.now();
+      await this.saveSnapshot(snapshot);
+
+      // 触发 on-complete 钩子
+      const lastResult = snapshot.completedResults[snapshot.completedResults.length - 1];
+      const completeContext = this.makeHookContext('complete', snapshot, lastResult);
+      await this.fireHook('on-complete', snapshot, completeContext);
+
+      return { success: true, snapshot };
+    } catch (err) {
+      // 未预期异常
+      snapshot.status = 'failed';
+      snapshot.updatedAt = Date.now();
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      try {
+        await this.saveSnapshot(snapshot);
+      } catch {
+        // 保存失败也不影响错误返回
+      }
+      return { success: false, snapshot, error: errorMsg };
+    } finally {
+      this.runningPlans.delete(planId);
+    }
+  }
+
+  /**
    * 执行完整计划（start 入口）
    */
   private async executePlan(
@@ -359,6 +475,8 @@ export class DurableExecutor {
         if (!result.success) {
           // 失败或被 abort
           snapshot.status = result.aborted ? 'paused' : 'failed';
+          // B2：保存剩余步骤以便 resumeFrom 恢复
+          snapshot.remainingSteps = plan.slice(i + 1);
           snapshot.updatedAt = Date.now();
           await this.saveSnapshot(snapshot);
           return {
@@ -371,6 +489,8 @@ export class DurableExecutor {
         // 步骤成功，记录结果
         snapshot.completedResults.push(result.stepResult!);
         snapshot.lastStepCompleted = i + 1;
+        // B2：更新剩余步骤
+        snapshot.remainingSteps = plan.slice(i + 1);
         snapshot.updatedAt = Date.now();
         await this.saveSnapshot(snapshot);
       }
@@ -409,11 +529,14 @@ export class DurableExecutor {
   }
 
   /**
-   * 执行单步（resumeFrom 入口，仅执行 nextStep）
+   * B2：循环执行剩余步骤（resumeFrom 入口）
+   *
+   * 从 nextStep 开始，依次执行 stepsToExecute 中的所有步骤
+   * 每步完成后更新快照（nextStep + remainingSteps），任一步骤失败则暂停
    */
-  private async executeSingleStep(
+  private async executeRemainingSteps(
     snapshot: ExecutionSnapshot,
-    step: PlanStep,
+    stepsToExecute: PlanStep[],
   ): Promise<ExecutionResult> {
     const { planId } = snapshot;
 
@@ -430,28 +553,39 @@ export class DurableExecutor {
       snapshot.status = 'running';
       await this.saveSnapshot(snapshot);
 
-      const result = await this.runStepWithHooks(snapshot, step);
-      if (!result.success) {
-        snapshot.status = result.aborted ? 'paused' : 'failed';
+      for (let i = 0; i < stepsToExecute.length; i++) {
+        const step = stepsToExecute[i];
+        snapshot.nextStep = step;
+
+        const result = await this.runStepWithHooks(snapshot, step);
+        if (!result.success) {
+          // 失败或被 abort：保存剩余步骤以便再次恢复
+          snapshot.status = result.aborted ? 'paused' : 'failed';
+          snapshot.remainingSteps = stepsToExecute.slice(i + 1);
+          snapshot.updatedAt = Date.now();
+          await this.saveSnapshot(snapshot);
+          return { success: false, snapshot, error: result.error };
+        }
+
+        // 步骤成功
+        snapshot.completedResults.push(result.stepResult!);
+        snapshot.lastStepCompleted += 1;
+        // 更新 remainingSteps 为尚未执行的步骤
+        snapshot.remainingSteps = stepsToExecute.slice(i + 1);
         snapshot.updatedAt = Date.now();
         await this.saveSnapshot(snapshot);
-        return { success: false, snapshot, error: result.error };
       }
 
-      // 单步成功
-      snapshot.completedResults.push(result.stepResult!);
-      snapshot.lastStepCompleted += 1;
+      // 全部完成
       snapshot.nextStep = null;
+      snapshot.remainingSteps = [];
       snapshot.status = 'completed';
       snapshot.updatedAt = Date.now();
       await this.saveSnapshot(snapshot);
 
       // 触发 on-complete 钩子
-      const completeContext = this.makeHookContext(
-        String(step.id),
-        snapshot,
-        result.stepResult,
-      );
+      const lastResult = snapshot.completedResults[snapshot.completedResults.length - 1];
+      const completeContext = this.makeHookContext('complete', snapshot, lastResult);
       await this.fireHook('on-complete', snapshot, completeContext);
 
       return { success: true, snapshot };
@@ -563,6 +697,15 @@ export class DurableExecutor {
       stepResult = postResult.modifiedResult;
     }
 
+    // C6 修复：处理 post-step 的 retry 动作（硬上限 1 次，避免无限循环）
+    if (postResult.action === 'retry') {
+      try {
+        stepResult = await this.executor.execute(step, snapshot.goal);
+      } catch (retryErr) {
+        return { success: false, error: `post-step retry 失败: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}` };
+      }
+    }
+
     return { success: true, stepResult };
   }
 
@@ -574,9 +717,10 @@ export class DurableExecutor {
     snapshot: ExecutionSnapshot,
     context: HookContext,
   ): Promise<{
-    action: 'continue' | 'abort' | 'retry' | 'skip';
+    action: 'continue' | 'abort' | 'retry' | 'skip' | 'deny' | 'warn';
     message?: string;
     modifiedResult?: StepResult;
+    reason?: string;
   }> {
     if (!this.hookRunner) {
       return { action: 'continue' };
@@ -619,6 +763,7 @@ export class DurableExecutor {
 
   /**
    * 保存快照（原子写入：先写 .tmp 再 rename）
+   * 任务2：保存快照时同时生成 HANDOFF.md 交接文件到项目 .routedev/ 目录
    */
   private async saveSnapshot(snapshot: ExecutionSnapshot): Promise<void> {
     const filePath = this.getSnapshotPath(snapshot.planId);
@@ -635,11 +780,44 @@ export class DurableExecutor {
     // 原子 rename
     await fs.rename(tmpPath, filePath);
 
+    // 任务2：生成结构化交接文件 HANDOFF.md
+    await this.saveHandoffFile(snapshot);
+
     logger.debug('DurableExecutor: 快照已保存', {
       planId: snapshot.planId,
       status: snapshot.status,
       lastStepCompleted: snapshot.lastStepCompleted,
     });
+  }
+
+  /**
+   * 任务2：从执行状态提取 HandoffData 并保存 HANDOFF.md
+   * 交接文件保存到项目 .routedev/ 目录，供下次会话或人工接手参考
+   */
+  private async saveHandoffFile(snapshot: ExecutionSnapshot): Promise<void> {
+    try {
+      const handoffDir = path.join(this.projectPath, '.routedev');
+      const handoffData: HandoffData = {
+        currentGoal: snapshot.goal,
+        completedSteps: snapshot.completedResults.map((r, i) => {
+          const output = r.output ?? '';
+          // 截取前 120 字符作为步骤摘要
+          return `步骤${i + 1}: ${output.slice(0, 120)}`;
+        }),
+        nextAction: snapshot.nextStep?.description ?? '无下一步（计划已完成或暂停）',
+        constraints: [],
+        workingFiles: [],
+        openQuestions: [],
+        timestamp: snapshot.updatedAt,
+      };
+      await saveHandoff(handoffData, handoffDir);
+    } catch (err) {
+      // 交接文件生成失败不影响快照保存
+      logger.warn('DurableExecutor: HANDOFF.md 生成失败', {
+        planId: snapshot.planId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /**
