@@ -33,3 +33,27 @@ coverage/
 
 # RouteDev 运行时数据
 .routedev/
+
+# Electron 构建产物
+routedev/out/
+routedev/build/
+routedev/release/
+routedev/release-v*/
+routedev/release2/
+routedev/release3/
+
+# npm lock file（项目使用 pnpm）
+routedev/package-lock.json
+
+# CodeGraph 索引
+routedev/.codegraph/
+
+# 测试输出文件
+routedev/tests_output*.txt
+routedev/tests_output*_err.txt
+
+# 临时文件
+routedev/tmp_*.mjs
+
+# 工具目录
+.workbuddy/
