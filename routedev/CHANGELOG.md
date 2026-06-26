@@ -2,6 +2,50 @@
 
 所有版本变更记录。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## v4.0.0 (2026-06-25) — Phase 49: Skill 固化流水线与 Loop 工程化验证层
+
+### Added
+- **Task 1：SkillFlow 引擎** — 新增 `src/skills/skill-flow-engine.ts` + `skill-flow-types.ts` + `skill-flow-checkpoint-store.ts` + `attractor.ts`；5 种节点类型（step / checkpoint / user-gate / loop / branch）；onFailure 处理（retry / abort / goto）；Attractor 吸因子注入器；CheckpointStore 支持任务中断恢复（.routedev/skill-flow/ 持久化 + hash 校验 + stale 检测）；约 45 个测试
+- **Task 2：双循环编排器** — 新增 `src/agent/dual-loop-orchestrator.ts` + `dual-loop-types.ts` + `cross-model-reviewer.ts` + `loop-memory.ts`；Inner ReAct + Outer 验证（GoalVerifier + CompletionGate + CrossModelReviewer）；3 步仲裁规则（CompletionGate > GoalVerifier > CrossModelReviewer critical）；LoopMemory 失败记忆持久化（MAX_KEPT_FAILURES=5）；"让 AI 自己改"约束；约 38 个测试
+- **Task 3：Skill 质量门** — 新增 `src/skills/quality-gate.ts` + `skill-schema-validator.ts` + `fallback-checker.ts` + `skill-validator.ts` + `model-drift-detector.ts` + `runtime-fallback-detector.ts`；三层检查（Schema + 兜底 + 可选 3 场景验证）；模型漂移检测（同主版本 low / 跨主版本 high）；约 42 个测试
+- **Task 4：上下文占用率** — 新增 `src/agent/context-usage-panel.ts` + `src/cite/structured-injector.ts` + `src/skills/progressive-disclosure.ts` + `src/cite/style-sample-injector.ts`；三级阈值（50%/80%/90%）；分项 token 占用（systemPrompt/history/toolResults/references/skillPrompts）；结构化注入（不全量读文件，只注入相关符号块）；渐进式披露（最小注入集 + 按需加载）；打样注入（标注"勿照抄业务逻辑"）；约 40 个测试
+- **Task 5：评估集框架** — 新增 `src/evaluation/evaluation-framework.ts` + `online-monitor.ts`；Smoke(10) / Regression(30) 两套评估集；LLM-as-Judge 五大陷阱对策（洗牌 / Rubric / 跨模型 / 多维度 / expectedBehavior）；7 类在线监控信号 + 配置 ROI 评估；约 35 个测试
+- **Task 6：意图路由四层漏斗** — 新增 `src/router/routing-funnel.ts`（复用 `deterministic-rules.ts`）；L0 正则 / L1 向量 / L2 LLM / SafeNet 四层；熔断器（连续低置信度 > 5 次触发，5 分钟冷却期）；四条铁律（规则优先 / 意图枚举 / 低置信度反问 / 埋监控）；约 53 个测试
+- **Task 7：集成测试与文档同步** — 新增 `tests/integration/phase49-e2e.test.ts` 端到端测试（8 个场景：SkillFlow+双循环 / 质量门 / 上下文占用率 / 评估集 / 意图路由 / 跨模型审查 / 反思模式 / Loop 记忆）；新增 `docs/SKILLFLOW.md`、`docs/DUAL_LOOP.md`、`docs/QUALITY_GATE.md`、`docs/CONTEXT_USAGE.md`、`docs/EVALUATION.md`、`docs/ROUTING.md` 六份文档
+
+### Changed
+- `package.json` 版本号从 3.9.0 升至 4.0.0（主版本号升级：Phase 49 引入 SkillFlow 引擎和双循环编排器两大架构性变更）
+
+### Pitfalls
+- 新增 17 条陷阱（#139-155），覆盖 SkillFlow 节点循环 / 双循环仲裁 / 质量门 Token 消耗 / 上下文面板性能 / 结构化注入遗漏 / SafeNet 熔断 / 跨模型审查回退 / adversarial 用例失效 / LLM-as-Judge 模型漂移 / 渐进式披露信息缺失 / SkillFlow 中断恢复 / 打样注入过度模仿 / 模型漂移弹窗时机 / 配置 ROI 评估
+
+### Test Stats
+- 新增 261 个测试（Task 1-6 单元测试 253 个 + Task 7 集成测试 8 个），远超 ≥8 集成测试要求
+- 集成测试覆盖 8 个端到端场景，全部通过（189ms）
+
+## v3.9.0 (2026-06-25) — Phase 48: 引用系统与外部生态兼容层
+
+### Added
+- **Task 1：引用系统核心** — 新增 `src/cite/` 模块（types/manager/resolver/index）；8 种引用类型（file/folder/text/skill/tool/macro/url/message）；CiteManager 管理引用标签（add/remove/clear/list/toJSON/formatForUI）；CiteResolver 后端解析引用为 injectedContext + preflightTools + skillPrompts + allowedTools；消息引用版本与失效处理（targetVersion/targetBranchId 校验，outdated/unreachable/deleted 状态）；58 个测试
+- **Task 2：Anthropic Skills / Claude Code Plugin 兼容** — 新增 `src/import/` 模块（tool-name-mapper/anthropic-skills-loader/claude-plugin-importer/index）；扫描 `anthropic_skills/` 目录加载 SKILL.md；导入 Claude Code Plugin 包（plugin.json + skills + commands + agents + .mcp.json + hooks）；工具名映射（Read→read_file 等 8 对）；社区来源 Hook 进沙箱试用（陷阱 #129）；未映射工具 warning 不静默失败（陷阱 #132）；47 个测试
+- **Task 3：Codex Instructions 导入** — 新增 `src/import/codex-importer.ts`；扫描 `.codex/instructions.md` + `.codex/codex.md` + `.codex/*.md` 按字母顺序合并；3 种导入模式（system_prompt / project_memory / ignore）；project_memory 模式按 `##` 标题切分并打 codex-instruction 标签；hasUpdates 通过 mtime 检测文件更新；12 个测试
+- **Task 4：MCP 生态桥接** — 新增 `src/mcp/claude-bridge.ts`；ClaudeMCPBridge 类支持 .mcp.json 导入/导出/自动发现；5 种传输协议（stdio/http/sse/streamable_http/websocket）；3 种会话生命周期（per-call/per-session/persistent）；ID 冲突自动重命名（陷阱 #131）；部分失败不影响其他 server（陷阱 #137）；14 个测试
+- **Task 5：Macros 系统** — 新增 `src/macros/` 模块（types/builtin/manager/index）；4 个内置宏（macro-creator/daily-standup/code-review/commit-message）；MacroManager 支持 loadAll/getMacro/listMacros/createMacro/deleteMacro/searchMacros；通过 `!` 触发器引用；preferredProfile 字段联动 Agent Profile；32 个测试
+- **Task 6：集成测试与文档同步** — 新增 `tests/integration/phase48-e2e.test.ts` 端到端测试（5 个场景：引用+Skill 联动 / Codex+Macro 联动 / MCP+Tool 引用 / 引用持久化 / 消息引用版本失效）；新增 `docs/CITE.md`、`docs/IMPORT.md`、`docs/MACROS.md` 三份文档
+
+### Changed
+- `src/config/schema.ts` 扩展 MCPServerConfigSchema 支持 5 种 transport（sse/streamable_http/websocket 新增）；MCPServerEntrySchema 新增 lifecyclePolicy/origin 字段；MCPConfigSchema 新增 lifecyclePolicy 默认 per-session；新增 ImportConfigSchema（anthropicSkillsAutoEnable/claudePluginAutoEnable/codexInstructions/codexMemoryTag）
+- `src/config/defaults.ts` 同步新增 mcp.lifecyclePolicy 和 import 默认值
+- `src/tools/mcp/types.ts` 扩展 MCPTransportType 支持 5 种；新增 MCPSseConfig/MCPStreamableHttpConfig/MCPWebsocketConfig 类型；MCPServerEntry 新增 lifecyclePolicy/origin 字段
+- `package.json` 版本号从 3.8.1 升至 3.9.0
+
+### Pitfalls
+- 新增 14 条陷阱（#125-138），覆盖引用沦为复制粘贴 / 标签过多挤压 / 引用内容过长 / 引用持久化膨胀 / 社区 Hook 危险 / Codex 冲突 / MCP ID 冲突 / 工具名映射不全 / Macro 恶意指令 / 触发器误触发 / CiteResolver 绕过权限 / 消息引用版本不一致 / MCP 多协议降级 / Macro Profile 漂移
+
+### Test Stats
+- 新增 163 个测试（Task 1: 58 + Task 2: 47 + Task 3: 12 + Task 4: 14 + Task 5: 32），远超 ≥55 要求
+- 全量测试 3243 passed / 2 skipped / 0 failed
+
 ## v3.8.1 (2026-06-25) — Phase 48: 功能接线收尾与设置集成
 
 ### Fixed
