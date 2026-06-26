@@ -39,7 +39,7 @@ export interface GateResult {
 /**
  * CompletionGate 配置
  */
-export interface CompletionGateConfig {
+interface CompletionGateConfig {
   /** 总超时（毫秒） */
   gateTimeout: number;
   /** 验证失败后最多重试次数 */

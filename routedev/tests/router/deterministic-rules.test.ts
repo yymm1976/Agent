@@ -1,17 +1,12 @@
 // tests/router/deterministic-rules.test.ts
 // Phase 40 Task 2：确定性路由规则单元测试
-// 覆盖：exact/startsWith/regex 匹配、无匹配、loadCustomRules、mergeRules、classifier 集成
+// 覆盖：exact/startsWith/regex 匹配、无匹配、classifier 集成
+//
+// Phase 50 Task 8：已移除对 loadCustomRules / mergeRules 的测试（函数已作为死代码删除）
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { promises as fs } from 'node:fs';
-import * as path from 'node:path';
-import * as os from 'node:os';
 import {
   matchDeterministicRule,
-  loadCustomRules,
-  mergeRules,
-  BUILTIN_DETERMINISTIC_RULES,
-  type DeterministicRule,
 } from '../../src/router/deterministic-rules.js';
 import { ScenarioClassifier } from '../../src/router/classifier.js';
 import { ModelRouter } from '../../src/router/router.js';
@@ -124,138 +119,6 @@ describe('Deterministic Rules', () => {
 
     it('should return null for complex query', () => {
       expect(matchDeterministicRule('请帮我重构这个模块的架构设计')).toBeNull();
-    });
-  });
-
-  describe('loadCustomRules', () => {
-    let tmpDir: string;
-    let rulesPath: string;
-
-    beforeEach(async () => {
-      tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'routedev-test-'));
-      rulesPath = path.join(tmpDir, 'deterministic-rules.json');
-    });
-
-    afterEach(async () => {
-      await fs.rm(tmpDir, { recursive: true, force: true });
-    });
-
-    it('should load custom rules from JSON file', async () => {
-      const customRules: DeterministicRule[] = [
-        {
-          id: 'custom-greeting',
-          pattern: '你好',
-          matchType: 'exact',
-          handler: 'direct-response',
-          responseTemplate: '你好！',
-        },
-        {
-          id: 'custom-weather',
-          pattern: '天气',
-          matchType: 'startsWith',
-          handler: 'tool-direct',
-          targetTool: 'weather_query',
-        },
-      ];
-      await fs.writeFile(rulesPath, JSON.stringify(customRules), 'utf-8');
-
-      const loaded = await loadCustomRules(rulesPath);
-      expect(loaded).toHaveLength(2);
-      expect(loaded[0].id).toBe('custom-greeting');
-      expect(loaded[1].id).toBe('custom-weather');
-    });
-
-    it('should return empty array when file does not exist', async () => {
-      const loaded = await loadCustomRules(path.join(tmpDir, 'nonexistent.json'));
-      expect(loaded).toEqual([]);
-    });
-
-    it('should return empty array when file is not valid JSON', async () => {
-      await fs.writeFile(rulesPath, 'not a json', 'utf-8');
-      const loaded = await loadCustomRules(rulesPath);
-      expect(loaded).toEqual([]);
-    });
-
-    it('should return empty array when JSON is not an array', async () => {
-      await fs.writeFile(rulesPath, JSON.stringify({ id: 'not-array' }), 'utf-8');
-      const loaded = await loadCustomRules(rulesPath);
-      expect(loaded).toEqual([]);
-    });
-
-    it('should skip invalid rules in the array', async () => {
-      const customRules = [
-        { id: 'valid-rule', pattern: 'test', matchType: 'exact', handler: 'direct-response' },
-        { id: 123, pattern: 'invalid' }, // 缺少 matchType/handler，id 类型错误
-        { pattern: 'no-id', matchType: 'exact', handler: 'direct-response' }, // 缺少 id
-      ];
-      await fs.writeFile(rulesPath, JSON.stringify(customRules), 'utf-8');
-
-      const loaded = await loadCustomRules(rulesPath);
-      expect(loaded).toHaveLength(1);
-      expect(loaded[0].id).toBe('valid-rule');
-    });
-  });
-
-  describe('mergeRules', () => {
-    it('should append custom rules after builtin rules', () => {
-      const custom: DeterministicRule[] = [
-        {
-          id: 'custom-1',
-          pattern: '自定义',
-          matchType: 'exact',
-          handler: 'direct-response',
-          responseTemplate: '自定义响应',
-        },
-      ];
-
-      const merged = mergeRules(BUILTIN_DETERMINISTIC_RULES, custom);
-      expect(merged.length).toBe(BUILTIN_DETERMINISTIC_RULES.length + 1);
-      // 内置规则在前
-      expect(merged[0].id).toBe(BUILTIN_DETERMINISTIC_RULES[0].id);
-      // 自定义规则在后
-      expect(merged[merged.length - 1].id).toBe('custom-1');
-    });
-
-    it('should deduplicate custom rules with same id as builtin', () => {
-      const custom: DeterministicRule[] = [
-        {
-          id: 'cmd-cost', // 与内置规则 id 重复
-          pattern: '/cost-override',
-          matchType: 'exact',
-          handler: 'direct-response',
-          responseTemplate: 'override',
-        },
-        {
-          id: 'custom-new',
-          pattern: '新规则',
-          matchType: 'exact',
-          handler: 'direct-response',
-        },
-      ];
-
-      const merged = mergeRules(BUILTIN_DETERMINISTIC_RULES, custom);
-      // 重复 id 被跳过，只保留自定义中的新规则
-      expect(merged.length).toBe(BUILTIN_DETERMINISTIC_RULES.length + 1);
-      // 内置 cmd-cost 保留（不被覆盖）
-      const cmdCostRule = merged.find((r) => r.id === 'cmd-cost');
-      expect(cmdCostRule).toBeDefined();
-      expect(cmdCostRule!.pattern).toBe('/cost');
-      // 新规则被追加
-      expect(merged.some((r) => r.id === 'custom-new')).toBe(true);
-    });
-
-    it('should handle empty custom rules', () => {
-      const merged = mergeRules(BUILTIN_DETERMINISTIC_RULES, []);
-      expect(merged.length).toBe(BUILTIN_DETERMINISTIC_RULES.length);
-    });
-
-    it('should handle empty builtin rules', () => {
-      const custom: DeterministicRule[] = [
-        { id: 'custom-1', pattern: 'test', matchType: 'exact', handler: 'direct-response' },
-      ];
-      const merged = mergeRules([], custom);
-      expect(merged.length).toBe(1);
-      expect(merged[0].id).toBe('custom-1');
     });
   });
 

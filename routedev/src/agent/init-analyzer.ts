@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { logger } from '../utils/logger.js';
 
-export interface ProjectInfo {
+interface ProjectInfo {
   /** 项目根目录 */
   rootPath: string;
   /** 文件结构（树形） */
@@ -21,7 +21,7 @@ export interface ProjectInfo {
   hasTests: boolean;
 }
 
-export interface InitAnalyzerOptions {
+interface InitAnalyzerOptions {
   /** LLM 客户端 */
   llmClient: ILLMClient;
   /** 模型 ID */

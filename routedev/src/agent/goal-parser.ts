@@ -37,7 +37,7 @@ const REQUIREMENTS_CONTEXT_TEMPLATE = (r: RequirementsSummary) => `
 - 预估复杂度：${r.estimatedComplexity}
 </requirements_context>`;
 
-export interface GoalParserOptions {
+interface GoalParserOptions {
   /** 验证条件（可空） */
   verificationCriteria?: string;
   /** 路由决策（用于选定 LLM） */

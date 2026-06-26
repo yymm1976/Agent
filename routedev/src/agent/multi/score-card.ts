@@ -17,7 +17,7 @@
 //   - formatReport()：格式化为 /quality 命令的展示文本
 
 /** 用户反馈类型 */
-export type UserFeedback = 'accepted' | 'rejected' | 'edited' | 'pending';
+type UserFeedback = 'accepted' | 'rejected' | 'edited' | 'pending';
 
 /** 单步骤的执行质量评分卡 */
 export interface ScoreCard {
@@ -36,7 +36,7 @@ export interface ScoreCard {
 }
 
 /** 聚合统计结果 */
-export interface AggregateStats {
+interface AggregateStats {
   totalSteps: number;
   totalTokens: number;
   totalDuration: number;

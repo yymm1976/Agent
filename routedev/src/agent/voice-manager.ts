@@ -19,10 +19,10 @@
 // ============================================================
 
 /** 语音输入提供商 */
-export type VoiceProvider = 'web-speech' | 'whisper-local' | 'openai-whisper' | 'off';
+type VoiceProvider = 'web-speech' | 'whisper-local' | 'openai-whisper' | 'off';
 
 /** 语音输出（TTS）提供商 */
-export type TTSProvider = 'system' | 'openai' | 'off';
+type TTSProvider = 'system' | 'openai' | 'off';
 
 /** 语音配置 */
 export interface VoiceConfig {
@@ -37,7 +37,7 @@ export interface VoiceConfig {
 }
 
 /** 转写结果 */
-export interface TranscriptionResult {
+interface TranscriptionResult {
   /** 转写文本 */
   text: string;
   /** 置信度（0-1） */

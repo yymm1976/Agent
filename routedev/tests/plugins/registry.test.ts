@@ -6,7 +6,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
 import { AgentMiddlewarePipeline } from '../../src/agent/middleware.js';
-import { defineToolPlugin, defineHookPlugin } from '../../src/plugins/sdk.js';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -193,16 +192,7 @@ export default {
       cwd: '/test',
     });
 
-    // 直接加载一个 SDK 创建的插件（不走 discover）
-    const toolPlugin = defineToolPlugin('toggle', [
-      {
-        name: 'toggle_tool',
-        description: '可切换工具',
-        parameters: { type: 'object', properties: {} },
-        execute: async () => ({ success: true, output: 'ok', durationMs: 0 }),
-      },
-    ]);
-
+    // 直接加载一个 tool 插件（不走 discover，通过文件写入后 discover 加载）
     const manifest = {
       id: 'tool-toggle',
       name: 'toggle',

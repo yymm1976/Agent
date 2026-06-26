@@ -10,10 +10,7 @@ import {
   getMessageStyle,
   TYPOGRAPHY,
   divider,
-  formatErrorMessage,
-  getTierColor,
   getTierLabel,
-  TIER_COLORS,
   TIER_LABELS,
 } from '../../src/cli/design-system.js';
 
@@ -141,67 +138,14 @@ describe('设计系统 (design-system)', () => {
   });
 
   // ============================================================
-  // 错误消息格式化
+  // 场景等级标签
   // ============================================================
-  describe('错误消息格式化', () => {
-    it('完整三要素格式化', () => {
-      const result = formatErrorMessage({
-        what: '无法连接到本地服务',
-        why: '服务未启动',
-        how: '检查服务是否运行',
-      });
-      expect(result).toContain('[错误] 无法连接到本地服务');
-      expect(result).toContain('可能原因：服务未启动');
-      expect(result).toContain('建议：检查服务是否运行');
-      expect(result.split('\n').length).toBe(3);
-    });
-
-    it('只有 what 时单行输出', () => {
-      const result = formatErrorMessage({ what: '出错了' });
-      expect(result).toBe('[错误] 出错了');
-      expect(result.split('\n').length).toBe(1);
-    });
-
-    it('what + why 两行输出', () => {
-      const result = formatErrorMessage({
-        what: '出错了',
-        why: '原因不明',
-      });
-      expect(result.split('\n').length).toBe(2);
-      expect(result).toContain('可能原因：原因不明');
-      expect(result).not.toContain('建议：');
-    });
-  });
-
-  // ============================================================
-  // 场景等级颜色
-  // ============================================================
-  describe('场景等级颜色', () => {
-    it('TIER_COLORS 包含四个等级', () => {
-      expect(TIER_COLORS.simple).toBe('success');
-      expect(TIER_COLORS.medium).toBe('warning');
-      expect(TIER_COLORS.complex).toBe('accent');
-      expect(TIER_COLORS.reasoning).toBe('primary');
-    });
-
+  describe('场景等级标签', () => {
     it('TIER_LABELS 包含中文标签', () => {
       expect(TIER_LABELS.simple).toBe('简单');
       expect(TIER_LABELS.medium).toBe('中等');
       expect(TIER_LABELS.complex).toBe('复杂');
       expect(TIER_LABELS.reasoning).toBe('推理');
-    });
-
-    it('getTierColor 已知等级返回对应颜色', () => {
-      const simpleColor = getTierColor('simple');
-      const complexColor = getTierColor('complex');
-      expect(simpleColor).toBeTruthy();
-      expect(complexColor).toBeTruthy();
-      expect(simpleColor).not.toBe(complexColor);
-    });
-
-    it('getTierColor 未知等级回退到 info 颜色', () => {
-      const color = getTierColor('unknown');
-      expect(color).toBe(getColor('info'));
     });
 
     it('getTierLabel 已知等级返回中文', () => {

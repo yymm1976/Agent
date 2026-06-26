@@ -263,6 +263,28 @@ export type SoundsConfig = z.infer<typeof SoundsConfigSchema>;
 
 // --- UI 配置（Phase 25 / Phase 34） ---
 
+/**
+ * Phase 50 Task 7：CLI 组件开关配置
+ * 控制 7 个 React 组件是否接入 UI（关闭时回退到纯文本渲染函数）
+ */
+export const UIComponentsSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** BranchSwitcher：分支树可视化（状态栏区域） */
+  branchSwitcher: z.boolean().default(true),
+  /** ResumePicker：恢复执行选择器（/resume 命令） */
+  resumePicker: z.boolean().default(true),
+  /** ProgressBar：通用进度条（goal 执行进度） */
+  progressBar: z.boolean().default(true),
+  /** TracePanel：Trace 时间线（/trace 命令） */
+  tracePanel: z.boolean().default(false),
+  /** DisclosureLevel：渐进披露容器（消息列表） */
+  disclosureLevel: z.boolean().default(true),
+  /** DiffView：diff 可视化（/diff 命令） */
+  diffView: z.boolean().default(true),
+  /** ConfigReloadNotice：配置变更通知卡片 */
+  configReloadNotice: z.boolean().default(true),
+}));
+export type UIComponentsConfig = z.infer<typeof UIComponentsSchema>;
+
 export const UIConfigSchema = z.preprocess(
   (v) => {
     // Phase 34：向后兼容旧版 ui.disclosureLevel 数字 1/2/3
@@ -289,6 +311,8 @@ export const UIConfigSchema = z.preprocess(
     idleHintSeconds: z.number().positive().int().default(30),
     /** 配置热重载提示开关：开启后配置变更时显示提示 */
     hotReloadNotify: z.boolean().default(true),
+    /** Phase 50 Task 7：组件级开关，控制 7 个 React 组件接入 */
+    components: UIComponentsSchema,
   }),
 );
 export type UIConfig = z.infer<typeof UIConfigSchema>;
@@ -1169,6 +1193,97 @@ export const ImportConfigSchema = z.preprocess((v) => v ?? {}, z.object({
 }));
 export type ImportConfig = z.infer<typeof ImportConfigSchema>;
 
+// --- Phase 50：核心模块接入开关配置 ---
+
+/**
+ * Goal 流程接入配置（Phase 50 Task 1）
+ * 控制 /goal 流程中四个核心模块的渐进式接入，默认全部关闭
+ * - auditEnabled：GoalAuditor 三层独立审计
+ * - persistenceEnabled：GoalPersistence 持久化与续跑
+ * - promptBuilderEnabled：GoalPromptBuilder 五段式规范构造
+ * - requirementChangeEnabled：RequirementChangeAnalyzer 需求变更分析
+ */
+export const GoalIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  auditEnabled: z.boolean().default(false),
+  persistenceEnabled: z.boolean().default(false),
+  promptBuilderEnabled: z.boolean().default(false),
+  requirementChangeEnabled: z.boolean().default(false),
+}));
+export type GoalIntegrationConfig = z.infer<typeof GoalIntegrationConfigSchema>;
+
+/**
+ * 多 Agent 编排接入配置（Phase 50 Task 2）
+ * 控制 orchestrator.ts 中三个核心模块的渐进式接入，默认全部关闭
+ * - strategyEnabled：StrategySelector 按复杂度选择策略
+ * - stateGraphEnabled：ExecutionStateGraph 步骤状态管理
+ * - branchOrchestrationEnabled：BranchOrchestrator 并行分支调度
+ */
+export const OrchestrationIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  strategyEnabled: z.boolean().default(false),
+  stateGraphEnabled: z.boolean().default(false),
+  branchOrchestrationEnabled: z.boolean().default(false),
+}));
+export type OrchestrationIntegrationConfig = z.infer<typeof OrchestrationIntegrationConfigSchema>;
+
+/**
+ * 子 Agent 委托体系接入配置（Phase 50 Task 3）
+ * 控制 spawn-agent.ts 中五个核心模块的渐进式接入，默认全部关闭
+ * - contextPackerEnabled：ContextPacker 按角色打包上下文
+ * - delegationGateEnabled：DelegationGate 委托前检查资格
+ * - delegationEnforcerEnabled：DelegationEnforcer 执行中校验工具调用
+ * - lifecycleEnabled：SubAgentLifecycle + AntiAbuseDetector 生命周期与反滥用
+ * - scoreCardEnabled：SubAgentScoreCardCollector 执行后收集评分
+ */
+export const DelegationIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  contextPackerEnabled: z.boolean().default(false),
+  delegationGateEnabled: z.boolean().default(false),
+  delegationEnforcerEnabled: z.boolean().default(false),
+  lifecycleEnabled: z.boolean().default(false),
+  scoreCardEnabled: z.boolean().default(false),
+}));
+export type DelegationIntegrationConfig = z.infer<typeof DelegationIntegrationConfigSchema>;
+
+// --- Phase 50 Task 5/6：Phase 48/49 模块接入确认配置 ---
+
+/**
+ * Phase 48 模块接入确认配置（Phase 50 Task 5）
+ * 聚合 cite/import/macros/mcp 四模块的顶层接入开关
+ * 各子模块自身的配置（cite/macros/import/mcp）已存在，此处仅控制是否在生产路径接入
+ * 默认全部 true——这些模块在 Phase 48 已实现，Phase 50 确认接入
+ */
+export const Phase48IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** cite 引用系统接入（CiteResolver 注入 chat-runner） */
+  citeEnabled: z.boolean().default(true),
+  /** import 外部生态导入接入（ClaudePluginImporter / CodexInstructionImporter） */
+  importEnabled: z.boolean().default(true),
+  /** macros 宏系统接入（MacroManager `!` 触发器） */
+  macrosEnabled: z.boolean().default(true),
+  /** mcp 桥接接入（ClaudeMCPBridge） */
+  mcpBridgeEnabled: z.boolean().default(true),
+}));
+export type Phase48IntegrationConfig = z.infer<typeof Phase48IntegrationConfigSchema>;
+
+/**
+ * Phase 49 模块接入确认配置（Phase 50 Task 6）
+ * 聚合 SkillFlow/DualLoop/QualityGate/ContextUsagePanel/EvaluationFramework/RoutingFunnel 六模块
+ * 默认全部 false——这些模块为实验性功能，需显式开启
+ */
+export const Phase49IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** SkillFlow 引擎接入（Skill 执行时可选调用） */
+  skillFlowEnabled: z.boolean().default(false),
+  /** 双循环编排器接入（/goal 执行时可选调用） */
+  dualLoopEnabled: z.boolean().default(false),
+  /** Skill 质量门接入（Skill 生成时可选调用） */
+  qualityGateEnabled: z.boolean().default(false),
+  /** 上下文占用率面板接入（context-compaction 调用） */
+  contextUsagePanelEnabled: z.boolean().default(false),
+  /** 评估集框架接入（Skill 生成或 /goal 完成时可选调用） */
+  evaluationFrameworkEnabled: z.boolean().default(false),
+  /** 意图路由漏斗接入（router 调用） */
+  routingFunnelEnabled: z.boolean().default(false),
+}));
+export type Phase49IntegrationConfig = z.infer<typeof Phase49IntegrationConfigSchema>;
+
 // --- 全局配置（完整 schema） ---
 // 顶层 AppConfig：所有配置的根节点
 // 注：Zod 4 严格化后，`.default({})` 不接受空对象字面量。
@@ -1246,5 +1361,15 @@ export const AppConfigSchema = z.object({
   macros: z.preprocess((v) => v ?? {}, MacrosConfigSchema),
   // Phase 48 Task 2/3：外部生态导入配置（Anthropic Skills / Claude Plugin / Codex）
   import: ImportConfigSchema,
+  // Phase 50 Task 1：Goal 流程模块接入开关（默认全部 false）
+  goalIntegration: GoalIntegrationConfigSchema,
+  // Phase 50 Task 2：多 Agent 编排模块接入开关（默认全部 false）
+  orchestrationIntegration: OrchestrationIntegrationConfigSchema,
+  // Phase 50 Task 3：子 Agent 委托体系模块接入开关（默认全部 false）
+  delegationIntegration: DelegationIntegrationConfigSchema,
+  // Phase 50 Task 5：Phase 48 模块接入确认开关（默认全部 true）
+  phase48Integration: Phase48IntegrationConfigSchema,
+  // Phase 50 Task 6：Phase 49 模块接入确认开关（默认全部 false，实验性）
+  phase49Integration: Phase49IntegrationConfigSchema,
 });
 export type AppConfig = z.infer<typeof AppConfigSchema>;

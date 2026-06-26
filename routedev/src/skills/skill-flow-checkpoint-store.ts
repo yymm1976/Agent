@@ -61,8 +61,6 @@ interface SerializedExecutionContext {
  *   const stale = await store.validateCheckpoint('deploy-2026xxxx', restored!);
  */
 export class SkillFlowCheckpointStore {
-  /** 项目根目录 */
-  private readonly basePath: string;
   /** checkpoint 存储目录（.routedev/skill-flow/） */
   private readonly storeDir: string;
 
@@ -70,7 +68,6 @@ export class SkillFlowCheckpointStore {
    * @param basePath 项目根目录（默认 process.cwd()）
    */
   constructor(basePath: string = process.cwd()) {
-    this.basePath = basePath;
     this.storeDir = path.join(basePath, '.routedev', 'skill-flow');
   }
 
@@ -315,10 +312,5 @@ export class SkillFlowCheckpointStore {
   /** 简单字符串哈希（SHA-256 截断，非密码学用途） */
   private static hashString(str: string): string {
     return createHash('sha256').update(str, 'utf-8').digest('hex').slice(0, 16);
-  }
-
-  /** 暴露 basePath（用于测试） */
-  getBasePath(): string {
-    return this.basePath;
   }
 }

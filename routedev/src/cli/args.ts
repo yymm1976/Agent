@@ -2,7 +2,7 @@
 // CLI 参数解析（不引入外部库如 commander/yargs）
 // 手动解析 process.argv，保持零依赖
 
-export interface CLIArgs {
+interface CLIArgs {
   /** 子命令：undefined = interactive, 'serve' = server mode, 'config' = config ops, 'exec' = 非交互执行 */
   command?: 'serve' | 'config' | 'exec';
   /** 子命令参数 */

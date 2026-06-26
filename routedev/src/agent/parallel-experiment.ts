@@ -25,7 +25,7 @@ export interface ExperimentIntent {
 }
 
 /** 冲突检测结果 */
-export interface ConflictDetectionResult {
+interface ConflictDetectionResult {
   hasConflict: boolean;
   conflicts: Array<{
     branchA: string;

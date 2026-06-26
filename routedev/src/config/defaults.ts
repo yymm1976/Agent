@@ -136,6 +136,16 @@ export const DEFAULT_CONFIG: AppConfig = {
     bell: true,
     idleHintSeconds: 30,
     hotReloadNotify: true,
+    // Phase 50 Task 7：7 个 React 组件接入开关（tracePanel 默认 false，其余默认 true）
+    components: {
+      branchSwitcher: true,
+      resumePicker: true,
+      progressBar: true,
+      tracePanel: false,
+      disclosureLevel: true,
+      diffView: true,
+      configReloadNotice: true,
+    },
   },
   optimization: {
     tokenTracking: {
@@ -413,5 +423,42 @@ export const DEFAULT_CONFIG: AppConfig = {
     claudePluginAutoEnable: false,
     codexInstructions: 'project_memory',
     codexMemoryTag: 'codex-instruction',
+  },
+  // Phase 50 Task 1：Goal 流程模块接入开关（默认全部 false，渐进式接入）
+  goalIntegration: {
+    auditEnabled: false,
+    persistenceEnabled: false,
+    promptBuilderEnabled: false,
+    requirementChangeEnabled: false,
+  },
+  // Phase 50 Task 2：多 Agent 编排模块接入开关（默认全部 false）
+  orchestrationIntegration: {
+    strategyEnabled: false,
+    stateGraphEnabled: false,
+    branchOrchestrationEnabled: false,
+  },
+  // Phase 50 Task 3：子 Agent 委托体系模块接入开关（默认全部 false）
+  delegationIntegration: {
+    contextPackerEnabled: false,
+    delegationGateEnabled: false,
+    delegationEnforcerEnabled: false,
+    lifecycleEnabled: false,
+    scoreCardEnabled: false,
+  },
+  // Phase 50 Task 5：Phase 48 模块接入确认开关（默认全部 true）
+  phase48Integration: {
+    citeEnabled: true,
+    importEnabled: true,
+    macrosEnabled: true,
+    mcpBridgeEnabled: true,
+  },
+  // Phase 50 Task 6：Phase 49 模块接入确认开关（默认全部 false，实验性）
+  phase49Integration: {
+    skillFlowEnabled: false,
+    dualLoopEnabled: false,
+    qualityGateEnabled: false,
+    contextUsagePanelEnabled: false,
+    evaluationFrameworkEnabled: false,
+    routingFunnelEnabled: false,
   },
 };

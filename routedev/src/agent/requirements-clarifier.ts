@@ -9,7 +9,7 @@ import { logger } from '../utils/logger.js';
 // --- 类型定义 ---
 
 /** 澄清问题 */
-export interface ClarificationQuestion {
+interface ClarificationQuestion {
   /** 问题唯一标识 */
   id: string;
   /** 问题文本 */
@@ -25,7 +25,7 @@ export interface ClarificationQuestion {
 }
 
 /** 澄清结果 */
-export interface ClarificationResult {
+interface ClarificationResult {
   /** 是否需要澄清 */
   needsClarification: boolean;
   /** 模糊度分数 0~1（越高越模糊） */
@@ -37,7 +37,7 @@ export interface ClarificationResult {
 }
 
 /** 构造参数 */
-export interface RequirementsClarifierOptions {
+interface RequirementsClarifierOptions {
   /** LLM 客户端（应使用便宜的分类器模型） */
   llmClient: ILLMClient;
   /** 模型 ID */
@@ -429,15 +429,6 @@ export class RequirementsClarifier {
     }
     return null;
   }
-}
-
-/**
- * 创建 RequirementsClarifier 的工厂函数
- */
-export function createRequirementsClarifier(
-  options: RequirementsClarifierOptions,
-): RequirementsClarifier {
-  return new RequirementsClarifier(options);
 }
 
 // 暴露规则关键词供测试

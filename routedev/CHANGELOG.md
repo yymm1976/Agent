@@ -2,6 +2,56 @@
 
 所有版本变更记录。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## v4.0.1 (2026-06-26) — Phase 50: 死代码接入收尾与模块集成
+
+### Added
+- **Task 1：/goal 流程接入** — GoalPromptBuilder / GoalPersistence / GoalAuditor / RequirementChangeAnalyzer 四模块接入 `goal-runner.ts` 执行链路；新增 `goalIntegration` 配置组（4 开关，默认 false）；每个接入点 try/catch 降级
+- **Task 2：多 Agent 编排接入** — StrategySelector / ExecutionStateGraph / BranchOrchestrator 三模块接入 `orchestrator.ts`；新增 `orchestrationIntegration` 配置组（3 开关，默认 false）
+- **Task 3：子 Agent 委托体系接入** — ContextPacker / DelegationGate / DelegationEnforcer / SubAgentLifecycle / SubAgentScoreCardCollector 五模块通过 `wrapSpawnAgentWithDelegation` 包装器接入 `spawn-agent.ts`；新增 `delegationIntegration` 配置组（5 开关，默认 false）；`delegation-contract.ts` 随 enforcer 接入自动解除传递性死链
+- **Task 4：branch-operations 去重评估** — 对比 BranchManager 后保留（有独特功能 delete/insert/undo/redo/squash），通过 `BranchManager.createOperations()` 工厂方法接入
+- **Task 5：Phase 48 模块接入确认** — CiteResolver / ClaudePluginImporter / CodexInstructionImporter / MacroManager / ClaudeMCPBridge 五模块在 `app-init.ts` 添加最小接入代码；新增 `phase48Integration` 配置组（默认 true）
+- **Task 6：Phase 49 模块接入确认** — SkillFlowEngine / DualLoopOrchestrator / SkillQualityGate / ContextUsagePanel / EvaluationFramework / RoutingFunnel 六模块在 `app-init.ts` 添加最小接入代码；新增 `phase49Integration` 配置组（6 开关，默认 false）
+- **Task 7：React 组件接入 UI** — BranchSwitcher / ResumePicker / ProgressBar / TracePanel / DisclosureLevel / DiffView / ConfigReloadUI 七组件接入 `App.tsx` / `ChatView.tsx` / 命令处理器；新增 `ui.components` 配置组（7 开关，6 默认 true + tracePanel 默认 false）；CommandBridge 接口扩展 5 个可选回调
+- **Task 10：集成测试 + 文档同步** — 新增 `tests/integration/phase50-final-integration.test.ts` 端到端测试（5 场景 12 测试：/goal 流程串联 / 子 Agent 委托全链路 / UI 组件命令触发 / 死代码清理验证 / export 清理验证）；新增 `docs/DEAD_CODE_AUDIT.md` 和 `docs/CONFIGURATION.md` 两份文档；更新 `docs/ARCHITECTURE.md` 增加 Phase 50 模块接入总览
+
+### Changed
+- `src/config/schema.ts` 新增 `GoalIntegrationSchema` / `OrchestrationIntegrationSchema` / `DelegationIntegrationSchema` / `Phase48IntegrationSchema` / `Phase49IntegrationSchema` / `UIComponentsSchema` 六组 Zod schema
+- `src/config/defaults.ts` 同步新增六组配置默认值
+- `src/cli/goal-runner.ts` 接入 4 个 /goal 流程模块（try/catch 降级）
+- `src/cli/app-init.ts` 创建 Phase 48/49 模块实例并注入
+- `src/tools/builtin/spawn-agent.ts` 修复 DelegationContract 导入源 + 接入委托体系 5 模块
+- `src/hooks/registry.ts` 修复预存 broken import（`./generator.js` → `../agent/hooks.js`）
+- `src/plugins/index.ts` 移除指向已删除 sdk.ts 的 re-export
+- `src/agent/branch.ts` 新增 `createOperations()` 工厂方法
+- `src/cli/App.tsx` 新增 5 个 CommandBridge 回调 + JSX 渲染 7 个组件
+- `src/cli/components/ChatView.tsx` 新增 `enableDisclosure` prop + 系统消息 >200 字符包裹 DisclosureLevel
+- `src/cli/service-context.ts` CommandBridge 接口扩展 5 个可选回调
+- `src/cli/commands/resume.ts` / `trace.ts` / `diff.ts` 配置开关触发对应组件渲染
+- `desktop/renderer/src/components/Phase50Components.tsx`（新建）6 个桌面端 wrapper 组件
+- `package.json` 版本号从 4.0.0 升至 4.0.1（patch：bug 修复 + 死代码清理 + 模块接入，默认 enabled:false 不改变默认行为）
+
+### Removed
+- **11 个完全死掉的源文件**：`src/agent/types.ts` / `src/router/reasoning-mode.ts` / `src/utils/stall-detector.ts` / `src/utils/error-messages.ts` / `src/config/codegraph-manager.ts` / `src/harness/tracing-executor.ts` / `src/harness/experiment-runner.ts` / `src/hooks/market-manager.ts` / `src/hooks/generator.ts` / `src/plugins/sdk.ts` / `src/cli/wizard.tsx`
+- **7 个无引用的 barrel 文件**：`src/cite/index.ts` / `src/import/index.ts` / `src/macros/index.ts` / `src/mcp/index.ts` / `src/skills/index.ts` / `src/agent/patterns/index.ts` / `src/evaluation/index.ts`
+- **8 个测试文件**：`tests/cli/wizard.test.ts` / `tests/harness/tracing-executor.test.ts` / `tests/harness/experiment-runner.test.ts` / `tests/hooks/generator.test.ts` / `tests/utils/stall-detector.test.ts` / `tests/utils/error-messages.test.ts` / `tests/plugins/sdk.test.ts` / `tests/cli/notification-audit.test.ts`
+- **22 个完全未调用的函数/方法**：分布在 macros/builtin.ts / skill-flow-engine.ts / skill-flow-checkpoint-store.ts / evaluation-framework.ts / persona-templates.ts / quality-aggregator.ts / requirements-clarifier.ts / memory/context-manager.ts / preference-manager.ts / durable-executor.ts / cache-optimizer.ts / deterministic-rules.ts / repo-map.ts / cli/notification.ts / design-system.ts
+- **84 个多余 export**：覆盖 46 个文件（src/agent/ 26 文件 38 export / src/agent/memory/ 4 文件 10 export / src/agent/multi/ 5 文件 9 export / src/agents/ 6 文件 12 export / src/skills/skill-flow-types.ts 11 export / src/router/ 1 文件 1 export / src/cli/ 3 文件 3 export）
+
+### Fixed
+- **Bug 1**：`src/import/claude-plugin-importer.ts` 调用 `bridge.convertFromClaudeConfig(...)` 但该方法不存在 → 改为 `bridge.importFromClaudeConfig(...)`（原分支永远不可达）
+- **Bug 2**：`src/skills/model-drift-detector.ts` 入参类型为 `ParsedSkill[]` 但内部用 `as SkillMetadataWithDrift` 断言 → 入参改为 `ParsedSkillWithDrift[]`，移除类型断言
+- **预存 broken imports**：`src/hooks/registry.ts` 导入已删除的 `./generator.js` → 改为 `../agent/hooks.js`；`src/plugins/index.ts` re-export 已删除的 `sdk.ts` → 移除
+- **DelegationContract 导入源**：`spawn-agent.ts` 从 `delegation-enforcer.js` 导入 DelegationContract，但实际定义在 `delegation-contract.js` → 修正导入源
+- **resume.ts 配置访问**：`ctx.config.ui.components?` 改为 `ctx.config?.ui?.components?`（mock ctx 缺少 config 字段时报错）
+- **ipc-bridge.test.ts hook 测试**：`hooks/generator.ts` 删除后 `engine.createHook()` 桩化返回失败 → 测试改为手动创建 HookConfigRegistry；event 名称从 `'after_tool_call'` 修正为 `'post-tool-call'`；补全 HookConfig 必填字段
+
+### Pitfalls
+- 新增 5 条陷阱（#166-170），覆盖接入模块类型不匹配 / 委托契约传递性死链 / branch-operations 去重边缘功能 / React 组件接入破坏布局 / export 清理误删跨文件使用
+
+### Test Stats
+- 新增 135 个测试（Task 1-9 单元/集成测试 123 个 + Task 10 端到端测试 12 个），远超 ≥40 要求
+- 全量测试全部通过，typecheck / build / build:electron 均通过
+
 ## v4.0.0 (2026-06-25) — Phase 49: Skill 固化流水线与 Loop 工程化验证层
 
 ### Added

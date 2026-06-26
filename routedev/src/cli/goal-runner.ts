@@ -18,6 +18,11 @@ import type { CompletionGate } from '../agent/completion-gate.js';
 import { GoalParser } from '../agent/goal-parser.js';
 import { GoalVerifier } from '../agent/goal-verifier.js';
 import { GoalGateManager, gatesFromSteps } from '../agent/goal-gates.js';
+// Phase 50 Task 1：接入核心模块（默认 enabled: false，开关在 config.goalIntegration）
+import { GoalAuditor } from '../agent/goal-audit.js';
+import { GoalPersistence } from '../agent/goal-persistence.js';
+import { GoalPromptBuilder } from '../agent/goal-prompt-builder.js';
+import { analyzeChangeImpact, isRequirementChange, type RequirementChange } from '../agent/requirement-change.js';
 import { logger } from '../utils/logger.js';
 import { estimateTokens } from '../utils/token-estimate.js';
 import { renderGoalProgressText, renderGoalCompletionSummary } from './components/goal-progress.js';
@@ -57,6 +62,10 @@ export interface GoalRunnerDeps {
   profiler?: TokenProfiler;
   /** Phase 32 Task 1.4：独立代码验证门（typecheck/lint/tests 兜底，可选） */
   completionGate?: CompletionGate;
+  /** Phase 50 Task 1：核心模块实例（由 app-init.ts 在开关开启时创建并注入，可选） */
+  goalAuditor?: GoalAuditor;
+  goalPersistence?: GoalPersistence;
+  goalPromptBuilder?: GoalPromptBuilder;
   /** 生成消息 ID */
   nextId: () => string;
 }
@@ -69,13 +78,19 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     conversationHistoryRef, pendingConfirmRef, abortControllerRef,
     currentPlanRef, awaitingGoalConfirmRef,
     addSystemMessage, requestPlanEdit, setIsProcessing, setTodayTokensUsed, profiler,
-    completionGate, nextId,
+    completionGate,
+    goalAuditor, goalPersistence, goalPromptBuilder,
+    nextId,
   } = deps;
 
   // Phase 21 Task 2：GoalGateManager 管理冻结的验收门控
   const gateManager = new GoalGateManager(process.cwd());
   // Phase 43：缓存 goal 配置，避免多处重复访问
   const goalCfg = config.goal;
+  // Phase 50 Task 1：缓存 goalIntegration 开关（默认全部 false，渐进接入）
+  const goalIntegration = config.goalIntegration;
+  // Phase 50 Task 1：当前目标的五段式规范（promptBuilder 开启时由 build() 生成，供 audit 复用 doneWhen）
+  let currentGoalSpec: { doneWhen: string[] } | null = null;
 
   /** 处理 /goal 命令：解析目标、分解步骤、请求用户确认 */
   async function handleGoalCommand(text: string): Promise<void> {
@@ -114,7 +129,31 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     }
 
     const parser = new GoalParser();
-    const plan = await parser.parse(description, {
+
+    // Phase 50 Task 1：promptBuilderEnabled 时用 GoalPromptBuilder 构造五段式规范
+    // 失败时 try/catch 降级到原行为（直接用 description 喂给 parser）
+    let enrichedDescription = description;
+    if (goalIntegration?.promptBuilderEnabled && goalPromptBuilder) {
+      try {
+        const spec = await goalPromptBuilder.build(description);
+        currentGoalSpec = { doneWhen: spec.doneWhen };
+        // 用 scope + constraints 增强描述，让 GoalParser 拿到更明确的上下文
+        const scopeLine = spec.scope ? `\n范围: ${spec.scope}` : '';
+        const constraintsLine = spec.constraints.length > 0
+          ? `\n约束: ${spec.constraints.join('; ')}`
+          : '';
+        const doneWhenLine = spec.doneWhen.length > 0
+          ? `\n完成标准: ${spec.doneWhen.join('; ')}`
+          : '';
+        enrichedDescription = `${description}${scopeLine}${constraintsLine}${doneWhenLine}`;
+        addSystemMessage('📐 已用 GoalPromptBuilder 构造五段式规范');
+      } catch (error) {
+        logger.warn('GoalPromptBuilder.build failed (non-blocking)', { error: String(error) });
+        currentGoalSpec = null;
+      }
+    }
+
+    const plan = await parser.parse(enrichedDescription, {
       verificationCriteria,
       routeDecision,
       llmClient: client,
@@ -209,6 +248,29 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
         addSystemMessage(
           `${passedIcon} 验证结果 (置信度 ${(result.confidence * 100).toFixed(0)}%): ${result.reasoning}\n${result.missingItems.length > 0 ? `缺失项: ${result.missingItems.join('; ')}` : ''}`,
         );
+
+        // Phase 50 Task 1：auditEnabled 时用 GoalAuditor 执行三层独立审计
+        // 失败时 try/catch 降级（不阻塞返回 result.passed）
+        if (goalIntegration?.auditEnabled && goalAuditor) {
+          try {
+            const auditOutcome = await goalAuditor.audit({
+              spec: { doneWhen: currentGoalSpec?.doneWhen ?? [] },
+              verifierResult: {
+                passed: result.passed,
+                evidence: [result.reasoning],
+                missing: result.missingItems,
+              },
+            });
+            addSystemMessage(`🔬 GoalAuditor 审计: ${auditOutcome.overallPassed ? '通过' : '未通过'} (${auditOutcome.results.length} 层)`);
+            // 审计未通过时覆盖 plan.status 为 failed
+            if (!auditOutcome.overallPassed) {
+              plan.status = 'failed';
+            }
+          } catch (error) {
+            logger.warn('GoalAuditor.audit failed (non-blocking)', { error: String(error) });
+          }
+        }
+
         return result.passed;
       }
     } catch (error) {
@@ -377,6 +439,41 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     const softStopRatio = goalCfg?.softStopRatio ?? 0.9;
     tracker.startTask(taskBudget);
     addSystemMessage(`📊 任务级 Token 预算已启动: ${taskBudget.toLocaleString()}（软停止 ${(softStopRatio * 100).toFixed(0)}%）`);
+
+    // Phase 50 Task 1：persistenceEnabled 时用 GoalPersistence 持久化到 .routedev/goals/<id>.json
+    // 失败时 try/catch 降级（不阻塞执行）
+    if (goalIntegration?.persistenceEnabled && goalPersistence) {
+      try {
+        await goalPersistence.save({
+          id: plan.id,
+          spec: {
+            goal: plan.description,
+            scope: currentGoalSpec ? String(currentGoalSpec.doneWhen) : '',
+            constraints: [],
+            doneWhen: currentGoalSpec?.doneWhen ?? [],
+            stopIf: [],
+            tokenBudget: taskBudget,
+          },
+          plan: {
+            steps: plan.steps.map(s => ({
+              id: String(s.id),
+              description: s.description,
+              status: s.status,
+              dependencies: s.dependencies.map(d => String(d)),
+            })),
+          },
+          status: 'executing',
+          checkpointIds: [],
+          createdAt: plan.createdAt,
+          updatedAt: Date.now(),
+          tokenUsed: 0,
+          tokenBudget: taskBudget,
+        });
+        addSystemMessage('💾 GoalPersistence 已持久化目标');
+      } catch (error) {
+        logger.warn('GoalPersistence.save failed (non-blocking)', { error: String(error) });
+      }
+    }
 
     for (const step of plan.steps) {
       // 检查中断
@@ -645,5 +742,69 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     setIsProcessing(false);
   }
 
-  return { handleGoalCommand, executeGoalPlan };
+  /**
+   * Phase 50 Task 1：分析需求变更影响
+   * 在用户追加/编辑需求时调用，若 requirementChangeEnabled 则用 analyzeChangeImpact 分析
+   * 失败时 try/catch 降级返回 null
+   *
+   * @param before 变更前的需求文本
+   * @param after 变更后的需求文本
+   * @returns 变更影响分析结果，或 null（开关关闭/降级失败）
+   */
+  async function analyzeRequirementChange(
+    before: string,
+    after: string,
+  ): Promise<{ needsReplan: boolean; reason: string; severity: string; affectedSteps: string[] } | null> {
+    // 开关关闭时回退到原行为（返回 null，调用方不处理）
+    if (!goalIntegration?.requirementChangeEnabled) {
+      return null;
+    }
+    try {
+      const isChange = isRequirementChange(
+        { role: 'user', content: before },
+        { role: 'user', content: after },
+      );
+      if (!isChange) {
+        return { needsReplan: false, reason: '未检测到需求变更', severity: 'minor', affectedSteps: [] };
+      }
+      const change: RequirementChange = {
+        type: 'edit',
+        targetNodeId: 'user-input',
+        before,
+        after,
+        impactedBranches: [],
+        timestamp: Date.now(),
+      };
+      const currentPlan = currentPlanRef.current;
+      const result = analyzeChangeImpact(
+        change,
+        currentPlan
+          ? {
+              description: currentPlan.description,
+              steps: currentPlan.steps.map(s => ({
+                id: s.id,
+                description: s.description,
+                status: s.status,
+              })),
+            }
+          : undefined,
+        // currentGoalSpec 只存了 doneWhen，这里补齐 analyzeChangeImpact 所需的完整结构
+        currentGoalSpec
+          ? { goal: '', scope: '', constraints: [], doneWhen: currentGoalSpec.doneWhen, stopIf: [] }
+          : undefined,
+      );
+      addSystemMessage(`📝 需求变更分析: ${result.severity} - ${result.reason}`);
+      return {
+        needsReplan: result.needsReplan,
+        reason: result.reason,
+        severity: result.severity,
+        affectedSteps: result.affectedSteps,
+      };
+    } catch (error) {
+      logger.warn('analyzeRequirementChange failed (non-blocking)', { error: String(error) });
+      return null;
+    }
+  }
+
+  return { handleGoalCommand, executeGoalPlan, analyzeRequirementChange };
 }

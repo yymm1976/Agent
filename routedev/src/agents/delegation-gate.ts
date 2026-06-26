@@ -14,7 +14,7 @@
 export type AgentRole = 'researcher' | 'executor' | 'reviewer' | 'custom';
 
 /** 委托门控规则（按角色配置） */
-export interface DelegationGateRules {
+interface DelegationGateRules {
   researcher: {
     when: string[]; // ['need_facts', 'impact_analysis', 'unknown_domain']
     maxParallel: number;
@@ -56,7 +56,7 @@ export interface DelegationTask {
 }
 
 /** 活跃子 Agent（用于门控并行计数） */
-export interface ActiveSubAgent {
+interface ActiveSubAgent {
   id: string;
   role: AgentRole;
   taskId: string;
@@ -77,7 +77,7 @@ export interface ContextPackageInfo {
 }
 
 /** 门控结果 */
-export type GateResult =
+type GateResult =
   | { ok: true; reason: string }
   | { ok: false; reason: string };
 

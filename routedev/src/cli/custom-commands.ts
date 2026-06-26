@@ -79,7 +79,7 @@ function runGitCommand(args: string[], cwd: string): string {
 }
 
 /** 渲染上下文：提供模板变量值 */
-export interface RenderContext {
+interface RenderContext {
   /** 工作目录（用于执行 git 命令） */
   cwd: string;
   /** 当前编辑器文件路径（如有） */

@@ -10,7 +10,27 @@ import type { ILLMClient } from '../../router/types.js';
 import type { GoalPlan, GoalStep } from '../goal-types.js';
 import type { ExecutionPlan, StepDependency, WorkerRole, WorkerTask } from './types.js';
 import { ConflictDetector } from './conflict.js';
+// Phase 50 Task 2：接入多 Agent 编排核心模块（默认 enabled: false，开关在 config.orchestrationIntegration）
+import { StrategySelector } from './orchestrator-strategy.js';
+import { ExecutionStateGraph, type StepStatus as GraphStepStatus } from './state-graph.js';
+import type { BranchOrchestrator } from './branch-orchestrator.js';
 import { logger } from '../../utils/logger.js';
+
+// ============================================================
+// Phase 50 Task 2：编排接入开关（可选注入，未注入时回退到原行为）
+// ============================================================
+
+/** Phase 50 Task 2：编排接入配置（由 app-init.ts 从 config.orchestrationIntegration 注入） */
+export interface OrchestrationIntegrationOptions {
+  /** strategyEnabled：StrategySelector 按复杂度选择策略 */
+  strategyEnabled?: boolean;
+  /** stateGraphEnabled：ExecutionStateGraph 步骤状态管理 */
+  stateGraphEnabled?: boolean;
+  /** branchOrchestrationEnabled：BranchOrchestrator 并行分支调度 */
+  branchOrchestrationEnabled?: boolean;
+  /** 注入的 BranchOrchestrator 实例（branchOrchestrationEnabled 时使用） */
+  branchOrchestrator?: BranchOrchestrator;
+}
 
 // ============================================================
 // Phase 21 Task 3：Worker 异常隔离类型
@@ -220,11 +240,19 @@ export class Orchestrator {
   private llmClient: ILLMClient;
   private modelId: string;
   private conflictDetector: ConflictDetector;
+  // Phase 50 Task 2：编排接入配置（可选）
+  private integration: OrchestrationIntegrationOptions;
+  // Phase 50 Task 2：ExecutionStateGraph 实例（stateGraphEnabled 时创建）
+  private stateGraph: ExecutionStateGraph | null = null;
 
-  constructor(llmClient: ILLMClient, modelId: string) {
+  constructor(llmClient: ILLMClient, modelId: string, integration?: OrchestrationIntegrationOptions) {
     this.llmClient = llmClient;
     this.modelId = modelId;
     this.conflictDetector = new ConflictDetector();
+    this.integration = integration ?? {};
+    if (this.integration.stateGraphEnabled) {
+      this.stateGraph = new ExecutionStateGraph();
+    }
   }
 
   /**
@@ -232,6 +260,22 @@ export class Orchestrator {
    * 如果分析失败，fallback 到串行执行
    */
   async plan(goalPlan: GoalPlan): Promise<ExecutionPlan> {
+    // Phase 50 Task 2：strategyEnabled 时用 StrategySelector 按复杂度选择策略
+    // 失败时 try/catch 降级到原有 LLM 分析路径
+    if (this.integration.strategyEnabled) {
+      try {
+        const complexity = goalPlan.steps.length <= 2 ? 'low' : goalPlan.steps.length <= 6 ? 'medium' : 'high';
+        const strategy = StrategySelector.selectStrategy(complexity as 'low' | 'medium' | 'high');
+        logger.info('Phase 50: StrategySelector chose strategy', { complexity, strategy });
+        // 简单任务直接走串行 fallback；中等/复杂任务继续走 LLM 分析
+        if (strategy === 'sequential') {
+          return this.fallbackPlan(goalPlan);
+        }
+      } catch (error) {
+        logger.warn('StrategySelector.selectStrategy failed (non-blocking)', { error: String(error) });
+      }
+    }
+
     try {
       const analysis = await this.analyzeWithLLM(goalPlan);
       if (!analysis || analysis.length === 0) {
@@ -245,6 +289,21 @@ export class Orchestrator {
         analysis,
       );
 
+      // Phase 50 Task 2：stateGraphEnabled 时把步骤加入状态图，管理步骤状态
+      if (this.stateGraph) {
+        try {
+          for (const dep of analysis) {
+            this.stateGraph.addStep(
+              String(dep.stepId),
+              2,
+              dep.dependsOn.map(d => String(d)),
+            );
+          }
+        } catch (error) {
+          logger.warn('ExecutionStateGraph.addStep failed (non-blocking)', { error: String(error) });
+        }
+      }
+
       return {
         dependencies: analysis,
         parallelGroups: resolvedGroups,
@@ -254,6 +313,45 @@ export class Orchestrator {
     } catch (error) {
       logger.error('Orchestrator planning failed', { error: String(error) });
       return this.fallbackPlan(goalPlan);
+    }
+  }
+
+  /**
+   * Phase 50 Task 2：执行状态图转换（stateGraphEnabled 时供外部调用）
+   * 失败时返回 false（不抛出，调用方继续原流程）
+   */
+  transitionStepState(stepId: string | number, to: GraphStepStatus, reason?: string): boolean {
+    if (!this.stateGraph) return false;
+    try {
+      this.stateGraph.transition(String(stepId), to, reason);
+      return true;
+    } catch (error) {
+      logger.warn('ExecutionStateGraph.transition failed (non-blocking)', {
+        stepId,
+        to,
+        error: String(error),
+      });
+      return false;
+    }
+  }
+
+  /** Phase 50 Task 2：获取 ExecutionStateGraph 实例（测试用） */
+  getStateGraph(): ExecutionStateGraph | null {
+    return this.stateGraph;
+  }
+
+  /** Phase 50 Task 2：branchOrchestrationEnabled 时从 GoalPlan 创建分支任务 */
+  async planBranches(goalPlan: GoalPlan): Promise<{ scheduled: boolean; taskCount: number }> {
+    if (!this.integration.branchOrchestrationEnabled || !this.integration.branchOrchestrator) {
+      return { scheduled: false, taskCount: 0 };
+    }
+    try {
+      const tasks = await this.integration.branchOrchestrator.planFromGoal(goalPlan);
+      logger.info('Phase 50: BranchOrchestrator scheduled tasks', { count: tasks.length });
+      return { scheduled: true, taskCount: tasks.length };
+    } catch (error) {
+      logger.warn('BranchOrchestrator.planFromGoal failed (non-blocking)', { error: String(error) });
+      return { scheduled: false, taskCount: 0 };
     }
   }
 

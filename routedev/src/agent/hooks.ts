@@ -73,7 +73,7 @@ export interface StepResult {
 }
 
 /** 步骤错误 */
-export interface StepError {
+interface StepError {
   message: string;
   code?: string;
   stack?: string;
@@ -116,7 +116,7 @@ export interface HookResult {
 }
 
 /** 钩子处理器 */
-export type HookHandler = (context: HookContext) => Promise<HookResult>;
+type HookHandler = (context: HookContext) => Promise<HookResult>;
 
 /** 钩子定义 */
 export interface HookDefinition {

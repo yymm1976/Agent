@@ -14,10 +14,10 @@ export interface UserInteractionSignals {
 }
 
 /** EQ 状态 */
-export type EQState = 'calm' | 'focused' | 'frustrated' | 'confused' | 'rushed';
+type EQState = 'calm' | 'focused' | 'frustrated' | 'confused' | 'rushed';
 
 /** EQ 调整建议 */
-export interface EQAdjustment {
+interface EQAdjustment {
   state: EQState;
   tone: 'supportive' | 'concise' | 'mentor';
   verbosity: number; // 0.0 ~ 1.0

@@ -19,7 +19,7 @@ import { logger } from '../utils/logger.js';
  * Compose 阶段配置
  * 定义每个阶段的系统提示词、工具权限、自动流转条件
  */
-export interface ComposePhaseConfig {
+interface ComposePhaseConfig {
   /** 阶段名 */
   phase: ComposePhase;
   /** 注入 Agent Loop 的阶段提示词 */

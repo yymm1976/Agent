@@ -12,7 +12,7 @@ export const traceCommand: CommandDefinition = {
   description: '查看 trace 与审计日志',
   usage: '/trace [sessions|view [l1|l2|l3]|audit|export [sessionId]|summary]',
   handler: async (args, ctx) => {
-    const { trace, audit, tracker } = ctx;
+    const { trace, audit, tracker, commandBridge } = ctx;
     const sub = args.trim().toLowerCase().split(/\s+/)[0] || 'sessions';
 
     switch (sub) {
@@ -42,6 +42,14 @@ export const traceCommand: CommandDefinition = {
         const level = levelArg
           ? (levelMap[levelArg] ?? 2)
           : outputStyleToDisclosureLevel(ctx.config.ui.outputStyle);
+
+        // Phase 50 Task 7：tracePanel 开关开启时触发 TracePanel 组件渲染
+        // 默认关闭——回退到纯文本时间线（向后兼容）
+        if (ctx.config.ui.components?.tracePanel === true && commandBridge.showTracePanel) {
+          commandBridge.showTracePanel(entries, sessionId);
+          return { type: 'handled', messages: [] };
+        }
+
         const text = renderTraceTimelineText(entries, sessionId, level);
         return { type: 'handled', messages: [text] };
       }

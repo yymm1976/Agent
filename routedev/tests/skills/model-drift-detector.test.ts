@@ -10,11 +10,10 @@
 
 import { describe, it, expect } from 'vitest';
 import { ModelDriftDetector } from '../../src/skills/model-drift-detector.js';
-import type { ParsedSkill } from '../../src/skills/skill-md-parser.js';
-import type { SkillMetadataWithDrift } from '../../src/skills/skill-metadata-extension.js';
+import type { ParsedSkillWithDrift, SkillMetadataWithDrift } from '../../src/skills/skill-metadata-extension.js';
 
 /** 构造 Skill（含 lastValidatedModel 扩展字段） */
-function makeSkill(name: string, lastValidatedModel?: string): ParsedSkill {
+function makeSkill(name: string, lastValidatedModel?: string): ParsedSkillWithDrift {
   const metadata: SkillMetadataWithDrift = {
     name,
     description: 'a skill for drift detection testing',

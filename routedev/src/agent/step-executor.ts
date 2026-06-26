@@ -25,7 +25,7 @@ import { logger } from '../utils/logger.js';
 /**
  * AgentLoopStepExecutor 的依赖注入参数
  */
-export interface AgentLoopStepExecutorOptions {
+interface AgentLoopStepExecutorOptions {
   /** ReAct Agent Loop 实例 */
   agentLoop: ReActAgentLoop;
   /** 场景分类器（选择模型 tier） */

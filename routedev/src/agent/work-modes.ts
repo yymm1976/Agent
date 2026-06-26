@@ -16,7 +16,7 @@ import { ComposePipeline } from './compose-pipeline.js';
 export type WorkMode = 'build' | 'plan' | 'compose';
 
 /** 操作检查的结果 */
-export interface ModeCheckResult {
+interface ModeCheckResult {
   allowed: boolean;
   /** 被拦截时的人类可读原因 */
   reason?: string;

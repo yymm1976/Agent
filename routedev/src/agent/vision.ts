@@ -17,7 +17,7 @@ export interface ImageInput {
 }
 
 /** 视觉分析结果 */
-export interface VisionResult {
+interface VisionResult {
   description: string;
   modelId: string;
   inputTokens: number;
@@ -25,7 +25,7 @@ export interface VisionResult {
 }
 
 /** 视觉模型选择结果 */
-export interface VisionModelSelection {
+interface VisionModelSelection {
   model: ModelConfig;
   providerId: string;
   client: ILLMClient;

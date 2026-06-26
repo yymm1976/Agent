@@ -5,7 +5,7 @@
 import type { OutputStyle } from '../config/schema.js';
 
 /** 工具反馈状态 */
-export type ToolFeedbackState = 'running' | 'completed' | 'failed';
+type ToolFeedbackState = 'running' | 'completed' | 'failed';
 
 /** 单工具的三态动词文案 */
 interface ToolVerbSet {

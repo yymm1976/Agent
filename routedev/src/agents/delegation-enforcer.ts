@@ -4,7 +4,7 @@
 
 import type { DelegationContract } from './delegation-contract.js';
 
-export interface EnforcementResult {
+interface EnforcementResult {
   allowed: boolean;
   reason?: string;
 }

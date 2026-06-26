@@ -146,8 +146,3 @@ export const BUILTIN_MACROS: Macro[] = [
     source: 'builtin',
   },
 ];
-
-/** 按名称获取内置宏 */
-export function getBuiltinMacro(name: string): Macro | undefined {
-  return BUILTIN_MACROS.find((m) => m.metadata.name === name);
-}

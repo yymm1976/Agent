@@ -19,6 +19,14 @@ import { ToolRegistry } from '../registry.js';
 // Phase 48 Task 4：仅引入类型，避免运行时循环依赖
 import type { AgentProfileManager } from '../../agents/profiles/manager.js';
 import type { AgentProfile, AgentRole } from '../../agents/profiles/types.js';
+// Phase 50 Task 3：接入子 Agent 委托体系核心模块（默认 enabled: false，开关在 config.delegationIntegration）
+import { ContextPacker, type AgentRole as PackerAgentRole } from '../../agents/context-packer.js';
+import { DelegationGate, type DelegationTask, type ParentAgent, type ContextPackageInfo } from '../../agents/delegation-gate.js';
+import { DelegationEnforcer } from '../../agents/delegation-enforcer.js';
+import { DelegationContractManager, type DelegationContract } from '../../agents/delegation-contract.js';
+import { SubAgentLifecycle, AntiAbuseDetector } from '../../agents/sub-agent-lifecycle.js';
+import { SubAgentScoreCardCollector, type SubAgentScoreCard } from '../../agents/sub-agent-score-card.js';
+import { logger } from '../../utils/logger.js';
 
 /** 子 Agent 类型：决定可用工具集（白名单在 app-init.ts 中维护） */
 export type SubagentType = 'general' | 'researcher' | 'coder' | 'reviewer' | 'advisor';
@@ -212,6 +220,260 @@ export type SpawnAgentFunction = (
     maxIterations?: number;
   },
 ) => Promise<SpawnResult>;
+
+// ============================================================
+// Phase 50 Task 3：子 Agent 委托体系接入
+// ============================================================
+
+/**
+ * Phase 50 Task 3：委托体系集成依赖（由 app-init.ts 在开关开启时创建并注入）
+ * 所有字段可选，未注入时回退到原行为（passthrough）
+ */
+export interface DelegationIntegrationDeps {
+  /** contextPackerEnabled：ContextPacker 按角色打包上下文 */
+  contextPackerEnabled?: boolean;
+  contextPacker?: ContextPacker;
+  /** delegationGateEnabled：DelegationGate 委托前检查资格 */
+  delegationGateEnabled?: boolean;
+  delegationGate?: DelegationGate;
+  /** delegationEnforcerEnabled：DelegationEnforcer 执行中校验工具调用 */
+  delegationEnforcerEnabled?: boolean;
+  /** 注入的父 Agent 状态（用于门控并行计数与生命周期跟踪） */
+  parentAgent?: ParentAgent;
+  /** lifecycleEnabled：SubAgentLifecycle + AntiAbuseDetector 生命周期与反滥用 */
+  lifecycleEnabled?: boolean;
+  lifecycle?: SubAgentLifecycle;
+  /** scoreCardEnabled：SubAgentScoreCardCollector 执行后收集评分 */
+  scoreCardEnabled?: boolean;
+  scoreCardCollector?: SubAgentScoreCardCollector;
+}
+
+/** SubagentType → PackerAgentRole 映射（用于 ContextPacker） */
+function subagentTypeToPackerRole(subagentType: SubagentType): PackerAgentRole {
+  switch (subagentType) {
+    case 'researcher': return 'researcher';
+    case 'coder': return 'executor';
+    case 'reviewer': return 'reviewer';
+    default: return 'custom';
+  }
+}
+
+/**
+ * Phase 50 Task 3：用委托体系包装 SpawnAgentFunction
+ *
+ * 包装行为（每步均 try/catch 降级，不阻塞 spawn）：
+ *   1. contextPackerEnabled：用 ContextPacker.pack 按角色打包上下文，附加到 prompt
+ *   2. delegationGateEnabled：用 DelegationGate.checkDelegationEligibility 检查资格
+ *   3. delegationEnforcerEnabled：用 DelegationContractManager + DelegationEnforcer 创建契约并校验 spawn 调用
+ *   4. lifecycleEnabled：用 SubAgentLifecycle 注册/转换状态 + AntiAbuseDetector 反滥用
+ *   5. scoreCardEnabled：执行后用 SubAgentScoreCardCollector 记录评分卡
+ *
+ * 所有开关默认 false，未开启时 wrapper 是 passthrough（零开销）
+ */
+export function wrapSpawnAgentWithDelegation(
+  innerFn: SpawnAgentFunction,
+  deps: DelegationIntegrationDeps,
+): SpawnAgentFunction {
+  // 契约管理器（enforcer 接入时自动激活，解除死链）
+  const contractManager = deps.delegationEnforcerEnabled ? new DelegationContractManager() : null;
+
+  return async (params, options) => {
+    const normalizedParams: SpawnAgentParams = typeof params === 'string'
+      ? { description: params, prompt: params }
+      : params;
+    const subagentType: SubagentType = normalizedParams.subagentType ?? 'general';
+    const role = subagentTypeToPackerRole(subagentType);
+    const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const agentId = `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const profileId = `profile-${subagentType}`;
+    let enrichedPrompt = normalizedParams.prompt;
+    let contextTokens = 0;
+
+    // 1. ContextPacker：按角色打包上下文
+    if (deps.contextPackerEnabled && deps.contextPacker) {
+      try {
+        const contextPackage = await deps.contextPacker.pack({
+          role,
+          taskId,
+          sources: {
+            taskBoundary: {
+              designDoc: normalizedParams.description,
+              readFiles: [],
+              writeFiles: [],
+              goal: normalizedParams.description,
+              constraints: [],
+            },
+          },
+          budgetTokens: 4000,
+        });
+        contextTokens = contextPackage.metadata.estimatedTokens;
+        // 将打包后的上下文 sections 附加到 prompt
+        const contextText = contextPackage.sections
+          .map(s => `## ${s.title}\n${s.content}`)
+          .join('\n\n');
+        enrichedPrompt = `${normalizedParams.prompt}\n\n--- 上下文包 ---\n${contextText}`;
+        logger.debug('Phase 50: ContextPacker packed context', {
+          agentId,
+          role,
+          sections: contextPackage.sections.length,
+          tokens: contextTokens,
+        });
+      } catch (error) {
+        logger.warn('ContextPacker.pack failed (non-blocking)', { error: String(error) });
+      }
+    }
+
+    // 2. DelegationGate：检查委托资格
+    if (deps.delegationGateEnabled && deps.delegationGate) {
+      try {
+        const task: DelegationTask = {
+          id: taskId,
+          description: normalizedParams.description,
+          taskDescription: normalizedParams.prompt,
+        };
+        const contextPkgInfo: ContextPackageInfo = {
+          metadata: { estimatedTokens: Math.max(contextTokens, 200) },
+        };
+        const parent: ParentAgent = deps.parentAgent ?? { id: 'parent', activeSubAgents: [] };
+        const gateResult = deps.delegationGate.checkDelegationEligibility(
+          parent,
+          role,
+          task,
+          contextPkgInfo,
+        );
+        if (!gateResult.ok) {
+          logger.warn('Phase 50: DelegationGate rejected spawn', { reason: gateResult.reason });
+          return { success: false, result: '', error: `委托门控拒绝: ${gateResult.reason}` };
+        }
+      } catch (error) {
+        logger.warn('DelegationGate.checkDelegationEligibility failed (non-blocking)', { error: String(error) });
+      }
+    }
+
+    // 3. DelegationEnforcer：创建契约 + 校验（enforcer 接入自动激活 contractManager）
+    let enforcer: DelegationEnforcer | null = null;
+    if (deps.delegationEnforcerEnabled && contractManager) {
+      try {
+        const contract: DelegationContract = {
+          taskId,
+          parentAgentId: 'parent',
+          childAgentId: agentId,
+          profileId,
+          grant: {
+            readFiles: [],
+            allowedTools: ['spawn_agent', 'file_read', 'file_write', 'file_edit', 'shell_exec'],
+            maxTokens: 10000,
+            maxSteps: normalizedParams.maxIterations ?? 20,
+            canChallenge: true,
+          },
+          obligation: {
+            mustFollowDesign: true,
+            mustReportProgress: true,
+            mustNotAlterGoal: true,
+            challengeChannel: 'parent_only',
+          },
+          deliverable: {
+            format: 'text',
+            successCriteria: ['任务完成'],
+            failureCriteria: ['超时', '错误'],
+          },
+        };
+        contractManager.createContract(contract);
+        enforcer = new DelegationEnforcer(contract);
+        // 校验 spawn 调用本身是否被契约允许
+        const check = enforcer.beforeToolCall('spawn_agent', {});
+        if (!check.allowed) {
+          logger.warn('Phase 50: DelegationEnforcer blocked spawn', { reason: check.reason });
+          return { success: false, result: '', error: `委托执行拦截: ${check.reason}` };
+        }
+      } catch (error) {
+        logger.warn('DelegationEnforcer setup failed (non-blocking)', { error: String(error) });
+      }
+    }
+
+    // 4. Lifecycle：注册 + 转 running
+    if (deps.lifecycleEnabled && deps.lifecycle) {
+      try {
+        deps.lifecycle.register(agentId, taskId, role, profileId);
+        deps.lifecycle.transition(agentId, 'running');
+      } catch (error) {
+        logger.warn('SubAgentLifecycle register/transition failed (non-blocking)', { error: String(error) });
+      }
+    }
+
+    // 执行子 Agent
+    let result: SpawnResult;
+    try {
+      result = await innerFn(
+        { ...normalizedParams, prompt: enrichedPrompt },
+        options,
+      );
+    } catch (error) {
+      result = {
+        success: false,
+        result: '',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    // 5. Lifecycle：转 completed/failed + 累计 token + 反滥用检测
+    if (deps.lifecycleEnabled && deps.lifecycle) {
+      try {
+        deps.lifecycle.transition(agentId, result.success ? 'completed' : 'failed', result.error);
+        if (result.tokenUsage) {
+          const totalTokens = (result.tokenUsage.inputTokens ?? 0) + (result.tokenUsage.outputTokens ?? 0);
+          deps.lifecycle.addTokens(agentId, totalTokens);
+          deps.lifecycle.incrementStep(agentId);
+        }
+        // AntiAbuseDetector：检测活跃子 Agent 的频繁 challenge / 高 token 低效果
+        const activeAgents = deps.lifecycle.getActive();
+        const abuseChallenges = AntiAbuseDetector.detectFrequentChallenges(activeAgents);
+        const abuseLowEff = AntiAbuseDetector.detectLowEfficiency(activeAgents);
+        if (abuseChallenges.length > 0 || abuseLowEff.length > 0) {
+          logger.warn('Phase 50: AntiAbuseDetector detected issues', {
+            frequentChallenges: abuseChallenges.length,
+            lowEfficiency: abuseLowEff.length,
+          });
+        }
+      } catch (error) {
+        logger.warn('SubAgentLifecycle post-execution failed (non-blocking)', { error: String(error) });
+      }
+    }
+
+    // 6. ScoreCard：收集评分卡
+    if (deps.scoreCardEnabled && deps.scoreCardCollector) {
+      try {
+        const totalTokens = result.tokenUsage
+          ? (result.tokenUsage.inputTokens ?? 0) + (result.tokenUsage.outputTokens ?? 0)
+          : 0;
+        const card: SubAgentScoreCard = {
+          taskId,
+          agentId,
+          role,
+          profileId,
+          modelId: 'spawn-agent',
+          tokenUsage: {
+            input: result.tokenUsage?.inputTokens ?? 0,
+            output: result.tokenUsage?.outputTokens ?? 0,
+            total: totalTokens,
+          },
+          contextTokens,
+          redundantReads: 0,
+          challengeCount: 0,
+          contractViolations: enforcer ? (enforcer.getStepCount() > (normalizedParams.maxIterations ?? 20) ? 1 : 0) : 0,
+          deliverableQuality: result.success ? 80 : 0,
+          parentSatisfaction: result.success ? 'accepted' : 'rejected',
+          durationMs: 0,
+        };
+        deps.scoreCardCollector.record(card);
+      } catch (error) {
+        logger.warn('SubAgentScoreCardCollector.record failed (non-blocking)', { error: String(error) });
+      }
+    }
+
+    return result;
+  };
+}
 
 export class SpawnAgentTool implements ITool {
   readonly definition: ToolDefinition = {

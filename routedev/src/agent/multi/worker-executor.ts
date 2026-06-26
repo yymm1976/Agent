@@ -42,7 +42,7 @@ const DEFAULT_WORKER_CONTEXT_CONFIG: WorkerContextConfig = {
   fallbackToFull: true,
 };
 
-export interface WorkerExecutorOptions {
+interface WorkerExecutorOptions {
   agentLoop: ReActAgentLoop;
   /** Phase 35 Task 1：上下文过滤配置（可选，未传则用默认值） */
   workerContextConfig?: WorkerContextConfig;

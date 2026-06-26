@@ -2,6 +2,7 @@
 // 查看最近代码变更差异：/diff [page]
 // Phase 25 Task 6：调用 git diff 并渲染为可视化 diff
 // Phase 27 Task 5：支持 /diff apply 和 /diff reject 直接操作变更
+// Phase 50 Task 7：diffView 开关开启时触发 DiffView 组件渲染
 
 import type { CommandDefinition } from '../command-registry.js';
 import { renderDiffText, parseUnifiedDiff } from '../components/DiffView.js';
@@ -33,6 +34,15 @@ export const diffCommand: CommandDefinition = {
       // /diff reject：丢弃全部变更（git checkout -- .）
       if (sub === 'reject') {
         return rejectDiffViaGit(ctx.cwd, ctx.commandBridge);
+      }
+
+      // Phase 50 Task 7：diffView 开关开启（默认）且无分页参数时触发 DiffView 组件渲染
+      // 用户显式传页码时仍走纯文本路径
+      const hasPageArg = /^\d+$/.test(args.trim());
+      if (!hasPageArg && ctx.config.ui.components?.diffView !== false && ctx.commandBridge.showDiffView) {
+        const parsed = parseUnifiedDiff(diff);
+        ctx.commandBridge.showDiffView(diff, parsed.fileName);
+        return { type: 'handled', messages: [] };
       }
 
       const parsed = parseUnifiedDiff(diff);

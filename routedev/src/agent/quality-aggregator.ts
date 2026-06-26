@@ -4,7 +4,7 @@
 // 冷启动期内（totalCalls < coldStartThreshold）不降级，避免样本不足误判
 
 /** 单个模型的质量统计 */
-export interface ModelQualityStats {
+interface ModelQualityStats {
   modelId: string;
   totalCalls: number;
   negativeSignals: number;
@@ -114,9 +114,4 @@ export function getGlobalQualityAggregator(): QualityAggregator {
     globalAggregator = new QualityAggregator();
   }
   return globalAggregator;
-}
-
-/** 重置全局单例（测试用） */
-export function resetGlobalQualityAggregator(): void {
-  globalAggregator = null;
 }

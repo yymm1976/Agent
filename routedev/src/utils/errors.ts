@@ -5,7 +5,7 @@
 // 设计原则：
 //   1. 所有 RouteDev 错误继承 RouteDevError，携带 code 字段
 //   2. 每个错误类携带领域特定信息（toolName/rule/field 等）
-//   3. error-messages.ts 的 humanizeError() 优先用 instanceof 分类
+//   3. 优先用 instanceof 分类错误类型
 
 /**
  * RouteDev 错误基类

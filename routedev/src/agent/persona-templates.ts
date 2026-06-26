@@ -15,10 +15,10 @@
 export type PersonaTone = 'supportive' | 'concise' | 'playful' | 'mentor';
 
 /** Emoji 使用频率：不用 / 稀疏 / 适度 */
-export type EmojiUsage = 'none' | 'sparse' | 'moderate';
+type EmojiUsage = 'none' | 'sparse' | 'moderate';
 
 /** 确认风格：询问 / 建议 / 仅告知 */
-export type ConfirmationStyle = 'ask' | 'suggest' | 'inform';
+type ConfirmationStyle = 'ask' | 'suggest' | 'inform';
 
 /** 人格配置 */
 export interface PersonaConfig {
@@ -95,16 +95,3 @@ export const BUILTIN_PERSONAS: PersonaConfig[] = [
   MENTOR_PERSONA,
   HACKER_PERSONA,
 ];
-
-// ============================================================
-// 查询函数
-// ============================================================
-
-/**
- * 按 id 获取内置人格
- * @param id 人格 ID
- * @returns 命中的人格配置，未命中返回 undefined
- */
-export function getBuiltinPersona(id: string): PersonaConfig | undefined {
-  return BUILTIN_PERSONAS.find((p) => p.id === id);
-}

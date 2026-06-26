@@ -210,7 +210,6 @@ export async function checkPhase17bModules(): Promise<CheckResult> {
     'src/cli/splash.ts',
     'src/utils/token-estimate.ts',
     'src/agent/middleware.ts',
-    'src/utils/stall-detector.ts',
     'src/agent/handoff.ts',
   ];
   const missing: string[] = [];
@@ -224,7 +223,7 @@ export async function checkPhase17bModules(): Promise<CheckResult> {
     name: 'Phase 17b 新模块存在',
     passed: missing.length === 0,
     detail: missing.length === 0
-      ? '全部 7 个新模块存在'
+      ? '全部 6 个新模块存在'
       : `缺失: ${missing.join(', ')}`,
   };
 }

@@ -100,52 +100,70 @@ describe('IPC Bridge - RouteDevEngine 桥接方法 (Phase 39)', () => {
   });
 
   it('13. toggleHook 切换状态', async () => {
-    // 先创建一个 Hook（使用模板匹配的描述）
-    const createResult = await engine.createHook('保存文件后自动格式化');
-    expect(createResult.success).toBe(true);
-    expect(createResult.hookId).toBeTruthy();
+    // Phase 50 Task 8：HookGenerator 已移除，手动创建 Hook 用于测试
+    const { HookConfigRegistry } = await import('../../src/hooks/registry.js');
+    const configPath = path.join(tmpDir, '.routedev', 'hooks.json');
+    const registry = new HookConfigRegistry(configPath);
+    await registry.load();
+    const testHookId = 'test-hook-toggle';
+    registry.add({
+      id: testHookId,
+      name: '测试Hook',
+      enabled: true,
+      event: 'post-tool-call',
+      command: 'echo test',
+      failBehavior: 'warn',
+      isTemplate: false,
+    });
+    await registry.save();
 
     // 切换为禁用
-    const toggleResult = await engine.toggleHook(createResult.hookId!, false);
+    const toggleResult = await engine.toggleHook(testHookId, false);
     expect(toggleResult.success).toBe(true);
 
     // 验证状态已变更
     const list = await engine.listHooks() as Array<{ id: string; enabled: boolean }>;
-    const hook = list.find(h => h.id === createResult.hookId);
+    const hook = list.find(h => h.id === testHookId);
     expect(hook).toBeDefined();
     expect(hook!.enabled).toBe(false);
   });
 
   it('14. deleteHook 删除后列表减少', async () => {
-    // 先创建一个 Hook
-    const createResult = await engine.createHook('保存文件后自动格式化');
-    expect(createResult.success).toBe(true);
-    const hookId = createResult.hookId!;
+    // Phase 50 Task 8：HookGenerator 已移除，手动创建 Hook 用于测试
+    const { HookConfigRegistry } = await import('../../src/hooks/registry.js');
+    const configPath = path.join(tmpDir, '.routedev', 'hooks.json');
+    const registry = new HookConfigRegistry(configPath);
+    await registry.load();
+    const testHookId = 'test-hook-delete';
+    registry.add({
+      id: testHookId,
+      name: '测试Hook',
+      enabled: true,
+      event: 'post-tool-call',
+      command: 'echo test',
+      failBehavior: 'warn',
+      isTemplate: false,
+    });
+    await registry.save();
 
     // 确认列表中有该 Hook
     const listBefore = await engine.listHooks() as Array<{ id: string }>;
-    expect(listBefore.some(h => h.id === hookId)).toBe(true);
+    expect(listBefore.some(h => h.id === testHookId)).toBe(true);
 
     // 删除
-    const deleteResult = await engine.deleteHook(hookId);
+    const deleteResult = await engine.deleteHook(testHookId);
     expect(deleteResult.success).toBe(true);
 
     // 确认列表中不再有该 Hook
     const listAfter = await engine.listHooks() as Array<{ id: string }>;
-    expect(listAfter.some(h => h.id === hookId)).toBe(false);
+    expect(listAfter.some(h => h.id === testHookId)).toBe(false);
     expect(listAfter.length).toBe(listBefore.length - 1);
   });
 
-  it('15. createHook 生成新 Hook', async () => {
-    // 使用模板匹配的描述（auto-format 模板）
+  it('15. createHook 生成新 Hook（Phase 50 Task 8：生成器已移除，返回失败）', async () => {
+    // HookGenerator 已作为死代码移除，createHook 应返回失败
     const result = await engine.createHook('保存文件后自动格式化');
-    expect(result.success).toBe(true);
-    expect(result.hookId).toBeTruthy();
-    expect(typeof result.hookId).toBe('string');
-
-    // 验证 Hook 已持久化
-    const list = await engine.listHooks() as Array<{ id: string; name: string }>;
-    const created = list.find(h => h.id === result.hookId);
-    expect(created).toBeDefined();
+    expect(result.success).toBe(false);
+    expect(result.error).toBeTruthy();
   });
 });

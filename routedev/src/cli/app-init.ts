@@ -28,7 +28,7 @@ import { RepoMapTool } from '../tools/builtin/repo-map.js';
 import { TodoWriteTool } from '../tools/builtin/todo-write.js';
 import { AskUserTool } from '../tools/builtin/ask-user.js';
 import { TodoStore } from '../tools/builtin/todo-store.js';
-import { SpawnAgentTool, type SpawnAgentFunction, type SpawnAgentParams, type SubagentType, createChildRegistry, createConcurrencyLimitedSpawnFn, resolveProfileForSubagent } from '../tools/builtin/spawn-agent.js';
+import { SpawnAgentTool, type SpawnAgentFunction, type SpawnAgentParams, type SubagentType, createChildRegistry, createConcurrencyLimitedSpawnFn, resolveProfileForSubagent, wrapSpawnAgentWithDelegation, type DelegationIntegrationDeps } from '../tools/builtin/spawn-agent.js';
 // Phase 48 Task 4：接入 AgentProfileManager，让 UI 编辑的 profile 影响子 Agent 派遣
 import { AgentProfileManager } from '../agents/profiles/manager.js';
 import { NotesTool } from '../tools/builtin/notes-tool.js';
@@ -48,7 +48,16 @@ import { BranchManager } from '../agent/branch.js';
 import { InitAnalyzer } from '../agent/init-analyzer.js';
 import { DreamConsolidator } from '../agent/dream-consolidator.js';
 import { Blackboard } from '../agent/multi/blackboard.js';
-import { Orchestrator } from '../agent/multi/orchestrator.js';
+import { Orchestrator, type OrchestrationIntegrationOptions } from '../agent/multi/orchestrator.js';
+// Phase 50 Task 1：Goal 流程核心模块（按 config.goalIntegration 渐进接入）
+import { GoalAuditor } from '../agent/goal-audit.js';
+import { GoalPersistence } from '../agent/goal-persistence.js';
+import { GoalPromptBuilder } from '../agent/goal-prompt-builder.js';
+// Phase 50 Task 3：子 Agent 委托体系核心模块（按 config.delegationIntegration 渐进接入）
+import { ContextPacker } from '../agents/context-packer.js';
+import { DelegationGate } from '../agents/delegation-gate.js';
+import { SubAgentLifecycle } from '../agents/sub-agent-lifecycle.js';
+import { SubAgentScoreCardCollector } from '../agents/sub-agent-score-card.js';
 import { WorkerExecutor } from '../agent/multi/worker-executor.js';
 import { TraceCollector } from '../harness/trace-collector.js';
 import { AuditLogger } from '../harness/audit-logger.js';
@@ -158,6 +167,13 @@ export interface AppDependencies {
   sharedSystemPromptRef: { current: string };
   /** Phase 48 Task 3：调度引擎实例（scheduler.enabled !== false 时创建） */
   scheduleEngine?: import('../scheduler/engine.js').ScheduleEngine;
+  /** Phase 50 Task 1：Goal 流程核心模块实例（按 config.goalIntegration 渐进接入，未开启时为 null） */
+  goalAuditor: GoalAuditor | null;
+  goalPersistence: GoalPersistence | null;
+  goalPromptBuilder: GoalPromptBuilder | null;
+  /** Phase 50 Task 3：子 Agent 委托体系模块实例（按 config.delegationIntegration 渐进接入，未开启时为 null） */
+  subAgentLifecycle: SubAgentLifecycle | null;
+  subAgentScoreCardCollector: SubAgentScoreCardCollector | null;
 }
 
 /**
@@ -211,7 +227,7 @@ export function createAppDependencies(
     checkpointWriter,
   );
 
-  // A3：激活 ContextCompactor——消除双引擎不统一，让 compactIfNeeded 在生产路径生效
+  // A3：激活 ContextCompactor——消除双引擎不统一，让上下文压缩在生产路径生效
   // L5 summarize 回调使用 checkpointClient（已配置的辅助模型），失败时由 B12 的 try/catch 降级
   const contextCompactor = new ContextCompactor({
     targetTokens: Math.floor((currentModelConfig?.contextWindow ?? 128000) * 0.6),
@@ -357,6 +373,9 @@ export function createAppDependencies(
   const subAgentsCfg = config.subAgents;
   const subAgentsEnabled = subAgentsCfg?.enabled !== false;
   const MAX_CONCURRENT_SUB_AGENTS = subAgentsEnabled ? (subAgentsCfg?.maxParallel ?? config.agent?.maxConcurrentSubAgents ?? 3) : 0;
+  // Phase 50 Task 3：声明外层作用域变量，delegationIntegration 开启时由 wrapSpawnAgentWithDelegation 块填充
+  let delegationLifecycle: SubAgentLifecycle | null = null;
+  let delegationScoreCardCollector: SubAgentScoreCardCollector | null = null;
 
   /**
    * 创建子 Agent 的 spawn 函数
@@ -495,11 +514,52 @@ export function createAppDependencies(
   };
   // Phase 38 Task 2：用并行上限包装器包装 spawn 函数
   // 达到 MAX_CONCURRENT_SUB_AGENTS 时返回错误，执行期间计数器++，finally 中--
+  // Phase 50 Task 3：delegationIntegration 任一开关开启时，再用 wrapSpawnAgentWithDelegation 包装
+  //   包装顺序：innerSpawn → concurrencyLimit → delegation → SpawnAgentTool
+  //   delegation 在最外层：每次 spawn 都经过委托体系检查（context/gate/enforcer/lifecycle/scorecard）
+  //   未开启任一开关时 wrapper 是 passthrough（零开销）
   if (subAgentsEnabled && MAX_CONCURRENT_SUB_AGENTS > 0) {
-    const spawnAgentFn = createConcurrencyLimitedSpawnFn(
+    let spawnAgentFn: SpawnAgentFunction = createConcurrencyLimitedSpawnFn(
       createSpawnAgentFn(),
       MAX_CONCURRENT_SUB_AGENTS,
     );
+    const delegationCfg = config.delegationIntegration;
+    const anyDelegationEnabled = !!(
+      delegationCfg?.contextPackerEnabled ||
+      delegationCfg?.delegationGateEnabled ||
+      delegationCfg?.delegationEnforcerEnabled ||
+      delegationCfg?.lifecycleEnabled ||
+      delegationCfg?.scoreCardEnabled
+    );
+    if (anyDelegationEnabled) {
+      const contextPacker = delegationCfg!.contextPackerEnabled ? new ContextPacker() : undefined;
+      const delegationGate = delegationCfg!.delegationGateEnabled ? new DelegationGate() : undefined;
+      const subAgentLifecycle = delegationCfg!.lifecycleEnabled ? new SubAgentLifecycle() : null;
+      const scoreCardCollector = delegationCfg!.scoreCardEnabled ? new SubAgentScoreCardCollector() : null;
+      const delegationDeps: DelegationIntegrationDeps = {
+        contextPackerEnabled: delegationCfg!.contextPackerEnabled,
+        contextPacker,
+        delegationGateEnabled: delegationCfg!.delegationGateEnabled,
+        delegationGate,
+        delegationEnforcerEnabled: delegationCfg!.delegationEnforcerEnabled,
+        parentAgent: { id: 'parent-root', activeSubAgents: [] },
+        lifecycleEnabled: delegationCfg!.lifecycleEnabled,
+        lifecycle: subAgentLifecycle ?? undefined,
+        scoreCardEnabled: delegationCfg!.scoreCardEnabled,
+        scoreCardCollector: scoreCardCollector ?? undefined,
+      };
+      spawnAgentFn = wrapSpawnAgentWithDelegation(spawnAgentFn, delegationDeps);
+      logger.info('Phase 50: spawn_agent wrapped with delegation modules', {
+        contextPacker: !!contextPacker,
+        gate: !!delegationGate,
+        enforcer: delegationCfg!.delegationEnforcerEnabled,
+        lifecycle: !!subAgentLifecycle,
+        scoreCard: !!scoreCardCollector,
+      });
+      // 暴露实例到外层作用域，供 AppDependencies 返回
+      delegationLifecycle = subAgentLifecycle;
+      delegationScoreCardCollector = scoreCardCollector;
+    }
     registry.register(new SpawnAgentTool(spawnAgentFn));
   }
 
@@ -833,7 +893,23 @@ export function createAppDependencies(
   }
 
   // ===== 多 Agent =====
-  const orchestrator = new Orchestrator(primaryClient, config.router.classifierModel);
+  // Phase 50 Task 2：orchestrationIntegration 开关开启时注入 StrategySelector/StateGraph/BranchOrchestrator
+  // 未开启任何开关时传 undefined（Orchestrator 内部回退到原行为）
+  const orchestrationIntegrationCfg = config.orchestrationIntegration;
+  const orchestrationIntegration: OrchestrationIntegrationOptions | undefined = (
+    orchestrationIntegrationCfg?.strategyEnabled ||
+    orchestrationIntegrationCfg?.stateGraphEnabled ||
+    orchestrationIntegrationCfg?.branchOrchestrationEnabled
+  )
+    ? {
+        strategyEnabled: orchestrationIntegrationCfg?.strategyEnabled,
+        stateGraphEnabled: orchestrationIntegrationCfg?.stateGraphEnabled,
+        branchOrchestrationEnabled: orchestrationIntegrationCfg?.branchOrchestrationEnabled,
+        // branchOrchestrator 实例需 ExperimentManager + RunnerFactory，这里不创建（生产 wiring 留给后续阶段）
+        // branchOrchestrationEnabled=true 时 Orchestrator.planBranches 会因 branchOrchestrator 缺失安全回退
+      }
+    : undefined;
+  const orchestrator = new Orchestrator(primaryClient, config.router.classifierModel, orchestrationIntegration);
   // Phase 35 Task 1：注入 workerContext 配置，启用上下文选择性传递
   const workerExecutor = new WorkerExecutor(agentLoop, {
     agentLoop,
@@ -843,6 +919,21 @@ export function createAppDependencies(
   // ===== 目标解析与验证（无状态） =====
   const goalParser = new GoalParser();
   const goalVerifier = new GoalVerifier();
+
+  // ===== Phase 50 Task 1：Goal 流程核心模块（按 config.goalIntegration 渐进接入） =====
+  // 未开启的开关对应实例为 null，App.tsx 传给 createGoalRunner 时若为 undefined/null 则不接入
+  const goalIntegrationCfg = config.goalIntegration;
+  const goalAuditor = goalIntegrationCfg?.auditEnabled ? new GoalAuditor() : null;
+  const goalPersistence = goalIntegrationCfg?.persistenceEnabled ? new GoalPersistence(cwd) : null;
+  const goalPromptBuilder = goalIntegrationCfg?.promptBuilderEnabled ? new GoalPromptBuilder() : null;
+  if (goalIntegrationCfg && (goalAuditor || goalPersistence || goalPromptBuilder)) {
+    logger.info('Phase 50: goalIntegration modules wired', {
+      auditor: !!goalAuditor,
+      persistence: !!goalPersistence,
+      promptBuilder: !!goalPromptBuilder,
+      requirementChange: !!goalIntegrationCfg.requirementChangeEnabled,
+    });
+  }
 
   // ===== 持久化执行器（Phase 27 Task 6） =====
   // Phase 35 Task 2：创建 HookRunner 实例并注册内置钩子
@@ -973,16 +1064,21 @@ export function createAppDependencies(
 
   // Phase 35 Task 3：启动时检查可恢复执行，有则打印提示
   //   - 不自动恢复——只提示，让用户通过 /resume 决定
-  //   - 使用同步版 listRecoverable()（启动时一次性检查，不阻塞事件循环）
-  const recoverable = durableExecutor.listRecoverable();
-  if (recoverable.length > 0) {
-    const latest = recoverable[0];
-    logger.info('DurableExecutor: 发现未完成执行，可使用 /resume 恢复', {
-      count: recoverable.length,
-      latestGoal: latest.goal.slice(0, 60),
-      latestStatus: latest.status,
+  //   - Phase 50 Task 8：同步版 listRecoverable() 已移除，改用异步版（fire-and-forget，不阻塞初始化）
+  void durableExecutor.listRecoverableAsync().then((recoverable) => {
+    if (recoverable.length > 0) {
+      const latest = recoverable[0];
+      logger.info('DurableExecutor: 发现未完成执行，可使用 /resume 恢复', {
+        count: recoverable.length,
+        latestGoal: latest.goal.slice(0, 60),
+        latestStatus: latest.status,
+      });
+    }
+  }).catch((err) => {
+    logger.warn('DurableExecutor: 检查可恢复执行失败', {
+      error: err instanceof Error ? err.message : String(err),
     });
-  }
+  });
 
   // ===== Phase 32 Task 1：Phase 31 模块实例化（之前全部为死代码） =====
   // 接线顺序：先创建无依赖的工具类（ReadTracker/Sanitizer/CompletionGate），
@@ -1348,6 +1444,219 @@ export function createAppDependencies(
     logger.info('ScheduleEngine started', { checkInterval: '60s' });
   }
 
+  // ===== Phase 50 Task 5：Phase 48 模块接入确认 =====
+  // cite/import/macros/mcp 四模块按 config.phase48Integration 开关接入生产路径
+  // 全部使用动态 import + fail-open，模块不可用时跳过不影响主流程
+  const phase48Cfg = config.phase48Integration;
+  if (phase48Cfg?.citeEnabled && config.cite?.enabled) {
+    // CiteResolver 接入：引用解析器实例化（chat-runner 消息发送前可调用）
+    import('../cite/resolver.js')
+      .then((mod) => {
+        const resolver = new mod.CiteResolver({ config: config.cite });
+        const loop = agentLoop as unknown as { setCiteResolver?: (r: unknown) => void };
+        if (typeof loop.setCiteResolver === 'function') {
+          loop.setCiteResolver(resolver);
+        }
+        logger.info('Phase 48 cite module integrated', { enabled: true });
+      })
+      .catch((err: unknown) => {
+        logger.debug('CiteResolver not available', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+  if (phase48Cfg?.importEnabled && config.import) {
+    // 外部生态导入接入：ClaudePluginImporter / CodexInstructionImporter
+    // 启动时扫描导入（fire-and-forget，不阻塞主流程）
+    Promise.all([
+      import('../import/claude-plugin-importer.js'),
+      import('../import/codex-importer.js'),
+    ])
+      .then(([pluginMod, codexMod]) => {
+        // ClaudePluginImporter：实例化确认可加载，扫描 .claude-plugin/ 目录
+        const pluginImporter = new pluginMod.ClaudePluginImporter();
+        // CodexInstructionImporter：扫描 .codex/ 目录
+        const codexImporter = new codexMod.CodexInstructionImporter();
+        codexImporter.scan(cwd).then((scanResult) => {
+          if (scanResult.found) {
+            logger.info('Codex instructions found', { files: scanResult.files.length });
+          }
+        }).catch((e: unknown) => {
+          logger.debug('CodexInstructionImporter scan failed', {
+            error: e instanceof Error ? e.message : String(e),
+          });
+        });
+        // 标记 pluginImporter 可用，供后续 /plugin 命令调用
+        const loop = agentLoop as unknown as { setClaudePluginImporter?: (i: unknown) => void };
+        if (typeof loop.setClaudePluginImporter === 'function') {
+          loop.setClaudePluginImporter(pluginImporter);
+        }
+        logger.info('Phase 48 import module integrated', { enabled: true });
+      })
+      .catch((err: unknown) => {
+        logger.debug('Import module not available', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+  if (phase48Cfg?.macrosEnabled && config.macros?.enabled) {
+    // MacroManager 接入：`!` 触发器宏系统
+    import('../macros/manager.js')
+      .then((mod) => {
+        const macroManager = new mod.MacroManager(config.macros, cwd);
+        macroManager.loadAll().catch((e: unknown) => {
+          logger.debug('MacroManager loadAll failed', {
+            error: e instanceof Error ? e.message : String(e),
+          });
+        });
+        // 注入到 agentLoop（feature-detect：方法可能由其他子代理添加）
+        const loop = agentLoop as unknown as { setMacroManager?: (m: unknown) => void };
+        if (typeof loop.setMacroManager === 'function') {
+          loop.setMacroManager(macroManager);
+        }
+        logger.info('Phase 48 macros module integrated', { enabled: true });
+      })
+      .catch((err: unknown) => {
+        logger.debug('MacroManager not available', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+  if (phase48Cfg?.mcpBridgeEnabled) {
+    // ClaudeMCPBridge 接入：导入 Claude Code .mcp.json 配置
+    import('../mcp/claude-bridge.js')
+      .then((mod) => {
+        // 创建桥接器实例，确认模块可加载
+        const bridge = new mod.ClaudeMCPBridge();
+        // 异步导入项目级 .mcp.json（若存在）
+        const claudeConfigPath = path.join(cwd, '.mcp.json');
+        bridge.importFromClaudeConfig(claudeConfigPath).then((result) => {
+          if (result.servers.length > 0) {
+            logger.info('ClaudeMCPBridge imported servers', { count: result.servers.length });
+          }
+        }).catch((e: unknown) => {
+          logger.debug('ClaudeMCPBridge import failed', {
+            error: e instanceof Error ? e.message : String(e),
+          });
+        });
+        logger.info('Phase 48 mcp bridge module integrated', { enabled: true });
+      })
+      .catch((err: unknown) => {
+        logger.debug('ClaudeMCPBridge not available', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+
+  // ===== Phase 50 Task 6：Phase 49 模块接入确认 =====
+  // 六模块按 config.phase49Integration 开关接入（默认全部 false，实验性）
+  const phase49Cfg = config.phase49Integration;
+  if (phase49Cfg?.skillFlowEnabled) {
+    // SkillFlow 引擎接入：Skill 执行时可被调用
+    import('../skills/skill-flow-engine.js')
+      .then((mod) => {
+        const engine = new mod.SkillFlowEngine();
+        const loop = agentLoop as unknown as { setSkillFlowEngine?: (e: unknown) => void };
+        if (typeof loop.setSkillFlowEngine === 'function') {
+          loop.setSkillFlowEngine(engine);
+        }
+        logger.info('Phase 49 SkillFlowEngine integrated', { enabled: true });
+      })
+      .catch((err: unknown) => {
+        logger.debug('SkillFlowEngine not available', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+  if (phase49Cfg?.dualLoopEnabled) {
+    // 双循环编排器接入：/goal 执行时可被调用
+    import('../agent/dual-loop-orchestrator.js')
+      .then((mod) => {
+        const orchestrator = new mod.DualLoopOrchestrator();
+        const loop = agentLoop as unknown as { setDualLoopOrchestrator?: (o: unknown) => void };
+        if (typeof loop.setDualLoopOrchestrator === 'function') {
+          loop.setDualLoopOrchestrator(orchestrator);
+        }
+        logger.info('Phase 49 DualLoopOrchestrator integrated', { enabled: true });
+      })
+      .catch((err: unknown) => {
+        logger.debug('DualLoopOrchestrator not available', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+  if (phase49Cfg?.qualityGateEnabled) {
+    // Skill 质量门接入：Skill 生成时可被调用
+    import('../skills/quality-gate.js')
+      .then((mod) => {
+        const gate = new mod.SkillQualityGate();
+        const loop = agentLoop as unknown as { setSkillQualityGate?: (g: unknown) => void };
+        if (typeof loop.setSkillQualityGate === 'function') {
+          loop.setSkillQualityGate(gate);
+        }
+        logger.info('Phase 49 SkillQualityGate integrated', { enabled: true });
+      })
+      .catch((err: unknown) => {
+        logger.debug('SkillQualityGate not available', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+  if (phase49Cfg?.contextUsagePanelEnabled) {
+    // 上下文占用率面板接入：context-compaction 调用
+    import('../agent/context-usage-panel.js')
+      .then((mod) => {
+        const panel = new mod.ContextUsagePanel();
+        const compactor = contextCompactor as unknown as { setContextUsagePanel?: (p: unknown) => void };
+        if (typeof compactor.setContextUsagePanel === 'function') {
+          compactor.setContextUsagePanel(panel);
+        }
+        logger.info('Phase 49 ContextUsagePanel integrated', { enabled: true });
+      })
+      .catch((err: unknown) => {
+        logger.debug('ContextUsagePanel not available', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+  if (phase49Cfg?.evaluationFrameworkEnabled) {
+    // 评估集框架接入：Skill 生成或 /goal 完成时可选调用
+    // 注：EvaluationFramework 构造需要 executeTarget/judge 回调，此处仅确认模块可加载
+    // 实例化由 /goal 完成或 Skill 生成时按需创建（依赖注入 LLM 客户端）
+    import('../evaluation/evaluation-framework.js')
+      .then((mod) => {
+        // 标记模块可用，供后续按需实例化
+        const loop = agentLoop as unknown as { setEvaluationFrameworkFactory?: (f: unknown) => void };
+        if (typeof loop.setEvaluationFrameworkFactory === 'function') {
+          loop.setEvaluationFrameworkFactory(mod.EvaluationFramework);
+        }
+        logger.info('Phase 49 EvaluationFramework module available', { enabled: true });
+      })
+      .catch((err: unknown) => {
+        logger.debug('EvaluationFramework not available', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+  if (phase49Cfg?.routingFunnelEnabled) {
+    // 意图路由漏斗接入：router 调用
+    // 注：RoutingFunnel 构造需要 llmClassifier/fallbackModel 等依赖，此处仅确认模块可加载
+    // 实例化由 router 按需创建（依赖注入 classifier + 模型配置）
+    import('../router/routing-funnel.js')
+      .then((mod) => {
+        const loop = agentLoop as unknown as { setRoutingFunnelFactory?: (f: unknown) => void };
+        if (typeof loop.setRoutingFunnelFactory === 'function') {
+          loop.setRoutingFunnelFactory(mod.RoutingFunnel);
+        }
+        logger.info('Phase 49 RoutingFunnel module available', { enabled: true });
+      })
+      .catch((err: unknown) => {
+        logger.debug('RoutingFunnel not available', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+
   return {
     registry,
     mcpManager,
@@ -1396,5 +1705,12 @@ export function createAppDependencies(
     sharedSystemPromptRef,
     // Phase 48 Task 3：调度引擎实例
     scheduleEngine,
+    // Phase 50 Task 1：goalIntegration 实例（App.tsx 传给 createGoalRunner）
+    goalAuditor,
+    goalPersistence,
+    goalPromptBuilder,
+    // Phase 50 Task 3：delegationIntegration 实例（供 UI / 测试观察）
+    subAgentLifecycle: delegationLifecycle,
+    subAgentScoreCardCollector: delegationScoreCardCollector,
   };
 }

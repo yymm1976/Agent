@@ -41,7 +41,7 @@ export interface UserInteractionSignals {
 }
 
 /** 人格注入强度 */
-export type PersonaIntensity = 'none' | 'low' | 'medium' | 'high';
+type PersonaIntensity = 'none' | 'low' | 'medium' | 'high';
 
 // ============================================================
 // 常量

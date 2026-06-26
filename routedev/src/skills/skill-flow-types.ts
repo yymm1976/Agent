@@ -21,7 +21,7 @@ import type { HandoffArtifact } from '../agent/multi/handoff.js';
 // ============================================================
 
 /** 流水线节点类型 */
-export type FlowNodeType =
+type FlowNodeType =
   | 'step'           // 普通执行步骤：AI 做事
   | 'checkpoint'     // 检查节点：验证上一步输出是否达标
   | 'user-gate'      // 用户控制节点：暂停等待用户确认
@@ -29,7 +29,7 @@ export type FlowNodeType =
   | 'branch';        // 分支节点：根据条件走不同路径
 
 /** 吸因子引导层（蓝图 1.7 节）——引导而非约束 */
-export interface Attractor {
+interface Attractor {
   /** 期望产出的画像描述 */
   desiredOutput?: string;
   /** 风格样本路径（打样文件） */
@@ -39,7 +39,7 @@ export interface Attractor {
 }
 
 /** 检查条件定义（checkpoint 节点专用） */
-export interface CheckCondition {
+interface CheckCondition {
   /** 条件类型 */
   kind: 'llm-judge' | 'regex-match' | 'tool-output-contains';
   /** LLM judge 时的判断 prompt */
@@ -53,7 +53,7 @@ export interface CheckCondition {
 }
 
 /** 循环条件定义（loop 节点专用） */
-export interface LoopCondition {
+interface LoopCondition {
   /** 何时继续循环 */
   while: string;
   /** 最大循环次数（防止无限循环） */
@@ -61,7 +61,7 @@ export interface LoopCondition {
 }
 
 /** 分支条件定义（branch 节点专用） */
-export interface BranchRule {
+interface BranchRule {
   /** 条件描述 */
   condition: string;
   /** 目标节点 ID */
@@ -170,7 +170,7 @@ export type FlowEvent =
 // ============================================================
 
 /** 粒度警告级别 */
-export type GranularityLevel = 'too-coarse' | 'too-fine';
+type GranularityLevel = 'too-coarse' | 'too-fine';
 
 /** 粒度检查结果 */
 export interface GranularityWarning {
@@ -196,31 +196,31 @@ export interface GranularityWarning {
  *
  * allowedTools 由调用方决定如何强制限制（如过滤 ToolExecutor 的工具定义）。
  */
-export type RunReactCallback = (
+type RunReactCallback = (
   params: ReActRunParams,
   allowedTools?: string[],
 ) => AsyncGenerator<ReActEvent>;
 
 /** LLM Judge 回调——用独立 LLM 判断输出是否满足条件 */
-export type LlmJudgeCallback = (
+type LlmJudgeCallback = (
   judgePrompt: string,
   output: string,
 ) => Promise<boolean>;
 
 /** 循环条件评估回调——判断是否继续循环 */
-export type EvaluateLoopConditionCallback = (
+type EvaluateLoopConditionCallback = (
   whileCondition: string,
   lastOutput: string,
 ) => Promise<boolean>;
 
 /** 等待用户确认回调——返回 'approve' 或 'reject' */
-export type WaitForUserConfirmationCallback = (
+type WaitForUserConfirmationCallback = (
   nodeId: string,
   gateMessage: string,
 ) => Promise<'approve' | 'reject'>;
 
 /** 分支条件评估回调——返回目标节点 ID */
-export type EvaluateBranchCallback = (
+type EvaluateBranchCallback = (
   branches: BranchRule[],
   lastOutput: string,
 ) => Promise<string>;

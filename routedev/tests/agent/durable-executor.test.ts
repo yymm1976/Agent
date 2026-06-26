@@ -353,13 +353,13 @@ describe('DurableExecutor 持久化执行器 (Phase 24 Task 3)', () => {
   });
 
   // ============================================================
-  // listRecoverable()
+  // listRecoverableAsync()
   // ============================================================
-  describe('listRecoverable()', () => {
-    it('空目录返回空数组', () => {
+  describe('listRecoverableAsync()', () => {
+    it('空目录返回空数组', async () => {
       const executor = makeMockExecutor([]);
       const de = createDurableExecutor(makeOptions(storageRoot, executor));
-      expect(de.listRecoverable()).toEqual([]);
+      expect(await de.listRecoverableAsync()).toEqual([]);
     });
 
     it('列出 paused 和 failed 状态的快照', async () => {
@@ -377,7 +377,7 @@ describe('DurableExecutor 持久化执行器 (Phase 24 Task 3)', () => {
 
       // 用新的 executor 实例列出
       const de3 = createDurableExecutor(makeOptions(storageRoot, makeMockExecutor([])));
-      const recoverable = de3.listRecoverable();
+      const recoverable = await de3.listRecoverableAsync();
 
       expect(recoverable).toHaveLength(1);
       expect(recoverable[0].planId).toBe(failedResult.snapshot.planId);
@@ -399,7 +399,7 @@ describe('DurableExecutor 持久化执行器 (Phase 24 Task 3)', () => {
       const r2 = await de2.start([makeStep(1)], '计划2');
 
       const de3 = createDurableExecutor(makeOptions(storageRoot, makeMockExecutor([])));
-      const recoverable = de3.listRecoverable();
+      const recoverable = await de3.listRecoverableAsync();
 
       expect(recoverable).toHaveLength(2);
       // 最新的在前
@@ -423,7 +423,7 @@ describe('DurableExecutor 持久化执行器 (Phase 24 Task 3)', () => {
       );
 
       const de2 = createDurableExecutor(makeOptions(storageRoot, makeMockExecutor([])));
-      const recoverable = de2.listRecoverable();
+      const recoverable = await de2.listRecoverableAsync();
 
       // 损坏的被跳过，只返回有效的
       expect(recoverable).toHaveLength(1);

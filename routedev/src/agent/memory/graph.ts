@@ -45,25 +45,25 @@ export interface GraphEdge {
 }
 
 /** PPR / 召回结果条目 */
-export interface ScoredNode {
+interface ScoredNode {
   node: GraphNode;
   score: number;
 }
 
 /** 召回结果（带路径来源标记） */
-export interface RecallResult extends ScoredNode {
+interface RecallResult extends ScoredNode {
   path: 'precise' | 'generalized' | 'both';
 }
 
 /** Phase 38 Task 3.2：improve() 反馈结果 */
-export interface ImproveResult {
+interface ImproveResult {
   updatedNodes: number;
   supersededNodes: number;
   details: string;
 }
 
 /** Phase 38 Task 3.3：forget() 遗忘结果 */
-export interface ForgetResult {
+interface ForgetResult {
   forgotten: number;
   nodes: Array<{ id: string; content: string; type: NodeType }>;
 }
@@ -72,7 +72,7 @@ export interface ForgetResult {
 export type RecallStrategy = 'semantic' | 'graph' | 'temporal' | 'type_weighted' | 'hybrid';
 
 /** Phase 38 Task 4.1：recallV2 召回结果条目 */
-export interface RecallV2Result {
+interface RecallV2Result {
   node: GraphNode;
   score: number;
   strategy: RecallStrategy;

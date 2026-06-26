@@ -116,3 +116,72 @@ RouteDev 采用七层安全防护：
 
 ### MCP 集成
 通过 MCP 协议接入外部工具服务器，支持 stdio 和 SSE 两种传输方式。
+
+## 6. Phase 50 模块接入总览
+
+Phase 50 将 41 项"已开发待集成"的资产接入生产代码执行链路。所有接入模块默认 `enabled: false`，用户在设置页面手动开启（渐进接入原则）。每个接入点均有 try/catch 兜底，接入失败时降级到原行为而非崩溃。
+
+### 6.1 /goal 流程接入（Task 1）
+
+| 模块 | 接入点 | 配置开关 |
+|------|--------|----------|
+| GoalPromptBuilder | `goal-runner.ts` handleGoalCommand 入口 | `goalIntegration.promptBuilderEnabled` |
+| GoalPersistence | `goal-runner.ts` executeGoalPlan 持久化 | `goalIntegration.persistenceEnabled` |
+| GoalAuditor | `goal-runner.ts` verify 阶段 | `goalIntegration.auditEnabled` |
+| RequirementChangeAnalyzer | `goal-runner.ts` analyzeRequirementChange | `goalIntegration.requirementChangeEnabled` |
+
+数据流：`/goal 输入 → GoalPromptBuilder.build → GoalParser → GoalPersistence.save → 执行 → GoalAuditor.audit → 完成`
+
+### 6.2 多 Agent 编排接入（Task 2）
+
+| 模块 | 接入点 | 配置开关 |
+|------|--------|----------|
+| StrategySelector | `orchestrator.ts` plan 阶段 | `orchestrationIntegration.strategyEnabled` |
+| ExecutionStateGraph | `orchestrator.ts` execute 阶段 | `orchestrationIntegration.stateGraphEnabled` |
+| BranchOrchestrator | `orchestrator.ts` planBranches | `orchestrationIntegration.branchOrchestrationEnabled` |
+
+### 6.3 子 Agent 委托体系接入（Task 3）
+
+`spawn-agent.ts` 通过 `wrapSpawnAgentWithDelegation` 包装器接入 5 个模块：
+
+| 模块 | 接入顺序 | 配置开关 |
+|------|----------|----------|
+| ContextPacker | 1. 按角色打包上下文附加到 prompt | `delegationIntegration.contextPackerEnabled` |
+| DelegationGate | 2. spawn 前检查委托资格 | `delegationIntegration.delegationGateEnabled` |
+| DelegationEnforcer | 3. 创建契约 + 校验工具调用 | `delegationIntegration.delegationEnforcerEnabled` |
+| SubAgentLifecycle | 4. 注册 + 状态转换 + 反滥用 | `delegationIntegration.lifecycleEnabled` |
+| SubAgentScoreCardCollector | 5. 执行后收集评分卡 | `delegationIntegration.scoreCardEnabled` |
+
+注：`delegation-contract.ts` 随 enforcer 接入自动解除传递性死链。
+
+### 6.4 Phase 48/49 模块接入确认（Task 5/6）
+
+| 模块 | 接入点 | 配置开关 |
+|------|--------|----------|
+| CiteResolver | `app-init.ts` 创建实例 | `phase48Integration.citeEnabled` |
+| ClaudePluginImporter | `app-init.ts` 创建实例 | `phase48Integration.importEnabled` |
+| CodexInstructionImporter | `app-init.ts` 创建实例 | `phase48Integration.importEnabled` |
+| MacroManager | `app-init.ts` 创建实例 | `phase48Integration.macrosEnabled` |
+| ClaudeMCPBridge | `app-init.ts` 创建实例 | `phase48Integration.mcpBridgeEnabled` |
+| SkillFlowEngine | `app-init.ts` 创建实例 | `phase49Integration.skillFlowEnabled` |
+| DualLoopOrchestrator | `app-init.ts` 创建实例 | `phase49Integration.dualLoopEnabled` |
+| SkillQualityGate | `app-init.ts` 创建实例 | `phase49Integration.skillQualityGateEnabled` |
+| ContextUsagePanel | `app-init.ts` 创建实例 | `phase49Integration.contextUsagePanelEnabled` |
+| EvaluationFramework | `app-init.ts` 创建实例 | `phase49Integration.evaluationFrameworkEnabled` |
+| RoutingFunnel | `app-init.ts` 创建实例 | `phase49Integration.routingFunnelEnabled` |
+
+### 6.5 React 组件接入（Task 7）
+
+| 组件 | 接入到 | 配置开关 | 默认值 |
+|------|--------|----------|--------|
+| BranchSwitcher | `App.tsx` 顶部分支切换 | `ui.components.branchSwitcher` | true |
+| ResumePicker | `/resume` 命令多快照时触发 | `ui.components.resumePicker` | true |
+| ProgressBar | `TaskMonitorPanel` 任务进度 | `ui.components.progressBar` | true |
+| TracePanel | `/trace view` 命令触发 | `ui.components.tracePanel` | false |
+| DisclosureLevel | `ChatView` 系统消息 >200 字符包裹 | `ui.components.disclosureLevel` | true |
+| DiffView | `/diff` 命令触发 | `ui.components.diffView` | true |
+| ConfigReloadUI | `App.tsx` 配置变更通知 | `ui.components.configReloadNotice` | true |
+
+### 6.6 branch-operations 接入（Task 4）
+
+`branch-operations.ts` 经评估保留（有独特功能：delete/insert/undo/redo/squash），通过 `BranchManager.createOperations()` 工厂方法接入。

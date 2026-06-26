@@ -15,8 +15,7 @@
 //   - 在线监控的"漂移信号"是"运行时统计"（运行中发现行为分布变化）
 //   - 两者互补
 
-import type { ParsedSkill } from './skill-md-parser.js';
-import type { SkillMetadataWithDrift } from './skill-metadata-extension.js';
+import type { ParsedSkillWithDrift } from './skill-metadata-extension.js';
 
 /** 单个 Skill 的漂移检测结果 */
 export interface DriftResult {
@@ -48,29 +47,28 @@ export class ModelDriftDetector {
   /**
    * 检测模型漂移
    *
-   * @param installedSkills 已安装的 Skill 列表
+   * Phase 50 Task 8 修复：入参类型改为 ParsedSkillWithDrift[]，
+   *   直接访问 metadata.lastValidatedModel，去除原先的 as 断言。
+   *
+   * @param installedSkills 已安装的 Skill 列表（metadata 含 lastValidatedModel 扩展字段）
    * @param currentModelVersion 当前使用的模型版本
    * @returns 需要重新校验的 Skill 列表（已过滤掉版本匹配的 Skill）
    */
   detectDrift(
-    installedSkills: ParsedSkill[],
+    installedSkills: ParsedSkillWithDrift[],
     currentModelVersion: string,
   ): DriftResult[] {
     return installedSkills
       .filter((s) => {
-        // 把 metadata 视为带 drift 字段的扩展接口
-        // 由于 SkillMetadataWithDrift 仅在 SkillMetadata 上新增可选字段，
-        // 此处的类型断言是安全的
-        const meta = s.metadata as SkillMetadataWithDrift;
-        return meta.lastValidatedModel !== currentModelVersion;
+        // metadata 类型已为 SkillMetadataWithDrift，直接访问 lastValidatedModel
+        return s.metadata.lastValidatedModel !== currentModelVersion;
       })
       .map((s) => {
-        const meta = s.metadata as SkillMetadataWithDrift;
         return {
           skillName: s.metadata.name,
-          lastValidatedModel: meta.lastValidatedModel ?? 'unknown',
+          lastValidatedModel: s.metadata.lastValidatedModel ?? 'unknown',
           currentModelVersion,
-          severity: this.assessDriftSeverity(meta.lastValidatedModel, currentModelVersion),
+          severity: this.assessDriftSeverity(s.metadata.lastValidatedModel, currentModelVersion),
         };
       });
   }

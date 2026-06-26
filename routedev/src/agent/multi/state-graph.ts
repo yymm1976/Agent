@@ -30,7 +30,7 @@ export type StepStatus =
   | 'retrying';
 
 /** 步骤状态节点 */
-export interface StepStateNode {
+interface StepStateNode {
   stepId: string;
   status: StepStatus;
   retries: number;
@@ -42,7 +42,7 @@ export interface StepStateNode {
 }
 
 /** 状态转换记录 */
-export interface StepTransition {
+interface StepTransition {
   from: StepStatus;
   to: StepStatus;
   condition: string;

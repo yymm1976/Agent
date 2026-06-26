@@ -278,13 +278,13 @@ describe('Phase 35 Task 3: DurableExecutor 真实接线与会话恢复', () => {
       const plan = [makeStep(1, '会失败的步骤')];
       await durable.start(plan, '测试目标');
 
-      // 验证 listRecoverable 能找到失败的执行
-      const recoverable = durable.listRecoverable();
+      // 验证 listRecoverableAsync 能找到失败的执行
+      const recoverable = await durable.listRecoverableAsync();
       expect(recoverable.length).toBeGreaterThanOrEqual(1);
       expect(recoverable[0].status).toBe('failed');
     });
 
-    it('无快照时 listRecoverable() 返回空数组', () => {
+    it('无快照时 listRecoverableAsync() 返回空数组', async () => {
       const durable = new DurableExecutor({
         sessionId: 'test-session',
         executor: { async execute() { return { success: true, output: '', durationMs: 0 }; } },
@@ -292,7 +292,7 @@ describe('Phase 35 Task 3: DurableExecutor 真实接线与会话恢复', () => {
         projectPath: process.cwd(),
       });
 
-      const recoverable = durable.listRecoverable();
+      const recoverable = await durable.listRecoverableAsync();
       expect(recoverable).toEqual([]);
     });
   });

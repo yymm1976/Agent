@@ -15,7 +15,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 /** 单个 Gate 状态 */
-export type GateStatus = 'pending' | 'passed' | 'failed' | 'skipped';
+type GateStatus = 'pending' | 'passed' | 'failed' | 'skipped';
 
 /** 验收门控（单条） */
 export interface Gate {

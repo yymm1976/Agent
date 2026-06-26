@@ -7,7 +7,7 @@ import {
   getColorWithTheme,
   getTierColorWithTheme,
 } from '../../../src/cli/components/StatusBar.js';
-import { getColor, getTierColor } from '../../../src/cli/design-system.js';
+import { getColor } from '../../../src/cli/design-system.js';
 import type { ThemeColors } from '../../../src/plugins/types.js';
 
 describe('Phase 27 Task 3: StatusBar ThemePlugin 接入', () => {
@@ -68,14 +68,14 @@ describe('Phase 27 Task 3: StatusBar ThemePlugin 接入', () => {
     // reasoning → primary → 覆盖
     expect(getTierColorWithTheme('reasoning', themeColors)).toBe('#CCC333');
     // medium → warning → 无对应 ThemeColors 字段，用默认
-    expect(getTierColorWithTheme('medium', themeColors)).toBe(getTierColor('medium'));
+    expect(getTierColorWithTheme('medium', themeColors)).toBe(getColor('warning'));
   });
 
   // 测试 5：未传入 themeColors 时，tier 颜色用设计系统默认
   it('未传入 themeColors 时 tier 颜色用设计系统默认', () => {
-    expect(getTierColorWithTheme('simple')).toBe(getTierColor('simple'));
-    expect(getTierColorWithTheme('medium')).toBe(getTierColor('medium'));
-    expect(getTierColorWithTheme('complex')).toBe(getTierColor('complex'));
-    expect(getTierColorWithTheme('reasoning')).toBe(getTierColor('reasoning'));
+    expect(getTierColorWithTheme('simple')).toBe(getColor('success'));
+    expect(getTierColorWithTheme('medium')).toBe(getColor('warning'));
+    expect(getTierColorWithTheme('complex')).toBe(getColor('accent'));
+    expect(getTierColorWithTheme('reasoning')).toBe(getColor('primary'));
   });
 });

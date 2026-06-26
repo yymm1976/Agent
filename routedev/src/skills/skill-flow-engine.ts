@@ -506,9 +506,4 @@ export class SkillFlowEngine {
         return 'abort';
     }
   }
-
-  /** 重置引擎的 runtime 状态（重试计数器等）——供测试用 */
-  resetRuntimeState(): void {
-    this.retryCounters.clear();
-  }
 }

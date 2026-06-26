@@ -5,7 +5,7 @@
 import type { TraceSpan, TrajectorySummary } from '../harness/trace-types.js';
 
 /** 文件变更摘要 */
-export interface FileChangeSummary {
+interface FileChangeSummary {
   path: string;
   /** 增加行数（粗略估算） */
   added: number;

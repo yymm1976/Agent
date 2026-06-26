@@ -471,8 +471,12 @@ export class ClaudePluginImporter {
   /**
    * 解析 .mcp.json
    *
-   * Task 4 的 ClaudeMCPBridge 尚未实现，这里通过动态 import 尝试加载。
-   * 加载失败时仅 warn 跳过 MCP 部分，不影响整体导入。
+   * Phase 48 Task 4 的 ClaudeMCPBridge 已实现，通过动态 import 加载。
+   * 调用 bridge.importFromClaudeConfig(configPath, options) 完成导入，
+   * 桥接器内部读取并解析 JSON。加载失败时仅 warn 跳过 MCP 部分，不影响整体导入。
+   *
+   * 陷阱修复：原实现调用 bridge.convertFromClaudeConfig(...)，
+   *   但 ClaudeMCPBridge 实际方法名为 importFromClaudeConfig（Phase 50 Task 8 修复）。
    */
   private async parseMCPConfig(
     pluginRoot: string,
@@ -487,22 +491,18 @@ export class ClaudePluginImporter {
       return empty;
     }
 
-    // 先读取原始 JSON 内容
-    let rawConfig: unknown;
-    try {
-      const raw = await fs.readFile(mcpPath, 'utf-8');
-      rawConfig = JSON.parse(raw);
-    } catch (err) {
-      warnings.push(
-        `.mcp.json 解析失败: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return empty;
-    }
-
-    // 尝试动态加载 ClaudeMCPBridge（Task 4 提供）
+    // 尝试动态加载 ClaudeMCPBridge（Phase 48 Task 4 提供）
     type BridgeModule = {
       ClaudeMCPBridge?: new () => {
-        convertFromClaudeConfig?: (config: unknown, pluginName: string) => Array<{ id: string; config: unknown }>;
+        importFromClaudeConfig?: (
+          configPath: string,
+          options?: { origin?: string },
+        ) => Promise<{
+          servers: Array<{ id: string; config: unknown }>;
+          renamed: Array<{ originalId: string; newId: string; reason: string }>;
+          failed: Array<{ id: string; error: string }>;
+          warnings: string[];
+        }>;
       };
     };
 
@@ -516,14 +516,25 @@ export class ClaudePluginImporter {
         return { ...empty, warning: 'ClaudeMCPBridge 未导出' };
       }
       const bridge = new mod.ClaudeMCPBridge();
-      if (typeof bridge.convertFromClaudeConfig !== 'function') {
-        warnings.push('ClaudeMCPBridge.convertFromClaudeConfig 未实现，跳过 MCP 部分导入');
-        return { ...empty, warning: 'convertFromClaudeConfig 未实现' };
+      // Bug 修复：原代码调用 convertFromClaudeConfig（不存在），改为 importFromClaudeConfig
+      if (typeof bridge.importFromClaudeConfig !== 'function') {
+        warnings.push('ClaudeMCPBridge.importFromClaudeConfig 未实现，跳过 MCP 部分导入');
+        return { ...empty, warning: 'importFromClaudeConfig 未实现' };
       }
-      const servers = bridge.convertFromClaudeConfig(rawConfig, pluginName);
-      return { servers };
+      // 桥接器内部读取并解析 .mcp.json，返回 servers/renamed/failed/warnings
+      const result = await bridge.importFromClaudeConfig(mcpPath, { origin: pluginName });
+      // 转发桥接器的 warnings 到 importer 的 warnings（便于在 manifest 中体现）
+      for (const w of result.warnings) {
+        warnings.push(`[mcp] ${w}`);
+      }
+      // 桥接失败的 server 记入 warnings（不阻断整体导入）
+      for (const f of result.failed) {
+        warnings.push(`[mcp] server "${f.id}" 桥接失败: ${f.error}`);
+      }
+      // servers 已是 { id, config } 形状，直接透传
+      return { servers: result.servers };
     } catch (err) {
-      // Task 4 尚未实现时此分支命中
+      // Phase 48 Task 4 未实现时此分支命中
       const msg = err instanceof Error ? err.message : String(err);
       warnings.push(
         `MCP 桥接不可用（Task 4 未实现或加载失败），跳过 MCP 部分导入: ${msg}`,

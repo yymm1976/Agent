@@ -7,7 +7,6 @@ import { pluginCommand } from '../../src/cli/commands/plugin.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
 import { AgentMiddlewarePipeline } from '../../src/agent/middleware.js';
-import { defineToolPlugin } from '../../src/plugins/sdk.js';
 import type { ServiceContext } from '../../src/cli/service-context.js';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';

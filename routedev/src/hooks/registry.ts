@@ -27,7 +27,7 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import { logger } from '../utils/logger.js';
-import type { HookEvent } from './generator.js';
+import type { HookEvent } from '../agent/hooks.js';
 
 // ============================================================
 // 类型定义

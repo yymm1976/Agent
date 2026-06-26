@@ -23,7 +23,7 @@ import path from 'node:path';
 // ============================================================
 
 /** 偏好类别 */
-export type PreferenceCategory =
+type PreferenceCategory =
   | 'tech_stack'
   | 'coding_style'
   | 'communication'
@@ -31,7 +31,7 @@ export type PreferenceCategory =
   | 'security';
 
 /** 用户偏好 */
-export interface UserPreference {
+interface UserPreference {
   /** 唯一 ID（category:key 的哈希） */
   id: string;
   /** 类别 */
@@ -49,7 +49,7 @@ export interface UserPreference {
 }
 
 /** 审计日志条目 */
-export interface AuditLogEntry {
+interface AuditLogEntry {
   /** 操作类型 */
   action: string;
   /** 相关偏好 */
@@ -221,11 +221,6 @@ export class PreferenceManager {
     return Array.from(this.preferences.values());
   }
 
-  /** 按类别获取偏好 */
-  getByCategory(category: PreferenceCategory): UserPreference[] {
-    return this.getAll().filter((p) => p.category === category);
-  }
-
   /**
    * 获取高置信度偏好（>= 0.7）用于注入上下文
    */
@@ -297,15 +292,6 @@ export class PreferenceManager {
   }
 
   // ============================================================
-  // 审计日志
-  // ============================================================
-
-  /** 获取审计日志 */
-  getAuditLog(): AuditLogEntry[] {
-    return [...this.auditLog];
-  }
-
-  // ============================================================
   // 自动学习开关
   // ============================================================
 
@@ -362,15 +348,6 @@ export class PreferenceManager {
     } catch {
       // 文件不存在或解析失败：保持空状态
     }
-  }
-
-  // ============================================================
-  // 导出
-  // ============================================================
-
-  /** 导出所有偏好（含全局） */
-  exportAll(): UserPreference[] {
-    return [...this.getAll(), ...Array.from(this.globalPreferences.values())];
   }
 
   // ============================================================

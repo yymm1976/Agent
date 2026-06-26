@@ -10,8 +10,8 @@
 //   14. PolicyEngine 按优先级排序
 //   15. PolicyEngine enable/disable 策略
 //   16. PolicyEngine 导入导出
-//   17. ReasoningMode 三种模式配置正确
-//   18. ReasoningMode getReasoningConfig 返回正确配置
+//
+// Phase 50 Task 8：已移除 ReasoningMode 测试（reasoning-mode.ts 已作为死代码删除）
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
@@ -23,12 +23,6 @@ import { IntentGuard } from '../../src/policies/intent-guard.js';
 import { Playbook } from '../../src/policies/playbook.js';
 import { ToolGuide } from '../../src/policies/tool-guide.js';
 import { ToolApproval } from '../../src/policies/tool-approval.js';
-import {
-  MODE_CONFIGS,
-  getReasoningConfig,
-  getDefaultMode,
-  type ReasoningMode,
-} from '../../src/router/reasoning-mode.js';
 
 // ============================================================
 // IntentGuard 测试
@@ -433,65 +427,6 @@ describe('PolicyEngine', () => {
       // 只返回 tool_guide 的结果
       expect(results.length).toBe(1);
       expect(results[0].policyId).toBe('tg');
-    });
-  });
-});
-
-// ============================================================
-// ReasoningMode 测试
-// ============================================================
-
-describe('ReasoningMode', () => {
-  describe('三种模式配置正确', () => {
-    it('fast 模式应优先成本', () => {
-      const cfg = MODE_CONFIGS.fast;
-      expect(cfg.mode).toBe('fast');
-      expect(cfg.preferCheaper).toBe(true);
-      expect(cfg.maxRetries).toBe(1);
-      expect(cfg.reasoningEffort).toBe('low');
-      expect(cfg.maxTokens).toBe(4096);
-    });
-
-    it('balanced 模式应居中', () => {
-      const cfg = MODE_CONFIGS.balanced;
-      expect(cfg.mode).toBe('balanced');
-      expect(cfg.preferCheaper).toBe(false);
-      expect(cfg.maxRetries).toBe(2);
-      expect(cfg.reasoningEffort).toBe('medium');
-      expect(cfg.maxTokens).toBe(8192);
-    });
-
-    it('accurate 模式应最大化质量', () => {
-      const cfg = MODE_CONFIGS.accurate;
-      expect(cfg.mode).toBe('accurate');
-      expect(cfg.preferCheaper).toBe(false);
-      expect(cfg.maxRetries).toBe(3);
-      expect(cfg.reasoningEffort).toBe('high');
-      expect(cfg.maxTokens).toBe(16384);
-    });
-
-    it('三种模式的 maxTokens 应递增', () => {
-      expect(MODE_CONFIGS.fast.maxTokens).toBeLessThan(MODE_CONFIGS.balanced.maxTokens);
-      expect(MODE_CONFIGS.balanced.maxTokens).toBeLessThan(MODE_CONFIGS.accurate.maxTokens);
-    });
-  });
-
-  describe('getReasoningConfig 返回正确配置', () => {
-    it('应返回对应模式的配置', () => {
-      expect(getReasoningConfig('fast').mode).toBe('fast');
-      expect(getReasoningConfig('balanced').mode).toBe('balanced');
-      expect(getReasoningConfig('accurate').mode).toBe('accurate');
-    });
-
-    it('getDefaultMode 应返回 balanced', () => {
-      expect(getDefaultMode()).toBe('balanced');
-    });
-
-    it('getReasoningConfig 返回的应是 MODE_CONFIGS 中的对象', () => {
-      // 验证引用一致（同一对象）
-      expect(getReasoningConfig('fast')).toBe(MODE_CONFIGS.fast);
-      expect(getReasoningConfig('balanced')).toBe(MODE_CONFIGS.balanced);
-      expect(getReasoningConfig('accurate')).toBe(MODE_CONFIGS.accurate);
     });
   });
 });

@@ -14,7 +14,7 @@
 //   blocked    → pending / aborted（门控解除后回到 pending）
 
 /** 子 Agent 状态 */
-export type SubAgentStatus =
+type SubAgentStatus =
   | 'pending'
   | 'running'
   | 'challenged'

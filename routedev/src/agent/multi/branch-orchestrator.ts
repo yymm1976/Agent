@@ -16,7 +16,7 @@ import type { ExperimentRunnerLike } from '../../harness/experiment-manager.js';
 import { logger } from '../../utils/logger.js';
 
 /** 分支任务状态 */
-export type BranchTaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'blocked';
+type BranchTaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'blocked';
 
 /** 分支任务 */
 export interface BranchTask {

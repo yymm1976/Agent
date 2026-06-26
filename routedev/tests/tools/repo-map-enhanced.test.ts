@@ -10,9 +10,7 @@ import os from 'node:os';
 import {
   extractSignatures,
   incrementalScan,
-  loadCache,
   saveCache,
-  analyzeImpact,
   type RepoMapFileEntry,
 } from '../../src/tools/repo-map.js';
 
@@ -188,84 +186,6 @@ type Handler interface {
     expect(dependencies.some(d => d.target === 'strings')).toBe(true);
   });
 
-  it('analyzeImpact 反向 BFS：收集所有间接依赖者', () => {
-    // 构建依赖链：a.ts → b.ts → c.ts
-    // c.ts 变更后，a.ts 和 b.ts 受影响
-    const entries: RepoMapFileEntry[] = [
-      {
-        path: 'src/a.ts',
-        exports: ['a'],
-        signatures: ['export function a() {}'],
-        dependencies: [{ target: './b', symbols: ['b'] }],
-        language: 'typescript',
-      },
-      {
-        path: 'src/b.ts',
-        exports: ['b'],
-        signatures: ['export function b() {}'],
-        dependencies: [{ target: './c', symbols: ['c'] }],
-        language: 'typescript',
-      },
-      {
-        path: 'src/c.ts',
-        exports: ['c'],
-        signatures: ['export function c() {}'],
-        dependencies: [],
-        language: 'typescript',
-      },
-    ];
-
-    const result = analyzeImpact(entries, 'src/c.ts', 3);
-    expect(result.affectedFiles).toContain('src/b.ts');
-    expect(result.affectedFiles).toContain('src/a.ts');
-    expect(result.depth).toBeGreaterThanOrEqual(2);
-  });
-
-  it('analyzeImpact maxDepth 限制搜索深度', () => {
-    // a → b → c → d
-    const entries: RepoMapFileEntry[] = [
-      {
-        path: 'a.ts',
-        exports: [],
-        signatures: [],
-        dependencies: [{ target: './b', symbols: [] }],
-      },
-      {
-        path: 'b.ts',
-        exports: [],
-        signatures: [],
-        dependencies: [{ target: './c', symbols: [] }],
-      },
-      {
-        path: 'c.ts',
-        exports: [],
-        signatures: [],
-        dependencies: [{ target: './d', symbols: [] }],
-      },
-      {
-        path: 'd.ts',
-        exports: [],
-        signatures: [],
-        dependencies: [],
-      },
-    ];
-
-    // depth=1：只能找到直接依赖者 c.ts
-    const d1 = analyzeImpact(entries, 'd.ts', 1);
-    expect(d1.affectedFiles).toEqual(['c.ts']);
-    expect(d1.depth).toBe(1);
-
-    // depth=2：找到 c.ts 和 b.ts
-    const d2 = analyzeImpact(entries, 'd.ts', 2);
-    expect(d2.affectedFiles).toContain('c.ts');
-    expect(d2.affectedFiles).toContain('b.ts');
-    expect(d2.affectedFiles).not.toContain('a.ts');
-
-    // depth=3：找到 c.ts, b.ts, a.ts
-    const d3 = analyzeImpact(entries, 'd.ts', 3);
-    expect(d3.affectedFiles).toContain('a.ts');
-  });
-
   it('增量缓存：mtime 比对，未变更文件用缓存', async () => {
     await writeFile('a.ts', 'export function a() {}');
     await writeFile('b.ts', 'export function b() {}');
@@ -277,11 +197,6 @@ type Handler interface {
     // 缓存文件应存在
     const cachePath = path.join(tempDir, '.routedev', 'repo-map-cache.json');
     expect(fsSync.existsSync(cachePath)).toBe(true);
-
-    // 加载缓存
-    const cached = loadCache(cachePath);
-    expect(cached).not.toBeNull();
-    expect(cached!.length).toBe(2);
 
     // 第二次扫描：未变更，应使用缓存
     const second = await incrementalScan(tempDir, { maxFiles: 10 });
@@ -308,7 +223,7 @@ type Handler interface {
     expect(second[0].exports).not.toContain('oldName');
   });
 
-  it('loadCache / saveCache 往返一致性', () => {
+  it('saveCache 写入缓存文件', () => {
     const cachePath = path.join(tempDir, '.routedev', 'test-cache.json');
     const entries: RepoMapFileEntry[] = [
       {
@@ -321,26 +236,11 @@ type Handler interface {
     ];
 
     saveCache(cachePath, entries, { 'src/test.ts': 1234567890 });
-    const loaded = loadCache(cachePath);
-    expect(loaded).not.toBeNull();
-    expect(loaded![0].path).toBe('src/test.ts');
-    expect(loaded![0].exports).toContain('foo');
-    expect(loaded![0].dependencies).toBeDefined();
-    expect(loaded![0].dependencies![0].target).toBe('./bar');
-  });
-
-  it('loadCache 版本不匹配返回 null', () => {
-    const cachePath = path.join(tempDir, '.routedev', 'bad-cache.json');
-    const dir = path.dirname(cachePath);
-    if (!fsSync.existsSync(dir)) fsSync.mkdirSync(dir, { recursive: true });
-    // 写入错误版本的缓存
-    fsSync.writeFileSync(cachePath, JSON.stringify({
-      version: 'wrong-version',
-      entries: [],
-      mtimes: {},
-    }), 'utf-8');
-
-    const loaded = loadCache(cachePath);
-    expect(loaded).toBeNull();
+    // 缓存文件应存在且为合法 JSON
+    expect(fsSync.existsSync(cachePath)).toBe(true);
+    const raw = fsSync.readFileSync(cachePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    expect(parsed.entries[0].path).toBe('src/test.ts');
+    expect(parsed.entries[0].exports).toContain('foo');
   });
 });

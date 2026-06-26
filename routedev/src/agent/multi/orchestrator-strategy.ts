@@ -14,13 +14,13 @@
 //   - conversational：边对话边执行
 
 /** 编排策略 */
-export type OrchestrationStrategy = 'sequential' | 'parallel' | 'adaptive';
+type OrchestrationStrategy = 'sequential' | 'parallel' | 'adaptive';
 
 /** 编排模式 */
-export type OrchestrationMode = 'plan_upfront' | 'conversational';
+type OrchestrationMode = 'plan_upfront' | 'conversational';
 
 /** 编排器配置 */
-export interface OrchestratorConfig {
+interface OrchestratorConfig {
   strategy: OrchestrationStrategy;
   mode: OrchestrationMode;
   maxParallelism: number;

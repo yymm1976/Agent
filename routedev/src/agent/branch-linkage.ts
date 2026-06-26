@@ -9,7 +9,7 @@ import path from 'node:path';
 import { logger } from '../utils/logger.js';
 
 /** 消息分支联动信息 */
-export interface BranchLinkage {
+interface BranchLinkage {
   /** 消息分支 ID（对应 BranchManager 的 branchId） */
   messageBranchId: string;
   /** 消息分支名称 */

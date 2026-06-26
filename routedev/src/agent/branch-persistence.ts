@@ -38,7 +38,7 @@ type JsonlLine =
   | { type: 'history'; nodeIds: string[] };
 
 /** BranchManager 的最小可访问形态（仅用于 extract/apply） */
-export interface ManagerLike {
+interface ManagerLike {
   nodes: Map<string, BranchNode>;
   branches: Map<string, BranchInfo>;
   activeBranchId: string | null;

@@ -8,7 +8,6 @@ import { anyNeedsSubAgent } from '../../src/agent/execution-orchestrator.js';
 import { ReadTracker, createReadTracker } from '../../src/tools/read-tracker.js';
 import { ToolResultSanitizer, createToolResultSanitizer, INJECTION_PATTERNS } from '../../src/tools/result-sanitizer.js';
 import { CompletionGate, createCompletionGate } from '../../src/agent/completion-gate.js';
-import { classifyError, generateSuggestion } from '../../src/utils/error-messages.js';
 import { HookRunner, createHookRunner } from '../../src/agent/hooks.js';
 import type { ClassificationResult } from '../../src/router/types.js';
 import type { AppConfig } from '../../src/config/schema.js';

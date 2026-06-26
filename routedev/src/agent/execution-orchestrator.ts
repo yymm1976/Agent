@@ -46,7 +46,7 @@ export interface ExecutionOrchestratorDeps {
 /**
  * 执行进度信息
  */
-export interface ExecutionProgress {
+interface ExecutionProgress {
   /** 当前步骤 ID */
   stepId: number;
   /** 总步骤数 */

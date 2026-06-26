@@ -2,6 +2,7 @@
 // 对话视图组件：显示消息列表，支持流式输出
 // Phase 24 Task 1：迁移到设计系统颜色语义
 // Phase 34 Task 2/3：支持折叠组、微摘要、工具执行 Spinner
+// Phase 50 Task 7：接入 DisclosureLevel 渐进披露容器
 
 import React from 'react';
 import { Box, Text } from 'ink';
@@ -11,6 +12,7 @@ import { Spinner } from './Spinner.js';
 import type { OutputStyle } from '../../config/schema.js';
 import type { MicroSummary } from '../../agent/micro-summary.js';
 import { MicroSummaryCard } from './MicroSummaryCard.js';
+import { DisclosureLevel, type DisclosureContent } from './DisclosureLevel.js';
 
 /** 对话消息 */
 export interface ChatMessage {
@@ -34,6 +36,8 @@ interface ChatViewProps {
   messages: ChatMessage[];
   /** Phase 34：当前输出样式，控制信息密度 */
   outputStyle?: OutputStyle;
+  /** Phase 50 Task 7：是否启用 DisclosureLevel 渐进披露（默认 false 保持向后兼容） */
+  enableDisclosure?: boolean;
 }
 
 /** 消息角色对应的语义颜色 */
@@ -56,7 +60,21 @@ function roleLabel(role: string): string {
   }
 }
 
-export function ChatView({ messages, outputStyle = 'standard' }: ChatViewProps) {
+/**
+ * Phase 50 Task 7：将消息内容转换为 DisclosureContent
+ * - L1：首行摘要（前 80 字符）
+ * - L2：前 3 行
+ * - L3：完整内容
+ */
+function toDisclosureContent(content: string): DisclosureContent {
+  const lines = content.split('\n').filter(Boolean);
+  const firstLine = lines[0] ?? content;
+  const l1 = firstLine.length > 80 ? firstLine.slice(0, 80) + '...' : firstLine;
+  const l2 = lines.slice(0, 3).join('\n');
+  return { l1, l2, l3: content };
+}
+
+export function ChatView({ messages, outputStyle = 'standard', enableDisclosure = false }: ChatViewProps) {
   const infoColor = getColor('info');
 
   return (
@@ -82,14 +100,22 @@ export function ChatView({ messages, outputStyle = 'standard' }: ChatViewProps) 
                 )}
               </Box>
               <Box paddingLeft={2}>
-                <Text wrap="wrap">
-                  {msg.isPending ? (
+                {msg.isPending ? (
+                  <Text wrap="wrap">
                     <Spinner startTime={msg.pendingSince} />
-                  ) : (
-                    msg.content
-                  )}
-                  {msg.isStreaming && <Text color={infoColor}> ▌</Text>}
-                </Text>
+                  </Text>
+                ) : enableDisclosure && msg.role === 'system' && msg.content.length > 200 ? (
+                  // Phase 50 Task 7：长系统消息用 DisclosureLevel 包裹，按需展开
+                  <DisclosureLevel
+                    content={toDisclosureContent(msg.content)}
+                    outputStyle={outputStyle}
+                  />
+                ) : (
+                  <Text wrap="wrap">
+                    {msg.content}
+                    {msg.isStreaming && <Text color={infoColor}> ▌</Text>}
+                  </Text>
+                )}
               </Box>
             </>
           )}

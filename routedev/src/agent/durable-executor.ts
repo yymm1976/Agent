@@ -25,7 +25,7 @@ import * as nodeFs from 'node:fs';
 // ============================================================
 
 /** 执行状态 */
-export type ExecutionStatus = 'running' | 'paused' | 'failed' | 'completed';
+type ExecutionStatus = 'running' | 'paused' | 'failed' | 'completed';
 
 /** 执行快照（蓝图 Section 7.6） */
 export interface ExecutionSnapshot {
@@ -52,7 +52,7 @@ export interface ExecutionSnapshot {
 }
 
 /** 执行结果 */
-export interface ExecutionResult {
+interface ExecutionResult {
   /** 是否整体成功 */
   success: boolean;
   /** 最终快照 */
@@ -249,45 +249,7 @@ export class DurableExecutor {
   /**
    * 列出所有可恢复的执行（status 为 paused 或 failed）
    *
-   * @returns 快照列表（按更新时间倒序）
-   */
-  listRecoverable(): ExecutionSnapshot[] {
-    const sessionDir = this.getSessionDir();
-    try {
-      const entries = nodeFs.readdirSync(sessionDir);
-      const snapshots: ExecutionSnapshot[] = [];
-
-      for (const entry of entries) {
-        const entryPath = path.join(sessionDir, entry);
-        const stat = nodeFs.statSync(entryPath);
-        if (!stat.isDirectory()) continue;
-
-        const snapshotPath = path.join(entryPath, SNAPSHOT_FILENAME);
-        if (!nodeFs.existsSync(snapshotPath)) continue;
-
-        try {
-          const content = nodeFs.readFileSync(snapshotPath, 'utf-8');
-          const snapshot = JSON.parse(content) as ExecutionSnapshot;
-          if (this.validateSnapshot(snapshot) && (snapshot.status === 'paused' || snapshot.status === 'failed')) {
-            snapshots.push(snapshot);
-          }
-        } catch {
-          // 损坏的快照文件跳过
-          logger.warn('DurableExecutor: 跳过损坏的快照文件', { path: snapshotPath });
-        }
-      }
-
-      // 按更新时间倒序排列（最近的最先）
-      snapshots.sort((a, b) => b.updatedAt - a.updatedAt);
-      return snapshots;
-    } catch {
-      return [];
-    }
-  }
-
-  /**
-   * 异步并行版 listRecoverable（Phase 26 Task 5：避免同步 I/O 阻塞事件循环）
-   * 使用 fs.promises + Promise.all 并行读取所有 session 目录
+   * Phase 50 Task 8：同步版 listRecoverable 已移除，统一使用异步版避免阻塞事件循环
    * @returns 可恢复的执行快照列表（按更新时间倒序）
    */
   async listRecoverableAsync(): Promise<ExecutionSnapshot[]> {

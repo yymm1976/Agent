@@ -8,7 +8,7 @@ import type { LLMMessage } from '../../router/types.js';
 export type CheckpointLevel = 'initial' | 'incremental' | 'compress';
 
 /** Checkpoint 触发结果 */
-export interface CheckpointTriggerResult {
+interface CheckpointTriggerResult {
   /** 需要执行的动作（null 表示当前不需要触发） */
   action: CheckpointLevel | null;
   /** 当前 token 消耗百分比（0-1） */
@@ -47,7 +47,7 @@ export interface CheckpointData {
 }
 
 /** 任务树节点 */
-export interface TaskTreeNode {
+interface TaskTreeNode {
   /** 任务描述 */
   description: string;
   /** 状态 */

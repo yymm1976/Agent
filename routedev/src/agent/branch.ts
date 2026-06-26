@@ -5,6 +5,9 @@
 import type { LLMMessage } from '../router/types.js';
 import crypto from 'node:crypto';
 import { logger } from '../utils/logger.js';
+// Phase 50 Task 4：接入 BranchOperations（提供 delete/insert/undo/redo 等高级操作）
+// 注：branch-operations.ts 仅 import 本文件的 type，运行时无循环依赖
+import { BranchOperations } from './branch-operations.js';
 
 /** 分支节点 */
 export interface BranchNode {
@@ -373,5 +376,24 @@ export class BranchManager {
   private deriveBranchName(message: LLMMessage): string {
     const content = typeof message.content === 'string' ? message.content : '';
     return content.slice(0, 20) || '分叉';
+  }
+
+  /**
+   * 创建 BranchOperations 实例（Phase 50 Task 4 接入点）
+   *
+   * BranchOperations 提供 BranchManager 未覆盖的高级操作：
+   *   - deleteByHistoryIndex：删除消息节点（子节点挂到父节点）
+   *   - insertByHistoryIndex：在指定位置插入消息并创建新分支
+   *   - editRange：批量编辑范围内的消息
+   *   - undo/redo：操作栈（操作前快照 + 整体恢复）
+   *   - serializeStacks/deserializeStacks：操作栈持久化
+   *
+   * 评估结论：BranchOperations 与 BranchManager 功能非完全重叠
+   *   - 重叠：fork/append/editByHistoryIndex（BranchManager 已有）
+   *   - 独特：delete/insert/batch edit/undo/redo（BranchManager 没有）
+   * 因此保留 branch-operations.ts 并通过此方法接入
+   */
+  createOperations(): BranchOperations {
+    return new BranchOperations(this);
   }
 }

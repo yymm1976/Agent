@@ -20,10 +20,8 @@ import type { SkillStatus } from '../../src/plugins/filesystem-discovery.js';
 import { getCatalogEntry } from './mcp-catalog.js';
 import type { MCPServerEntry } from '../../src/tools/mcp/types.js';
 import path from 'node:path';
-import { CodeGraphManager } from '../../src/config/codegraph-manager.js';
 import { ExperimentManager } from '../../src/harness/experiment-manager.js';
 import { HookConfigRegistry } from '../../src/hooks/registry.js';
-import { HookGenerator } from '../../src/hooks/generator.js';
 import type { Checkpoint } from '../../src/harness/types.js';
 
 /** Skill 信息（IPC 传输用，剥离 content 避免大对象） */
@@ -781,42 +779,20 @@ export class RouteDevEngine {
 
   /** 获取 CodeGraph 引擎状态 */
   getCodeGraphStatus(): { available: boolean; indexed: boolean } {
-    try {
-      const workspace = this.config.codegraph?.workspace ?? this.options.cwd;
-      const available = CodeGraphManager.isAvailable(workspace);
-      return { available, indexed: available };
-    } catch {
-      return { available: false, indexed: false };
-    }
+    // Phase 50 Task 8：CodeGraphManager 已作为死代码移除，返回不可用
+    return { available: false, indexed: false };
   }
 
   /** 安装 CodeGraph 引擎到工作区 */
   async installCodeGraph(): Promise<{ success: boolean; error?: string }> {
-    try {
-      const workspace = this.config.codegraph?.workspace ?? this.options.cwd;
-      const result = await CodeGraphManager.install(workspace);
-      return { success: result.success, error: result.success ? undefined : result.message };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
+    // Phase 50 Task 8：CodeGraphManager 已作为死代码移除
+    return { success: false, error: 'CodeGraph 模块已移除' };
   }
 
   /** 启动 CodeGraph 索引 */
   async startIndexCodeGraph(): Promise<{ success: boolean; error?: string }> {
-    try {
-      const workspace = this.config.codegraph?.workspace ?? this.options.cwd;
-      // feature-detect：CodeGraphManager 未实现 startIndex，若未来添加则调用
-      const manager = CodeGraphManager as unknown as {
-        startIndex?: (ws: string) => Promise<{ success: boolean; message?: string }>;
-      };
-      if (typeof manager.startIndex === 'function') {
-        const result = await manager.startIndex(workspace);
-        return { success: result.success, error: result.success ? undefined : result.message };
-      }
-      return { success: false, error: 'CodeGraph 索引尚未实现' };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
+    // Phase 50 Task 8：CodeGraphManager 已作为死代码移除
+    return { success: false, error: 'CodeGraph 模块已移除' };
   }
 
   /** 列出所有实验分支 */
@@ -906,32 +882,8 @@ export class RouteDevEngine {
   async createHook(
     desc: string,
   ): Promise<{ success: boolean; hookId?: string; error?: string }> {
-    try {
-      const generator = new HookGenerator();
-      const generated = await generator.generate({ description: desc });
-      // 持久化到 registry
-      const configPath = path.join(
-        this.options.cwd,
-        this.config.hooks?.configPath ?? '.routedev/hooks.json',
-      );
-      const registry = new HookConfigRegistry(configPath);
-      await registry.load();
-      const hookId = generated.name;
-      registry.add({
-        id: hookId,
-        name: generated.name,
-        event: generated.event,
-        enabled: true,
-        condition: generated.condition ? { toolName: generated.condition } : undefined,
-        command: generated.command,
-        failBehavior: generated.failBehavior,
-        isTemplate: false,
-      });
-      await registry.save();
-      return { success: true, hookId };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
+    // Phase 50 Task 8：HookGenerator 已作为死代码移除，Hook 生成功能不可用
+    return { success: false, error: 'Hook 生成器已移除' };
   }
 
   /** 删除自定义 Hook */

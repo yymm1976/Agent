@@ -530,24 +530,6 @@ export function renderRepoMap(entries: RepoMapFileEntry[], maxLines = 500): stri
 // ============================================================
 
 /**
- * 加载缓存文件
- * @param cachePath 缓存文件绝对路径
- * @returns 缓存的条目数组，缓存不存在或版本不匹配时返回 null
- */
-export function loadCache(cachePath: string): RepoMapFileEntry[] | null {
-  try {
-    if (!fsSync.existsSync(cachePath)) return null;
-    const raw = fsSync.readFileSync(cachePath, 'utf-8');
-    const data = JSON.parse(raw) as CacheData;
-    if (data.version !== CACHE_VERSION) return null;
-    if (!Array.isArray(data.entries)) return null;
-    return data.entries;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * 保存缓存到文件
  * @param cachePath 缓存文件绝对路径
  * @param entries 条目数组
@@ -668,94 +650,4 @@ export async function incrementalScan(
   saveCache(cachePath, result, newMtimes);
 
   return result.sort((a, b) => a.path.localeCompare(b.path));
-}
-
-// ============================================================
-// Phase 39 Task 1：影响分析（反向 BFS）
-// ============================================================
-
-/**
- * 解析 import 目标到实际文件路径（启发式匹配）
- * @param target 原始 import 路径（如 './bar'、'../utils'）
- * @param importerPath 导入文件的相对路径
- * @returns 规范化后的目标路径（无扩展名）
- */
-function resolveDependencyTarget(target: string, importerPath: string): string {
-  // 相对路径：相对于 importer 所在目录解析
-  let resolved: string;
-  if (target.startsWith('./') || target.startsWith('../')) {
-    const importerDir = path.dirname(importerPath);
-    resolved = path.posix.normalize(path.posix.join(importerDir, target));
-  } else {
-    // 非相对路径（npm 包名等），直接用 target
-    resolved = target;
-  }
-  // 去除扩展名
-  resolved = resolved.replace(/\.\w+$/, '');
-  return resolved;
-}
-
-/**
- * 分析变更影响：从 targetFile 出发，反向 BFS 收集所有间接依赖者
- * @param entries Repo Map 条目数组
- * @param targetFile 目标文件相对路径
- * @param maxDepth 最大搜索深度（默认 3）
- * @returns 受影响文件列表和实际搜索深度
- */
-export function analyzeImpact(
-  entries: RepoMapFileEntry[],
-  targetFile: string,
-  maxDepth: number = 3,
-): { affectedFiles: string[]; depth: number } {
-  // 构建反向依赖图：被依赖文件 → 依赖它的文件列表
-  const reverseDeps = new Map<string, Set<string>>();
-
-  // 构建路径索引（无扩展名 → 完整路径）
-  const pathIndex = new Map<string, string>();
-  for (const entry of entries) {
-    const noExt = entry.path.replace(/\.\w+$/, '');
-    pathIndex.set(noExt, entry.path);
-    pathIndex.set(entry.path, entry.path);
-  }
-
-  for (const entry of entries) {
-    if (!entry.dependencies) continue;
-    for (const dep of entry.dependencies) {
-      const resolved = resolveDependencyTarget(dep.target, entry.path);
-      // 匹配到实际文件
-      const targetPath = pathIndex.get(resolved);
-      if (targetPath) {
-        if (!reverseDeps.has(targetPath)) {
-          reverseDeps.set(targetPath, new Set());
-        }
-        reverseDeps.get(targetPath)!.add(entry.path);
-      }
-    }
-  }
-
-  // 反向 BFS
-  const affected: string[] = [];
-  const visited = new Set<string>([targetFile]);
-  let currentLevel: string[] = [targetFile];
-  let actualDepth = 0;
-
-  for (let depth = 0; depth < maxDepth; depth++) {
-    const nextLevel: string[] = [];
-    for (const file of currentLevel) {
-      const dependents = reverseDeps.get(file);
-      if (!dependents) continue;
-      for (const dep of dependents) {
-        if (!visited.has(dep)) {
-          visited.add(dep);
-          affected.push(dep);
-          nextLevel.push(dep);
-        }
-      }
-    }
-    if (nextLevel.length === 0) break;
-    currentLevel = nextLevel;
-    actualDepth = depth + 1;
-  }
-
-  return { affectedFiles: affected.sort(), depth: actualDepth };
 }

@@ -38,7 +38,7 @@ export interface CompactionResult {
 }
 
 /** 压缩配置 */
-export interface CompactionConfig {
+interface CompactionConfig {
   /** 目标 token 数：每阶段后检查，达到则停止 */
   targetTokens: number;
   /** token 估算函数 */

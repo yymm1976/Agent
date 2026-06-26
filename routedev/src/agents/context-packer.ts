@@ -4,7 +4,7 @@
 
 export type AgentRole = 'researcher' | 'executor' | 'reviewer' | 'custom';
 
-export interface RelevantSymbol {
+interface RelevantSymbol {
   id: string;
   name: string;
   type: string;
@@ -35,14 +35,14 @@ export interface ContextSources {
   parentReasoning?: string;
 }
 
-export interface ContextSection {
+interface ContextSection {
   title: string;
   content: string;
   estimatedTokens: number;
   priority: number; // 1=最高
 }
 
-export interface ContextPackage {
+interface ContextPackage {
   role: AgentRole;
   taskId: string;
   tokenBudget: number;

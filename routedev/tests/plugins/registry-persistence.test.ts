@@ -19,11 +19,29 @@ vi.mock('../../src/utils/paths.js', async (importOriginal) => {
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
 import { AgentMiddlewarePipeline } from '../../src/agent/middleware.js';
-import { defineToolPlugin } from '../../src/plugins/sdk.js';
-import type { Plugin } from '../../src/plugins/types.js';
+import type { Plugin, ToolPlugin, ITool } from '../../src/plugins/types.js';
 import { getAppDataDir } from '../../src/utils/paths.js';
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+
+/**
+ * 内联的 defineToolPlugin 替代（Phase 50 Task 8：sdk.ts 已作为死代码移除）
+ * 创建一个最小可用的 ToolPlugin 实例，用于持久化测试注入
+ */
+function defineToolPlugin(name: string, tools: Array<Partial<ITool>>): ToolPlugin {
+  return {
+    id: `tool-${name}`,
+    name,
+    version: '1.0.0',
+    type: 'tool',
+    enabled: true,
+    async init() {},
+    async destroy() {},
+    getTools() {
+      return tools as ITool[];
+    },
+  };
+}
 
 /** 创建一个空 PluginRegistry */
 function makeRegistry(): PluginRegistry {

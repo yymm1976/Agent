@@ -163,57 +163,8 @@ export function divider(width: number = TYPOGRAPHY.defaultDividerWidth): string 
 }
 
 // ============================================================
-// 错误消息三要素结构
+// 场景等级标签
 // ============================================================
-
-/**
- * 错误消息三要素（Phase 24 Task 7 使用）
- * - what: 发生了什么
- * - why: 可能原因
- * - how: 建议操作
- */
-export interface ErrorMessageContent {
-  what: string;
-  why?: string;
-  how?: string;
-}
-
-/**
- * 格式化错误消息为三行结构
- * 输出格式：
- *   [错误] {what}
- *   可能原因：{why}
- *   建议：{how}
- */
-export function formatErrorMessage(content: ErrorMessageContent): string {
-  const lines = [`[错误] ${content.what}`];
-  if (content.why) lines.push(`可能原因：${content.why}`);
-  if (content.how) lines.push(`建议：${content.how}`);
-  return lines.join('\n');
-}
-
-// ============================================================
-// 场景等级颜色（专用于路由分层显示）
-// ============================================================
-
-/**
- * 路由场景等级对应的颜色
- * 与 StatusBar 的 tierColor 对齐，但通过设计系统统一管理
- */
-export const TIER_COLORS: Record<string, SemanticColor> = {
-  simple: 'success',
-  medium: 'warning',
-  complex: 'accent',
-  reasoning: 'primary',
-};
-
-/**
- * 获取场景等级颜色
- */
-export function getTierColor(tier: string): string {
-  const semantic = TIER_COLORS[tier] ?? 'info';
-  return getColor(semantic);
-}
 
 /**
  * 场景等级中文标签

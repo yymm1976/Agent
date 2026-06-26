@@ -51,7 +51,7 @@ export interface TokenProfileSnapshot {
 /**
  * Profiling 参数
  */
-export interface ProfileParams {
+interface ProfileParams {
   systemPrompt?: string;
   messages: LLMMessage[];
   tools?: unknown[];
@@ -64,7 +64,7 @@ export interface ProfileParams {
 /**
  * 会话汇总统计
  */
-export interface TokenProfileSummary {
+interface TokenProfileSummary {
   /** 本次会话总 LLM 调用次数 */
   totalCalls: number;
   /** 总估算 token 数 */

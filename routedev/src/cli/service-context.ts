@@ -34,6 +34,10 @@ import type { GoalPlan, PlanStep } from '../agent/goal-types.js';
 import type { PluginRegistry } from '../plugins/registry.js';
 import type { CommandRegistry } from './command-registry.js';
 import type { DurableExecutor } from '../agent/durable-executor.js';
+// Phase 50 Task 7：接入 7 个 React 组件所需类型
+import type { ExecutionSnapshot } from '../agent/durable-executor.js';
+import type { TraceTimelineEntry } from './components/TracePanel.js';
+import type { ConfigChange } from './components/ConfigReloadUI.js';
 
 /** 命令与 UI 之间的桥接：命令通过回调影响 UI，不直接持有 React state */
 export interface CommandBridge {
@@ -69,6 +73,17 @@ export interface CommandBridge {
   setOutputStyle: (style: OutputStyle) => void;
   /** 获取当前对话历史（只读，供 /btw 等命令传递上下文给子 Agent） */
   getConversationHistory?: () => LLMMessage[];
+  // ===== Phase 50 Task 7：7 个 React 组件接入回调（可选） =====
+  /** 渲染 ResumePicker 组件（/resume 命令无 planId 且有多个快照时触发） */
+  showResumePicker?: (snapshots: ExecutionSnapshot[]) => void;
+  /** 渲染 TracePanel 组件（/trace view 命令触发） */
+  showTracePanel?: (entries: TraceTimelineEntry[], sessionId?: string) => void;
+  /** 渲染 DiffView 组件（/diff 命令触发） */
+  showDiffView?: (diff: string, fileName?: string) => void;
+  /** 关闭当前激活的面板（Esc 取消时触发） */
+  closeActivePanel?: () => void;
+  /** 通知配置变更（ConfigReloadNotice 组件渲染） */
+  notifyConfigChanges?: (changes: ConfigChange[]) => void;
 }
 
 export interface ServiceContext {

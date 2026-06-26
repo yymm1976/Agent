@@ -24,7 +24,7 @@ import type { CheckpointData, DesignDecision, ErrorAndFix } from './types.js';
 import { logger } from '../../utils/logger.js';
 
 /** ingestToGraph 结果统计 */
-export interface IngestResult {
+interface IngestResult {
   /** 新创建的节点数 */
   created: number;
   /** 合并到已有节点的数量 */

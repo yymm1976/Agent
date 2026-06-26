@@ -2,9 +2,7 @@
 // Phase 40 Task 2：确定性路由规则表
 // 在 LLM 分类之前匹配确定性规则，命中后跳过 LLM 调用，直接走对应 handler
 // 支持三种匹配方式：exact / startsWith / regex
-// 支持用户自定义规则（从 .routedev/deterministic-rules.json 加载）
 
-import { promises as fs } from 'node:fs';
 import { logger } from '../utils/logger.js';
 
 /** 确定性规则匹配方式 */
@@ -136,77 +134,3 @@ function matchesRule(input: string, rule: DeterministicRule): boolean {
   }
 }
 
-// ============================================================
-// 自定义规则加载
-// ============================================================
-
-/**
- * 从 JSON 文件加载用户自定义规则
- * 文件格式：DeterministicRule[]
- * 文件不存在或解析失败时返回空数组（不抛错，降级到仅内置规则）
- *
- * @param rulesPath JSON 文件绝对路径（如 .routedev/deterministic-rules.json）
- */
-export async function loadCustomRules(rulesPath: string): Promise<DeterministicRule[]> {
-  try {
-    const content = await fs.readFile(rulesPath, 'utf-8');
-    const parsed = JSON.parse(content);
-    if (!Array.isArray(parsed)) {
-      logger.warn('Custom deterministic rules file is not an array, ignoring', { rulesPath });
-      return [];
-    }
-    // 基本字段校验：每条规则必须有 id/pattern/matchType/handler
-    const valid: DeterministicRule[] = [];
-    for (const [idx, raw] of parsed.entries()) {
-      if (isValidRule(raw)) {
-        valid.push(raw);
-      } else {
-        logger.warn('Invalid deterministic rule at index, skipping', { rulesPath, index: idx });
-      }
-    }
-    return valid;
-  } catch (err) {
-    // 文件不存在或 JSON 解析失败：静默降级
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') {
-      logger.debug('Custom deterministic rules file not found, using builtin only', { rulesPath });
-    } else {
-      logger.warn('Failed to load custom deterministic rules, using builtin only', {
-        rulesPath,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-    return [];
-  }
-}
-
-/** 规则基本字段校验 */
-function isValidRule(raw: unknown): raw is DeterministicRule {
-  if (typeof raw !== 'object' || raw === null) return false;
-  const r = raw as Record<string, unknown>;
-  return (
-    typeof r.id === 'string' &&
-    typeof r.pattern === 'string' &&
-    (r.matchType === 'exact' || r.matchType === 'regex' || r.matchType === 'startsWith') &&
-    (r.handler === 'direct-response' || r.handler === 'tool-direct' || r.handler === 'command-dispatch')
-  );
-}
-
-// ============================================================
-// 规则合并
-// ============================================================
-
-/**
- * 合并内置规则和自定义规则
- * 策略：内置规则在前，自定义规则在后（自定义规则作为补充，不覆盖内置规则）
- * 自定义规则中与内置规则 id 重复的会被跳过（避免重复匹配）
- *
- * @param builtin 内置规则表
- * @param custom 用户自定义规则表
- * @returns 合并后的规则表
- */
-export function mergeRules(builtin: DeterministicRule[], custom: DeterministicRule[]): DeterministicRule[] {
-  const builtinIds = new Set(builtin.map((r) => r.id));
-  const dedupedCustom = custom.filter((r) => !builtinIds.has(r.id));
-  return [...builtin, ...dedupedCustom];
-}

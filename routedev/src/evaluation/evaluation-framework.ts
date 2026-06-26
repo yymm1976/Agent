@@ -320,11 +320,6 @@ export class EvaluationFramework {
     return arr;
   }
 
-  /** 获取通过阈值（供外部查询） */
-  getPassThreshold(): number {
-    return this.passThreshold;
-  }
-
   /** 获取 Judge 模型版本 */
   getModelVersion(): string {
     return this.modelVersion;

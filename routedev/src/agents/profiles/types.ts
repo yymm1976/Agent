@@ -17,14 +17,14 @@
 export type AgentRole = 'researcher' | 'executor' | 'reviewer' | 'custom';
 
 /** 输出格式 */
-export type AgentOutputFormat =
+type AgentOutputFormat =
   | 'research_report'
   | 'code_change'
   | 'review_report'
   | 'custom';
 
 /** 质疑严重级别 */
-export type ChallengeSeverity = 'blocking' | 'warning';
+type ChallengeSeverity = 'blocking' | 'warning';
 
 // ============================================================
 // AgentProfile

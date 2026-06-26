@@ -2,7 +2,7 @@
 // /goal 命令的目标分解与验证相关类型
 
 /** 单个步骤的状态 */
-export type GoalStepStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
+type GoalStepStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
 
 /** 步骤状态别名（蓝图称 StepStatus，与 GoalStepStatus 等价） */
 export type StepStatus = GoalStepStatus;

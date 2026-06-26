@@ -55,10 +55,10 @@ export interface CompressionEvent {
 }
 
 /** 压缩回调函数类型 */
-export type CompressionCallback = (event: CompressionEvent) => void;
+type CompressionCallback = (event: CompressionEvent) => void;
 
 /** compressEnhanced 方法的选项 */
-export interface CompressEnhancedOptions {
+interface CompressEnhancedOptions {
   /** 最大 token 数（默认为 contextWindow * 0.8） */
   maxTokens?: number;
   /** offload 目录（默认为 .routedev/offloaded/） */
@@ -98,7 +98,7 @@ export class ContextManager {
     this.loadGraphFromDisk();
   }
 
-  /** 设置上下文压缩器（启用 compactIfNeeded 功能） */
+  /** 设置上下文压缩器 */
   setCompactor(compactor: ContextCompactor): void {
     this.compactor = compactor;
   }
@@ -452,57 +452,6 @@ export class ContextManager {
     const filepath = join(offloadDir, filename);
     await writeFile(filepath, content, 'utf-8');
     logger.debug('Tool output offloaded', { filepath, size: content.length });
-  }
-
-  /**
-   * 如果上下文超过阈值，使用 ContextCompactor 进行渐进压缩
-   * 需要先通过 setCompactor() 设置压缩器，否则原样返回
-   * @param messages 当前消息列表
-   * @returns 压缩后的消息列表及压缩信息
-   */
-  async compactIfNeeded(
-    messages: LLMMessage[],
-  ): Promise<{
-    messages: LLMMessage[];
-    compacted: boolean;
-    maxStageReached?: 1 | 2 | 3 | 4 | 5;
-    beforeTokens?: number;
-    afterTokens?: number;
-  }> {
-    // 未设置压缩器 → 原样返回
-    if (!this.compactor) {
-      return { messages, compacted: false };
-    }
-
-    // 估算当前 token 数（使用中文感知的 estimateTokens 函数）
-    const estimatedTokens = messages.reduce((sum, msg) => {
-      const text = typeof msg.content === 'string'
-        ? msg.content
-        : Array.isArray(msg.content)
-          ? msg.content.map((p) => (p.type === 'text' ? p.text : p.type === 'tool_result' ? p.content : '')).join('')
-          : '';
-      return sum + estimateTokens(text);
-    }, 0);
-
-    // 未超阈值 → 不压缩
-    if (!this.shouldCompress(messages.length, estimatedTokens)) {
-      return { messages, compacted: false };
-    }
-
-    // 调用渐进压缩管线
-    const { messages: compacted, result } = await this.compactor.compact(messages);
-    logger.info('Context compacted by ContextCompactor', {
-      beforeTokens: result.beforeTokens,
-      afterTokens: result.afterTokens,
-      maxStageReached: result.maxStageReached,
-    });
-    return {
-      messages: compacted,
-      compacted: true,
-      maxStageReached: result.maxStageReached,
-      beforeTokens: result.beforeTokens,
-      afterTokens: result.afterTokens,
-    };
   }
 
   /** 获取当前 checkpoint 数据 */

@@ -4,12 +4,19 @@
 // Phase 0c Task 3：装配逻辑收敛到 createAppDependencies + createServiceContext，App.tsx 只负责 React 状态和 UI
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Box } from 'ink';
+import { Box, Text } from 'ink';
 import { ChatView, type ChatMessage } from './components/ChatView.js';
 import { StatusBar } from './components/StatusBar.js';
 import { InputBox } from './components/InputBox.js';
 import { StepEditor } from './components/StepEditor.js';
 import { ConfirmDialog } from './components/ConfirmDialog.js';
+// Phase 50 Task 7：接入 7 个 React 组件
+import { BranchSwitcher } from './components/BranchSwitcher.js';
+import { ResumePicker } from './components/ResumePicker.js';
+import { ProgressBar } from './components/ProgressBar.js';
+import { TracePanel, type TraceTimelineEntry } from './components/TracePanel.js';
+import { DiffView } from './components/DiffView.js';
+import { ConfigReloadNotice, generateReloadNotices, type ConfigChange } from './components/ConfigReloadUI.js';
 import type { ScenarioTier, LLMMessage } from '../router/types.js';
 import type { LLMClientManager } from '../router/llm/index.js';
 import type { ScenarioClassifier } from '../router/classifier.js';
@@ -19,6 +26,7 @@ import type { AppConfig, AutonomyMode } from '../config/schema.js';
 import { getSystemPrompt } from '../agent/prompts.js';
 import type { GoalPlan, PlanStep } from '../agent/goal-types.js';
 import type { WorkMode } from '../agent/work-modes.js';
+import type { ExecutionSnapshot } from '../agent/durable-executor.js';
 import { logger } from '../utils/logger.js';
 import { CommandRegistry } from './command-registry.js';
 import { loadCustomCommands } from './custom-commands.js';
@@ -101,6 +109,20 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   const [idleHintShown, setIdleHintShown] = useState(false);
   // Phase 34：outputStyle 提升到 UI 状态，支持运行时切换
   const [outputStyle, setOutputStyleState] = useState(config.ui.outputStyle);
+  // Phase 50 Task 7：7 个 React 组件接入状态
+  // - activePanel: 当前激活的命令面板（/resume | /trace | /diff 触发）
+  // - goalProgress: goal 执行进度（ProgressBar 组件用）
+  // - configReloadChanges: 配置变更通知（ConfigReloadNotice 组件用）
+  // - showBranchSwitcher: 是否显示分支切换器
+  const [activePanel, setActivePanel] = useState<
+    | { type: 'resume'; snapshots: ExecutionSnapshot[] }
+    | { type: 'trace'; entries: TraceTimelineEntry[]; sessionId?: string }
+    | { type: 'diff'; diff: string; fileName?: string }
+    | null
+  >(null);
+  const [goalProgress, setGoalProgress] = useState<{ current: number; total: number } | null>(null);
+  const [configReloadChanges, setConfigReloadChanges] = useState<{ changes: ConfigChange[]; timestamp: Date } | null>(null);
+  const [showBranchSwitcher, setShowBranchSwitcher] = useState(false);
 
   // ===== refs：UI 状态 =====
   const conversationHistoryRef = useRef<LLMMessage[]>([]);
@@ -185,6 +207,28 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     getState: () => ({ currentModel, currentTier, isDegraded, autonomyMode, conversationHistoryLength: conversationHistoryRef.current.length, mcpConnectedCount: deps.mcpManager.connectedCount, mcpTotalToolCount: deps.mcpManager.totalToolCount }),
     setOutputStyle: (style) => { setOutputStyleState(style); configRef.current.ui.outputStyle = style; },
     getConversationHistory: () => conversationHistoryRef.current.slice(),
+    // Phase 50 Task 7：组件接入回调——命令触发对应 React 组件渲染
+    showResumePicker: (snapshots: ExecutionSnapshot[]) => {
+      if (configRef.current.ui.components?.resumePicker !== false) {
+        setActivePanel({ type: 'resume', snapshots });
+      }
+    },
+    showTracePanel: (entries: TraceTimelineEntry[], sessionId?: string) => {
+      if (configRef.current.ui.components?.tracePanel === true) {
+        setActivePanel({ type: 'trace', entries, sessionId });
+      }
+    },
+    showDiffView: (diff: string, fileName?: string) => {
+      if (configRef.current.ui.components?.diffView !== false) {
+        setActivePanel({ type: 'diff', diff, fileName });
+      }
+    },
+    closeActivePanel: () => setActivePanel(null),
+    notifyConfigChanges: (changes: ConfigChange[]) => {
+      if (configRef.current.ui.components?.configReloadNotice !== false && changes.length > 0) {
+        setConfigReloadChanges({ changes, timestamp: new Date() });
+      }
+    },
   };
   commandBridgeRef.current = commandBridge; // Phase 21：供 PermissionEngine 中间件使用
 
@@ -208,6 +252,10 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     profiler: deps.profiler ?? undefined,
     // Phase 32 Task 1.4：接入 CompletionGate（独立代码验证门）
     completionGate: deps.completionGate,
+    // Phase 50 Task 1：接入 goalIntegration 实例（未开启时为 null，createGoalRunner 内部按 falsy 跳过）
+    goalAuditor: deps.goalAuditor ?? undefined,
+    goalPersistence: deps.goalPersistence ?? undefined,
+    goalPromptBuilder: deps.goalPromptBuilder ?? undefined,
   }));
 
   // ChatRunner（非命令聊天执行）
@@ -293,9 +341,16 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     const onConfigReload = () => {
       try {
         const fresh = loadConfig() as unknown as Record<string, unknown>;
-        handleConfigReload(configRef.current as unknown as Record<string, unknown>, fresh).forEach((m: string) =>
+        const oldConfig = configRef.current as unknown as Record<string, unknown>;
+        // Phase 50 Task 7：保留原有文本通知（兼容旧 UI），同时触发 ConfigReloadNotice 组件渲染
+        handleConfigReload(oldConfig, fresh).forEach((m: string) =>
           setMessages(p => [...p, { id: nextId(), role: 'system', content: m }]),
         );
+        // 触发 ConfigReloadNotice 组件渲染（受 configReloadNotice 开关控制）
+        const notices = generateReloadNotices(oldConfig, fresh);
+        if (notices.length > 0) {
+          commandBridge.notifyConfigChanges?.(notices);
+        }
         configRef.current = fresh as unknown as typeof config;
       } catch {
         setMessages(p => [...p, { id: nextId(), role: 'system', content: '[配置] 配置已变更，将在下次请求时生效。' }]);
@@ -379,6 +434,42 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     useEffect(() => {
       initPluginSystem(deps.pluginRegistry).catch(err => logger.warn('Plugin init failed', { error: String(err) }));
     }, [deps]);
+
+    // Phase 50 Task 7：监听 currentPlanRef 变化，更新 ProgressBar 进度
+    // goal-runner 在每步完成时调用 addSystemMessage(renderGoalProgressText(plan))，
+    // 这里通过轮询 currentPlanRef 同步 goalProgress 状态供 ProgressBar 组件使用
+    useEffect(() => {
+      const interval = setInterval(() => {
+        const plan = currentPlanRef.current;
+        if (!plan || configRef.current.ui.components?.progressBar === false) {
+          if (goalProgress !== null) setGoalProgress(null);
+          return;
+        }
+        if (plan.status === 'executing' && plan.steps.length > 0) {
+          const completed = plan.steps.filter(s => s.status === 'completed').length;
+          setGoalProgress({ current: completed, total: plan.steps.length });
+        } else if (plan.status === 'completed' || plan.status === 'failed') {
+          // 任务结束时清理进度条
+          if (goalProgress !== null) setGoalProgress(null);
+        }
+      }, 500);
+      return () => clearInterval(interval);
+    }, [goalProgress]);
+
+    // Phase 50 Task 7：BranchSwitcher 接入——有分支时显示分支切换器
+    // 通过轮询 branchManager.listBranches() 检测分支创建/删除
+    useEffect(() => {
+      if (configRef.current.ui.components?.branchSwitcher === false) {
+        setShowBranchSwitcher(false);
+        return;
+      }
+      const interval = setInterval(() => {
+        const branches = deps.branchManager.listBranches();
+        const shouldShow = branches.length > 1; // 仅当有多个分支时显示
+        setShowBranchSwitcher(prev => prev !== shouldShow ? shouldShow : prev);
+      }, 2000);
+      return () => clearInterval(interval);
+    }, [deps.branchManager]);
 
     // Phase 25：空闲提示——等待输入超过配置秒数后显示一次
     useEffect(() => {
@@ -753,7 +844,51 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   return (
     <Box flexDirection="column" height="100%">
       <Box flexDirection="column" flexGrow={1} paddingX={1}>
-        <ChatView messages={messages} outputStyle={outputStyle} />
+        <ChatView
+          messages={messages}
+          outputStyle={outputStyle}
+          enableDisclosure={configRef.current.ui.components?.disclosureLevel !== false}
+        />
+        {/* Phase 50 Task 7：ConfigReloadNotice 配置变更通知卡片 */}
+        {configReloadChanges && (
+          <ConfigReloadNotice changes={configReloadChanges.changes} timestamp={configReloadChanges.timestamp} />
+        )}
+        {/* Phase 50 Task 7：ProgressBar goal 执行进度 */}
+        {goalProgress && (
+          <Box flexDirection="column" paddingX={1} marginTop={0}>
+            <Text>{' '}目标进度</Text>
+            <ProgressBar current={goalProgress.current} total={goalProgress.total} />
+          </Box>
+        )}
+        {/* Phase 50 Task 7：BranchSwitcher 分支树可视化 */}
+        {showBranchSwitcher && (
+          <BranchSwitcher
+            branches={deps.branchManager.listBranches()}
+            activeBranchId={deps.branchManager.getActiveBranchId()}
+          />
+        )}
+        {/* Phase 50 Task 7：命令触发的交互式面板（/resume | /trace | /diff） */}
+        {activePanel?.type === 'resume' && (
+          <ResumePicker
+            snapshots={activePanel.snapshots}
+            onResume={(planId) => {
+              setActivePanel(null);
+              setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `🔄 恢复执行: ${planId}（请通过 /resume ${planId} 完成恢复）` }]);
+            }}
+            onCancel={() => setActivePanel(null)}
+          />
+        )}
+        {activePanel?.type === 'trace' && (
+          <TracePanel entries={activePanel.entries} sessionId={activePanel.sessionId} />
+        )}
+        {activePanel?.type === 'diff' && (
+          <DiffView
+            diff={activePanel.diff}
+            fileName={activePanel.fileName}
+            onApplyDiff={() => { setActivePanel(null); }}
+            onRejectDiff={() => { setActivePanel(null); }}
+          />
+        )}
         {editingPlan && <StepEditor plan={editingPlan} outputStyle={outputStyle} onConfirm={(s) => { pendingPlanEditRef.current?.resolve(s); pendingPlanEditRef.current = null; setEditingPlan(null); }} onCancel={() => { pendingPlanEditRef.current?.resolve(null); pendingPlanEditRef.current = null; setEditingPlan(null); }} />}
         {confirmDialog && (
           <ConfirmDialog

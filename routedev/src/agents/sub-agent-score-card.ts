@@ -10,7 +10,7 @@
 //   - 增加 redundantReads / challengeCount / contractViolations / deliverableQuality
 
 /** 父 Agent 满意度 */
-export type ParentSatisfaction = 'accepted' | 'rejected' | 'edited' | 'pending';
+type ParentSatisfaction = 'accepted' | 'rejected' | 'edited' | 'pending';
 
 /** 单个子 Agent 的评分卡 */
 export interface SubAgentScoreCard {
@@ -30,7 +30,7 @@ export interface SubAgentScoreCard {
 }
 
 /** 聚合统计结果 */
-export interface SubAgentAggregateStats {
+interface SubAgentAggregateStats {
   totalAgents: number;
   totalTokens: number;
   avgContextTokens: number;

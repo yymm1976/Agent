@@ -26,7 +26,7 @@ export interface DreamResult {
   compactionStages?: number[];
 }
 
-export interface DreamOptions {
+interface DreamOptions {
   llmClient: ILLMClient;
   modelId: string;
   /** 整理阈值（记忆字段项数超过此值时触发 LLM 整理） */

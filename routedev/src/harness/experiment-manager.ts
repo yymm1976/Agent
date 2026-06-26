@@ -106,7 +106,7 @@ export interface AdoptOptions {
 
 /**
  * ExperimentRunner 的最小接口（供 ExperimentManager 依赖，避免循环导入）
- * 实际实现见 experiment-runner.ts
+ * Phase 50 Task 8：experiment-runner.ts 已作为死代码移除，此接口保留供未来实现注入
  */
 export interface ExperimentRunnerLike {
   runInWorktree(
