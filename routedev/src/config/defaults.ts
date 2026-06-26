@@ -113,6 +113,8 @@ export const DEFAULT_CONFIG: AppConfig = {
     autoConnect: true,
     autoReconnect: true,
     connectTimeout: 30000,
+    // Phase 48 Task 4：默认会话生命周期策略（Claude Code .mcp.json 未声明时使用 per-session）
+    lifecyclePolicy: 'per-session',
   },
   prompts: {
     projectOverrides: true,
@@ -388,5 +390,28 @@ export const DEFAULT_CONFIG: AppConfig = {
     filenames: ['AGENTS.md', 'AGENTS.local.md', 'AGENTS.override.md'],
     fallbackFilenames: ['CLAUDE.md', 'CLAUDE.local.md'],
     maxBytes: 32768, // 32KiB，对齐 Codex 上限
+  },
+  // Phase 48 Task 5：Macro 配置（轻量工作流宏，通过 `!` 触发器引用）
+  macros: {
+    enabled: true,
+    dir: '.routedev/macros',
+  },
+  // Phase 48 Task 1：引用系统配置（CiteManager + CiteResolver）
+  // 默认开启引用系统，最多 10 个标签，text 引用上限 2000 字符（陷阱 #127）
+  cite: {
+    enabled: true,
+    maxTags: 10,
+    maxTextCiteLength: 2000,
+    maxPreflightTokens: 8000,
+    autoRunPreflight: true,
+  },
+  // Phase 48 Task 2/3：外部生态导入配置
+  // 默认全部「不自动启用」——社区来源需用户确认（陷阱 #129）
+  // Codex Instructions 默认走项目记忆模式，避免 system prompt 过长
+  import: {
+    anthropicSkillsAutoEnable: false,
+    claudePluginAutoEnable: false,
+    codexInstructions: 'project_memory',
+    codexMemoryTag: 'codex-instruction',
   },
 };

@@ -303,6 +303,19 @@ export type UpdatesConfig = z.infer<typeof UpdatesConfigSchema>;
 
 // --- MCP 配置 ---
 
+/**
+ * MCP 传输协议（Phase 48 Task 4 扩展）
+ * 蓝图要求覆盖 APIX / SonettoHere 已验证的全部传输：
+ *   - stdio：Claude Code / SonettoHere 基础类型
+ *   - http：Claude Code / SonettoHere HTTP(SSE) 类型
+ *   - sse：独立 SSE 传输（SonettoHere 验证）
+ *   - streamable_http：MCP 2025-03-26 规范
+ *   - websocket：SonettoHere 验证
+ * 陷阱 #137：导入前必须校验 transport 是否被当前运行时支持，不支持的明确禁用
+ */
+export const MCPTransportSchema = z.enum(['stdio', 'http', 'sse', 'streamable_http', 'websocket']);
+export type MCPTransport = z.infer<typeof MCPTransportSchema>;
+
 export const MCPServerConfigSchema = z.discriminatedUnion('transport', [
   z.object({
     transport: z.literal('stdio'),
@@ -316,7 +329,29 @@ export const MCPServerConfigSchema = z.discriminatedUnion('transport', [
     url: z.string().url(),
     headers: z.record(z.string(), z.string()).optional(),
   }),
+  // Phase 48 Task 4：SSE 独立传输（与 http 区分：http 是请求-响应，sse 是单向流）
+  z.object({
+    transport: z.literal('sse'),
+    url: z.string().url(),
+    headers: z.record(z.string(), z.string()).optional(),
+  }),
+  // Phase 48 Task 4：MCP 2025-03-26 Streamable HTTP（双向流式 HTTP）
+  z.object({
+    transport: z.literal('streamable_http'),
+    url: z.string().url(),
+    headers: z.record(z.string(), z.string()).optional(),
+  }),
+  // Phase 48 Task 4：WebSocket 传输
+  z.object({
+    transport: z.literal('websocket'),
+    url: z.string().url(),
+    headers: z.record(z.string(), z.string()).optional(),
+  }),
 ]);
+
+/** MCP 会话生命周期策略（Phase 48 Task 4，受 APIX 启发） */
+export const MCPLifecyclePolicySchema = z.enum(['per-call', 'per-session', 'persistent']);
+export type MCPLifecyclePolicy = z.infer<typeof MCPLifecyclePolicySchema>;
 
 export const MCPServerEntrySchema = z.object({
   id: z.string(),
@@ -324,6 +359,10 @@ export const MCPServerEntrySchema = z.object({
   enabled: z.boolean().default(true),
   config: MCPServerConfigSchema,
   connectTimeout: z.number().optional(),
+  /** Phase 48 Task 4：会话生命周期策略（未指定时使用全局 mcp.lifecyclePolicy） */
+  lifecyclePolicy: MCPLifecyclePolicySchema.optional(),
+  /** 来源标注（导入时填写，便于在 UI 中显示来源） */
+  origin: z.string().optional(),
 });
 
 export const MCPConfigSchema = z.object({
@@ -333,6 +372,8 @@ export const MCPConfigSchema = z.object({
   autoReconnect: z.boolean().default(true),
   /** 连接超时（毫秒），全局默认值 */
   connectTimeout: z.number().int().min(1000).default(30000),
+  /** Phase 48 Task 4：默认会话生命周期策略（Claude Code .mcp.json 未声明时使用 per-session） */
+  lifecyclePolicy: MCPLifecyclePolicySchema.default('per-session'),
 });
 
 export type MCPConfig = z.infer<typeof MCPConfigSchema>;
@@ -1022,6 +1063,32 @@ export const DiscoveryConfigSchema = z.preprocess((v) => v ?? {}, z.object({
 }));
 export type DiscoveryConfig = z.infer<typeof DiscoveryConfigSchema>;
 
+// --- Phase 48 Task 1：引用系统配置 ---
+
+/**
+ * 引用系统配置（Phase 48 Task 1）
+ * 控制 CiteManager 与 CiteResolver 的行为：启用状态、标签上限、文本截断、preflight token 预算
+ *
+ * - enabled：是否启用引用系统
+ * - maxTags：单次最多引用标签数（陷阱 #126：超过时折叠显示，避免输入框被挤压）
+ * - maxTextCiteLength：text 引用最大字符数（陷阱 #127：超过时提示用户而非静默截断）
+ * - maxPreflightTokens：preflight 工具调用结果的 token 上限
+ * - autoRunPreflight：是否自动执行 preflight 工具（陷阱 #135：自动执行也需经过 PermissionEngine）
+ */
+export const CiteConfigSchema = z.object({
+  /** 是否启用引用系统 */
+  enabled: z.boolean().default(true),
+  /** 单次最多引用标签数（1-20，默认 10） */
+  maxTags: z.number().int().min(1).max(20).default(10),
+  /** text 引用最大字符数（100-10000，默认 2000） */
+  maxTextCiteLength: z.number().int().min(100).max(10000).default(2000),
+  /** preflight 工具调用结果的 token 上限（1000-50000，默认 8000） */
+  maxPreflightTokens: z.number().int().min(1000).max(50000).default(8000),
+  /** 是否自动执行 preflight 工具 */
+  autoRunPreflight: z.boolean().default(true),
+});
+export type CiteConfigType = z.infer<typeof CiteConfigSchema>;
+
 // --- Phase 47 Task 8：项目文档（AGENTS.md / CLAUDE.md）多文件名 fallback 配置 ---
 
 /**
@@ -1045,6 +1112,62 @@ export const ProjectDocConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   maxBytes: z.number().int().min(1024).default(32768),
 }));
 export type ProjectDocConfig = z.infer<typeof ProjectDocConfigSchema>;
+
+// --- Phase 48 Task 5：Macro 配置 ---
+
+/**
+ * Macro 配置（Phase 48 Task 5）
+ * 控制轻量工作流宏的启用与存储路径
+ * Macro 是比 Skill 更轻量的流程指引，纯 Markdown，通过 `!` 触发器引用
+ */
+export const MacrosConfigSchema = z.object({
+  /** 是否启用 Macro 系统 */
+  enabled: z.boolean().default(true),
+  /** Macro 目录（相对于工作目录，默认 .routedev/macros） */
+  dir: z.string().default('.routedev/macros'),
+});
+export type MacrosConfig = z.infer<typeof MacrosConfigSchema>;
+
+// --- Phase 48 Task 2/3：外部生态导入配置 ---
+
+/**
+ * Codex Instructions 导入模式（Phase 48 Task 3）
+ *   - system_prompt：追加到 PromptManager 的项目级 system prompt
+ *   - project_memory：按段落写入项目记忆，打 codex-instruction 标签
+ *   - ignore：记录用户选择，不再提示（除非文件更新）
+ * 陷阱 #130：导入时必须提示用户选择，不能默默覆盖已有记忆
+ */
+export const CodexInstructionsModeSchema = z.enum(['system_prompt', 'project_memory', 'ignore']);
+export type CodexInstructionsMode = z.infer<typeof CodexInstructionsModeSchema>;
+
+/**
+ * 外部生态导入配置（Phase 48 Task 2/3）
+ * 控制 Anthropic Skills / Claude Code Plugin / Codex Instructions 的导入行为
+ *
+ * 陷阱 #129：社区来源的 Hook/Skill 默认不直接启用，需用户确认或沙箱试用
+ * 陷阱 #132：未映射的工具必须禁用并提示，不能静默失败
+ */
+export const ImportConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /**
+   * 是否自动启用 anthropic_skills/ 目录下扫描到的 Skill
+   * 默认 false：社区来源默认不启用，需用户在设置页或 /plugin 命令中确认
+   */
+  anthropicSkillsAutoEnable: z.boolean().default(false),
+  /**
+   * 是否自动启用导入的 Claude Code Plugin
+   * 默认 false：plugin 中的 Hook/MCP 进入沙箱试用模式
+   */
+  claudePluginAutoEnable: z.boolean().default(false),
+  /**
+   * Codex Instructions 导入模式（默认 project_memory，避免 system prompt 过长）
+   */
+  codexInstructions: CodexInstructionsModeSchema.default('project_memory'),
+  /**
+   * Codex Instructions 导入后存放的标签（项目记忆模式用）
+   */
+  codexMemoryTag: z.string().default('codex-instruction'),
+}));
+export type ImportConfig = z.infer<typeof ImportConfigSchema>;
 
 // --- 全局配置（完整 schema） ---
 // 顶层 AppConfig：所有配置的根节点
@@ -1117,5 +1240,11 @@ export const AppConfigSchema = z.object({
   discovery: DiscoveryConfigSchema,
   // Phase 47 Task 8：项目文档配置（AGENTS.md / CLAUDE.md 多文件名 fallback）
   projectDoc: ProjectDocConfigSchema,
+  // Phase 48 Task 1：引用系统配置（CiteManager + CiteResolver）
+  cite: z.preprocess((v) => v ?? {}, CiteConfigSchema),
+  // Phase 48 Task 5：Macro 配置（轻量工作流宏，通过 `!` 触发器引用）
+  macros: z.preprocess((v) => v ?? {}, MacrosConfigSchema),
+  // Phase 48 Task 2/3：外部生态导入配置（Anthropic Skills / Claude Plugin / Codex）
+  import: ImportConfigSchema,
 });
 export type AppConfig = z.infer<typeof AppConfigSchema>;

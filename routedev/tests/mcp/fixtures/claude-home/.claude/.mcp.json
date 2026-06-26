@@ -1,0 +1,11 @@
+{
+  "user-level-server": {
+    "type": "http",
+    "url": "https://user.mcp.example.com/api"
+  },
+  "user-stdio": {
+    "type": "stdio",
+    "command": "python",
+    "args": ["-m", "mcp_server"]
+  }
+}

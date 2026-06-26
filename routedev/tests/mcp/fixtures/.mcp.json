@@ -1,0 +1,33 @@
+{
+  "http-server": {
+    "type": "http",
+    "url": "https://mcp.example.com/api",
+    "headers": { "Authorization": "Bearer token123" },
+    "timeout": 60000
+  },
+  "stdio-server": {
+    "type": "stdio",
+    "command": "node",
+    "args": ["server.js", "--port", "3000"],
+    "env": { "NODE_ENV": "production" },
+    "cwd": "/tmp"
+  },
+  "sse-server": {
+    "type": "sse",
+    "url": "https://mcp.example.com/sse",
+    "headers": { "X-Api-Key": "abc" }
+  },
+  "streamable-server": {
+    "type": "streamable_http",
+    "url": "https://mcp.example.com/stream"
+  },
+  "websocket-server": {
+    "type": "websocket",
+    "url": "wss://mcp.example.com/ws"
+  },
+  "persistent-server": {
+    "type": "http",
+    "url": "https://mcp.example.com/persistent",
+    "persistent": true
+  }
+}
