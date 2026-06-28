@@ -324,6 +324,9 @@ export class WorkerExecutor {
     // 移除原"profileManager 注入则强制清空 workerHistory"的 detached session 逻辑
     // - tail 策略：保留 filteredHistory 尾部 maxMessages 条（让 Worker 拿到近期对话上下文）
     // - 其他策略或禁用：回退到空数组（保持原 profileManager 注入时的隔离语义）
+    // 注意：非 tail 策略下 Worker 失去历史上下文，是 Phase 55 为换取 prompt cache 命中率的故意取舍
+    // 默认配置（DEFAULT_WORKER_CONTEXT_CONFIG）使用 tail 策略，filterContext 已 slice(-maxMessages)，
+    // 故默认配置下 workerHistory 与原 filteredHistory 内容等价；非默认配置需 Task 15 集成验证
     // 配合 systemBlocks 固定前缀缓存，不同 Worker 共享同一份 baseSystemPrompt 命中 Anthropic prompt cache
     const workerHistory = (this.workerContextConfig.enabled && this.workerContextConfig.strategy === 'tail')
       ? filteredHistory.slice(-this.workerContextConfig.maxMessages)

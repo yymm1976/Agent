@@ -50,7 +50,8 @@ import type { BudgetMonitor } from './budget-monitor.js';
 
 /**
  * Phase 55：结构化 system block（支持 Anthropic cache_control: ephemeral）
- * 单一数据源：其他文件（types.ts / anthropic.ts / worker-executor.ts）均从此处 import 使用
+ * agent 层单一数据源：worker-executor.ts 从此处 import 使用
+ * 注意：src/router/types.ts 因避免 router→agent 反向依赖，使用结构等价的 inline 类型
  * 字段结构与 Anthropic SDK 的 TextBlockParam 兼容（type/text/cache_control）
  */
 export interface SystemBlock {
