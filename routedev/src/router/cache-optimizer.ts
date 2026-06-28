@@ -84,6 +84,20 @@ export class CacheStatsTracker {
   private turnCacheHit = 0;
   /** 单轮缓存未命中 token 数 */
   private turnCacheMiss = 0;
+  /**
+   * Phase 55：Worker 级别缓存统计（按 goalId 聚合）
+   * 每次 Worker 执行完成后调用 recordWorkerCacheHit 追加一条记录
+   * 通过 getGoalCacheStats(goalId) 按目标聚合查询命中率
+   */
+  private workerStats: Array<{
+    goalId: string;
+    workerId: string;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    inputTokens: number;
+    hitRate: number;
+    timestamp: number;
+  }> = [];
 
   /**
    * 记录一次 API 调用的缓存统计
@@ -154,5 +168,92 @@ export class CacheStatsTracker {
       miss: this.sessCacheMiss,
       total: this.sessCacheHit + this.sessCacheMiss,
     };
+  }
+
+  /**
+   * Phase 55：记录单个 Worker 的缓存命中（按 goalId 聚合）
+   *
+   * @param goalId 目标 ID（用于聚合查询）
+   * @param workerId Worker 标识（如 `worker-step-1-coder`）
+   * @param cacheReadTokens 缓存读取 token 数（命中）
+   * @param cacheCreationTokens 缓存创建 token 数（未命中,新写入）
+   * @param inputTokens 输入 token 总数
+   */
+  recordWorkerCacheHit(
+    goalId: string,
+    workerId: string,
+    cacheReadTokens: number,
+    cacheCreationTokens: number,
+    inputTokens: number,
+  ): void {
+    // 命中率 = 缓存读取 / (缓存读取 + 缓存创建 + 输入)
+    // 注:inputTokens 包含 cacheReadTokens + cacheCreationTokens + 新内容,此处用全量分母
+    const total = cacheReadTokens + cacheCreationTokens + inputTokens;
+    const hitRate = total > 0 ? cacheReadTokens / total : 0;
+    this.workerStats.push({
+      goalId,
+      workerId,
+      cacheReadTokens,
+      cacheCreationTokens,
+      inputTokens,
+      hitRate,
+      timestamp: Date.now(),
+    });
+    // I-8 修复：无界集合淘汰,避免长期运行内存泄漏
+    if (this.workerStats.length > 1000) this.workerStats.shift();
+    logger.debug('Worker cache stats recorded', {
+      goalId,
+      workerId,
+      cacheReadTokens,
+      cacheCreationTokens,
+      inputTokens,
+      hitRate: hitRate.toFixed(3),
+    });
+  }
+
+  /**
+   * Phase 55：按 goalId 聚合缓存命中率
+   *
+   * @param goalId 目标 ID
+   * @returns 聚合统计：Worker 数量、平均命中率、每个 Worker 的命中率
+   */
+  getGoalCacheStats(goalId: string): {
+    workerCount: number;
+    avgHitRate: number;
+    hitRatePerWorker: Array<{ workerId: string; hitRate: number }>;
+  } {
+    const records = this.workerStats.filter(s => s.goalId === goalId);
+    if (records.length === 0) {
+      return { workerCount: 0, avgHitRate: 0, hitRatePerWorker: [] };
+    }
+    const avgHitRate = records.reduce((sum, r) => sum + r.hitRate, 0) / records.length;
+    const hitRatePerWorker = records.map(r => ({ workerId: r.workerId, hitRate: r.hitRate }));
+    return {
+      workerCount: records.length,
+      avgHitRate,
+      hitRatePerWorker,
+    };
+  }
+
+  /**
+   * Phase 55：获取所有 Worker 缓存统计（验证脚本用）
+   */
+  getWorkerStats(): Array<{
+    goalId: string;
+    workerId: string;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    inputTokens: number;
+    hitRate: number;
+    timestamp: number;
+  }> {
+    return [...this.workerStats];
+  }
+
+  /**
+   * Phase 55：重置 Worker 统计（验证脚本用）
+   */
+  resetWorkerStats(): void {
+    this.workerStats = [];
   }
 }

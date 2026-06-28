@@ -15,6 +15,11 @@ export interface StepDependency {
   assignedRole: WorkerRole;
   /** 可能涉及的文件（从步骤描述推断） */
   likelyFiles: string[];
+  /**
+   * 验收标准（Phase 54 Task 3：从 GoalStep.acceptanceCriteria 传递）
+   * 供协作剧场面板展示与 GoalAuditor 三层验收使用
+   */
+  acceptanceCriteria?: string;
 }
 
 /** 执行计划（Orchestrator 输出） */
@@ -89,6 +94,10 @@ export interface WorkerResult {
   tokenUsage: {
     inputTokens: number;
     outputTokens: number;
+    /** Phase 55：缓存读取 token 数（命中） */
+    cacheReadTokens?: number;
+    /** Phase 55：缓存创建 token 数（未命中,新写入） */
+    cacheCreationTokens?: number;
   };
 }
 

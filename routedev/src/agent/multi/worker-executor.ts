@@ -336,6 +336,9 @@ export class WorkerExecutor {
     let capturedModifiedFiles: string[] = [];
     let capturedInputTokens = 0;
     let capturedOutputTokens = 0;
+    // Phase 55 Task 15：缓存字段提取（done 事件中提取）
+    let capturedCacheReadTokens = 0;
+    let capturedCacheCreationTokens = 0;
     // C4 修复：跟踪尝试次数，首次调用为 0，重试时递增
     let attemptNumber = 0;
 
@@ -395,6 +398,9 @@ export class WorkerExecutor {
             if (event.usage) {
               capturedInputTokens = event.usage.inputTokens;
               capturedOutputTokens = event.usage.outputTokens;
+              // Phase 55 Task 15：提取缓存字段（可选,部分模型支持）
+              capturedCacheReadTokens = event.usage.cacheReadInputTokens ?? 0;
+              capturedCacheCreationTokens = event.usage.cacheCreationInputTokens ?? 0;
             }
             break;
         }
@@ -419,13 +425,31 @@ export class WorkerExecutor {
     }
 
     if (outcome.success) {
+      // Phase 55 Task 15：缓存命中率日志（开发时观察用）
+      const totalCacheTokens = capturedCacheReadTokens + capturedCacheCreationTokens + capturedInputTokens;
+      const hitRate = totalCacheTokens > 0 ? capturedCacheReadTokens / totalCacheTokens : 0;
+      if (capturedCacheReadTokens > 0 || capturedCacheCreationTokens > 0) {
+        logger.info('Worker cache stats', {
+          workerId,
+          stepId: task.stepId,
+          cacheReadTokens: capturedCacheReadTokens,
+          cacheCreationTokens: capturedCacheCreationTokens,
+          inputTokens: capturedInputTokens,
+          hitRate: hitRate.toFixed(3),
+        });
+      }
       return {
         stepId: task.stepId,
         role: task.role,
         success: true,
         conclusion: outcome.result,
         modifiedFiles: capturedModifiedFiles,
-        tokenUsage: { inputTokens: capturedInputTokens, outputTokens: capturedOutputTokens },
+        tokenUsage: {
+          inputTokens: capturedInputTokens,
+          outputTokens: capturedOutputTokens,
+          cacheReadTokens: capturedCacheReadTokens,
+          cacheCreationTokens: capturedCacheCreationTokens,
+        },
       };
     }
 
@@ -443,7 +467,13 @@ export class WorkerExecutor {
       success: false,
       conclusion: `执行失败: ${outcome.error.message}`,
       modifiedFiles: [],
-      tokenUsage: { inputTokens: capturedInputTokens, outputTokens: capturedOutputTokens },
+      tokenUsage: {
+        inputTokens: capturedInputTokens,
+        outputTokens: capturedOutputTokens,
+        // 失败时缓存字段为 0（未完成执行）
+        cacheReadTokens: capturedCacheReadTokens,
+        cacheCreationTokens: capturedCacheCreationTokens,
+      },
     };
   }
 
