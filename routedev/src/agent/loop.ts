@@ -39,6 +39,26 @@ import type { ComposePipeline } from './compose-pipeline.js';
 import { CONCISE_THINKING_BLOCK, trimToolResult, shouldSkipConcise } from './concise-thinking.js';
 // 任务1：evaluateAdvance 需要 ToolResult 类型
 import type { ToolResult } from '../tools/types.js';
+// Phase 53 Task 2：装配验证与 setter 注入
+// 使用 type-only import 避免运行时循环依赖（PolicyEngine/CiteManager/MacroManager/ScheduleEngine 不在 Loop 运行时路径上）
+import type { PolicyEngine } from '../policies/policy-engine.js';
+import type { CiteManager } from '../cite/manager.js';
+import type { MacroManager } from '../macros/manager.js';
+import type { ScheduleEngine } from '../scheduler/engine.js';
+// Phase 53 Task 9：预算监控器（type-only import，避免运行时循环依赖）
+import type { BudgetMonitor } from './budget-monitor.js';
+
+/**
+ * Phase 55：结构化 system block（支持 Anthropic cache_control: ephemeral）
+ * 单一数据源：其他文件（types.ts / anthropic.ts / worker-executor.ts）均从此处 import 使用
+ * 字段结构与 Anthropic SDK 的 TextBlockParam 兼容（type/text/cache_control）
+ */
+export interface SystemBlock {
+  type: 'text';
+  text: string;
+  /** Anthropic prompt cache 标记；不打则该 block 不参与缓存 */
+  cache_control?: { type: 'ephemeral' };
+}
 
 /** ReAct 循环运行参数 */
 export interface ReActRunParams {
@@ -52,6 +72,12 @@ export interface ReActRunParams {
   conversationHistory: LLMMessage[];
   /** 系统提示（可选，不传则不加系统消息） */
   systemPrompt?: string;
+  /**
+   * Phase 55：结构化 system blocks（支持 cache_control），未传时回退到 systemPrompt 字符串
+   * 用于 WorkerExecutor 把固定前缀（baseSystemPrompt）+ 可变后缀（role/blackboard）拆分为多个 block，
+   * 固定前缀打 cache_control: ephemeral，跨 Worker 命中 Anthropic prompt cache
+   */
+  systemBlocks?: SystemBlock[];
   /** 取消信号 */
   signal?: AbortSignal;
   /** 工具调用确认回调（Phase 9 自主模式） */
@@ -103,6 +129,31 @@ export class ReActAgentLoop {
    * 开启后追加输出纪律到系统提示词、裁剪过长工具返回、检测用户"详细"关键词临时跳过
    */
   private conciseThinkingEnabled = false;
+  /**
+   * Phase 53 Task 2：策略引擎（可选）
+   * 接入后，onActing 中间件会调用 evaluateAction 做 fail-closed 检查
+   */
+  private policyEngine: PolicyEngine | null = null;
+  /**
+   * Phase 53 Task 2：引用管理器（可选）
+   * 接入后，工具返回中的引用标记会被规范化解析与渲染
+   */
+  private citeManager: CiteManager | null = null;
+  /**
+   * Phase 53 Task 2：宏管理器（可选）
+   * 接入后，用户输入中的 `!` 触发器会被宏系统展开
+   */
+  private macroManager: MacroManager | null = null;
+  /**
+   * Phase 53 Task 2：调度引擎（可选，对应蓝图的 CronEngine）
+   * 接入后，run() 会在每次迭代前后检查待触发的定时任务
+   */
+  private cronEngine: ScheduleEngine | null = null;
+  /**
+   * Phase 53 Task 9：预算监控器（可选）
+   * 接入后，每次迭代结束会记录 token 消耗与工具调用，并输出告警（fail-open）
+   */
+  private budgetMonitor: BudgetMonitor | null = null;
 
   constructor(
     toolExecutor: ToolExecutorAdapter,
@@ -176,6 +227,48 @@ export class ReActAgentLoop {
    */
   setConciseThinking(enabled: boolean): void {
     this.conciseThinkingEnabled = enabled;
+  }
+
+  /**
+   * Phase 53 Task 2：注入策略引擎
+   * 接入后，onActing 中间件会调用 evaluateAction 做 fail-closed 检查
+   * 传入 null 可显式卸载（用于配置热重载场景）
+   */
+  setPolicyEngine(engine: PolicyEngine | null): void {
+    this.policyEngine = engine;
+  }
+
+  /**
+   * Phase 53 Task 2：注入引用管理器
+   * 接入后，工具返回中的引用标记会被规范化解析与渲染
+   */
+  setCiteManager(manager: CiteManager | null): void {
+    this.citeManager = manager;
+  }
+
+  /**
+   * Phase 53 Task 2：注入宏管理器
+   * 接入后，用户输入中的 `!` 触发器会被宏系统展开
+   */
+  setMacroManager(manager: MacroManager | null): void {
+    this.macroManager = manager;
+  }
+
+  /**
+   * Phase 53 Task 2：注入调度引擎（对应蓝图的 setCronEngine）
+   * 接入后，run() 会在每次迭代前后检查待触发的定时任务
+   */
+  setCronEngine(engine: ScheduleEngine | null): void {
+    this.cronEngine = engine;
+  }
+
+  /**
+   * Phase 53 Task 9：注入预算监控器
+   * 接入后，每次迭代结束会记录 token 消耗与工具调用，并检查告警（fail-open）
+   * 传入 null 可显式卸载（用于配置热重载场景）
+   */
+  setBudgetMonitor(monitor: BudgetMonitor | null): void {
+    this.budgetMonitor = monitor;
   }
 
   /**
@@ -387,6 +480,9 @@ export class ReActAgentLoop {
     } = params;
     // Phase 38 Task 1：systemPrompt 改为 let，允许 onSystemPrompt 中间件修改
     let systemPrompt = params.systemPrompt;
+    // Phase 55：systemBlocks（结构化 blocks，支持 per-block cache_control）
+    // 传入时优先使用，透传到 LLM 客户端；未传时回退到 systemPrompt 字符串（向后兼容）
+    let systemBlocks = params.systemBlocks;
 
     // C6 修复：触发 on-session-start 钩子
     await this.fireHookSafe('on-session-start', {});
@@ -395,7 +491,8 @@ export class ReActAgentLoop {
     // 使用 try-finally，finally 块在 async generator return 时执行
     try {
     // Phase 38 Task 1：onSystemPrompt 中间件——允许中间件修改 systemPrompt（fail-open）
-    if (this.middleware) {
+    // Phase 55：systemBlocks 模式下跳过中间件（结构化 blocks 不易在中间件中无歧义修改）
+    if (this.middleware && !systemBlocks) {
       const mwCtx: MiddlewareContext = {
         phase: 'onSystemPrompt',
         systemPrompt,
@@ -412,8 +509,13 @@ export class ReActAgentLoop {
     }
 
     // 任务3：简洁思考约束——用户未请求详细输出时，追加输出纪律到系统提示词
+    // Phase 55：systemBlocks 模式下追加为独立 block（不缓存，每次都可能变化）
     if (this.conciseThinkingEnabled && !shouldSkipConcise(userMessage)) {
-      systemPrompt = (systemPrompt ?? '') + '\n\n' + CONCISE_THINKING_BLOCK;
+      if (systemBlocks) {
+        systemBlocks = [...systemBlocks, { type: 'text', text: CONCISE_THINKING_BLOCK }];
+      } else {
+        systemPrompt = (systemPrompt ?? '') + '\n\n' + CONCISE_THINKING_BLOCK;
+      }
     }
 
     // 构建初始消息列表
@@ -471,11 +573,17 @@ export class ReActAgentLoop {
       this.trace?.recordEvent(thinkingEvent);
 
       // 任务1：每次迭代重新注入 Compose 阶段提示词（阶段可能在上一轮工具执行后已流转）
+      // Phase 55：systemBlocks 模式下追加为独立 block（不缓存）
       let effectiveSystemPrompt = systemPrompt;
+      let effectiveSystemBlocks = systemBlocks;
       if (this.composePipeline) {
         const phasePrompt = this.composePipeline.getPhasePrompt();
         if (phasePrompt) {
-          effectiveSystemPrompt = (effectiveSystemPrompt ?? '') + '\n\n' + phasePrompt;
+          if (effectiveSystemBlocks) {
+            effectiveSystemBlocks = [...effectiveSystemBlocks, { type: 'text', text: phasePrompt }];
+          } else {
+            effectiveSystemPrompt = (effectiveSystemPrompt ?? '') + '\n\n' + phasePrompt;
+          }
         }
       }
 
@@ -496,11 +604,13 @@ export class ReActAgentLoop {
       try {
         // ===== LLM 流式调用 =====
         // Phase 32 Task 2：透传 enableCache（由 ModelRouter 全局启用）
+        // Phase 55：透传 effectiveSystemBlocks（若有），LLM 客户端优先使用 blocks 否则回退 systemPrompt
         const result = yield* this.callLLMStream(
           llmClient,
           routeDecision.model.id,
           messages,
           effectiveSystemPrompt,
+          effectiveSystemBlocks,
           toolDefs,
           signal,
           routeDecision.enableCache,
@@ -704,6 +814,24 @@ export class ReActAgentLoop {
                   // 原行为仅 warn 后继续执行工具，权限检查被静默跳过
                   logger.warn('Middleware onActing threw, denying tool execution (fail-closed)', { error: String(mwErr) });
                   mwCtx.metadata.permissionDenied = `中间件异常: ${String(mwErr)}`;
+                }
+                // Phase 53 Task 3：策略引擎检查（动作级 fail-closed）
+                // 与中间件叠加：中间件已 deny 则跳过策略引擎；否则策略引擎再评估
+                if (!mwCtx.metadata.permissionDenied && this.policyEngine) {
+                  try {
+                    const policyDecision = this.policyEngine.evaluateAction({
+                      toolName: toolCall.name,
+                      description: toolCall.name,
+                      args: toolCall.arguments,
+                    });
+                    if (policyDecision.denied) {
+                      mwCtx.metadata.permissionDenied = policyDecision.reason ?? '策略引擎拒绝';
+                    }
+                  } catch (policyErr) {
+                    // 策略引擎异常时 fail-closed（借鉴 AGT）
+                    logger.warn('PolicyEngine evaluateAction threw, denying (fail-closed)', { error: String(policyErr) });
+                    mwCtx.metadata.permissionDenied = `策略引擎异常: ${String(policyErr)}`;
+                  }
                 }
                 if (mwCtx.metadata.permissionDenied) {
                   const denyReason = String(mwCtx.metadata.permissionDenied);
@@ -1059,6 +1187,35 @@ export class ReActAgentLoop {
           const MAX_MESSAGES = 40;
           this.trimMessagesWindow(messages, MAX_MESSAGES);
 
+          // Phase 53 Task 9：预算监控（每次迭代结束后检查本轮工具调用与 token 消耗，fail-open）
+          // 记录本轮 token 消耗 + 所有工具调用，然后检查告警（同 alertId 不重复返回）
+          if (this.budgetMonitor) {
+            try {
+              // 记录本轮 token 消耗
+              this.budgetMonitor.recordToken(result.usage.totalTokens);
+              // 记录本轮所有工具调用（用于循环检测与 scope_creep 检测）
+              for (const tc of result.toolCalls) {
+                this.budgetMonitor.recordToolCall(tc.name);
+              }
+              // 检查并输出告警
+              const alerts = this.budgetMonitor.check();
+              for (const a of alerts) {
+                logger.warn('BudgetMonitor alert', {
+                  type: a.type,
+                  severity: a.severity,
+                  message: a.message,
+                  current: a.current,
+                  threshold: a.threshold,
+                });
+              }
+            } catch (budgetErr) {
+              // fail-open：监控异常不影响主流程
+              logger.warn('BudgetMonitor check failed, continuing (fail-open)', {
+                error: budgetErr instanceof Error ? budgetErr.message : String(budgetErr),
+              });
+            }
+          }
+
           // Phase 38 Task 1：onAgent 中间件——每次迭代结束后调用（会话级 Token 累计、进度报告，fail-open）
           if (this.middleware) {
             const mwCtx: MiddlewareContext = {
@@ -1181,6 +1338,7 @@ export class ReActAgentLoop {
     modelId: string,
     messages: LLMMessage[],
     systemPrompt: string | undefined,
+    systemBlocks: SystemBlock[] | undefined,
     toolDefs: LLMToolDefinition[],
     signal?: AbortSignal,
     enableCache?: boolean,
@@ -1196,6 +1354,8 @@ export class ReActAgentLoop {
       model: modelId,
       messages,
       systemPrompt,
+      // Phase 55：透传 systemBlocks（结构化 blocks），LLM 客户端优先使用，未传时回退 systemPrompt
+      systemBlocks,
       tools: toolDefs.length > 0 ? toolDefs : undefined,
       maxTokens: 4096,
       timeoutMs: this.config.llmTimeout,

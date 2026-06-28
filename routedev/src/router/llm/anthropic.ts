@@ -211,8 +211,17 @@ export class AnthropicClient extends BaseLLMClient {
     };
 
     // Anthropic 的 system prompt 是独立参数，不在 messages 中
-    // P2-10：启用 cache_control 实现 Prompt 缓存（减少重复请求的 token 消耗）
-    if (options.systemPrompt) {
+    // Phase 55：优先使用 systemBlocks（结构化 blocks，支持 per-block cache_control）
+    // - systemBlocks 传入时直接透传，cache_control 由调用方在 block 上指定（固定前缀打、可变后缀不打）
+    // - 未传时回退到 systemPrompt 字符串（向后兼容；enableCache 时整体打 cache_control）
+    // 字段结构与 Anthropic SDK 的 TextBlockParam 兼容（type/text/cache_control）
+    if (options.systemBlocks && options.systemBlocks.length > 0) {
+      params.system = options.systemBlocks as MessageCreateParams['system'] as Array<{
+        type: 'text';
+        text: string;
+        cache_control?: { type: 'ephemeral' } | null;
+      }>;
+    } else if (options.systemPrompt) {
       if (options.enableCache) {
         // 带缓存的 system prompt：使用文本块数组 + cache_control
         params.system = [

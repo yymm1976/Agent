@@ -16,6 +16,12 @@
 //   - classifyInfoValue()：过滤前先对消息做三分类（该扔/该缓存/该存）
 //   - declareFocus()：从 task.description 提取关注点关键词（纯文本处理，不调用 LLM）
 //   - filterContext() 增强：先丢弃"该扔"类消息，再用 focusKeywords 计算相关性分数
+//
+// Phase 54 Task 2：ContextPacker 接线（可选注入）
+//   - contextPacker 注入后，execute() 调用 pack() 生成结构化上下文包
+//   - packedContext.sections 追加到 enhancedPrompt（替代部分 blackboardContext）
+//   - packedContext.passedFragments/filteredOutCount/filteredOutSummary 记录到日志（供面板展示）
+//   - 未注入 contextPacker 时回退到 filterContext（零回归）
 
 import type {
   ILLMClient,
@@ -23,7 +29,7 @@ import type {
   ContentPart,
   RoutingResult,
 } from '../../router/types.js';
-import type { ReActAgentLoop } from '../loop.js';
+import type { ReActAgentLoop, SystemBlock } from '../loop.js';
 import type {
   ConfirmToolCallback,
 } from '../loop-config.js';
@@ -32,6 +38,17 @@ import { WORKER_ROLE_PROMPTS, executeWorkerIsolated, type WorkerFunction } from 
 import { logger } from '../../utils/logger.js';
 import type { WorkerContextConfig } from '../../config/schema.js';
 import { estimateTokens } from '../../utils/token-estimate.js';
+// Phase 53 Task 11：熔断器（type-only import，避免运行时循环依赖）
+import type { CircuitBreaker } from '../circuit-breaker.js';
+// Phase 54 Task 2：ContextPacker 接线（type-only import，避免运行时循环依赖）
+// 注：ContextPackage 已被 Phase 50 Task 9 清理为非 export，这里用 ReturnType 推导 pack() 的返回类型
+import type { ContextPacker, AgentRole, ContextSources } from '../../agents/context-packer.js';
+// Phase 54：接入 AgentProfile——用 profile.systemPrompt 替换 WORKER_ROLE_PROMPTS 短句
+// 让每个 Worker 拥有独立的完整 systemPrompt（含角色规则、工具白名单、输出格式契约）
+import type { AgentProfileManager } from '../../agents/profiles/manager.js';
+
+/** Phase 54 Task 2：ContextPackage 的本地类型别名（从 ContextPacker.pack() 返回类型推导） */
+type ContextPackage = Awaited<ReturnType<ContextPacker['pack']>>;
 
 /** 默认 Worker 上下文配置（未注入 config 时使用） */
 const DEFAULT_WORKER_CONTEXT_CONFIG: WorkerContextConfig = {
@@ -42,26 +59,71 @@ const DEFAULT_WORKER_CONTEXT_CONFIG: WorkerContextConfig = {
   fallbackToFull: true,
 };
 
+/** Phase 54 Task 2：WorkerRole → AgentRole 映射（ContextPacker 角色权重表） */
+const WORKER_ROLE_TO_AGENT_ROLE: Record<string, AgentRole> = {
+  coder: 'executor',
+  searcher: 'researcher',
+  tester: 'executor',
+  reviewer: 'reviewer',
+};
+
 interface WorkerExecutorOptions {
   agentLoop: ReActAgentLoop;
   /** Phase 35 Task 1：上下文过滤配置（可选，未传则用默认值） */
   workerContextConfig?: WorkerContextConfig;
+  /** Phase 54 Task 2：ContextPacker 实例（可选，注入后 execute() 调用 pack()） */
+  contextPacker?: ContextPacker;
+  /**
+   * Phase 54：AgentProfileManager 实例（可选，注入后用 profile.systemPrompt 替换 WORKER_ROLE_PROMPTS）
+   * 让每个 Worker 拥有独立的完整 systemPrompt（含角色规则、工具白名单、输出格式契约）
+   * 未注入时回退到 WORKER_ROLE_PROMPTS 短句（零回归）
+   */
+  profileManager?: AgentProfileManager;
 }
 
 export class WorkerExecutor {
   private agentLoop: ReActAgentLoop;
   private readonly workerContextConfig: WorkerContextConfig;
   /**
+   * Phase 54 Task 2：ContextPacker 实例（可选）
+   * 注入后 execute() 会调用 pack() 生成结构化上下文包，追加到 enhancedPrompt
+   */
+  private readonly contextPacker?: ContextPacker;
+  /**
+   * Phase 54：AgentProfileManager 实例（可选）
+   * 注入后 execute() 会用 profile.systemPrompt 替换 WORKER_ROLE_PROMPTS 短句
+   * 让每个 Worker 拥有独立的完整 systemPrompt（含角色规则、工具白名单、输出格式契约）
+   */
+  private readonly profileManager?: AgentProfileManager;
+  /**
    * I13 修复：rollback 互斥锁
    * Promise-based mutex——确保同一时刻只有一个 rollback 操作在执行，
    * 避免多个 Worker 并发重试时 rollback 竞态导致状态不一致
    */
   private rollbackMutex: Promise<void> = Promise.resolve();
+  /**
+   * Phase 53 Task 11：熔断器（可选）
+   * 接入后，execute 前会检查熔断器状态（fail-closed：打开时拒绝执行）
+   * execute 完成后会记录成功/失败结果
+   */
+  private circuitBreaker?: CircuitBreaker;
 
   constructor(agentLoop: ReActAgentLoop, options?: WorkerExecutorOptions) {
     this.agentLoop = agentLoop;
     // 兼容旧签名：WorkerExecutor(agentLoop) 也能工作
     this.workerContextConfig = options?.workerContextConfig ?? DEFAULT_WORKER_CONTEXT_CONFIG;
+    // Phase 54 Task 2：可选注入 ContextPacker
+    this.contextPacker = options?.contextPacker;
+    // Phase 54：可选注入 AgentProfileManager
+    this.profileManager = options?.profileManager;
+  }
+
+  /**
+   * Phase 53 Task 11：注入熔断器
+   * 接入后，execute 前会检查熔断器状态（fail-closed），execute 完成后记录结果
+   */
+  setCircuitBreaker(breaker: CircuitBreaker | null): void {
+    this.circuitBreaker = breaker ?? undefined;
   }
 
   /**
@@ -138,22 +200,134 @@ export class WorkerExecutor {
     signal?: AbortSignal,
     onConfirmTool?: ConfirmToolCallback,
   ): Promise<WorkerResult> {
-    const rolePrompt = task.rolePrompt || WORKER_ROLE_PROMPTS[task.role];
+    // Phase 53 Task 11：熔断器检查（Worker 调用前，fail-closed）
+    // 熔断器打开时拒绝执行，直接返回失败结果（避免对已故障的下游继续施压）
+    if (this.circuitBreaker) {
+      try {
+        if (!this.circuitBreaker.canCall()) {
+          logger.warn('CircuitBreaker open, worker execution rejected', {
+            stepId: task.stepId,
+            role: task.role,
+          });
+          return {
+            stepId: task.stepId,
+            role: task.role,
+            success: false,
+            conclusion: '熔断器已打开，Worker 调用被拒绝',
+            modifiedFiles: [],
+            tokenUsage: { inputTokens: 0, outputTokens: 0 },
+          };
+        }
+      } catch {
+        // fail-open：熔断器检查异常时放行（避免监控组件故障阻断主流程）
+      }
+    }
+
+    // Phase 54：优先用 AgentProfile 的 systemPrompt（完整角色规则+工具白名单+输出格式契约）
+    // 回退到 task.rolePrompt（调用方显式传入）→ WORKER_ROLE_PROMPTS[task.role]（短句兜底）
+    let rolePrompt = task.rolePrompt || WORKER_ROLE_PROMPTS[task.role];
+    let roleLabel: string = task.role;
+    if (this.profileManager) {
+      try {
+        const agentRole = WORKER_ROLE_TO_AGENT_ROLE[task.role] ?? 'executor';
+        const profile = this.profileManager.resolveProfileForTask(agentRole);
+        if (profile?.systemPrompt) {
+          rolePrompt = profile.systemPrompt;
+          roleLabel = `${task.role}→${profile.name}`;
+          logger.info('WorkerExecutor 使用 AgentProfile systemPrompt', {
+            stepId: task.stepId,
+            workerRole: task.role,
+            agentRole,
+            profileId: profile.id,
+            profileName: profile.name,
+          });
+        }
+      } catch (err) {
+        // fail-open：profile 解析异常时回退到 WORKER_ROLE_PROMPTS
+        logger.warn('AgentProfileManager.resolveProfileForTask 失败，回退到 WORKER_ROLE_PROMPTS', {
+          stepId: task.stepId,
+          role: task.role,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     const blackboardContext = this.formatBlackboard(task.blackboardSnapshot);
 
-    const enhancedPrompt = [
-      baseSystemPrompt,
-      '',
-      `## 你的角色: ${task.role}`,
-      rolePrompt,
-      '',
-      '## 当前协作上下文',
-      blackboardContext,
-    ].join('\n');
+    // Phase 55 改造：固定前缀 + 可变后缀，支持 Anthropic cache_control: ephemeral
+    // - 固定前缀（baseSystemPrompt）：跨 Worker 不变，打 cache_control 让前缀块跨请求命中缓存
+    // - 可变后缀（roleLabel + rolePrompt + blackboardContext）：每个 Worker 不同，不打 cache_control
+    // 替代原 enhancedPrompt 单字符串拼接；移除"profileManager 注入则强制清空 workerHistory"后，
+    // 不同 Worker 共享同一份 baseSystemPrompt（固定前缀），可命中 Anthropic prompt cache
+    const systemBlocks: SystemBlock[] = [
+      {
+        type: 'text',
+        text: baseSystemPrompt,
+        cache_control: { type: 'ephemeral' },
+      },
+      {
+        type: 'text',
+        text: `## 你的角色: ${roleLabel}\n${rolePrompt}\n\n## 当前协作上下文\n${blackboardContext}`,
+      },
+    ];
+
+    // Phase 54 Task 2：ContextPacker 接线——注入后调用 pack() 生成结构化上下文包
+    // Phase 55：packedContext.sections 追加为 systemBlocks 的独立 block（不缓存，每次内容可能变化）
+    // 未注入 contextPacker 时跳过（零回归，继续使用 filterContext）
+    let packedContext: ContextPackage | null = null;
+    if (this.contextPacker) {
+      try {
+        const agentRole = WORKER_ROLE_TO_AGENT_ROLE[task.role] ?? 'custom';
+        const sources = this.buildContextSources(task, conversationHistory);
+        const budgetTokens = (routeDecision as { tokenBudget?: number }).tokenBudget ?? 8000;
+        packedContext = await this.contextPacker.pack({
+          role: agentRole,
+          taskId: String(task.stepId),
+          sources,
+          budgetTokens,
+        });
+        // 将 packed sections 追加到 systemBlocks 末尾（独立 block，不参与缓存）
+        if (packedContext.sections.length > 0) {
+          const packedSection = [
+            '## 上下文包（ContextPacker 选择性传递）',
+            ...packedContext.sections.map(s => `### ${s.title}\n${s.content}`),
+          ].join('\n');
+          systemBlocks.push({ type: 'text', text: packedSection });
+        }
+        // 记录选择性传递元数据（供协作剧场面板展示）
+        logger.info('ContextPacker packed for worker', {
+          stepId: task.stepId,
+          role: task.role,
+          agentRole,
+          passedFragmentCount: packedContext.passedFragments.length,
+          filteredOutCount: packedContext.filteredOutCount,
+          filteredOutSummary: packedContext.filteredOutSummary,
+          truncated: packedContext.metadata.truncated,
+          estimatedTokens: packedContext.metadata.estimatedTokens,
+        });
+      } catch (err) {
+        // fail-open：ContextPacker 异常不影响主流程，回退到 filterContext
+        logger.warn('ContextPacker.pack failed (non-blocking, falling back to filterContext)', {
+          stepId: task.stepId,
+          role: task.role,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        packedContext = null;
+      }
+    }
 
     // Phase 35 Task 1：对 conversationHistory 做角色感知过滤
     // 过滤逻辑在 execute() 内部，调用方无需预先过滤（避免双重过滤）
+    // Phase 54 Task 2：contextPacker 注入后仍调用 filterContext（packed sections 是 ADDITIVE，不替代 history 过滤）
     const filteredHistory = this.filterContext(task, conversationHistory);
+
+    // Phase 55 改造：不再强制清空，按 workerContextConfig 策略取 tail 切片
+    // 移除原"profileManager 注入则强制清空 workerHistory"的 detached session 逻辑
+    // - tail 策略：保留 filteredHistory 尾部 maxMessages 条（让 Worker 拿到近期对话上下文）
+    // - 其他策略或禁用：回退到空数组（保持原 profileManager 注入时的隔离语义）
+    // 配合 systemBlocks 固定前缀缓存，不同 Worker 共享同一份 baseSystemPrompt 命中 Anthropic prompt cache
+    const workerHistory = (this.workerContextConfig.enabled && this.workerContextConfig.strategy === 'tail')
+      ? filteredHistory.slice(-this.workerContextConfig.maxMessages)
+      : [];
 
     // 闭包变量：捕获每次执行尝试的中间状态（重试时会重置）
     let capturedModifiedFiles: string[] = [];
@@ -189,8 +363,10 @@ export class WorkerExecutor {
         userMessage: task.description,
         llmClient,
         routeDecision,
-        conversationHistory: filteredHistory,
-        systemPrompt: enhancedPrompt,
+        conversationHistory: workerHistory,
+        // Phase 55：传 systemBlocks（固定前缀 + 可变后缀）替代原 enhancedPrompt 单字符串
+        // 由 ReActAgentLoop 透传到 LLM 客户端，Anthropic 客户端按 block 上的 cache_control 命中缓存
+        systemBlocks,
         signal,
         onConfirmTool,
       })) {
@@ -229,6 +405,15 @@ export class WorkerExecutor {
     // 用 executeWorkerIsolated 包装：异常隔离 + 自动重试
     const workerId = `worker-${task.stepId}-${task.role}`;
     const outcome = await executeWorkerIsolated(workerId, task, workerFn);
+
+    // Phase 53 Task 11：熔断器记录调用结果（受存在性守护，fail-open）
+    if (this.circuitBreaker) {
+      try {
+        this.circuitBreaker.recordResult(outcome.success);
+      } catch {
+        // fail-open：记录异常不影响结果返回
+      }
+    }
 
     if (outcome.success) {
       return {
@@ -635,5 +820,50 @@ export class WorkerExecutor {
     }
 
     return parts.length > 0 ? parts.join('\n') : '（无上下文）';
+  }
+
+  /**
+   * Phase 54 Task 2：从 WorkerTask + conversationHistory 构建 ContextSources
+   *
+   * 用于 ContextPacker.pack() 的输入：
+   *   - taskBoundary：从 task.description 提取 goal，blackboard 提供 designDoc
+   *   - facts：从 blackboardSnapshot.projectFacts 转为 Map
+   *   - parentReasoning：从 blackboardSnapshot.completedSteps 拼接结论
+   *
+   * 设计原则：最小化构建，不引入额外 LLM 调用；codeMap/memory 暂不填充
+   * （后续 Phase 可由 CodeMapEngine 注入 relevantSymbols）
+   */
+  private buildContextSources(
+    task: WorkerTask,
+    _conversationHistory: LLMMessage[],
+  ): ContextSources {
+    const snapshot = task.blackboardSnapshot;
+
+    // facts：从 blackboard projectFacts 转 Map
+    const facts = new Map<string, string>();
+    for (const fact of snapshot.projectFacts) {
+      facts.set(fact.key, fact.value);
+    }
+
+    // parentReasoning：从 completedSteps 拼接结论（父 Agent 的推理痕迹）
+    const parentReasoning = snapshot.completedSteps.length > 0
+      ? snapshot.completedSteps.map(s => `[${s.source.role}] ${s.value}`).join('\n')
+      : undefined;
+
+    // taskBoundary：从 task.description 提取 goal，blackboard 提供 designDoc
+    const goal = snapshot.currentGoal?.description ?? task.description;
+    const designDoc = snapshot.currentGoal?.description ?? '';
+
+    return {
+      taskBoundary: {
+        designDoc,
+        readFiles: [],
+        writeFiles: [],
+        goal,
+        constraints: [],
+      },
+      facts,
+      parentReasoning,
+    };
   }
 }

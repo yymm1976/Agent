@@ -177,6 +177,13 @@ export interface LLMRequestOptions {
   model: string;
   messages: LLMMessage[];
   systemPrompt?: string;
+  /**
+   * Phase 55：结构化 system blocks（支持 Anthropic cache_control: ephemeral）
+   * 传入时 LLM 客户端优先使用，未传时回退到 systemPrompt 字符串（向后兼容）
+   * 用于 WorkerExecutor 把固定前缀 + 可变后缀拆分为多个 block，固定前缀打 cache_control 跨 Worker 命中缓存
+   * 字段结构与 agent/loop.ts 的 SystemBlock 一致（type/text/cache_control）
+   */
+  systemBlocks?: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }>;
   tools?: LLMToolDefinition[];
   maxTokens?: number;
   temperature?: number;
