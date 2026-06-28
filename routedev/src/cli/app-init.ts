@@ -58,6 +58,9 @@ import { ContextPacker } from '../agents/context-packer.js';
 import { DelegationGate } from '../agents/delegation-gate.js';
 import { SubAgentLifecycle } from '../agents/sub-agent-lifecycle.js';
 import { SubAgentScoreCardCollector } from '../agents/sub-agent-score-card.js';
+// CR-4b：接入 activity-store（子 Agent 活动面板）+ instance-harness（三层抽象）
+import { AgentActivityStore } from '../agents/activity-store.js';
+import { createDefaultInstance, createHarness, type AgentInstance, type AgentHarness } from '../agents/instance-harness.js';
 import { WorkerExecutor } from '../agent/multi/worker-executor.js';
 import { TraceCollector } from '../harness/trace-collector.js';
 import { AuditLogger } from '../harness/audit-logger.js';
@@ -95,6 +98,41 @@ import * as path from 'node:path';
 // Phase 48 Task 6 修复：scheduler 模块静态 import（替代原 await import，避免非 async 函数中的 typecheck 错误）
 import { ScheduleStore } from '../scheduler/store.js';
 import { ScheduleEngine } from '../scheduler/engine.js';
+// Phase 52 Task 1/3/5/6/7/8/9/10：Phase 52 模块接入（按 config.phase52Integration 开关守护）
+import { SkillLifecycleManager } from '../skills/skill-lifecycle.js';
+import { createBoundedRecoveryManager } from '../agent/bounded-recovery.js';
+import { ArchitectureAwareMetricsCollector } from '../evaluation/architecture-aware-metrics.js';
+import { SaturationMonitor } from '../evaluation/saturation-monitor.js';
+import { MCPSecurityFramework } from '../mcp/security-framework.js';
+import { SelfEvolutionFramework } from '../agent/self-evolution/framework.js';
+import { GodelProposer } from '../agent/self-evolution/godel-proposer.js';
+import { SelfHarnessLoop } from '../agent/self-evolution/self-harness-loop.js';
+// CR-4b：接入 compositional-router（Phase 52 Task 4 组合式路由）
+import { decomposeWithSkillAwareness, retrieveSkill, composeDAG, DEFAULT_ROUTING_CONFIG, type AtomicSubTask, type SkillMatch, type SkillDAGPlan, type CompositionalRoutingConfig } from '../skills/compositional-router.js';
+// Phase 53 Task 5/7：MCP 安全扫描器 + 配置保护守卫（Task 6 SkillSecurityGate 使用动态 import）
+import { McpSecurityScanner } from '../tools/mcp/security-scanner.js';
+import { ConfigGuard } from '../tools/builtin/config-guard.js';
+
+/**
+ * CR-4b：组合式路由器实例类型
+ * 包装 compositional-router.ts 的 decomposeWithSkillAwareness / composeDAG，
+ * 按配置注入路由参数，供上层 planner 调用。
+ */
+export interface CompositionalRouterInstance {
+  /** 按配置分解任务为原子子任务（SAD 迭代技能感知分解） */
+  decompose(
+    task: string,
+    availableSkills: Array<{ id: string; name: string; description: string; category: string }>,
+    decomposeFn: (task: string) => Promise<AtomicSubTask[]>,
+  ): Promise<AtomicSubTask[]>;
+  /** 为子任务检索 Skill 并组合为 DAG 执行计划 */
+  planDAG(
+    subTasks: AtomicSubTask[],
+    availableSkills: Array<{ id: string; name: string; description: string; category: string }>,
+  ): SkillDAGPlan;
+  /** 路由配置（只读快照） */
+  readonly config: CompositionalRoutingConfig;
+}
 
 /** App 所需的全部服务依赖 */
 export interface AppDependencies {
@@ -174,6 +212,27 @@ export interface AppDependencies {
   /** Phase 50 Task 3：子 Agent 委托体系模块实例（按 config.delegationIntegration 渐进接入，未开启时为 null） */
   subAgentLifecycle: SubAgentLifecycle | null;
   subAgentScoreCardCollector: SubAgentScoreCardCollector | null;
+  /** Phase 52 Task 1：Skill 生命周期管理器（未启用时为 undefined） */
+  skillLifecycleManager?: SkillLifecycleManager;
+  /** Phase 52 Task 6：架构感知指标采集器（未启用时为 undefined） */
+  metricsCollector?: ArchitectureAwareMetricsCollector;
+  /** Phase 52 Task 7：评估集饱和监测器（未启用时为 undefined） */
+  saturationMonitor?: SaturationMonitor;
+  /** Phase 52 Task 10：MCP 安全框架（未启用时为 undefined） */
+  mcpSecurityFramework?: MCPSecurityFramework;
+  /** Phase 52 Task 5：自进化统一框架（未启用时为 undefined） */
+  selfEvolutionFramework?: SelfEvolutionFramework;
+  /** Phase 52 Task 8：Gödel 提议器（未启用时为 undefined） */
+  godelProposer?: GodelProposer;
+  /** Phase 52 Task 9：Self-Harness 循环（未启用时为 undefined） */
+  selfHarnessLoop?: SelfHarnessLoop;
+  // CR-4b：孤立模块接线点（按各自 config 开关守护，未启用时为 undefined）
+  /** 子 Agent 活动面板存储（config.activityPanel.enabled） */
+  activityStore?: AgentActivityStore;
+  /** 三层抽象 Instance/Harness（config.instanceHarness.threeTierAbstractionEnabled） */
+  instanceHarness?: { instance: AgentInstance; harness: AgentHarness };
+  /** 组合式路由器（config.phase52Integration.compositionalRouting.enabled） */
+  compositionalRouter?: CompositionalRouterInstance;
 }
 
 /**
@@ -251,6 +310,27 @@ export function createAppDependencies(
   });
   contextManager.setCompactor(contextCompactor);
 
+  // Phase 53 Task 8：前缀感知缓存（受 config.phase53Integration.prefixCache.enabled 守护，fail-open）
+  // 使用变量路径让 TypeScript 无法静态解析，避免模块尚未生成时 typecheck 失败
+  const phase53PrefixCacheCfg = config.phase53Integration?.prefixCache;
+  if (phase53PrefixCacheCfg?.enabled) {
+    const prefixCacheModulePath = '../agent/memory/prefix-cache.js';
+    import(prefixCacheModulePath)
+      .then((mod: { PrefixAwareCache: new (opts?: { blockSize?: number; l1MaxSize?: number }) => unknown }) => {
+        const cache = new mod.PrefixAwareCache({
+          blockSize: phase53PrefixCacheCfg.blockSize,
+          l1MaxSize: phase53PrefixCacheCfg.l1MaxSize,
+        });
+        // feature-detect：方法可能由其他子代理添加（避免硬依赖）
+        const cm = contextManager as unknown as { setPrefixCache?: (c: unknown) => void };
+        if (typeof cm.setPrefixCache === 'function') {
+          cm.setPrefixCache(cache);
+          logger.debug('PrefixAwareCache injected', { via: 'setPrefixCache' });
+        }
+      })
+      .catch(() => { /* fail-open：缓存不可用时跳过 */ });
+  }
+
   // ===== 辅助 Agent =====
   const visionAssistant = new VisionAssistant(config.providers, (id: string) => clientManager.get(id));
   const branchManager = new BranchManager();
@@ -271,6 +351,18 @@ export function createAppDependencies(
   const audit = new AuditLogger(trace.getSessionId() ?? 'app');
   const projectMemory = new ProjectMemoryManager(cwd, config.projectMemory);
 
+  // Phase 53 Task 4：哈希链审计接入（受 config.phase53Integration.auditChain.enabled 守护）
+  // 启用后所有 audit.log() 写入的记录会附加 previousHash + hash 字段，形成防篡改链
+  const phase53AuditChainCfg = config.phase53Integration?.auditChain;
+  if (phase53AuditChainCfg?.enabled) {
+    audit.setChainConfig({
+      enabled: true,
+      logFile: phase53AuditChainCfg.logFile,
+      overflowSealCount: phase53AuditChainCfg.overflowSealCount,
+    });
+    logger.debug('AuditLogger hash-chain enabled', { via: 'setChainConfig' });
+  }
+
   // Phase 48 Task 2：接线 loadProjectDoc，激活多文件名 fallback（AGENTS.md / CLAUDE.md）
   // 异步加载，不阻塞主流程；加载后注入 projectMemory 供 system prompt 使用
   loadProjectDoc(cwd, config.projectDoc).then((doc) => {
@@ -287,13 +379,17 @@ export function createAppDependencies(
   // ===== 工具链 =====
   // P0-1/P0-2/P1-4/P1-5/P1-6/P1-7：注册全部内置工具
   const registry = new ToolRegistry();
-  // 基础工具（原有）
-  [FileReadTool, FileWriteTool, FileSearchTool, ShellExecTool, GitOpTool, WebSearchTool, CodeSearchTool]
+  // Phase 53 Task 7：提取 fileEditTool / fileWriteTool 实例，供 ConfigGuard 注入
+  const fileEditTool = new FileEditTool();
+  const fileWriteTool = new FileWriteTool();
+  // 基础工具（原有）—— fileWriteTool 已提取为实例变量供 ConfigGuard 注入
+  [FileReadTool, FileSearchTool, ShellExecTool, GitOpTool, WebSearchTool, CodeSearchTool]
     .forEach(T => registry.register(new T()));
+  registry.register(fileWriteTool);
   // Phase 34 Task 4：Repo Map 代码检索增强
   registry.register(new RepoMapTool());
   // P1-4：文件编辑工具（str_replace，避免全量重写）
-  registry.register(new FileEditTool());
+  registry.register(fileEditTool);
   // P0-2：目录列表工具（补全 work-modes.ts 的 list_directory 引用）
   registry.register(new ListDirectoryTool());
   // P1-7：网页抓取工具
@@ -306,6 +402,19 @@ export function createAppDependencies(
   const sessionDir = path.join(homedir(), '.qoderwork', 'routedev', 'sessions', trace.getSessionId() ?? `app-${Date.now()}`);
   const notesManager = new NotesManager(sessionDir);
   registry.register(new NotesTool(notesManager));
+
+  // Phase 53 Task 7：ConfigGuard 注入（受 config.phase53Integration.configGuard.enabled 守护）
+  // 启用后 file_edit / file_write 在执行前会检查是否弱化安全/治理配置
+  const phase53GuardCfg = config.phase53Integration?.configGuard;
+  if (phase53GuardCfg?.enabled) {
+    const configGuard = new ConfigGuard({
+      warnOnFirst: phase53GuardCfg.warnOnFirst,
+      protectedPatterns: phase53GuardCfg.protectedPatterns,
+    });
+    fileEditTool.setConfigGuard(configGuard);
+    fileWriteTool.setConfigGuard(configGuard);
+    logger.debug('ConfigGuard injected', { via: 'setConfigGuard' });
+  }
 
   const mcpManager = new MCPClientManager(registry);
   // CONCERN 修复：传入 MCP 配置，使 connectTimeout 和 autoReconnect 生效
@@ -362,6 +471,33 @@ export function createAppDependencies(
   if (profiler) {
     agentLoop.setProfiler(profiler);
   }
+
+  // Phase 53 Task 9：预算监控（受 config.phase53Integration.budgetMonitor.enabled 守护，fail-open）
+  // tokenLimit 取自 config.router.budget.dailyLimit（默认 500000），避免在 BudgetMonitorConfigSchema 重复定义
+  const phase53BudgetCfg = config.phase53Integration?.budgetMonitor;
+  if (phase53BudgetCfg?.enabled) {
+    const budgetMonitorModulePath = '../agent/budget-monitor.js';
+    import(budgetMonitorModulePath)
+      .then((mod: { BudgetMonitor: new (opts: { tokenLimit: number; costLimit?: number; tokenWarnRatio?: number; toolLoopThreshold?: number }) => unknown }) => {
+        const monitor = new mod.BudgetMonitor({
+          tokenLimit: config.router.budget.dailyLimit,
+          costLimit: phase53BudgetCfg.costLimitPerSession,
+          tokenWarnRatio: phase53BudgetCfg.tokenWarnRatio,
+          toolLoopThreshold: phase53BudgetCfg.toolLoopThreshold,
+        });
+        // feature-detect：方法可能由其他子代理添加
+        const loop = agentLoop as unknown as { setBudgetMonitor?: (m: unknown) => void };
+        if (typeof loop.setBudgetMonitor === 'function') {
+          loop.setBudgetMonitor(monitor);
+          logger.debug('BudgetMonitor injected', {
+            via: 'setBudgetMonitor',
+            tokenLimit: config.router.budget.dailyLimit,
+          });
+        }
+      })
+      .catch(() => { /* fail-open：监控器不可用时跳过 */ });
+  }
+
   // P1-6：子 Agent 生成工具（需注入 spawnAgent 函数，依赖 agentLoop 和 primaryClient）
   // Phase 38 Task 2：防递归增强 + 并行上限
   //   - 防递归：通过 ToolRegistry.clone() + 移除 spawn_agent 实现（工具集层面物理阻断）
@@ -376,6 +512,18 @@ export function createAppDependencies(
   // Phase 50 Task 3：声明外层作用域变量，delegationIntegration 开启时由 wrapSpawnAgentWithDelegation 块填充
   let delegationLifecycle: SubAgentLifecycle | null = null;
   let delegationScoreCardCollector: SubAgentScoreCardCollector | null = null;
+  // CR-4b：活动面板存储（config.activityPanel.enabled 守护）
+  // 在外层作用域实例化，既供 wrapSpawnAgentWithDelegation 注入，也供 AppDependencies 返回
+  const activityPanelCfg = config.activityPanel;
+  const activityStore = activityPanelCfg?.enabled
+    ? new AgentActivityStore(activityPanelCfg.maxActiveDisplay, activityPanelCfg.maxRecentDisplay)
+    : undefined;
+  if (activityStore) {
+    logger.info('app-init: AgentActivityStore 已启用', {
+      maxActive: activityPanelCfg!.maxActiveDisplay,
+      maxRecent: activityPanelCfg!.maxRecentDisplay,
+    });
+  }
 
   /**
    * 创建子 Agent 的 spawn 函数
@@ -524,37 +672,67 @@ export function createAppDependencies(
       MAX_CONCURRENT_SUB_AGENTS,
     );
     const delegationCfg = config.delegationIntegration;
+    // CR-4b：把 delegationPolicy / resultSchema / activityStore 也纳入包装触发条件
+    //   任一开关开启即应用 wrapSpawnAgentWithDelegation，由 wrapper 内部各开关分别守护
+    const delegationPolicyCfg = config.delegationPolicy;
+    const resultSchemaCfg = config.resultSchema;
     const anyDelegationEnabled = !!(
       delegationCfg?.contextPackerEnabled ||
       delegationCfg?.delegationGateEnabled ||
       delegationCfg?.delegationEnforcerEnabled ||
       delegationCfg?.lifecycleEnabled ||
-      delegationCfg?.scoreCardEnabled
+      delegationCfg?.scoreCardEnabled ||
+      delegationPolicyCfg?.boundedDelegationEnabled ||
+      resultSchemaCfg?.enabled ||
+      !!activityStore
     );
     if (anyDelegationEnabled) {
-      const contextPacker = delegationCfg!.contextPackerEnabled ? new ContextPacker() : undefined;
-      const delegationGate = delegationCfg!.delegationGateEnabled ? new DelegationGate() : undefined;
-      const subAgentLifecycle = delegationCfg!.lifecycleEnabled ? new SubAgentLifecycle() : null;
-      const scoreCardCollector = delegationCfg!.scoreCardEnabled ? new SubAgentScoreCardCollector() : null;
+      const contextPacker = delegationCfg?.contextPackerEnabled ? new ContextPacker() : undefined;
+      const delegationGate = delegationCfg?.delegationGateEnabled ? new DelegationGate() : undefined;
+      const subAgentLifecycle = delegationCfg?.lifecycleEnabled ? new SubAgentLifecycle() : null;
+      const scoreCardCollector = delegationCfg?.scoreCardEnabled ? new SubAgentScoreCardCollector() : null;
+      // CR-4b：构造 decideDelegation 所需策略对象（仅 boundedDelegationEnabled 启用时）
+      const delegationPolicyEnabled = !!delegationPolicyCfg?.boundedDelegationEnabled;
+      const delegationPolicy = delegationPolicyEnabled
+        ? {
+            hardDelegationTypes: (delegationPolicyCfg!.hardDelegationTypes ?? []).filter(
+              (t): t is 'frontend' | 'research' | 'review' =>
+                t === 'frontend' || t === 'research' || t === 'review',
+            ),
+            refuseIfSpecialistUnavailable: delegationPolicyCfg!.refuseIfSpecialistUnavailable ?? false,
+            specialistAvailability: delegationPolicyCfg!.specialistAvailabilityOverride ?? {},
+          }
+        : undefined;
       const delegationDeps: DelegationIntegrationDeps = {
-        contextPackerEnabled: delegationCfg!.contextPackerEnabled,
+        contextPackerEnabled: delegationCfg?.contextPackerEnabled,
         contextPacker,
-        delegationGateEnabled: delegationCfg!.delegationGateEnabled,
+        delegationGateEnabled: delegationCfg?.delegationGateEnabled,
         delegationGate,
-        delegationEnforcerEnabled: delegationCfg!.delegationEnforcerEnabled,
+        delegationEnforcerEnabled: delegationCfg?.delegationEnforcerEnabled,
         parentAgent: { id: 'parent-root', activeSubAgents: [] },
-        lifecycleEnabled: delegationCfg!.lifecycleEnabled,
+        lifecycleEnabled: delegationCfg?.lifecycleEnabled,
         lifecycle: subAgentLifecycle ?? undefined,
-        scoreCardEnabled: delegationCfg!.scoreCardEnabled,
+        scoreCardEnabled: delegationCfg?.scoreCardEnabled,
         scoreCardCollector: scoreCardCollector ?? undefined,
+        // CR-4b 新增接线点：委托三态策略 / 结果 schema 校验 / 活动面板
+        delegationPolicyEnabled,
+        delegationPolicy,
+        resultSchemaEnabled: !!resultSchemaCfg?.enabled,
+        resultSchemaStrict: resultSchemaCfg?.strictValidation,
+        resultSchemaFallbackToText: resultSchemaCfg?.fallbackToText,
+        activityStoreEnabled: !!activityStore,
+        activityStore,
       };
       spawnAgentFn = wrapSpawnAgentWithDelegation(spawnAgentFn, delegationDeps);
       logger.info('Phase 50: spawn_agent wrapped with delegation modules', {
         contextPacker: !!contextPacker,
         gate: !!delegationGate,
-        enforcer: delegationCfg!.delegationEnforcerEnabled,
+        enforcer: delegationCfg?.delegationEnforcerEnabled,
         lifecycle: !!subAgentLifecycle,
         scoreCard: !!scoreCardCollector,
+        delegationPolicy: delegationPolicyEnabled,
+        resultSchema: !!resultSchemaCfg?.enabled,
+        activityStore: !!activityStore,
       });
       // 暴露实例到外层作用域，供 AppDependencies 返回
       delegationLifecycle = subAgentLifecycle;
@@ -756,11 +934,18 @@ export function createAppDependencies(
   // Intent Guard + Playbook + Tool Guide + Tool Approval
   // 注：policies/policy-engine.ts 由其他子代理创建，使用变量路径动态 import 避免 typecheck 失败
   const policiesCfg = config.policies;
+  const phase53PolicyCfg = config.phase53Integration?.policyEngine;
   if (policiesCfg?.enabled !== false) {
     const policyModulePath = '../policies/policy-engine.js';
     import(policyModulePath)
-      .then((mod: { PolicyEngine: new () => { addPolicy: (p: unknown) => void; evaluateInput: (i: string) => unknown[]; evaluateToolCall: (t: string, a: unknown) => unknown[] } }) => {
+      .then((mod: { PolicyEngine: new () => { addPolicy: (p: unknown) => void; evaluateInput: (i: string) => unknown[]; evaluateToolCall: (t: string, a: unknown) => unknown[]; setDefaultPolicy?: (p: 'deny' | 'allow') => void } }) => {
         const engine = new mod.PolicyEngine();
+        // Phase 53 Task 3：设置默认策略（fail-closed 控制）
+        // phase53Integration.policyEngine.enabled=false 时 setPolicyEngine 不被调用，loop 不接入策略引擎
+        // phase53Integration.policyEngine.enabled=true 时按 defaultPolicy 设置（默认 'deny'）
+        if (phase53PolicyCfg?.enabled && typeof engine.setDefaultPolicy === 'function') {
+          engine.setDefaultPolicy(phase53PolicyCfg.defaultPolicy ?? 'deny');
+        }
         // 根据配置添加内置策略（Intent Guard / Playbook / Tool Guide / Tool Approval）
         // 各策略模块由其他子代理创建，使用变量路径让 TypeScript 无法静态解析（fail-open）
         if (policiesCfg.intentGuard !== false) {
@@ -910,14 +1095,96 @@ export function createAppDependencies(
       }
     : undefined;
   const orchestrator = new Orchestrator(primaryClient, config.router.classifierModel, orchestrationIntegration);
+  // Phase 54 Task 2：orchestrationIntegration 任一开关开启时创建 ContextPacker 并注入 WorkerExecutor
+  // 注入后 WorkerExecutor.execute() 会调用 pack() 生成结构化上下文包（选择性传递可视化）
+  // 未开启任一开关时 contextPacker 为 undefined，WorkerExecutor 回退到 filterContext（零回归）
+  const workerContextPacker = orchestrationIntegration ? new ContextPacker() : undefined;
+  // Phase 54：创建共享 AgentProfileManager 实例并预加载（供 WorkerExecutor 使用 profile.systemPrompt）
+  // 异步加载，不阻塞启动；WorkerExecutor.execute() 调用 resolveProfileForTask 时若未加载完成会回退到内置模板
+  const workerProfileManager = new AgentProfileManager(cwd);
+  workerProfileManager.loadAll().catch(err => {
+    logger.warn('AgentProfileManager.loadAll 失败，WorkerExecutor 将回退到 WORKER_ROLE_PROMPTS', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
   // Phase 35 Task 1：注入 workerContext 配置，启用上下文选择性传递
   const workerExecutor = new WorkerExecutor(agentLoop, {
     agentLoop,
     workerContextConfig: config.optimization?.workerContext,
+    // Phase 54 Task 2：可选注入 ContextPacker
+    contextPacker: workerContextPacker,
+    // Phase 54：注入 AgentProfileManager，让 Worker 用 profile.systemPrompt 替换 WORKER_ROLE_PROMPTS
+    profileManager: workerProfileManager,
   });
+  if (workerContextPacker) {
+    logger.info('Phase 54 Task 2: ContextPacker injected into WorkerExecutor', {
+      strategyEnabled: !!orchestrationIntegrationCfg?.strategyEnabled,
+      stateGraphEnabled: !!orchestrationIntegrationCfg?.stateGraphEnabled,
+      branchOrchestrationEnabled: !!orchestrationIntegrationCfg?.branchOrchestrationEnabled,
+    });
+  }
+  logger.info('Phase 54: AgentProfileManager injected into WorkerExecutor (async loading)');
+
+  // Phase 53 Task 11：熔断器（受 config.phase53Integration.circuitBreaker.enabled 守护，fail-open）
+  // 注入 workerExecutor + delegationLifecycle（如果存在），使用变量路径让 TypeScript 无法静态解析
+  const phase53BreakerCfg = config.phase53Integration?.circuitBreaker;
+  if (phase53BreakerCfg?.enabled) {
+    const breakerModulePath = '../agent/circuit-breaker.js';
+    import(breakerModulePath)
+      .then((mod: { CircuitBreaker: new (config?: { failureThreshold?: number; resetTimeout?: number; halfOpenMaxAttempts?: number }) => unknown }) => {
+        const breaker = new mod.CircuitBreaker({
+          failureThreshold: phase53BreakerCfg.failureThreshold,
+          resetTimeout: phase53BreakerCfg.resetTimeout,
+          halfOpenMaxAttempts: phase53BreakerCfg.halfOpenMaxAttempts,
+        });
+        // feature-detect：workerExecutor 和 delegationLifecycle 的 setter 可能由其他子代理添加
+        // delegationLifecycle 为外层 let 变量，闭包在此处捕获引用，import 异步回调执行时取最新值
+        const we = workerExecutor as unknown as { setCircuitBreaker?: (b: unknown) => void };
+        if (typeof we.setCircuitBreaker === 'function') {
+          we.setCircuitBreaker(breaker);
+        }
+        const dl = delegationLifecycle as unknown as { setCircuitBreaker?: (b: unknown) => void } | null;
+        if (dl && typeof dl.setCircuitBreaker === 'function') {
+          dl.setCircuitBreaker(breaker);
+        }
+        logger.debug('CircuitBreaker injected', {
+          via: 'setCircuitBreaker',
+          failureThreshold: phase53BreakerCfg.failureThreshold,
+          targets: {
+            workerExecutor: typeof we.setCircuitBreaker === 'function',
+            delegationLifecycle: !!dl && typeof dl.setCircuitBreaker === 'function',
+          },
+        });
+      })
+      .catch(() => { /* fail-open：熔断器不可用时跳过 */ });
+  }
 
   // ===== 目标解析与验证（无状态） =====
   const goalParser = new GoalParser();
+  // Phase 53 Task 10：DAG 引擎（受 config.phase53Integration.dagEngine.enabled 守护，fail-open）
+  // 使用变量路径让 TypeScript 无法静态解析，避免模块尚未生成时 typecheck 失败
+  const phase53DagCfg = config.phase53Integration?.dagEngine;
+  if (phase53DagCfg?.enabled) {
+    const dagEngineModulePath = '../agent/workflow/dag-engine.js';
+    import(dagEngineModulePath)
+      .then((mod: { DagEngine: new (opts?: { maxParallel?: number; retryLimit?: number; humanEscalationThreshold?: number }) => unknown }) => {
+        const engine = new mod.DagEngine({
+          maxParallel: phase53DagCfg.maxParallel,
+          retryLimit: phase53DagCfg.retryLimit,
+          humanEscalationThreshold: phase53DagCfg.humanEscalationThreshold,
+        });
+        // feature-detect：方法可能由其他子代理添加
+        const gp = goalParser as unknown as { setDagEngine?: (e: unknown) => void };
+        if (typeof gp.setDagEngine === 'function') {
+          gp.setDagEngine(engine);
+          logger.debug('DagEngine injected into GoalParser', {
+            via: 'setDagEngine',
+            maxParallel: phase53DagCfg.maxParallel,
+          });
+        }
+      })
+      .catch(() => { /* fail-open：DAG 引擎不可用时跳过 */ });
+  }
   const goalVerifier = new GoalVerifier();
 
   // ===== Phase 50 Task 1：Goal 流程核心模块（按 config.goalIntegration 渐进接入） =====
@@ -1095,6 +1362,17 @@ export function createAppDependencies(
   agentLoop.setSanitizer(resultSanitizer);
   // Phase 32 Task 4.2：将 sanitizer 注入 MCPClientManager，检测 MCP 工具描述中的注入模式
   mcpManager.setSanitizer(resultSanitizer);
+  // Phase 53 Task 5：McpSecurityScanner 注入（受 config.phase53Integration.mcpSecurityScan.enabled 守护）
+  // 启用后 MCP 工具注册前会扫描 4 类威胁（投毒/仿冒/隐藏指令/地毯式替换）
+  const phase53McpScanCfg = config.phase53Integration?.mcpSecurityScan;
+  if (phase53McpScanCfg?.enabled) {
+    const scanner = new McpSecurityScanner({
+      knownToolNames: phase53McpScanCfg.knownToolNames,
+      blockThreshold: phase53McpScanCfg.blockThreshold,
+    });
+    mcpManager.setSecurityScanner(scanner);
+    logger.debug('McpSecurityScanner injected', { via: 'setSecurityScanner' });
+  }
 
   // C5 修复：接线 Steering Queue 消费者，让 ReActAgentLoop 能消费 taskOrchestrator 中的转向消息
   agentLoop.setSteeringConsumer(() => {
@@ -1442,6 +1720,11 @@ export function createAppDependencies(
     });
     scheduleEngine.start();
     logger.info('ScheduleEngine started', { checkInterval: '60s' });
+
+    // Phase 53 Task 2：装配验证 — 将 ScheduleEngine 注入 AgentLoop
+    // 接入点：run() 在每次迭代前后检查待触发的定时任务（目前 setter 已就位，运行时使用待 Phase 54+ 扩展）
+    agentLoop.setCronEngine(scheduleEngine);
+    logger.debug('ScheduleEngine injected into AgentLoop', { via: 'setCronEngine' });
   }
 
   // ===== Phase 50 Task 5：Phase 48 模块接入确认 =====
@@ -1573,10 +1856,39 @@ export function createAppDependencies(
     import('../agent/dual-loop-orchestrator.js')
       .then((mod) => {
         const orchestrator = new mod.DualLoopOrchestrator();
-        const loop = agentLoop as unknown as { setDualLoopOrchestrator?: (o: unknown) => void };
-        if (typeof loop.setDualLoopOrchestrator === 'function') {
-          loop.setDualLoopOrchestrator(orchestrator);
+        // CR-1 修复：在 orchestrator 创建后立即注入 reviewerPolicy 和 boundedRecovery
+        // 原 Phase 51/52 接线因"异步创建无同步引用"被跳过，导致配置读取后无法生效
+        if (config.reviewerPolicy?.tieredReviewEnabled) {
+          orchestrator.setReviewerPolicy(config.reviewerPolicy);
+          logger.info('app-init: reviewerPolicy 已注入 DualLoopOrchestrator', {
+            tieredReviewEnabled: true,
+          });
         }
+        if (config.phase52Integration?.boundedRecovery?.enabled) {
+          orchestrator.setBoundedRecovery(config.phase52Integration.boundedRecovery);
+          logger.info('app-init: boundedRecovery 已注入 DualLoopOrchestrator', {
+            maxBacktrack: config.phase52Integration.boundedRecovery.maxBacktrack,
+          });
+        }
+        // Phase 52 消费方接入（I-2）：注入架构感知指标 / Gödel 提案器 / Self-Harness 循环
+        // 注：这三个实例在下方同步创建（晚于本 .then() 注册），但由于 .then() 回调异步执行，
+        //     此时它们已完成赋值；未启用对应 config 开关时为 undefined，跳过注入（向后兼容）。
+        //     run() 中的完整消费逻辑（extractFromTrajectory / proposeModifications / discoverWeaknesses）
+        //     待 Phase 53 接入，当前仅记录采集 / 提案意图。
+        if (metricsCollector) {
+          orchestrator.setMetricsCollector(metricsCollector);
+          logger.info('app-init: metricsCollector 已注入 DualLoopOrchestrator（消费方待 Phase 53）');
+        }
+        if (godelProposer) {
+          orchestrator.setGodelProposer(godelProposer);
+          logger.info('app-init: godelProposer 已注入 DualLoopOrchestrator（消费方待 Phase 53）');
+        }
+        if (selfHarnessLoop) {
+          orchestrator.setSelfHarnessLoop(selfHarnessLoop);
+          logger.info('app-init: selfHarnessLoop 已注入 DualLoopOrchestrator（消费方待 Phase 53）');
+        }
+        // Phase 55 Task 7：强类型调用 setDualLoopOrchestrator（删除 as unknown as 弱类型断言）
+        agentLoop.setDualLoopOrchestrator(orchestrator);
         logger.info('Phase 49 DualLoopOrchestrator integrated', { enabled: true });
       })
       .catch((err: unknown) => {
@@ -1657,6 +1969,244 @@ export function createAppDependencies(
       });
   }
 
+  // ===== Phase 52 模块接入（全部由 config.phase52Integration 开关守护）=====
+  // 设计原则：未启用的模块不初始化，实例为 undefined；用 ?? 兜底避免 config 字段未定义时崩溃
+
+  // Task 1：Skill 生命周期管理
+  let skillLifecycleManager: SkillLifecycleManager | undefined;
+  if (config.phase52Integration?.skillLifecycle?.enabled) {
+    skillLifecycleManager = new SkillLifecycleManager(config.phase52Integration.skillLifecycle);
+    logger.info('app-init: SkillLifecycleManager 已启用');
+  }
+
+  // Phase 53 Task 6：SkillSecurityGate 注入（受 config.phase53Integration.skillSecurityGate.enabled 守护）
+  // 启用后第三方技能安装前会经过 17 类漏洞扫描；lifecycle manager 未启用时仅实例化记录日志
+  const phase53SkillGateCfg = config.phase53Integration?.skillSecurityGate;
+  if (phase53SkillGateCfg?.enabled) {
+    import('../skills/security-gate.js')
+      .then((mod) => {
+        const gate = new mod.SkillSecurityGate({
+          autoInstallThreshold: phase53SkillGateCfg.autoInstallThreshold,
+        });
+        if (skillLifecycleManager) {
+          skillLifecycleManager.setSecurityGate(gate);
+          logger.debug('SkillSecurityGate injected', { via: 'setSecurityGate' });
+        } else {
+          logger.info('SkillSecurityGate instantiated but no consumer wired (skillLifecycleManager disabled)');
+        }
+      })
+      .catch((err: unknown) => {
+        // fail-open：SkillSecurityGate 不可用时不阻塞主流程
+        logger.debug('SkillSecurityGate not available', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+
+  // Task 3：有界局部恢复——已在 Phase 49 块中通过 DualLoopOrchestrator.setBoundedRecovery 接入
+  // CR-1 修复：原因此处异步创建无同步引用而跳过，现改为在 Phase 49 .then() 回调中注入。
+  // 此处保留日志确认配置已读取，实际注入在 Phase 49 块完成。
+  if (config.phase52Integration?.boundedRecovery?.enabled) {
+    logger.info('app-init: boundedRecovery 配置已确认，将在 Phase 49 DualLoopOrchestrator 创建时注入');
+  }
+
+  // Task 6：架构感知指标
+  let metricsCollector: ArchitectureAwareMetricsCollector | undefined;
+  if (config.phase52Integration?.archAwareMetrics?.enabled) {
+    metricsCollector = new ArchitectureAwareMetricsCollector(
+      config.phase52Integration.archAwareMetrics.anomalySensitivity ?? 'medium',
+    );
+    logger.info('app-init: ArchitectureAwareMetricsCollector 已启用');
+  }
+
+  // Task 7：饱和监测
+  let saturationMonitor: SaturationMonitor | undefined;
+  if (config.phase52Integration?.saturationMonitor?.enabled) {
+    saturationMonitor = new SaturationMonitor();
+    logger.info('app-init: SaturationMonitor 已启用');
+  }
+
+  // Task 10：MCP 安全框架
+  let mcpSecurityFramework: MCPSecurityFramework | undefined;
+  if (config.phase52Integration?.mcpSecurity?.enabled) {
+    const mcpSecCfg = config.phase52Integration.mcpSecurity;
+    mcpSecurityFramework = new MCPSecurityFramework({
+      strictness: mcpSecCfg.strictness ?? 'standard',
+      defenseLayers: {
+        capabilityControl: mcpSecCfg.l1CapabilityCheck ?? true,
+        toolAttestation: mcpSecCfg.l2AttestationCheck ?? false,
+        informationFlowTracking: mcpSecCfg.l3InfoFlowTracking ?? true,
+        runtimePolicyEnforcement: mcpSecCfg.l4RuntimeMonitoring ?? true,
+      },
+    });
+    logger.info('app-init: MCPSecurityFramework 已启用');
+  }
+
+  // Task 5：自进化框架
+  let selfEvolutionFramework: SelfEvolutionFramework | undefined;
+  if (config.phase52Integration?.selfEvolution?.enabled) {
+    selfEvolutionFramework = new SelfEvolutionFramework({
+      enabled: true,
+      targets: config.phase52Integration.selfEvolution.targets ?? {
+        prompt: true,
+        memory: true,
+        tools: false,
+        workflow: true,
+        communication: false,
+      },
+      trigger: config.phase52Integration.selfEvolution.trigger ?? {
+        failureThreshold: 5,
+        qualityDropThreshold: 0.3,
+        evaluationInterval: 20,
+      },
+    });
+    logger.info('app-init: SelfEvolutionFramework 已启用');
+    // CR-4b：接入过程级缺陷评估（config.phase52Integration.processEvaluation.enabled 守护）
+    // 启用后 optimize 分析失败信号时调用 classifyDefect + buildCalibratedScorecard 生成评分卡
+    const processEvalCfg = config.phase52Integration?.processEvaluation;
+    if (processEvalCfg?.enabled) {
+      selfEvolutionFramework.setProcessDefectIntegration(true, {
+        sensitivity: processEvalCfg.sensitivity ?? 'medium',
+        controlPreservationThreshold: processEvalCfg.controlPreservationThreshold ?? 0.7,
+      });
+      logger.info('app-init: SelfEvolutionFramework 过程缺陷评估已启用', {
+        sensitivity: processEvalCfg.sensitivity ?? 'medium',
+        controlPreservationThreshold: processEvalCfg.controlPreservationThreshold ?? 0.7,
+      });
+    }
+  }
+
+  // Task 8：Gödel 提议器
+  let godelProposer: GodelProposer | undefined;
+  if (config.phase52Integration?.godelProposer?.enabled) {
+    godelProposer = new GodelProposer({
+      enabled: true,
+      maxProposalsPerRun: config.phase52Integration.godelProposer.maxProposalsPerRun ?? 5,
+      autoApplyLowRisk: config.phase52Integration.godelProposer.autoApplyLowRisk ?? false,
+      requireUserApproval: config.phase52Integration.godelProposer.requireUserApproval ?? true,
+      allowedTargetTypes: ['prompt', 'config', 'skill', 'rule'],
+    });
+    logger.info('app-init: GodelProposer 已启用');
+  }
+
+  // Task 9：Self-Harness 循环
+  let selfHarnessLoop: SelfHarnessLoop | undefined;
+  if (config.phase52Integration?.selfHarness?.enabled) {
+    selfHarnessLoop = new SelfHarnessLoop({
+      enabled: true,
+      weaknessDetectionSensitivity: config.phase52Integration.selfHarness.weaknessDetectionSensitivity ?? 'medium',
+      maxProposalsPerCycle: config.phase52Integration.selfHarness.maxProposalsPerCycle ?? 5,
+      requireRegressionTest: config.phase52Integration.selfHarness.requireRegressionTest ?? true,
+      autoApplyLowRiskProposals: config.phase52Integration.selfHarness.autoApplyLowRiskProposals ?? false,
+    });
+    logger.info('app-init: SelfHarnessLoop 已启用');
+  }
+
+  // Phase 52 Task 8/9 深度接入：把 GodelProposer 和 SelfHarnessLoop 注入到 SelfEvolutionFramework
+  // config 守护：仅在 selfEvolutionFramework 已启用且 godelProposer/selfHarnessLoop 已创建时调用
+  // 注：executionHistory 和 currentRules 暂传 undefined，由后续 Phase 53 接入真实数据源
+  if (selfEvolutionFramework && godelProposer) {
+    try {
+      selfEvolutionFramework.setGodelProposer(godelProposer);
+      logger.info('app-init: GodelProposer 已注入 SelfEvolutionFramework（消费方待 Phase 53）');
+    } catch (err) {
+      logger.warn('app-init: setGodelProposer 失败 (non-blocking)', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  if (selfEvolutionFramework && selfHarnessLoop) {
+    try {
+      selfEvolutionFramework.setSelfHarnessLoop(selfHarnessLoop);
+      logger.info('app-init: SelfHarnessLoop 已注入 SelfEvolutionFramework（消费方待 Phase 53）');
+    } catch (err) {
+      logger.warn('app-init: setSelfHarnessLoop 失败 (non-blocking)', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // CR-4b：三层抽象 Instance/Harness（config.instanceHarness.threeTierAbstractionEnabled 守护）
+  let instanceHarness: { instance: AgentInstance; harness: AgentHarness } | undefined;
+  const instanceHarnessCfg = config.instanceHarness;
+  if (instanceHarnessCfg?.threeTierAbstractionEnabled) {
+    const harnessInstance = createDefaultInstance(instanceHarnessCfg.defaultInstanceId || cwd);
+    const harnessModelId = config.providers[0]?.models[0]?.id ?? currentModel;
+    const harness = createHarness(
+      harnessInstance,
+      instanceHarnessCfg.defaultHarnessName || 'default',
+      harnessModelId,
+    );
+    instanceHarness = { instance: harnessInstance, harness };
+    logger.info('app-init: InstanceHarness 三层抽象已启用', {
+      instanceId: harnessInstance.id,
+      harnessName: harness.name,
+      scopeAbortCascade: instanceHarnessCfg.scopeAbortCascadeEnabled,
+    });
+  }
+
+  // CR-4b：组合式路由器（config.phase52Integration.compositionalRouting.enabled 守护）
+  // 包装 decomposeWithSkillAwareness / composeDAG，按配置注入路由参数，供上层 planner 调用
+  let compositionalRouter: CompositionalRouterInstance | undefined;
+  const compositionalRoutingCfg = config.phase52Integration?.compositionalRouting;
+  if (compositionalRoutingCfg?.enabled) {
+    const routingConfig: CompositionalRoutingConfig = {
+      maxDecompositionIterations: compositionalRoutingCfg.maxDecompositionIterations ?? DEFAULT_ROUTING_CONFIG.maxDecompositionIterations,
+      semanticRetrieval: compositionalRoutingCfg.semanticRetrieval ?? DEFAULT_ROUTING_CONFIG.semanticRetrieval,
+      maxParallelSkills: compositionalRoutingCfg.maxParallelSkills ?? DEFAULT_ROUTING_CONFIG.maxParallelSkills,
+    };
+    compositionalRouter = {
+      config: routingConfig,
+      decompose: (task, availableSkills, decomposeFn) =>
+        decomposeWithSkillAwareness(task, availableSkills, routingConfig, decomposeFn),
+      planDAG: (subTasks, availableSkills) => {
+        const matches: SkillMatch[] = [];
+        for (const sub of subTasks) {
+          const m = retrieveSkill(sub, availableSkills);
+          if (m) matches.push(m);
+        }
+        return composeDAG(matches, subTasks);
+      },
+    };
+    logger.info('app-init: CompositionalRouter 已启用', {
+      maxDecompositionIterations: routingConfig.maxDecompositionIterations,
+      maxParallelSkills: routingConfig.maxParallelSkills,
+    });
+  }
+
+  // Phase 51 Task 1/7：Reviewer 分级策略——已在 Phase 49 块中通过 DualLoopOrchestrator.setReviewerPolicy 接入
+  // CR-1 修复：原因此处异步创建无同步引用而跳过，现改为在 Phase 49 .then() 回调中注入。
+
+  // ===== Phase 53 Task 12：Doctor 健康检查（受 config.phase53Integration.doctor.runOnStartup 守护） =====
+  // 启动时异步运行环境探测，结果输出到 logger；不阻塞主流程
+  // Doctor 实例不暴露到 AppDependencies（一次性启动检查，UI 无需持有）
+  const phase53DoctorCfg = config.phase53Integration?.doctor;
+  if (phase53DoctorCfg?.runOnStartup) {
+    // 动态 import 避免未启用时引入 spawnSync 噪音
+    const doctorPath = '../cli/doctor.js';
+    import(doctorPath)
+      .then((mod: { Doctor: new (cfg?: Partial<{ probeTimeout: number; runOnStartup: boolean }>, ctx?: { providers?: Array<{ id: string; baseUrl: string }>; mcpServers?: Array<{ id: string; command: string }>; cwd?: string }) => { runAllChecks: () => Promise<unknown[]>; formatReport: (r: unknown[]) => string } }) => {
+        const doctor = new mod.Doctor(
+          { probeTimeout: phase53DoctorCfg.probeTimeout, runOnStartup: true },
+          {
+            providers: config.providers.map(p => ({ id: p.id, baseUrl: p.baseUrl })),
+            mcpServers: config.mcp.servers.map(s => ({ id: s.id, command: (s as { command?: string }).command ?? '' })),
+            cwd,
+          },
+        );
+        return doctor.runAllChecks().then((results: unknown[]) => {
+          const report = doctor.formatReport(results);
+          logger.info('Phase53 Doctor: startup probe complete', { report });
+        });
+      })
+      .catch((err: unknown) => {
+        // fail-open：Doctor 不可用时不阻塞主流程
+        logger.debug('Phase53 Doctor not available', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+
   return {
     registry,
     mcpManager,
@@ -1712,5 +2262,17 @@ export function createAppDependencies(
     // Phase 50 Task 3：delegationIntegration 实例（供 UI / 测试观察）
     subAgentLifecycle: delegationLifecycle,
     subAgentScoreCardCollector: delegationScoreCardCollector,
+    // Phase 52 模块（全部可选，未启用时为 undefined）
+    skillLifecycleManager,
+    metricsCollector,
+    saturationMonitor,
+    mcpSecurityFramework,
+    selfEvolutionFramework,
+    godelProposer,
+    selfHarnessLoop,
+    // CR-4b：孤立模块接线点实例（按各自 config 开关守护，未启用时为 undefined）
+    activityStore,
+    instanceHarness,
+    compositionalRouter,
   };
 }

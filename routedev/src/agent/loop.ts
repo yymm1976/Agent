@@ -47,6 +47,9 @@ import type { MacroManager } from '../macros/manager.js';
 import type { ScheduleEngine } from '../scheduler/engine.js';
 // Phase 53 Task 9：预算监控器（type-only import，避免运行时循环依赖）
 import type { BudgetMonitor } from './budget-monitor.js';
+// Phase 55 Task 7：DualLoop 编排器（type-only import，避免运行时循环依赖）
+// 注入后 run() 会把控制权转交给 orchestrator.run()
+import type { DualLoopOrchestrator } from './dual-loop-orchestrator.js';
 
 /**
  * Phase 55：结构化 system block（支持 Anthropic cache_control: ephemeral）
@@ -155,6 +158,11 @@ export class ReActAgentLoop {
    * 接入后，每次迭代结束会记录 token 消耗与工具调用，并输出告警（fail-open）
    */
   private budgetMonitor: BudgetMonitor | null = null;
+  /**
+   * Phase 55 Task 7：DualLoop 编排器（可选）
+   * 注入后 run() 会把控制权转交给 orchestrator.run()，由双循环编排器接管
+   */
+  private dualLoopOrchestrator: DualLoopOrchestrator | null = null;
 
   constructor(
     toolExecutor: ToolExecutorAdapter,
@@ -270,6 +278,15 @@ export class ReActAgentLoop {
    */
   setBudgetMonitor(monitor: BudgetMonitor | null): void {
     this.budgetMonitor = monitor;
+  }
+
+  /**
+   * Phase 55 Task 7：注入 DualLoop 编排器
+   * 接入后，run() 会把控制权转交给 orchestrator.run()（双循环接管）
+   * 传入 null 可显式卸载（用于配置热重载场景）
+   */
+  setDualLoopOrchestrator(orchestrator: DualLoopOrchestrator | null): void {
+    this.dualLoopOrchestrator = orchestrator;
   }
 
   /**
@@ -471,6 +488,13 @@ export class ReActAgentLoop {
    * yield 出 ReActEvent 事件流
    */
   async *run(params: ReActRunParams): AsyncGenerator<ReActEvent> {
+    // Phase 55 Task 7：DualLoop 编排器注入时转交控制权
+    // 编排器内部负责完整的 ReAct 循环（innerAgent 执行 + outerAgent 验证）
+    if (this.dualLoopOrchestrator) {
+      yield* this.dualLoopOrchestrator.run(params);
+      return;
+    }
+
     const {
       userMessage,
       llmClient,
