@@ -263,6 +263,8 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     unifiedReviewer: deps.unifiedReviewer,
     // Phase 55 Task 8：执行路径判定器（app-init.ts 实例化，未注入时 goal-runner 降级到 legacy）
     executionRouter: deps.executionRouter,
+    // Phase 55 Task 9：DualLoop 编排器 ref（异步创建，ref 延迟绑定，未注入时降级到 legacyIterativeLoop）
+    dualLoopOrchestratorRef: deps.dualLoopOrchestratorRef,
   }));
 
   // ChatRunner（非命令聊天执行）

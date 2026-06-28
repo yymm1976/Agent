@@ -674,6 +674,16 @@ export function createAppDependencies(
   //   包装顺序：innerSpawn → concurrencyLimit → delegation → SpawnAgentTool
   //   delegation 在最外层：每次 spawn 都经过委托体系检查（context/gate/enforcer/lifecycle/scorecard）
   //   未开启任一开关时 wrapper 是 passthrough（零开销）
+
+  // Phase 55 Task 8：提前创建 workerProfileManager（供 delegationDeps.detachedSession 和 WorkerExecutor 共享）
+  // 异步加载，不阻塞启动；WorkerExecutor.execute() 调用 resolveProfileForTask 时若未加载完成会回退到内置模板
+  const workerProfileManager = new AgentProfileManager(cwd);
+  workerProfileManager.loadAll().catch(err => {
+    logger.warn('AgentProfileManager.loadAll 失败，WorkerExecutor 将回退到 WORKER_ROLE_PROMPTS', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+
   if (subAgentsEnabled && MAX_CONCURRENT_SUB_AGENTS > 0) {
     let spawnAgentFn: SpawnAgentFunction = createConcurrencyLimitedSpawnFn(
       createSpawnAgentFn(),
@@ -730,6 +740,9 @@ export function createAppDependencies(
         resultSchemaFallbackToText: resultSchemaCfg?.fallbackToText,
         activityStoreEnabled: !!activityStore,
         activityStore,
+        // Phase 55 Task 8：修复 detachedSession 接线断层（原漏传导致 spawn-agent.ts:546 分支永不执行）
+        detachedSessionEnabled: !!delegationPolicyCfg?.detachedSessionEnabled,
+        profileManager: workerProfileManager,
       };
       spawnAgentFn = wrapSpawnAgentWithDelegation(spawnAgentFn, delegationDeps);
       logger.info('Phase 50: spawn_agent wrapped with delegation modules', {
@@ -1107,14 +1120,7 @@ export function createAppDependencies(
   // 注入后 WorkerExecutor.execute() 会调用 pack() 生成结构化上下文包（选择性传递可视化）
   // 未开启任一开关时 contextPacker 为 undefined，WorkerExecutor 回退到 filterContext（零回归）
   const workerContextPacker = orchestrationIntegration ? new ContextPacker() : undefined;
-  // Phase 54：创建共享 AgentProfileManager 实例并预加载（供 WorkerExecutor 使用 profile.systemPrompt）
-  // 异步加载，不阻塞启动；WorkerExecutor.execute() 调用 resolveProfileForTask 时若未加载完成会回退到内置模板
-  const workerProfileManager = new AgentProfileManager(cwd);
-  workerProfileManager.loadAll().catch(err => {
-    logger.warn('AgentProfileManager.loadAll 失败，WorkerExecutor 将回退到 WORKER_ROLE_PROMPTS', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  });
+  // Phase 54：workerProfileManager 已在 Phase 55 Task 8 提前创建（供 delegationDeps.detachedSession 和 WorkerExecutor 共享）
   // Phase 35 Task 1：注入 workerContext 配置，启用上下文选择性传递
   const workerExecutor = new WorkerExecutor(agentLoop, {
     agentLoop,
