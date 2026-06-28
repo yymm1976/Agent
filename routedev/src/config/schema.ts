@@ -169,10 +169,11 @@ export const GoalVerifierConfigSchema = z.object({
    */
   iterative: z.object({
     /** 是否启用迭代闭环 */
-    enabled: z.boolean().default(false),
+    // Phase 54 修复：默认 true——验证失败时自动生成补救步骤，交叉验证的闭环保障
+    enabled: z.boolean().default(true),
     /** 最大迭代轮数（1-10，默认 3） */
     maxRounds: z.number().int().min(1).max(10).default(3),
-  }).default({ enabled: false, maxRounds: 3 }),
+  }).default({ enabled: true, maxRounds: 3 }),
 });
 export type GoalVerifierConfig = z.infer<typeof GoalVerifierConfigSchema>;
 
@@ -250,6 +251,39 @@ export const AutonomyConfigSchema = z.object({
   confirmTimeout: z.number().positive().int().default(30000),
 });
 export type AutonomyConfig = z.infer<typeof AutonomyConfigSchema>;
+
+/**
+ * Phase 54 Task 5：自主度模式行为定义
+ * 把 auto/semi/manual 三档映射到具体行为开关，供 GoalRunner 在 handleGoalCommand 中统一判定
+ *
+ * - requirePlanConfirmation：是否需要用户确认执行计划（auto 跳过，semi/manual 需确认）
+ * - requireToolConfirmation：是否需要用户确认单个工具调用（manual 需确认，auto/semi 跳过）
+ * - requireHumanAcceptance：是否需要人工最终确认验收（所有模式都需——这是"严苛验收"核心价值的体现）
+ */
+export const AUTONOMY_BEHAVIOR: Record<AutonomyMode, {
+  requirePlanConfirmation: boolean;
+  requireToolConfirmation: boolean;
+  requireHumanAcceptance: boolean;
+}> = {
+  // auto：全自动执行，但关键验收仍需人工把关
+  auto: {
+    requirePlanConfirmation: false,
+    requireToolConfirmation: false,
+    requireHumanAcceptance: true,
+  },
+  // semi：半自动——需用户确认计划，工具调用自动批准，验收需人工确认
+  semi: {
+    requirePlanConfirmation: true,
+    requireToolConfirmation: false,
+    requireHumanAcceptance: true,
+  },
+  // manual：全手动——计划确认 + 工具确认 + 验收确认都需人工
+  manual: {
+    requirePlanConfirmation: true,
+    requireToolConfirmation: true,
+    requireHumanAcceptance: true,
+  },
+};
 
 // --- 提示音配置 ---
 
@@ -974,6 +1008,20 @@ export const GoalConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   tokenBudget: z.number().int().min(1000).default(50000),
   /** 软停止比例（达到预算此比例时提示用户，0.5-1.0） */
   softStopRatio: z.number().min(0.5).max(1.0).default(0.9),
+  /**
+   * Phase 55 Task 4：/goal 执行路径路由器配置
+   * 字段与 ExecutionRouterOptions 接口保持一致（单一数据源）
+   */
+  executionRouter: z.object({
+    /** 判定模式：auto（自动判定）/ legacy（强制旧路径）/ explicit（显式指定） */
+    mode: z.enum(['auto', 'legacy', 'explicit']).default('auto'),
+    /** mode=explicit 时生效，指定具体路径 */
+    explicitRoute: z.enum(['single', 'dag', 'compose', 'legacy']).optional(),
+    /** 单 Agent 路径的最大步数（1-5，默认 2） */
+    singleAgentMaxSteps: z.number().int().min(1).max(5).default(2),
+    /** DAG 路径的最大领域数（超过则升级到 compose，1-5，默认 1） */
+    dagMaxDomains: z.number().int().min(1).max(5).default(1),
+  }).default({ mode: 'auto', singleAgentMaxSteps: 2, dagMaxDomains: 1 }),
 }));
 export type GoalConfig = z.infer<typeof GoalConfigSchema>;
 
@@ -1204,7 +1252,8 @@ export type ImportConfig = z.infer<typeof ImportConfigSchema>;
  * - requirementChangeEnabled：RequirementChangeAnalyzer 需求变更分析
  */
 export const GoalIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
-  auditEnabled: z.boolean().default(false),
+  // Phase 54 修复：auditEnabled 默认 true——三层独立审计是交叉验证的核心保障
+  auditEnabled: z.boolean().default(true),
   persistenceEnabled: z.boolean().default(false),
   promptBuilderEnabled: z.boolean().default(false),
   requirementChangeEnabled: z.boolean().default(false),
@@ -1283,6 +1332,474 @@ export const Phase49IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.obj
   routingFunnelEnabled: z.boolean().default(false),
 }));
 export type Phase49IntegrationConfig = z.infer<typeof Phase49IntegrationConfigSchema>;
+
+// --- Phase 51：外部开源借鉴落地配置 ---
+
+/** Reviewer 分级策略（Phase 51 Task 1/7） */
+export const ReviewerPolicySchema = z.preprocess((v) => v ?? {}, z.object({
+  tieredReviewEnabled: z.boolean().default(false),
+  tinyTaskStepThreshold: z.number().int().min(1).max(20).default(5),
+  bigTaskStepThreshold: z.number().int().min(10).max(100).default(30),
+  midWorkReviewRatio: z.number().min(0.3).max(0.8).default(0.5),
+  autoCrossModelForHighRisk: z.boolean().default(false),
+  crossModelReviewerId: z.string().default(''),
+  enforceEvidenceProtocol: z.boolean().default(false),
+  highRiskThreshold: z.number().int().min(20).max(100).default(40),
+  autoSelectCrossModel: z.boolean().default(true),
+  failureEscalationThreshold: z.number().int().min(1).max(10).default(2),
+  contextTokenEscalationRatio: z.number().min(0.5).max(0.95).default(0.8),
+}));
+export type ReviewerPolicyConfig = z.infer<typeof ReviewerPolicySchema>;
+
+/** 委托四维约束+三态策略（Phase 51 Task 2/3/4） */
+export const DelegationPolicySchema = z.preprocess((v) => v ?? {}, z.object({
+  boundedDelegationEnabled: z.boolean().default(false),
+  maxDepth: z.number().int().min(0).max(5).default(1),
+  maxParallel: z.number().int().min(1).max(10).default(4),
+  delegationTargets: z.record(z.string(), z.array(z.string())).default({}),
+  subprocessTools: z.record(z.string(), z.array(z.string())).default({}),
+  depthPassingMode: z.enum(['env', 'counter']).default('counter'),
+  hardDelegationTypes: z.array(z.string()).default(['research', 'review']),
+  refuseIfSpecialistUnavailable: z.boolean().default(false),
+  specialistAvailabilityOverride: z.record(z.string(), z.boolean()).default({}),
+  toolCallGuardEnabled: z.boolean().default(false),
+  detachedSessionEnabled: z.boolean().default(false),
+  fullContextIsolation: z.boolean().default(true),
+  subAgentMaxContextTokens: z.number().int().min(1000).max(200000).default(32000),
+  propagateToolCallsToParent: z.boolean().default(false),
+}));
+export type DelegationPolicyConfig = z.infer<typeof DelegationPolicySchema>;
+
+/** Agent 活动面板（Phase 51 Task 5） */
+export const ActivityPanelSchema = z.preprocess((v) => v ?? {}, z.object({
+  enabled: z.boolean().default(false),
+  maxActiveDisplay: z.number().int().min(1).max(10).default(4),
+  maxRecentDisplay: z.number().int().min(0).max(20).default(3),
+  taskPreviewLength: z.number().int().min(20).max(200).default(72),
+  showToolCallStats: z.boolean().default(true),
+  showThinkingLevel: z.boolean().default(true),
+}));
+export type ActivityPanelConfig = z.infer<typeof ActivityPanelSchema>;
+
+/** 三层抽象 Instance/Harness/Session（Phase 51 Task 6） */
+export const InstanceHarnessSchema = z.preprocess((v) => v ?? {}, z.object({
+  threeTierAbstractionEnabled: z.boolean().default(false),
+  defaultInstanceId: z.string().default(''),
+  defaultHarnessName: z.string().default('default'),
+  scopeAbortCascadeEnabled: z.boolean().default(false),
+}));
+export type InstanceHarnessConfig = z.infer<typeof InstanceHarnessSchema>;
+
+/** 项目级配置分层（Phase 51 Task 8） */
+export const ConfigLayeringSchema = z.preprocess((v) => v ?? {}, z.object({
+  // 旧字段(保留向后兼容)
+  enabled: z.boolean().default(false),
+  projectConfigPath: z.string().default('.routedev/config.json'),
+  globalConfigPath: z.string().default(''),
+  mergeStrategy: z.enum(['deep', 'shallow']).default('deep'),
+  // 新字段(Phase 51 蓝图对齐)
+  projectConfigEnabled: z.boolean().default(false),
+  globalConfigDir: z.string().default(''),
+  arrayMergeStrategy: z.enum(['replace', 'merge']).default('replace'),
+}));
+export type ConfigLayeringConfig = z.infer<typeof ConfigLayeringSchema>;
+
+/** 错误显示配置（Phase 51 Task 9） */
+export const ErrorDisplaySchema = z.preprocess((v) => v ?? {}, z.object({
+  // 旧字段
+  showDevDetails: z.boolean().default(false),
+  showStackTrace: z.boolean().default(false),
+  maxDetailsLength: z.number().int().min(100).max(10000).default(2000),
+  // 新字段(Phase 51 蓝图对齐)
+  errorDisplayMode: z.enum(['user', 'dev']).default('user'),
+  includeStackTrace: z.boolean().default(false),
+  logErrorsToFile: z.boolean().default(true),
+}));
+export type ErrorDisplayConfig = z.infer<typeof ErrorDisplaySchema>;
+
+/** Result Schema 配置（Phase 51 Task 10） */
+export const ResultSchemaConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  // 旧字段
+  enabled: z.boolean().default(false),
+  strictValidation: z.boolean().default(false),
+  fallbackToText: z.boolean().default(true),
+  // 新字段(Phase 51 蓝图对齐)
+  resultSchemaEnabled: z.boolean().default(false),
+  enforceFinishProtocol: z.boolean().default(false),
+  maxSubAgentSteps: z.number().int().min(5).max(200).default(50),
+}));
+export type ResultSchemaConfig = z.infer<typeof ResultSchemaConfigSchema>;
+
+/** 模型显示配置（Phase 51 Task 11） */
+export const ModelDisplaySchema = z.preprocess((v) => v ?? {}, z.object({
+  // 旧字段
+  showThinkingLevel: z.boolean().default(true),
+  showProviderPrefix: z.boolean().default(false),
+  thinkingLevelLabels: z.record(z.string(), z.string()).default({}),
+  // 新字段(Phase 51 蓝图对齐)
+  splitThinkingLabel: z.boolean().default(true),
+  thinkingLabelStyle: z.enum(['badge', 'text', 'icon']).default('badge'),
+}));
+export type ModelDisplayConfig = z.infer<typeof ModelDisplaySchema>;
+
+// --- Phase 52：MUSE-Autoskill 集成配置 ---
+
+/**
+ * Skill 生命周期配置（Phase 52 Task 1）
+ * 实现 MUSE-Autoskill 论文的五阶段生命周期：Creation / Memory / Management / Evaluation / Refinement
+ *
+ * 默认全部关闭——这些功能为实验性自主能力，需显式开启
+ * 陷阱 #171：memoryRetentionDays 必须严格执行，过期记忆立即清理
+ */
+export const SkillLifecycleConfigSchema = z.object({
+  /** 是否启用 Skill 生命周期管理 */
+  enabled: z.boolean().default(false),
+  /** 触发创建的相似任务次数阈值（2-10，默认 3） */
+  creationTriggerThreshold: z.number().int().min(2).max(10).default(3),
+  /** 记忆保留天数（1-365，默认 30，陷阱 #171） */
+  memoryRetentionDays: z.number().int().min(1).max(365).default(30),
+  /** 是否自动应用优化建议（默认 false——必须用户审批） */
+  autoApplyRefinement: z.boolean().default(false),
+});
+export type SkillLifecycleConfig = z.infer<typeof SkillLifecycleConfigSchema>;
+
+// --- Phase 52 Task 7：评估集饱和监测配置 ---
+
+/**
+ * 评估集饱和监测配置（Phase 52 Task 7）
+ *
+ * 来自 Benchmark Saturation 论文——评估集区分度会随模型升级而下降，
+ * 当模型在评估集上的得分接近天花板时，评估集就不再具备区分能力。
+ *
+ * SaturationMonitor 持续监测 passRate / scoreVariance / discrimination，
+ * 在饱和时给出 add_difficult_cases / retire_easy_cases / replace_evaluation 建议。
+ *
+ * 默认关闭——开启后由 EvaluationFramework 在每次 runEvaluation 后调用 SaturationMonitor。
+ */
+export const SaturationMonitorConfigSchema = z.object({
+  /** 是否启用饱和监测 */
+  enabled: z.boolean().default(false),
+  /** 通过率阈值（高于此值且方差低于阈值时判定为 saturated，默认 0.95） */
+  passRateThreshold: z.number().min(0.5).max(1).default(0.95),
+  /** 方差阈值（低于此值且通过率高于阈值时判定为 saturated，默认 0.05） */
+  varianceThreshold: z.number().min(0).max(0.5).default(0.05),
+  /** 检查间隔：至少积累多少次运行结果才开始评估（5-100，默认 10） */
+  checkInterval: z.number().int().min(5).max(100).default(10),
+});
+export type SaturationMonitorConfig = z.infer<typeof SaturationMonitorConfigSchema>;
+
+/**
+ * MCP 安全形式化框架配置（Phase 52 Task 10）
+ * 来自 MCPSHIELD 论文——4 层深度防御 + 7 类威胁检测
+ */
+export const MCPSecurityConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 是否启用 MCP 安全框架 */
+  enabled: z.boolean().default(false),
+  /** 严格度级别：permissive(宽松) / standard(标准) / strict(严格) */
+  strictness: z.enum(['permissive', 'standard', 'strict']).default('standard'),
+  /** L1 能力层防御：工具能力校验 */
+  l1CapabilityCheck: z.boolean().default(true),
+  /** L2 证明层防御：工具来源验证 */
+  l2AttestationCheck: z.boolean().default(false),
+  /** L3 信息流层防御：数据流追踪 */
+  l3InfoFlowTracking: z.boolean().default(true),
+  /** L4 运行时层防御：运行时行为监控 */
+  l4RuntimeMonitoring: z.boolean().default(true),
+}));
+export type MCPSecurityConfig = z.infer<typeof MCPSecurityConfigSchema>;
+
+// --- Phase 52 Task 3：长程工作流有界局部恢复配置 ---
+
+/**
+ * 有界局部恢复配置（Phase 52 Task 3）
+ * 来自 BCER Agent 论文：失败时不全局重跑，回退到最近 checkpoint 只重跑失败步骤
+ *
+ * - enabled：是否启用有界局部恢复（默认 false，由接入层控制）
+ * - maxBacktrack：最大回溯步数（含失败步骤本身，1-10，默认 3）
+ * - artifactBinding：是否启用工件绑定（注册 StepArtifact 以追踪依赖）
+ * - validateConsistency：恢复后是否验证工件一致性（陷阱 #173）
+ *
+ * 注：即使 enabled=false，BoundedRecoveryManager 仍可被实例化（测试场景），
+ *     接入层根据此开关决定是否调用 computeRecoveryScope
+ */
+export const BoundedRecoveryConfigSchema = z.object({
+  /** 是否启用有界局部恢复 */
+  enabled: z.boolean().default(false),
+  /** 最大回溯步数（含失败步骤本身，1-10，默认 3） */
+  maxBacktrack: z.number().int().min(1).max(10).default(3),
+  /** 是否启用工件绑定（注册 StepArtifact 以追踪依赖） */
+  artifactBinding: z.boolean().default(true),
+  /** 恢复后是否验证工件一致性（陷阱 #173） */
+  validateConsistency: z.boolean().default(true),
+});
+export type BoundedRecoveryConfig = z.infer<typeof BoundedRecoveryConfigSchema>;
+
+/**
+ * Phase 52 集成配置（聚合所有 Phase 52 Task 的配置）
+ * 各子配置已由 Phase 52 Task 实现为完整 schema，默认 enabled=false（保守启用）
+ */
+export const Phase52IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** Task 1：Skill 生命周期管理 */
+  skillLifecycle: z.preprocess((v) => v ?? {}, SkillLifecycleConfigSchema),
+  /** Task 2：过程评估 */
+  processEvaluation: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    sensitivity: z.enum(['low', 'medium', 'high']).default('medium'),
+    showProcessGrade: z.boolean().default(true),
+    controlPreservationThreshold: z.number().min(0).max(1).default(0.7),
+  })),
+  /** Task 3：有界恢复 */
+  boundedRecovery: z.preprocess((v) => v ?? {}, BoundedRecoveryConfigSchema),
+  /** Task 4：组合式路由 */
+  compositionalRouting: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    maxDecompositionIterations: z.number().int().min(1).max(5).default(2),
+    semanticRetrieval: z.boolean().default(true),
+    maxParallelSkills: z.number().int().min(1).max(4).default(2),
+  })),
+  /** Task 5：自演化 */
+  selfEvolution: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    // Phase 53 收尾修复：targets/trigger 需要 preprocess 包裹，否则 AppConfigSchema.parse({}) 失败
+    targets: z.preprocess((v) => v ?? {}, z.object({
+      prompt: z.boolean().default(true),
+      memory: z.boolean().default(true),
+      tools: z.boolean().default(false),
+      workflow: z.boolean().default(true),
+      communication: z.boolean().default(false),
+    })),
+    trigger: z.preprocess((v) => v ?? {}, z.object({
+      failureThreshold: z.number().int().min(2).max(20).default(5),
+      qualityDropThreshold: z.number().min(0).max(1).default(0.3),
+      evaluationInterval: z.number().int().min(5).max(100).default(20),
+    })),
+  })),
+  /** Task 6：架构感知指标 */
+  archAwareMetrics: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    anomalySensitivity: z.enum(['low', 'medium', 'high']).default('medium'),
+    showInQualityCommand: z.boolean().default(true),
+  })),
+  /** Task 7：饱和度监测（Phase 52 Task 7 完整 schema） */
+  saturationMonitor: z.preprocess((v) => v ?? {}, SaturationMonitorConfigSchema),
+  /** Task 8：Gödel 提议器 */
+  godelProposer: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    maxProposalsPerRun: z.number().int().min(1).max(20).default(5),
+    autoApplyLowRisk: z.boolean().default(false),
+    requireUserApproval: z.boolean().default(true),
+    // 新字段（Phase 52 蓝图对齐）
+    /** 提议运行间隔（收集多少次信号后产出一轮提议，10-200，默认 50） */
+    proposalInterval: z.number().int().min(10).max(200).default(50),
+    /** 是否允许高风险提案（默认 false——高风险提案默认不产出） */
+    allowHighRiskProposals: z.boolean().default(false),
+    /** 提案保留天数（1-90，默认 14，超期清理） */
+    proposalRetentionDays: z.number().int().min(1).max(90).default(14),
+  })),
+  /** Task 9：自安全套件 */
+  selfHarness: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    weaknessDetectionSensitivity: z.enum(['low', 'medium', 'high']).default('medium'),
+    maxProposalsPerCycle: z.number().int().min(1).max(20).default(5),
+    requireRegressionTest: z.boolean().default(true),
+    autoApplyLowRiskProposals: z.boolean().default(false),
+    // 新字段（Phase 52 蓝图对齐）
+    /** 弱点挖掘样本量（10-500，默认 50——历史失败日志采样数） */
+    miningSampleSize: z.number().int().min(10).max(500).default(50),
+    /** 模式频率阈值（2-20，默认 3——出现次数达到此值才视为模式） */
+    patternFrequencyThreshold: z.number().int().min(2).max(20).default(3),
+    /** 是否自动应用已通过验证的提案（默认 false——仍需用户确认） */
+    autoApplyValidated: z.boolean().default(false),
+    /** 回归测试存放目录（相对路径，默认 '.routedev/regression-tests/'） */
+    regressionTestPath: z.string().default('.routedev/regression-tests/'),
+  })),
+  /** Task 10：MCP 安全形式化框架（4 层深度防御 + 7 类威胁检测） */
+  mcpSecurity: z.preprocess((v) => v ?? {}, MCPSecurityConfigSchema),
+}));
+export type Phase52IntegrationConfig = z.infer<typeof Phase52IntegrationConfigSchema>;
+
+// --- Phase 53：代码卫生与安全治理加固 ---
+
+/**
+ * Phase 53 Task 3：策略引擎配置（动作级 fail-closed）
+ * 借鉴 microsoft/agent-governance-toolkit 的 PolicyEngine
+ * enabled=false 时退回原行为（向后兼容）
+ */
+export const PolicyEngineConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 是否启用策略引擎（默认 false，向后兼容） */
+  enabled: z.boolean().default(false),
+  /** 默认策略：无匹配规则时 deny（fail-closed）或 allow */
+  defaultPolicy: z.enum(['deny', 'allow']).default('deny'),
+  /** 冲突解决策略（当前仅实现 deny-overrides，其他枚举值供未来扩展） */
+  conflictResolution: z.enum([
+    'deny-overrides',
+    'allow-overrides',
+    'priority-first-match',
+    'most-specific-wins',
+  ]).default('deny-overrides'),
+  /** 策略规则文件路径（YAML，预留字段，当前策略通过 addPolicy API 注入） */
+  rulesFile: z.string().default('.routedev/policies.yaml'),
+}));
+export type PolicyEngineConfig = z.infer<typeof PolicyEngineConfigSchema>;
+
+/**
+ * Phase 53 Task 4：哈希链审计配置
+ * enabled=true 时 AuditLogger 写入 SHA-256 链式哈希
+ */
+export const AuditChainConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 是否启用哈希链（默认 false，向后兼容） */
+  enabled: z.boolean().default(false),
+  /** 审计日志文件路径（可选，默认沿用 AuditLogger 的 storageDir） */
+  logFile: z.string().default('.routedev/audit-chain.jsonl'),
+  /** 溢出时保留的接缝哈希数 */
+  overflowSealCount: z.number().int().min(1).default(1),
+}));
+export type AuditChainConfigType = z.infer<typeof AuditChainConfigSchema>;
+
+/**
+ * Phase 53 Task 5：MCP 安全扫描配置
+ * 在 MCP 工具注册到 ToolRegistry 之前扫描 4 类威胁
+ */
+export const McpSecurityScanConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 是否启用 MCP 安全扫描（默认 false，向后兼容） */
+  enabled: z.boolean().default(false),
+  /** 阻断阈值：severity >= 此级别的发现阻止注册 */
+  blockThreshold: z.enum(['low', 'medium', 'high', 'critical']).default('high'),
+  /** 已知工具名列表（用于仿冒检测） */
+  knownToolNames: z.array(z.string()).default([]),
+}));
+export type McpSecurityScanConfig = z.infer<typeof McpSecurityScanConfigSchema>;
+
+/**
+ * Phase 53 Task 6：技能安全门控配置
+ * 第三方技能安装前通过 17 类漏洞扫描
+ */
+export const SkillSecurityGateConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 是否启用技能安全扫描（默认 false，向后兼容） */
+  enabled: z.boolean().default(false),
+  /** 自动安装的分数阈值（>此值需用户确认） */
+  autoInstallThreshold: z.number().int().min(0).max(100).default(50),
+  /** 基线抑制文件（Glob + SHA-256 指纹，预留字段） */
+  baselineFile: z.string().default('.routedev/skill-baseline.json'),
+}));
+export type SkillSecurityGateConfig = z.infer<typeof SkillSecurityGateConfigSchema>;
+
+/**
+ * Phase 53 Task 7：配置保护守卫配置
+ * 阻止 Agent 弱化自身的安全约束
+ */
+export const ConfigGuardConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 是否启用配置保护（默认 false，向后兼容） */
+  enabled: z.boolean().default(false),
+  /** 首次触发时是否降级为 info（避免首次误报阻塞） */
+  warnOnFirst: z.boolean().default(true),
+  /** 受保护文件 pattern（用户可扩展，追加到默认 pattern） */
+  protectedPatterns: z.array(z.string()).default([]),
+}));
+export type ConfigGuardConfig = z.infer<typeof ConfigGuardConfigSchema>;
+
+/**
+ * Phase 53 Task 8：前缀感知缓存配置
+ * 借鉴 LMCache 的内容可寻址分块缓存
+ */
+export const PrefixCacheConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 是否启用前缀感知缓存（默认 false，向后兼容） */
+  enabled: z.boolean().default(false),
+  /** 分块大小（Token 数，64-1024） */
+  blockSize: z.number().int().min(64).max(1024).default(256),
+  /** L1 内存缓存最大块数 */
+  l1MaxSize: z.number().int().min(100).default(1000),
+  /** 是否对齐 Anthropic prompt caching API（预留字段） */
+  alignAnthropicApi: z.boolean().default(true),
+}));
+export type PrefixCacheConfig = z.infer<typeof PrefixCacheConfigSchema>;
+
+/**
+ * Phase 53 Task 9：上下文预算监控配置
+ * Token 耗尽、成本超支、范围蔓延、工具循环时注入告警
+ */
+export const BudgetMonitorConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 是否启用预算监控（默认 false，向后兼容） */
+  enabled: z.boolean().default(false),
+  /** Token 预警比例（0.1-1，达到此值触发 warn 级告警） */
+  tokenWarnRatio: z.number().min(0.1).max(1).default(0.75),
+  /** 会话成本上限（美元） */
+  costLimitPerSession: z.number().positive().default(10),
+  /** 工具循环阈值（连续相同工具调用次数） */
+  toolLoopThreshold: z.number().int().min(3).default(5),
+}));
+export type BudgetMonitorConfig = z.infer<typeof BudgetMonitorConfigSchema>;
+
+/**
+ * Phase 53 Task 10：DAG 工作流引擎配置
+ * 拓扑排序 + 并行执行 + 变量替换
+ */
+export const DagEngineConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 是否启用 DAG 工作流（默认 false，向后兼容） */
+  enabled: z.boolean().default(false),
+  /** 最大并行度（1-10） */
+  maxParallel: z.number().int().min(1).max(10).default(3),
+  /** 重试上限（0-5） */
+  retryLimit: z.number().int().min(0).max(5).default(2),
+  /** 人类升级阈值：连续失败 N 次后请求人类介入 */
+  humanEscalationThreshold: z.number().int().min(1).default(3),
+}));
+export type DagEngineConfig = z.infer<typeof DagEngineConfigSchema>;
+
+/**
+ * Phase 53 Task 11：熔断器配置
+ * 三态机：closed / open / half_open
+ */
+export const CircuitBreakerConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 是否启用熔断器（默认 false，向后兼容） */
+  enabled: z.boolean().default(false),
+  /** 连续失败 N 次后熔断 */
+  failureThreshold: z.number().int().min(1).default(5),
+  /** 熔断后多久尝试恢复（毫秒） */
+  resetTimeout: z.number().int().min(1000).default(60000),
+  /** HALF-OPEN 状态最多试探次数 */
+  halfOpenMaxAttempts: z.number().int().min(1).default(1),
+}));
+export type CircuitBreakerConfigType = z.infer<typeof CircuitBreakerConfigSchema>;
+
+/**
+ * Phase 53 Task 12：Doctor 健康检查配置
+ */
+export const DoctorConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 探测超时（毫秒） */
+  probeTimeout: z.number().int().min(1000).default(10000),
+  /** 是否在启动时自动运行 doctor */
+  runOnStartup: z.boolean().default(false),
+}));
+export type DoctorConfig = z.infer<typeof DoctorConfigSchema>;
+
+/**
+ * Phase 53 聚合配置：把 10 个子 schema 合并到一个对象
+ * 便于在 app-init.ts 中统一读取
+ */
+export const Phase53IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** Task 3：策略引擎接入 */
+  policyEngine: PolicyEngineConfigSchema,
+  /** Task 4：哈希链审计 */
+  auditChain: AuditChainConfigSchema,
+  /** Task 5：MCP 安全扫描 */
+  mcpSecurityScan: McpSecurityScanConfigSchema,
+  /** Task 6：技能安全门控 */
+  skillSecurityGate: SkillSecurityGateConfigSchema,
+  /** Task 7：配置保护守卫 */
+  configGuard: ConfigGuardConfigSchema,
+  /** Task 8：前缀感知缓存 */
+  prefixCache: PrefixCacheConfigSchema,
+  /** Task 9：预算监控 */
+  budgetMonitor: BudgetMonitorConfigSchema,
+  /** Task 10：DAG 引擎 */
+  dagEngine: DagEngineConfigSchema,
+  /** Task 11：熔断器 */
+  circuitBreaker: CircuitBreakerConfigSchema,
+  /** Task 12：Doctor */
+  doctor: DoctorConfigSchema,
+}));
+export type Phase53IntegrationConfig = z.infer<typeof Phase53IntegrationConfigSchema>;
 
 // --- 全局配置（完整 schema） ---
 // 顶层 AppConfig：所有配置的根节点
@@ -1371,5 +1888,21 @@ export const AppConfigSchema = z.object({
   phase48Integration: Phase48IntegrationConfigSchema,
   // Phase 50 Task 6：Phase 49 模块接入确认开关（默认全部 false，实验性）
   phase49Integration: Phase49IntegrationConfigSchema,
+  // Phase 52 Task 3：有界局部恢复配置（默认 enabled=false，由接入层控制）
+  // 注：Task 1 后续可将其重构进 phase52Integration 聚合结构
+  boundedRecovery: z.preprocess((v) => v ?? {}, BoundedRecoveryConfigSchema),
+  // Phase 52：MUSE-Autoskill 集成（聚合所有 Phase 52 Task 的配置）
+  phase52Integration: z.preprocess((v) => v ?? {}, Phase52IntegrationConfigSchema),
+  // Phase 51 配置
+  reviewerPolicy: z.preprocess((v) => v ?? {}, ReviewerPolicySchema),
+  delegationPolicy: z.preprocess((v) => v ?? {}, DelegationPolicySchema),
+  activityPanel: z.preprocess((v) => v ?? {}, ActivityPanelSchema),
+  instanceHarness: z.preprocess((v) => v ?? {}, InstanceHarnessSchema),
+  configLayering: z.preprocess((v) => v ?? {}, ConfigLayeringSchema),
+  errorDisplay: z.preprocess((v) => v ?? {}, ErrorDisplaySchema),
+  resultSchema: z.preprocess((v) => v ?? {}, ResultSchemaConfigSchema),
+  modelDisplay: z.preprocess((v) => v ?? {}, ModelDisplaySchema),
+  // Phase 53：代码卫生与安全治理加固（聚合 10 个子配置）
+  phase53Integration: z.preprocess((v) => v ?? {}, Phase53IntegrationConfigSchema),
 });
 export type AppConfig = z.infer<typeof AppConfigSchema>;

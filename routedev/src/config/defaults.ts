@@ -53,7 +53,9 @@ export const DEFAULT_CONFIG: AppConfig = {
     maxTokensPerVerification: 1000,
     autoVerify: true,
     iterative: {
-      enabled: false,
+      // Phase 54 修复：默认改为 true——验证失败时自动生成补救步骤并重新执行
+      // 是交叉验证真正生效的保障：单次验证可能漏判，迭代闭环让失败步骤被重新处理
+      enabled: true,
       maxRounds: 3,
     },
   },
@@ -345,6 +347,12 @@ export const DEFAULT_CONFIG: AppConfig = {
     auditMode: 'completion_gate_first',
     tokenBudget: 50000,
     softStopRatio: 0.9,
+    // Phase 55 Task 4：执行路径路由器默认值（explicitRoute 为 optional，不设置）
+    executionRouter: {
+      mode: 'auto',
+      singleAgentMaxSteps: 2,
+      dagMaxDomains: 1,
+    },
   },
   // Phase 43：Hook 增强（函数级 Hook + 沙箱 + 试用期 + 分组）
   hookEnhancement: {
@@ -424,9 +432,11 @@ export const DEFAULT_CONFIG: AppConfig = {
     codexInstructions: 'project_memory',
     codexMemoryTag: 'codex-instruction',
   },
-  // Phase 50 Task 1：Goal 流程模块接入开关（默认全部 false，渐进式接入）
+  // Phase 50 Task 1：Goal 流程模块接入开关
+  // Phase 54 修复：auditEnabled 默认改为 true——三层独立审计（completion_gate + verifier_llm + reviewer_agent）
+  // 是用户质疑"不确定是不是真的交叉验证"的根因，默认关闭导致交叉验证形同虚设
   goalIntegration: {
-    auditEnabled: false,
+    auditEnabled: true,
     persistenceEnabled: false,
     promptBuilderEnabled: false,
     requirementChangeEnabled: false,
@@ -460,5 +470,244 @@ export const DEFAULT_CONFIG: AppConfig = {
     contextUsagePanelEnabled: false,
     evaluationFrameworkEnabled: false,
     routingFunnelEnabled: false,
+  },
+  // Phase 51：外部开源借鉴落地配置（默认全部 false，保守启用）
+  reviewerPolicy: {
+    tieredReviewEnabled: false,
+    tinyTaskStepThreshold: 5,
+    bigTaskStepThreshold: 30,
+    midWorkReviewRatio: 0.5,
+    autoCrossModelForHighRisk: false,
+    crossModelReviewerId: '',
+    enforceEvidenceProtocol: false,
+    highRiskThreshold: 40,
+    autoSelectCrossModel: true,
+    failureEscalationThreshold: 2,
+    contextTokenEscalationRatio: 0.8,
+  },
+  delegationPolicy: {
+    boundedDelegationEnabled: false,
+    maxDepth: 1,
+    maxParallel: 4,
+    delegationTargets: {},
+    subprocessTools: {},
+    depthPassingMode: 'counter',
+    hardDelegationTypes: ['research', 'review'],
+    refuseIfSpecialistUnavailable: false,
+    specialistAvailabilityOverride: {},
+    toolCallGuardEnabled: false,
+    detachedSessionEnabled: false,
+    fullContextIsolation: true,
+    subAgentMaxContextTokens: 32000,
+    propagateToolCallsToParent: false,
+  },
+  activityPanel: {
+    enabled: false,
+    maxActiveDisplay: 4,
+    maxRecentDisplay: 3,
+    taskPreviewLength: 72,
+    showToolCallStats: true,
+    showThinkingLevel: true,
+  },
+  instanceHarness: {
+    threeTierAbstractionEnabled: false,
+    defaultInstanceId: '',
+    defaultHarnessName: 'default',
+    scopeAbortCascadeEnabled: false,
+  },
+  configLayering: {
+    enabled: false,
+    projectConfigPath: '.routedev/config.json',
+    globalConfigPath: '',
+    mergeStrategy: 'deep',
+    projectConfigEnabled: false,
+    globalConfigDir: '',
+    arrayMergeStrategy: 'replace',
+  },
+  errorDisplay: {
+    showDevDetails: false,
+    showStackTrace: false,
+    maxDetailsLength: 2000,
+    errorDisplayMode: 'user',
+    includeStackTrace: false,
+    logErrorsToFile: true,
+  },
+  resultSchema: {
+    enabled: false,
+    strictValidation: false,
+    fallbackToText: true,
+    resultSchemaEnabled: false,
+    enforceFinishProtocol: false,
+    maxSubAgentSteps: 50,
+  },
+  modelDisplay: {
+    showThinkingLevel: true,
+    showProviderPrefix: false,
+    thinkingLevelLabels: {},
+    splitThinkingLabel: true,
+    thinkingLabelStyle: 'badge',
+  },
+  // Phase 52 Task 3：有界局部恢复配置（顶层字段，默认 enabled=false，由接入层控制）
+  // 注：schema.ts 注释说明 Task 1 后续可将其重构进 phase52Integration 聚合结构
+  boundedRecovery: {
+    enabled: false,
+    maxBacktrack: 3,
+    artifactBinding: true,
+    validateConsistency: true,
+  },
+  // Phase 52：MUSE-Autoskill 集成（聚合所有 Phase 52 Task 配置，默认全部关闭）
+  phase52Integration: {
+    // Task 1：Skill 生命周期管理
+    skillLifecycle: {
+      enabled: false,
+      creationTriggerThreshold: 3,
+      memoryRetentionDays: 30,
+      autoApplyRefinement: false,
+    },
+    // Task 2：过程级缺陷评估
+    processEvaluation: {
+      enabled: false,
+      sensitivity: 'medium',
+      showProcessGrade: true,
+      controlPreservationThreshold: 0.7,
+    },
+    // Task 3：有界局部恢复（schema.ts 中仍为占位，仅 enabled 字段；完整字段见顶层 boundedRecovery）
+    boundedRecovery: { enabled: false, maxBacktrack: 3, artifactBinding: true, validateConsistency: true },
+    // Task 4：组合技能路由
+    compositionalRouting: {
+      enabled: false,
+      maxDecompositionIterations: 2,
+      semanticRetrieval: true,
+      maxParallelSkills: 2,
+    },
+    // Task 5：自进化框架
+    selfEvolution: {
+      enabled: false,
+      targets: {
+        prompt: true,
+        memory: true,
+        tools: false,
+        workflow: true,
+        communication: false,
+      },
+      trigger: {
+        failureThreshold: 5,
+        qualityDropThreshold: 0.3,
+        evaluationInterval: 20,
+      },
+    },
+    // Task 6：架构感知指标
+    archAwareMetrics: {
+      enabled: false,
+      anomalySensitivity: 'medium',
+      showInQualityCommand: true,
+    },
+    // Task 7：饱和度监测
+    saturationMonitor: {
+      enabled: false,
+      passRateThreshold: 0.95,
+      varianceThreshold: 0.05,
+      checkInterval: 10,
+    },
+    // Task 8：Gödel 提议器
+    godelProposer: {
+      enabled: false,
+      maxProposalsPerRun: 5,
+      autoApplyLowRisk: false,
+      requireUserApproval: true,
+      // Phase 52 蓝图对齐字段（与 schema.ts 中 Phase52IntegrationConfigSchema 一致）
+      proposalInterval: 50,
+      allowHighRiskProposals: false,
+      proposalRetentionDays: 14,
+    },
+    // Task 9：Self-Harness 循环
+    selfHarness: {
+      enabled: false,
+      weaknessDetectionSensitivity: 'medium',
+      maxProposalsPerCycle: 5,
+      requireRegressionTest: true,
+      autoApplyLowRiskProposals: false,
+      // Phase 52 蓝图对齐字段（与 schema.ts 中 Phase52IntegrationConfigSchema 一致）
+      miningSampleSize: 50,
+      patternFrequencyThreshold: 3,
+      autoApplyValidated: false,
+      regressionTestPath: '.routedev/regression-tests/',
+    },
+    // Task 10：MCP 安全形式化框架
+    mcpSecurity: {
+      enabled: false,
+      strictness: 'standard',
+      l1CapabilityCheck: true,
+      l2AttestationCheck: false,
+      l3InfoFlowTracking: true,
+      l4RuntimeMonitoring: true,
+    },
+  },
+  // Phase 53：代码卫生与安全治理加固（聚合 10 个子配置，默认全部关闭）
+  phase53Integration: {
+    // Task 3：策略引擎接入（动作级 fail-closed）
+    policyEngine: {
+      enabled: false,
+      defaultPolicy: 'deny',
+      conflictResolution: 'deny-overrides',
+      rulesFile: '.routedev/policies.yaml',
+    },
+    // Task 4：哈希链审计日志
+    auditChain: {
+      enabled: false,
+      logFile: '.routedev/audit-chain.jsonl',
+      overflowSealCount: 1,
+    },
+    // Task 5：MCP 安全扫描器
+    mcpSecurityScan: {
+      enabled: false,
+      blockThreshold: 'high',
+      knownToolNames: [],
+    },
+    // Task 6：技能安全门控
+    skillSecurityGate: {
+      enabled: false,
+      autoInstallThreshold: 50,
+      baselineFile: '.routedev/skill-baseline.json',
+    },
+    // Task 7：配置保护守卫
+    configGuard: {
+      enabled: false,
+      warnOnFirst: true,
+      protectedPatterns: [],
+    },
+    // Task 8：前缀感知上下文缓存
+    prefixCache: {
+      enabled: false,
+      blockSize: 256,
+      l1MaxSize: 1000,
+      alignAnthropicApi: true,
+    },
+    // Task 9：上下文预算监控与告警
+    budgetMonitor: {
+      enabled: false,
+      tokenWarnRatio: 0.75,
+      costLimitPerSession: 10,
+      toolLoopThreshold: 5,
+    },
+    // Task 10：DAG 工作流引擎
+    dagEngine: {
+      enabled: false,
+      maxParallel: 3,
+      retryLimit: 2,
+      humanEscalationThreshold: 3,
+    },
+    // Task 11：熔断器模式
+    circuitBreaker: {
+      enabled: false,
+      failureThreshold: 5,
+      resetTimeout: 60000,
+      halfOpenMaxAttempts: 1,
+    },
+    // Task 12：Doctor 健康检查
+    doctor: {
+      probeTimeout: 10000,
+      runOnStartup: false,
+    },
   },
 };
