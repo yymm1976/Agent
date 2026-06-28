@@ -15,6 +15,9 @@ import type { AppConfig } from '../config/schema.js';
 import type { GoalPlan, GoalStep, PlanStep, GoalEvent } from '../agent/goal-types.js';
 // Phase 55 Task 6：执行路径判定器（/goal 路径分发）
 import type { ExecutionRouter } from '../agent/execution-router.js';
+// Phase 55 Task 9：DualLoop + BoundedRecovery 替代迭代闭环
+import type { DualLoopOrchestrator } from '../agent/dual-loop-orchestrator.js';
+import type { DualLoopParams } from '../agent/dual-loop-types.js';
 // Phase 54 Task 5：自主度行为映射（auto/semi/manual → 具体行为开关）
 import { AUTONOMY_BEHAVIOR, type AutonomyMode } from '../config/schema.js';
 // Phase 32 Task 1.4：接入 CompletionGate（独立代码验证门）
@@ -95,6 +98,13 @@ export interface GoalRunnerDeps {
   /** Phase 55：执行路径判定器（由 app-init.ts 注入，Task 8 完成） */
   executionRouter?: ExecutionRouter;
   /**
+   * Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，通过 ref 延迟绑定）
+   * app-init.ts 中 DualLoopOrchestrator 在动态 import 的 .then() 回调内创建，
+   * 此时 createGoalRunner 已被调用，故用 ref 让 /goal 实际触发时读取最新引用。
+   * BoundedRecovery 已在 orchestrator 内部启用（setBoundedRecovery 注入配置）。
+   */
+  dualLoopOrchestratorRef?: { current: DualLoopOrchestrator | null };
+  /**
    * Phase 55：DAG 引擎（由 app-init.ts 注入，可选，未注入时降级到单 Agent）
    * TODO: Task 8 接入真实 DagEngine 类型（src/agent/workflow/dag-engine.ts），
    * 当前用 unknown 占位——实际 execute 签名与任务描述不同，需在 Task 8 对齐
@@ -132,6 +142,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     orchestrator, workerExecutor, blackboard, unifiedReviewer,
     // Phase 55 Task 6：执行路径判定器 + DAG 引擎（可选注入，未注入时降级到 legacy）
     executionRouter, dagEngine,
+    // Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，通过 ref 延迟绑定）
+    dualLoopOrchestratorRef,
     nextId,
     // Phase 54：结构化事件回调 + goalId + 工具确认触发器
     onGoalEvent,
@@ -651,6 +663,209 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     }
   }
 
+  /**
+   * Phase 55 Task 9：原迭代闭环逻辑提取为独立函数（P2 降级 fallback）
+   *
+   * 当 DualLoop 未启用或异常时使用。保留原逻辑不变，仅做结构重组。
+   * @param plan 目标计划
+   */
+  async function legacyIterativeLoop(plan: GoalPlan): Promise<void> {
+    // 迭代闭环：验证失败时自动生成补救步骤并重新执行（借鉴 kimi-code 的"迭代到目标达成为止"模式）
+    // 配置开关：goalVerifier.iterative.enabled（默认 false）
+    const iterativeConfig = config.goalVerifier?.iterative;
+    if (iterativeConfig?.enabled && plan.status === 'failed') {
+      const maxRounds = iterativeConfig.maxRounds;
+      for (let round = 1; round <= maxRounds; round++) {
+        // 检查中断
+        if (abortControllerRef.current?.signal.aborted) {
+          addSystemMessage('⏸ 迭代闭环被中断');
+          break;
+        }
+
+        const verification = plan.verificationResult;
+        // 无验证结果或已通过，跳出循环
+        if (!verification || verification.passed) break;
+
+        addSystemMessage(`🔄 迭代闭环第 ${round}/${maxRounds} 轮：验证未通过，生成补救步骤...`);
+
+        // 构建补救描述：包含缺失项和改进建议，让 GoalParser 生成针对性的补救步骤
+        const remediationParts: string[] = [`目标: ${plan.description}`];
+        if (verification.missingItems.length > 0) {
+          remediationParts.push(`缺失项: ${verification.missingItems.join('; ')}`);
+        }
+        if (verification.suggestions.length > 0) {
+          remediationParts.push(`改进建议: ${verification.suggestions.join('; ')}`);
+        }
+        if (plan.verificationCriteria) {
+          remediationParts.push(`验证条件: ${plan.verificationCriteria}`);
+        }
+        const remediationDescription = remediationParts.join('\n');
+
+        // 调用 GoalParser 生成补救步骤
+        const remediateClassify = await classifier.classify({ query: remediationDescription });
+        const remediateRoute = await modelRouter.route(remediateClassify);
+        const remediateClient = clientManager.get(remediateRoute.providerId);
+        if (!remediateClient || !remediateClient.isReady()) {
+          addSystemMessage(`❌ 迭代闭环：提供商 ${remediateRoute.providerId} 不可用，中止迭代`);
+          break;
+        }
+
+        const parser = new GoalParser();
+        const remediationPlan = await parser.parse(remediationDescription, {
+          verificationCriteria: plan.verificationCriteria,
+          routeDecision: remediateRoute,
+          llmClient: remediateClient,
+        });
+
+        addSystemMessage(`📋 补救计划已生成（${remediationPlan.steps.length} 个步骤），开始执行...`);
+
+        // 执行补救步骤
+        for (const step of remediationPlan.steps) {
+          if (abortControllerRef.current?.signal.aborted) break;
+          await executeRemediationStep(step, plan);
+          // 将补救步骤追加到原计划，便于最终摘要展示
+          plan.steps.push(step);
+        }
+
+        if (abortControllerRef.current?.signal.aborted) break;
+
+        // 重新验证
+        await verifyPlan(plan);
+        await runCompletionGate(plan);
+
+        // 重新读取 plan.status（verifyPlan 和 runCompletionGate 可能已将其改为 completed 或 failed）
+        // 使用局部变量断言避免 TypeScript 的类型窄化（它不知道函数调用会修改 plan.status）
+        const currentStatus: string = plan.status;
+        if (currentStatus === 'completed') {
+          addSystemMessage(`✅ 迭代闭环第 ${round} 轮：目标已达成`);
+          break;
+        }
+
+        if (round < maxRounds) {
+          addSystemMessage(`⚠️ 迭代闭环第 ${round} 轮：验证仍未通过，继续迭代...`);
+        } else {
+          addSystemMessage(`⚠️ 迭代闭环：已达到最大迭代次数 ${maxRounds}，停止迭代`);
+        }
+      }
+    }
+  }
+
+  /**
+   * Phase 55 Task 9：调用 DualLoopOrchestrator.runDualLoop 执行完整双循环
+   *
+   * 构造 DualLoopParams 并消费 async generator 事件流，根据终态事件判定成功/失败。
+   * BoundedRecovery 已在 DualLoopOrchestrator 内部启用（app-init.ts 通过 setBoundedRecovery 注入配置），
+   * 失败时优先尝试局部恢复（computeRecoveryScope），超限时退回全局重跑。
+   *
+   * @param plan 目标计划
+   * @param orchestrator DualLoopOrchestrator 实例
+   * @returns true 表示双循环验证通过，false 表示耗尽重跑次数仍失败
+   */
+  async function runDualLoopPlan(
+    plan: GoalPlan,
+    orchestrator: DualLoopOrchestrator,
+  ): Promise<boolean> {
+    if (!completionGate) {
+      throw new Error('completionGate 未注入，DualLoop 不可用');
+    }
+
+    // 路由 executor 使用的 LLM 客户端（与目标描述同级）
+    const execClassify = await classifier.classify({ query: plan.description });
+    const execRoute = await modelRouter.route(execClassify);
+    const execClient = clientManager.get(execRoute.providerId);
+    if (!execClient || !execClient.isReady()) {
+      throw new Error(`executor 提供商 ${execRoute.providerId} 不可用`);
+    }
+
+    // 路由 verifier 使用的 LLM 客户端（独立路由，与 verifyPlan 一致）
+    const verifyClassify = await classifier.classify({ query: plan.description });
+    const verifyRoute = await modelRouter.route(verifyClassify);
+    const verifyClient = clientManager.get(verifyRoute.providerId);
+    if (!verifyClient || !verifyClient.isReady()) {
+      throw new Error(`verifier 提供商 ${verifyRoute.providerId} 不可用`);
+    }
+
+    const dualLoopParams: DualLoopParams = {
+      goal: {
+        description: plan.description,
+        plan,
+        projectPath: process.cwd(),
+        gates: gateManager.getGates() ?? undefined,
+      },
+      reactLoop: agentLoop,
+      reactParams: {
+        userMessage: plan.description,
+        llmClient: execClient,
+        routeDecision: execRoute,
+        conversationHistory: conversationHistoryRef.current,
+        systemPrompt: systemPromptRef.current,
+        signal: abortControllerRef.current?.signal,
+      },
+      goalVerifier: new GoalVerifier(),
+      verifierOptions: {
+        routeDecision: verifyRoute,
+        llmClient: verifyClient,
+        onUsage: (usage, source) => {
+          tracker.record(usage, {
+            modelId: source === 'adversarial' ? 'adversarial' : verifyRoute.model.id,
+            agentId: 'goal-verifier',
+            stepId: `dual-loop-verify-${source}`,
+          });
+          if (setTodayTokensUsed) {
+            setTodayTokensUsed(prev => prev + usage.totalTokens);
+          }
+        },
+      },
+      completionGate,
+      maxReruns: config.goalVerifier?.iterative?.maxRounds ?? 3,
+    };
+
+    addSystemMessage('🔄 启动 DualLoop 双循环恢复（含 BoundedRecovery）...');
+
+    // 消费 async generator 事件流，根据终态事件判定成功/失败
+    let success = false;
+    for await (const event of orchestrator.runDualLoop(dualLoopParams)) {
+      switch (event.type) {
+        case 'inner-loop-start':
+          addSystemMessage(`▶ DualLoop 内循环 #${event.iteration} 开始`);
+          break;
+        case 'inner-loop-complete':
+          addSystemMessage(`✅ DualLoop 内循环 #${event.iteration} 完成（修改 ${event.result.modifiedFiles.length} 个文件）`);
+          break;
+        case 'outer-loop-start':
+          addSystemMessage(`🔍 DualLoop 外循环 #${event.iteration} 验证开始`);
+          break;
+        case 'outer-loop-failed':
+          addSystemMessage(`⚠️ DualLoop 外循环 #${event.iteration} 验证失败：${event.reason}`);
+          break;
+        case 'bounded-recovery-attempted':
+          addSystemMessage(`🔧 BoundedRecovery 尝试局部恢复（${event.recoverySteps.length} 步）`);
+          break;
+        case 'dual-loop-complete':
+          addSystemMessage(`✅ DualLoop 双循环通过（第 ${event.iteration} 轮）`);
+          plan.verificationResult = event.verification;
+          success = true;
+          break;
+        case 'dual-loop-exhausted':
+          addSystemMessage(`⚠️ DualLoop 已达最大重跑次数 ${event.maxReruns}，仍失败`);
+          break;
+        case 'human-intervention-detected':
+          addSystemMessage(`⏸ ${event.message}`);
+          break;
+        case 'pilot-mode-triggered':
+          addSystemMessage(`🛑 Pilot 模式触发：${event.repeatedReason}`);
+          break;
+      }
+      // 检查中断
+      if (abortControllerRef.current?.signal.aborted) {
+        addSystemMessage('⏸ DualLoop 被中断');
+        break;
+      }
+    }
+
+    return success;
+  }
+
   /** 执行目标计划：逐步骤运行 Agent Loop，支持中断 + 检查点 + 压缩 */
   async function executeGoalPlan(plan: GoalPlan): Promise<void> {
     setIsProcessing(true);
@@ -943,83 +1158,25 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       await runCompletionGate(plan);
     }
 
-    // 迭代闭环：验证失败时自动生成补救步骤并重新执行（借鉴 kimi-code 的"迭代到目标达成为止"模式）
-    // 配置开关：goalVerifier.iterative.enabled（默认 false）
-    const iterativeConfig = config.goalVerifier?.iterative;
-    if (iterativeConfig?.enabled && plan.status === 'failed') {
-      const maxRounds = iterativeConfig.maxRounds;
-      for (let round = 1; round <= maxRounds; round++) {
-        // 检查中断
-        if (abortControllerRef.current?.signal.aborted) {
-          addSystemMessage('⏸ 迭代闭环被中断');
-          break;
-        }
-
-        const verification = plan.verificationResult;
-        // 无验证结果或已通过，跳出循环
-        if (!verification || verification.passed) break;
-
-        addSystemMessage(`🔄 迭代闭环第 ${round}/${maxRounds} 轮：验证未通过，生成补救步骤...`);
-
-        // 构建补救描述：包含缺失项和改进建议，让 GoalParser 生成针对性的补救步骤
-        const remediationParts: string[] = [`目标: ${plan.description}`];
-        if (verification.missingItems.length > 0) {
-          remediationParts.push(`缺失项: ${verification.missingItems.join('; ')}`);
-        }
-        if (verification.suggestions.length > 0) {
-          remediationParts.push(`改进建议: ${verification.suggestions.join('; ')}`);
-        }
-        if (plan.verificationCriteria) {
-          remediationParts.push(`验证条件: ${plan.verificationCriteria}`);
-        }
-        const remediationDescription = remediationParts.join('\n');
-
-        // 调用 GoalParser 生成补救步骤
-        const remediateClassify = await classifier.classify({ query: remediationDescription });
-        const remediateRoute = await modelRouter.route(remediateClassify);
-        const remediateClient = clientManager.get(remediateRoute.providerId);
-        if (!remediateClient || !remediateClient.isReady()) {
-          addSystemMessage(`❌ 迭代闭环：提供商 ${remediateRoute.providerId} 不可用，中止迭代`);
-          break;
-        }
-
-        const parser = new GoalParser();
-        const remediationPlan = await parser.parse(remediationDescription, {
-          verificationCriteria: plan.verificationCriteria,
-          routeDecision: remediateRoute,
-          llmClient: remediateClient,
-        });
-
-        addSystemMessage(`📋 补救计划已生成（${remediationPlan.steps.length} 个步骤），开始执行...`);
-
-        // 执行补救步骤
-        for (const step of remediationPlan.steps) {
-          if (abortControllerRef.current?.signal.aborted) break;
-          await executeRemediationStep(step, plan);
-          // 将补救步骤追加到原计划，便于最终摘要展示
-          plan.steps.push(step);
-        }
-
-        if (abortControllerRef.current?.signal.aborted) break;
-
-        // 重新验证
-        await verifyPlan(plan);
-        await runCompletionGate(plan);
-
-        // 重新读取 plan.status（verifyPlan 和 runCompletionGate 可能已将其改为 completed 或 failed）
-        // 使用局部变量断言避免 TypeScript 的类型窄化（它不知道函数调用会修改 plan.status）
-        const currentStatus: string = plan.status;
-        if (currentStatus === 'completed') {
-          addSystemMessage(`✅ 迭代闭环第 ${round} 轮：目标已达成`);
-          break;
-        }
-
-        if (round < maxRounds) {
-          addSystemMessage(`⚠️ 迭代闭环第 ${round} 轮：验证仍未通过，继续迭代...`);
-        } else {
-          addSystemMessage(`⚠️ 迭代闭环：已达到最大迭代次数 ${maxRounds}，停止迭代`);
-        }
+    // Phase 55 Task 9：用 DualLoop + BoundedRecovery 替代迭代闭环
+    // 旧迭代闭环代码保留为 P2 降级 fallback（见设计文档第 7 节）
+    const dualLoopOrchestrator = dualLoopOrchestratorRef?.current ?? null;
+    if (plan.status === 'failed' && config.phase49Integration?.dualLoopEnabled && dualLoopOrchestrator) {
+      try {
+        // 调用 DualLoopOrchestrator.runDualLoop（完整 inner/outer 循环）
+        // 注意：不是调用 run 占位方法，而是调用包含完整双循环逻辑的 runDualLoop
+        // BoundedRecovery 已在 orchestrator 内部启用（app-init.ts 通过 setBoundedRecovery 注入配置）
+        const dualLoopSuccess = await runDualLoopPlan(plan, dualLoopOrchestrator);
+        plan.status = dualLoopSuccess ? 'completed' : 'failed';
+      } catch (error) {
+        logger.warn('DualLoop 异常，降级到基础迭代闭环', { error: String(error) });
+        addSystemMessage('⚠️ 高级恢复异常，降级到基础重跑');
+        // 走旧迭代闭环 fallback
+        await legacyIterativeLoop(plan);
       }
+    } else {
+      // DualLoop 未启用或 orchestrator 未注入，走旧迭代闭环
+      await legacyIterativeLoop(plan);
     }
 
     // Phase 31/32 P0 接线：TokenTracker 任务级 API——任务结束，清理任务级预算状态

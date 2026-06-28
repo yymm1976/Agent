@@ -103,6 +103,8 @@ import { ScheduleEngine } from '../scheduler/engine.js';
 // Phase 52 Task 1/3/5/6/7/8/9/10：Phase 52 模块接入（按 config.phase52Integration 开关守护）
 import { SkillLifecycleManager } from '../skills/skill-lifecycle.js';
 import { createBoundedRecoveryManager } from '../agent/bounded-recovery.js';
+// Phase 55 Task 9：DualLoopOrchestrator 类型（goal-runner 通过 ref 引用实例）
+import type { DualLoopOrchestrator } from '../agent/dual-loop-orchestrator.js';
 import { ArchitectureAwareMetricsCollector } from '../evaluation/architecture-aware-metrics.js';
 import { SaturationMonitor } from '../evaluation/saturation-monitor.js';
 import { MCPSecurityFramework } from '../mcp/security-framework.js';
@@ -237,6 +239,8 @@ export interface AppDependencies {
   compositionalRouter?: CompositionalRouterInstance;
   /** Phase 55 Task 8：执行路径判定器（App.tsx 传给 createGoalRunner，/goal 走新执行路径） */
   executionRouter: ExecutionRouter;
+  /** Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，goal-runner 通过 ref 延迟读取） */
+  dualLoopOrchestratorRef: { current: DualLoopOrchestrator | null };
 }
 
 /**
@@ -1857,11 +1861,16 @@ export function createAppDependencies(
         });
       });
   }
+  // Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，供 goal-runner 通过 ref 延迟读取）
+  // 声明在 phase49 块之前，确保 .then() 回调内能写入、createGoalRunner deps 能引用
+  const dualLoopOrchestratorRef: { current: DualLoopOrchestrator | null } = { current: null };
   if (phase49Cfg?.dualLoopEnabled) {
     // 双循环编排器接入：/goal 执行时可被调用
     import('../agent/dual-loop-orchestrator.js')
       .then((mod) => {
         const orchestrator = new mod.DualLoopOrchestrator();
+        // Phase 55 Task 9：立即写入 ref，让 goal-runner 在 /goal 触发时能读取到实例
+        dualLoopOrchestratorRef.current = orchestrator;
         // CR-1 修复：在 orchestrator 创建后立即注入 reviewerPolicy 和 boundedRecovery
         // 原 Phase 51/52 接线因"异步创建无同步引用"被跳过，导致配置读取后无法生效
         if (config.reviewerPolicy?.tieredReviewEnabled) {
@@ -2292,5 +2301,7 @@ export function createAppDependencies(
     compositionalRouter,
     // Phase 55 Task 8：执行路径判定器（App.tsx 传给 createGoalRunner）
     executionRouter,
+    // Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，goal-runner 通过 ref 延迟读取）
+    dualLoopOrchestratorRef,
   };
 }
