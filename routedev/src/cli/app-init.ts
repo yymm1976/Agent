@@ -36,6 +36,8 @@ import { NotesManager } from '../agent/memory/notes.js';
 import { createDefaultEngine, type PermissionEngine } from '../tools/permission-engine.js';
 import { MCPClientManager } from '../tools/mcp/client.js';
 import { ReActAgentLoop } from '../agent/loop.js';
+// Phase 55 Task 8：注入 ExecutionRouter 到 goal-runner（/goal 执行路径判定器）
+import { ExecutionRouter } from '../agent/execution-router.js';
 import { TokenProfiler } from '../agent/token-profiler.js';
 import { WorkModeController, GuardedToolExecutorAdapter } from '../agent/work-modes.js';
 import { CheckpointManager } from '../harness/checkpoint-manager.js';
@@ -233,6 +235,8 @@ export interface AppDependencies {
   instanceHarness?: { instance: AgentInstance; harness: AgentHarness };
   /** 组合式路由器（config.phase52Integration.compositionalRouting.enabled） */
   compositionalRouter?: CompositionalRouterInstance;
+  /** Phase 55 Task 8：执行路径判定器（App.tsx 传给 createGoalRunner，/goal 走新执行路径） */
+  executionRouter: ExecutionRouter;
 }
 
 /**
@@ -1161,6 +1165,8 @@ export function createAppDependencies(
 
   // ===== 目标解析与验证（无状态） =====
   const goalParser = new GoalParser();
+  // Phase 55 Task 8：实例化 ExecutionRouter（/goal 执行路径判定器，App.tsx 传给 createGoalRunner）
+  const executionRouter = new ExecutionRouter();
   // Phase 53 Task 10：DAG 引擎（受 config.phase53Integration.dagEngine.enabled 守护，fail-open）
   // 使用变量路径让 TypeScript 无法静态解析，避免模块尚未生成时 typecheck 失败
   const phase53DagCfg = config.phase53Integration?.dagEngine;
@@ -1887,9 +1893,19 @@ export function createAppDependencies(
           orchestrator.setSelfHarnessLoop(selfHarnessLoop);
           logger.info('app-init: selfHarnessLoop 已注入 DualLoopOrchestrator（消费方待 Phase 53）');
         }
+        // Phase 55 Task 8：注入 innerAgent（独立 ReActAgentLoop 实例，不注入 orchestrator，避免无限递归）
+        // orchestrator.run(params) 会转交给 innerAgent.run(params)；若 innerAgent 是已注入 orchestrator 的
+        // agentLoop，run() 会再次转交给 orchestrator，形成无限递归。故必须创建独立实例。
+        const innerAgentLoop = new ReActAgentLoop(guardedAdapter, {
+          maxIterations: 50,
+          toolsEnabled: true,
+          autoApprovePatterns: config.autonomy?.autoApprovePatterns ?? [],
+        });
+        innerAgentLoop.setTraceCollector(trace);
+        orchestrator.setInnerAgent(innerAgentLoop);
         // Phase 55 Task 7：强类型调用 setDualLoopOrchestrator（删除 as unknown as 弱类型断言）
         agentLoop.setDualLoopOrchestrator(orchestrator);
-        logger.info('Phase 49 DualLoopOrchestrator integrated', { enabled: true });
+        logger.info('Phase 49 DualLoopOrchestrator integrated', { enabled: true, innerAgent: true });
       })
       .catch((err: unknown) => {
         logger.debug('DualLoopOrchestrator not available', {
@@ -2274,5 +2290,7 @@ export function createAppDependencies(
     activityStore,
     instanceHarness,
     compositionalRouter,
+    // Phase 55 Task 8：执行路径判定器（App.tsx 传给 createGoalRunner）
+    executionRouter,
   };
 }

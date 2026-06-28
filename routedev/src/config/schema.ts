@@ -1284,11 +1284,11 @@ export type OrchestrationIntegrationConfig = z.infer<typeof OrchestrationIntegra
  * - scoreCardEnabled：SubAgentScoreCardCollector 执行后收集评分
  */
 export const DelegationIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
-  contextPackerEnabled: z.boolean().default(false),
-  delegationGateEnabled: z.boolean().default(false),
-  delegationEnforcerEnabled: z.boolean().default(false),
-  lifecycleEnabled: z.boolean().default(false),
-  scoreCardEnabled: z.boolean().default(false),
+  contextPackerEnabled: z.boolean().default(true),
+  delegationGateEnabled: z.boolean().default(true),
+  delegationEnforcerEnabled: z.boolean().default(true),
+  lifecycleEnabled: z.boolean().default(true),
+  scoreCardEnabled: z.boolean().default(true),
 }));
 export type DelegationIntegrationConfig = z.infer<typeof DelegationIntegrationConfigSchema>;
 
@@ -1321,9 +1321,9 @@ export const Phase49IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.obj
   /** SkillFlow 引擎接入（Skill 执行时可选调用） */
   skillFlowEnabled: z.boolean().default(false),
   /** 双循环编排器接入（/goal 执行时可选调用） */
-  dualLoopEnabled: z.boolean().default(false),
+  dualLoopEnabled: z.boolean().default(true),
   /** Skill 质量门接入（Skill 生成时可选调用） */
-  qualityGateEnabled: z.boolean().default(false),
+  qualityGateEnabled: z.boolean().default(true),
   /** 上下文占用率面板接入（context-compaction 调用） */
   contextUsagePanelEnabled: z.boolean().default(false),
   /** 评估集框架接入（Skill 生成或 /goal 完成时可选调用） */
@@ -1337,11 +1337,11 @@ export type Phase49IntegrationConfig = z.infer<typeof Phase49IntegrationConfigSc
 
 /** Reviewer 分级策略（Phase 51 Task 1/7） */
 export const ReviewerPolicySchema = z.preprocess((v) => v ?? {}, z.object({
-  tieredReviewEnabled: z.boolean().default(false),
+  tieredReviewEnabled: z.boolean().default(true),
   tinyTaskStepThreshold: z.number().int().min(1).max(20).default(5),
   bigTaskStepThreshold: z.number().int().min(10).max(100).default(30),
   midWorkReviewRatio: z.number().min(0.3).max(0.8).default(0.5),
-  autoCrossModelForHighRisk: z.boolean().default(false),
+  autoCrossModelForHighRisk: z.boolean().default(true),
   crossModelReviewerId: z.string().default(''),
   enforceEvidenceProtocol: z.boolean().default(false),
   highRiskThreshold: z.number().int().min(20).max(100).default(40),
@@ -1353,7 +1353,7 @@ export type ReviewerPolicyConfig = z.infer<typeof ReviewerPolicySchema>;
 
 /** 委托四维约束+三态策略（Phase 51 Task 2/3/4） */
 export const DelegationPolicySchema = z.preprocess((v) => v ?? {}, z.object({
-  boundedDelegationEnabled: z.boolean().default(false),
+  boundedDelegationEnabled: z.boolean().default(true),
   maxDepth: z.number().int().min(0).max(5).default(1),
   maxParallel: z.number().int().min(1).max(10).default(4),
   delegationTargets: z.record(z.string(), z.array(z.string())).default({}),
@@ -1363,7 +1363,7 @@ export const DelegationPolicySchema = z.preprocess((v) => v ?? {}, z.object({
   refuseIfSpecialistUnavailable: z.boolean().default(false),
   specialistAvailabilityOverride: z.record(z.string(), z.boolean()).default({}),
   toolCallGuardEnabled: z.boolean().default(false),
-  detachedSessionEnabled: z.boolean().default(false),
+  detachedSessionEnabled: z.boolean().default(true),
   fullContextIsolation: z.boolean().default(true),
   subAgentMaxContextTokens: z.number().int().min(1000).max(200000).default(32000),
   propagateToolCallsToParent: z.boolean().default(false),
@@ -1524,7 +1524,7 @@ export type MCPSecurityConfig = z.infer<typeof MCPSecurityConfigSchema>;
  */
 export const BoundedRecoveryConfigSchema = z.object({
   /** 是否启用有界局部恢复 */
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
   /** 最大回溯步数（含失败步骤本身，1-10，默认 3） */
   maxBacktrack: z.number().int().min(1).max(10).default(3),
   /** 是否启用工件绑定（注册 StepArtifact 以追踪依赖） */
@@ -1552,14 +1552,14 @@ export const Phase52IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.obj
   boundedRecovery: z.preprocess((v) => v ?? {}, BoundedRecoveryConfigSchema),
   /** Task 4：组合式路由 */
   compositionalRouting: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     maxDecompositionIterations: z.number().int().min(1).max(5).default(2),
     semanticRetrieval: z.boolean().default(true),
     maxParallelSkills: z.number().int().min(1).max(4).default(2),
   })),
   /** Task 5：自演化 */
   selfEvolution: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     // Phase 53 收尾修复：targets/trigger 需要 preprocess 包裹，否则 AppConfigSchema.parse({}) 失败
     targets: z.preprocess((v) => v ?? {}, z.object({
       prompt: z.boolean().default(true),
@@ -1584,7 +1584,7 @@ export const Phase52IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.obj
   saturationMonitor: z.preprocess((v) => v ?? {}, SaturationMonitorConfigSchema),
   /** Task 8：Gödel 提议器 */
   godelProposer: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     maxProposalsPerRun: z.number().int().min(1).max(20).default(5),
     autoApplyLowRisk: z.boolean().default(false),
     requireUserApproval: z.boolean().default(true),
@@ -1598,7 +1598,7 @@ export const Phase52IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.obj
   })),
   /** Task 9：自安全套件 */
   selfHarness: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     weaknessDetectionSensitivity: z.enum(['low', 'medium', 'high']).default('medium'),
     maxProposalsPerCycle: z.number().int().min(1).max(20).default(5),
     requireRegressionTest: z.boolean().default(true),
@@ -1736,7 +1736,7 @@ export type BudgetMonitorConfig = z.infer<typeof BudgetMonitorConfigSchema>;
  */
 export const DagEngineConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用 DAG 工作流（默认 false，向后兼容） */
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
   /** 最大并行度（1-10） */
   maxParallel: z.number().int().min(1).max(10).default(3),
   /** 重试上限（0-5） */
@@ -1752,7 +1752,7 @@ export type DagEngineConfig = z.infer<typeof DagEngineConfigSchema>;
  */
 export const CircuitBreakerConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用熔断器（默认 false，向后兼容） */
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
   /** 连续失败 N 次后熔断 */
   failureThreshold: z.number().int().min(1).default(5),
   /** 熔断后多久尝试恢复（毫秒） */

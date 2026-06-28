@@ -443,17 +443,17 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   // Phase 50 Task 2：多 Agent 编排模块接入开关（默认全部 false）
   orchestrationIntegration: {
-    strategyEnabled: false,
-    stateGraphEnabled: false,
-    branchOrchestrationEnabled: false,
+    strategyEnabled: true,
+    stateGraphEnabled: true,
+    branchOrchestrationEnabled: true,
   },
   // Phase 50 Task 3：子 Agent 委托体系模块接入开关（默认全部 false）
   delegationIntegration: {
-    contextPackerEnabled: false,
-    delegationGateEnabled: false,
-    delegationEnforcerEnabled: false,
-    lifecycleEnabled: false,
-    scoreCardEnabled: false,
+    contextPackerEnabled: true,
+    delegationGateEnabled: true,
+    delegationEnforcerEnabled: true,
+    lifecycleEnabled: true,
+    scoreCardEnabled: true,
   },
   // Phase 50 Task 5：Phase 48 模块接入确认开关（默认全部 true）
   phase48Integration: {
@@ -465,19 +465,19 @@ export const DEFAULT_CONFIG: AppConfig = {
   // Phase 50 Task 6：Phase 49 模块接入确认开关（默认全部 false，实验性）
   phase49Integration: {
     skillFlowEnabled: false,
-    dualLoopEnabled: false,
-    qualityGateEnabled: false,
+    dualLoopEnabled: true,
+    qualityGateEnabled: true,
     contextUsagePanelEnabled: false,
     evaluationFrameworkEnabled: false,
     routingFunnelEnabled: false,
   },
   // Phase 51：外部开源借鉴落地配置（默认全部 false，保守启用）
   reviewerPolicy: {
-    tieredReviewEnabled: false,
+    tieredReviewEnabled: true,
     tinyTaskStepThreshold: 5,
     bigTaskStepThreshold: 30,
     midWorkReviewRatio: 0.5,
-    autoCrossModelForHighRisk: false,
+    autoCrossModelForHighRisk: true,
     crossModelReviewerId: '',
     enforceEvidenceProtocol: false,
     highRiskThreshold: 40,
@@ -486,7 +486,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     contextTokenEscalationRatio: 0.8,
   },
   delegationPolicy: {
-    boundedDelegationEnabled: false,
+    boundedDelegationEnabled: true,
     maxDepth: 1,
     maxParallel: 4,
     delegationTargets: {},
@@ -496,7 +496,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     refuseIfSpecialistUnavailable: false,
     specialistAvailabilityOverride: {},
     toolCallGuardEnabled: false,
-    detachedSessionEnabled: false,
+    detachedSessionEnabled: true,
     fullContextIsolation: true,
     subAgentMaxContextTokens: 32000,
     propagateToolCallsToParent: false,
@@ -547,10 +547,10 @@ export const DEFAULT_CONFIG: AppConfig = {
     splitThinkingLabel: true,
     thinkingLabelStyle: 'badge',
   },
-  // Phase 52 Task 3：有界局部恢复配置（顶层字段，默认 enabled=false，由接入层控制）
+  // Phase 52 Task 3：有界局部恢复配置（顶层字段，默认 enabled=true，Phase 55 启用）
   // 注：schema.ts 注释说明 Task 1 后续可将其重构进 phase52Integration 聚合结构
   boundedRecovery: {
-    enabled: false,
+    enabled: true,
     maxBacktrack: 3,
     artifactBinding: true,
     validateConsistency: true,
@@ -572,17 +572,17 @@ export const DEFAULT_CONFIG: AppConfig = {
       controlPreservationThreshold: 0.7,
     },
     // Task 3：有界局部恢复（schema.ts 中仍为占位，仅 enabled 字段；完整字段见顶层 boundedRecovery）
-    boundedRecovery: { enabled: false, maxBacktrack: 3, artifactBinding: true, validateConsistency: true },
+    boundedRecovery: { enabled: true, maxBacktrack: 3, artifactBinding: true, validateConsistency: true },
     // Task 4：组合技能路由
     compositionalRouting: {
-      enabled: false,
+      enabled: true,
       maxDecompositionIterations: 2,
       semanticRetrieval: true,
       maxParallelSkills: 2,
     },
     // Task 5：自进化框架
     selfEvolution: {
-      enabled: false,
+      enabled: true,
       targets: {
         prompt: true,
         memory: true,
@@ -611,7 +611,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     },
     // Task 8：Gödel 提议器
     godelProposer: {
-      enabled: false,
+      enabled: true,
       maxProposalsPerRun: 5,
       autoApplyLowRisk: false,
       requireUserApproval: true,
@@ -622,7 +622,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     },
     // Task 9：Self-Harness 循环
     selfHarness: {
-      enabled: false,
+      enabled: true,
       weaknessDetectionSensitivity: 'medium',
       maxProposalsPerCycle: 5,
       requireRegressionTest: true,
@@ -692,14 +692,14 @@ export const DEFAULT_CONFIG: AppConfig = {
     },
     // Task 10：DAG 工作流引擎
     dagEngine: {
-      enabled: false,
+      enabled: true,
       maxParallel: 3,
       retryLimit: 2,
       humanEscalationThreshold: 3,
     },
     // Task 11：熔断器模式
     circuitBreaker: {
-      enabled: false,
+      enabled: true,
       failureThreshold: 5,
       resetTimeout: 60000,
       halfOpenMaxAttempts: 1,

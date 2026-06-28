@@ -126,7 +126,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
 
   // ===== refs：UI 状态 =====
   const conversationHistoryRef = useRef<LLMMessage[]>([]);
-  const pendingConfirmRef = useRef<{ resolve: (approved: boolean) => void; toolName: string } | null>(null);
+  const pendingConfirmRef = useRef<{ resolve: (approved: boolean | { approved: boolean; payload?: unknown }) => void; toolName: string } | null>(null);
   const awaitingGoalConfirmRef = useRef<{ resolve: (approved: boolean) => void; plan: GoalPlan } | null>(null);
   const currentPlanRef = useRef<GoalPlan | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -256,6 +256,13 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     goalAuditor: deps.goalAuditor ?? undefined,
     goalPersistence: deps.goalPersistence ?? undefined,
     goalPromptBuilder: deps.goalPromptBuilder ?? undefined,
+    // Phase 54 Task 1/4：多 Agent 编排 + 统一审查器（三者同时注入后 /goal 走多 Agent 路径）
+    orchestrator: deps.orchestrator,
+    workerExecutor: deps.workerExecutor,
+    blackboard: deps.blackboard,
+    unifiedReviewer: deps.unifiedReviewer,
+    // Phase 55 Task 8：执行路径判定器（app-init.ts 实例化，未注入时 goal-runner 降级到 legacy）
+    executionRouter: deps.executionRouter,
   }));
 
   // ChatRunner（非命令聊天执行）
