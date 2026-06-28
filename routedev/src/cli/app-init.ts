@@ -1916,6 +1916,12 @@ export function createAppDependencies(
           orchestrator.setSelfHarnessLoop(selfHarnessLoop);
           logger.info('app-init: selfHarnessLoop 已注入 DualLoopOrchestrator（消费方待 Phase 53）');
         }
+        // Phase 55 Task 13：注入 SelfEvolutionFramework（runDualLoop 末尾收集信号 + 产出提案）
+        // config 守护：仅在 selfEvolutionFramework 已创建时调用（config.phase52Integration.selfEvolution.enabled）
+        if (selfEvolutionFramework) {
+          orchestrator.setSelfEvolutionFramework(selfEvolutionFramework);
+          logger.info('app-init: selfEvolutionFramework 已注入 DualLoopOrchestrator（Task 13 接入）');
+        }
         // Phase 55 Task 8：注入 innerAgent（独立 ReActAgentLoop 实例，不注入 orchestrator，避免无限递归）
         // orchestrator.run(params) 会转交给 innerAgent.run(params)；若 innerAgent 是已注入 orchestrator 的
         // agentLoop，run() 会再次转交给 orchestrator，形成无限递归。故必须创建独立实例。

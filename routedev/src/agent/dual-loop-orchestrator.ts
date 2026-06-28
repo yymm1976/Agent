@@ -69,6 +69,9 @@ import type {
 import type { ArchitectureAwareMetricsCollector } from '../evaluation/architecture-aware-metrics.js';
 import type { GodelProposer } from './self-evolution/godel-proposer.js';
 import type { SelfHarnessLoop } from './self-evolution/self-harness-loop.js';
+// Phase 55 Task 13：SelfEvolutionFramework（消费执行信号产出优化提案）
+import { SelfEvolutionFramework } from './self-evolution/framework.js';
+import type { EvolutionSignal } from './self-evolution/types.js';
 
 /** 陷阱 #141：maxReruns 默认 2 而非 3，避免 Token 爆炸 */
 export const DEFAULT_MAX_RERUNS = 2;
@@ -137,6 +140,8 @@ export class DualLoopOrchestrator {
   private metricsCollector?: ArchitectureAwareMetricsCollector;
   private godelProposer?: GodelProposer;
   private selfHarnessLoop?: SelfHarnessLoop;
+  // Phase 55 Task 13：SelfEvolution 框架（消费执行信号产出提案，未注入时跳过）
+  private selfEvolutionFramework?: SelfEvolutionFramework;
   // Phase 55 Task 7：内循环 Agent（占位，Task 9 完整接入 inner/outer 循环逻辑）
   private innerAgent?: ReActAgentLoop;
 
@@ -226,6 +231,108 @@ export class DualLoopOrchestrator {
   setSelfHarnessLoop(loop: SelfHarnessLoop): void {
     this.selfHarnessLoop = loop;
     logger.debug('DualLoopOrchestrator: self-harness loop injected');
+  }
+
+  /**
+   * 注入 SelfEvolution 框架（Phase 55 Task 13）
+   *
+   * 由 app-init.ts 在创建 SelfEvolutionFramework 后调用。
+   * 未注入时 runDualLoop 末尾的提案生成分支自动跳过（向后兼容）。
+   *
+   * 注入后,runDualLoop 的三个退出点（成功/重复失败/maxReruns 耗尽）之前会:
+   *   1. collectSignals() 拉取已注册源信号 + 递增 collectionCount
+   *   2. 从 loopMemory 失败历史 + evaluation 结果构造 EvolutionSignal[]
+   *   3. shouldTriggerOptimization 判定是否触发
+   *   4. 触发时 selectOptimizationTarget + optimize 产出 OptimizationProposal（applied=false）
+   */
+  setSelfEvolutionFramework(framework: SelfEvolutionFramework): void {
+    this.selfEvolutionFramework = framework;
+    logger.debug('DualLoopOrchestrator: self-evolution framework injected');
+  }
+
+  /**
+   * Phase 55 Task 13：触发 SelfEvolution 优化（若已注入且触发条件满足）
+   *
+   * 在 runDualLoop 的三个退出点之前调用：
+   *   1. 成功完成（dual-loop-complete）
+   *   2. 重复失败触发 Pilot 模式（pilot-mode-triggered）
+   *   3. maxReruns 耗尽（dual-loop-exhausted）
+   *
+   * 信号构造：
+   *   - loopMemory.getHistory() 的每条 LoopFailure → type='failure' 信号
+   *   - evaluationResult（若传入且 !passed）→ type='quality_drop' 信号
+   *
+   * 向后兼容：未注入 selfEvolutionFramework 时直接 return（零开销）
+   * 错误隔离：try/catch 降级,失败不阻塞主流程（仅 logger.warn）
+   *
+   * @param loopMemory 本次 runDualLoop 的循环记忆（含失败历史）
+   * @param evaluationResult 最后一次外循环评估结果（可选,成功时为 null 或不传）
+   */
+  private triggerSelfEvolutionIfEnabled(
+    loopMemory: { getHistory(): import('./dual-loop-types.js').LoopFailure[] },
+    evaluationResult?: { passed: boolean; reason: string } | null,
+  ): void {
+    if (!this.selfEvolutionFramework) return;
+    try {
+      // 1. collectSignals 递增 collectionCount（用于 shouldTriggerOptimization 规则 3: evaluationInterval）
+      //    即使无注册源,调用此方法也能让 collectionCount 递增,保证规则 3 正常工作
+      const collectedSignals = this.selfEvolutionFramework.collectSignals();
+
+      // 2. 从 loopMemory 失败历史构造 failure 信号
+      const failures = loopMemory.getHistory();
+      const failureSignals: EvolutionSignal[] = failures.map(f => ({
+        source: 'loop_memory',
+        type: 'failure',
+        severity: 'medium',
+        description: `[迭代${f.iteration}] ${f.reason}`,
+        data: f,
+        timestamp: Date.now(),
+      }));
+
+      // 3. evaluation 不通过时追加 quality_drop 信号
+      const qualitySignals: EvolutionSignal[] = [];
+      if (evaluationResult && !evaluationResult.passed) {
+        qualitySignals.push({
+          source: 'loop_memory',
+          type: 'quality_drop',
+          severity: 'high',
+          description: evaluationResult.reason,
+          data: evaluationResult,
+          timestamp: Date.now(),
+        });
+      }
+
+      const allSignals = [...collectedSignals, ...failureSignals, ...qualitySignals];
+      if (allSignals.length === 0) {
+        logger.debug('SelfEvolution: 无信号可分析,跳过优化判定');
+        return;
+      }
+
+      // 4. 判定是否触发优化
+      const trigger = this.selfEvolutionFramework.shouldTriggerOptimization(allSignals);
+      if (!trigger.trigger) {
+        logger.debug('SelfEvolution: 未触发优化', { reason: trigger.reason, signalCount: allSignals.length });
+        return;
+      }
+
+      // 5. 选择优化目标 + 产出提案
+      const target = this.selfEvolutionFramework.selectOptimizationTarget(allSignals);
+      if (!target) {
+        logger.debug('SelfEvolution: 无可用优化目标,跳过');
+        return;
+      }
+      const proposal = this.selfEvolutionFramework.optimize(target, allSignals);
+      logger.info('SelfEvolution: 提案已生成（待用户确认）', {
+        proposalId: proposal.id,
+        target,
+        expectedImpact: proposal.expectedImpact,
+        riskLevel: proposal.riskLevel,
+        applied: proposal.applied,
+        signalCount: allSignals.length,
+      });
+    } catch (error) {
+      logger.warn('SelfEvolution 提案生成失败（非阻塞）', { error: error instanceof Error ? error.message : String(error) });
+    }
   }
 
   /**
@@ -404,6 +511,8 @@ export class DualLoopOrchestrator {
 
       if (evaluation.passed) {
         logger.info('DualLoopOrchestrator: outer loop passed', { iteration });
+        // Phase 55 Task 13：成功完成时也触发 SelfEvolution（收集成功模式信号 + 失败历史）
+        this.triggerSelfEvolutionIfEnabled(loopMemory, evaluation);
         yield {
           type: 'dual-loop-complete',
           iteration,
@@ -513,6 +622,8 @@ export class DualLoopOrchestrator {
           iteration,
           repeatedReason: evaluation.reason,
         });
+        // Phase 55 Task 13：Pilot 模式触发时收集失败信号
+        this.triggerSelfEvolutionIfEnabled(loopMemory, evaluation);
         yield {
           type: 'pilot-mode-triggered',
           iteration,
@@ -527,6 +638,8 @@ export class DualLoopOrchestrator {
 
     // 达到最大重跑次数
     logger.warn('DualLoopOrchestrator: max reruns exhausted', { maxReruns });
+    // Phase 55 Task 13：maxReruns 耗尽时收集失败信号（evaluation 可能未定义,传 null）
+    this.triggerSelfEvolutionIfEnabled(loopMemory, null);
     yield {
       type: 'dual-loop-exhausted',
       maxReruns,
