@@ -43,6 +43,10 @@ import type { Blackboard } from '../agent/multi/blackboard.js';
 import type { UnifiedReviewer } from '../agent/unified-reviewer.js';
 import type { WorkerTask, WorkerResult, WorkerRole, ExecutionPlan } from '../agent/multi/types.js';
 import type { StepExecutionResult } from '../agent/task-orchestrator-types.js';
+// Phase 55 Task 11：CompositionalRouter（组合式路由器，跨领域任务分解 + Skill 检索）
+import type { CompositionalRouterInstance } from './app-init.js';
+// Phase 55 Task 11：CompositionalRouter 底层类型（AtomicSubTask 用于 decomposeFn 签名）
+import type { AtomicSubTask } from '../skills/compositional-router.js';
 
 /** GoalRunner 依赖的外部对象（由 App.tsx 注入） */
 export interface GoalRunnerDeps {
@@ -111,6 +115,12 @@ export interface GoalRunnerDeps {
    * 真实签名 execute(workflow: DagWorkflow, executor: (node, action) => Promise<unknown>)
    */
   dagEngine?: DagEngine;
+  /**
+   * Phase 55 Task 11：CompositionalRouter 实例（由 app-init.ts 注入，可选）
+   * 未注入时 executePlanWithCompose 降级到 executePlanWithDag
+   * 跨领域任务（uniqueDomains > dagMaxDomains）走此路径：SAD 分解 + Skill 检索 + DAG 组合
+   */
+  compositionalRouter?: CompositionalRouterInstance;
   /** 生成消息 ID */
   nextId: () => string;
   /**
@@ -153,7 +163,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     // Phase 54 Task 1/4：多 Agent 编排 + 统一审查器
     orchestrator, workerExecutor, blackboard, unifiedReviewer,
     // Phase 55 Task 6：执行路径判定器 + DAG 引擎（可选注入，未注入时降级到 legacy）
-    executionRouter, dagEngine,
+    executionRouter, dagEngine, compositionalRouter,
     // Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，通过 ref 延迟绑定）
     dualLoopOrchestratorRef,
     nextId,
@@ -1516,16 +1526,171 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
   }
 
   /**
-   * Phase 55 Task 6：CompositionalRouter 执行路径（占位，Task 11 完整实现）
-   * 当前降级到 DAG
+   * Phase 55 Task 11：CompositionalRouter 执行路径
+   * 跨领域任务（uniqueDomains > dagMaxDomains）走此路径：
+   *   1. 用 LLM 把 plan 拆成原子子任务（SAD 迭代技能感知分解）
+   *   2. 检索 Skill 并组合为 DAG（当前 Skill 检索未启用，按纯依赖 DAG 执行）
+   *   3. 转换为 DagWorkflow，交由 dagEngine.execute() 执行
+   * 异常时降级到 executePlanWithDag（用原始 plan）
    * @param plan 目标计划
    */
   async function executePlanWithCompose(plan: GoalPlan): Promise<void> {
-    // Phase 55 阶段 3 实现：CompositionalRouter.route(plan) → DagEngine.execute(composedPlan)
-    // 当前降级到 DAG
-    logger.warn('CompositionalRouter 未实现，降级到 DAG');
-    addSystemMessage('⚠️ 组合路由未启用，降级到 DAG 执行');
-    return executePlanWithDag(plan);
+    // 前置检查：compositionalRouter 或 dagEngine 未注入时降级到 DAG
+    if (!compositionalRouter || !dagEngine) {
+      logger.warn('CompositionalRouter 或 DagEngine 未注入，降级到 DAG');
+      addSystemMessage('⚠️ 组合路由未启用，降级到 DAG 执行');
+      return executePlanWithDag(plan);
+    }
+    try {
+      addSystemMessage('🧩 组合路由：分解任务 + 检索 Skill...');
+
+      // 拼接任务描述（带 step id 前缀，便于 LLM 理解结构）
+      const taskDesc = plan.steps.map(s => `[步骤${s.id}] ${s.description}`).join('\n');
+
+      // decomposeFn：用闭包内的 LLM 客户端把任务拆成原子子任务
+      // 失败时返回空数组，让 compositionalRouter 上层降级
+      const decomposeFn = async (task: string): Promise<AtomicSubTask[]> => {
+        try {
+          const classifyResult = await classifier.classify({ query: task });
+          const routeDecision = await modelRouter.route(classifyResult);
+          const client = clientManager.get(routeDecision.providerId);
+          if (!client || !client.isReady()) return [];
+
+          const systemPrompt = [
+            '把给定的复杂任务分解为原子子任务（每个子任务可由单个 Skill 或单步操作完成）。',
+            '输出严格的 JSON 数组（不要输出任何其他内容）：',
+            '[{"id": "sub-1", "description": "子任务描述", "expectedSkillCategory": "code-review"}]',
+            'expectedSkillCategory 可选值: code-review / refactor / test / docs / build / deploy / general',
+          ].join('\n');
+
+          const response = await client.complete({
+            model: routeDecision.model.id,
+            messages: [{ role: 'user', content: task }],
+            systemPrompt,
+            maxTokens: 1500,
+            temperature: 0.2,
+            stream: false,
+          });
+
+          // 兼容 ```json 代码块包裹与裸 JSON 两种输出格式
+          const jsonStr = response.content.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1]?.trim() ?? response.content.trim();
+          const parsed = JSON.parse(jsonStr);
+          if (!Array.isArray(parsed)) return [];
+          return parsed.map(
+            (s: { id?: string; description?: string; expectedSkillCategory?: string }, i: number) => ({
+              id: s.id ?? `sub-${i + 1}`,
+              description: s.description ?? '',
+              expectedSkillCategory: s.expectedSkillCategory ?? 'general',
+            }),
+          );
+        } catch (err) {
+          logger.warn('[compose] decomposeFn 调用失败', { error: String(err) });
+          return [];
+        }
+      };
+
+      // SAD 分解（availableSkills 传空数组，当前不接入 SkillsRouter）
+      const subTasks = await compositionalRouter.decompose(taskDesc, [], decomposeFn);
+      if (subTasks.length === 0) {
+        logger.warn('CompositionalRouter 分解结果为空，降级到 DAG');
+        addSystemMessage('⚠️ 组合路由分解结果为空，降级到 DAG 执行');
+        return executePlanWithDag(plan);
+      }
+      addSystemMessage(`📋 组合计划已生成（${subTasks.length} 个原子子任务）`);
+
+      // Skill 检索 + DAG 组合（availableSkills 传空数组，retrieveSkill 返回 null，
+      // composeDAG 生成无 Skill 匹配的纯依赖 DAG——基于子任务顺序的 control 边）
+      const skillDagPlan = compositionalRouter.planDAG(subTasks, []);
+      addSystemMessage('ℹ️ Skill 检索未启用，按纯依赖 DAG 执行');
+
+      // SkillDAGPlan → DagWorkflow 转换
+      // nodes：id 透传；dependsOn 取 edges 中 to==node.id 的 from 列表；action 用 subTask.description
+      const workflow: DagWorkflow = {
+        nodes: skillDagPlan.nodes.map(node => ({
+          id: node.id,
+          dependsOn: skillDagPlan.edges.filter(e => e.to === node.id).map(e => e.from),
+          action: node.subTask.description,
+        })),
+        variables: {},
+      };
+
+      // 节点 id → 临时 GoalStep 反查映射（compose 路径节点是 subTask 不是 GoalStep，
+      // 构造临时 GoalStep 让 executeSingleStep 可消费；id 用 index+1）
+      const stepMap = new Map<number, GoalStep>();
+      skillDagPlan.nodes.forEach((node, idx) => {
+        stepMap.set(idx + 1, {
+          id: idx + 1,
+          description: node.subTask.description,
+          acceptanceCriteria: '',
+          dependencies: [],
+          domain: 'general',
+          status: 'pending',
+        });
+      });
+
+      // executor 回调——复用 executeSingleStep 执行单步，状态更新 + emit + blackboard 写入
+      const executor = async (node: DagNode, _resolvedAction: string): Promise<unknown> => {
+        const idx = skillDagPlan.nodes.findIndex(n => n.id === node.id);
+        const step = stepMap.get(idx + 1);
+        if (!step) throw new Error(`未找到节点 ${node.id} 对应的 GoalStep`);
+        step.status = 'in_progress';
+        step.startedAt = Date.now();
+        addSystemMessage(`▶ 子任务 ${idx + 1}/${skillDagPlan.nodes.length}: ${step.description}`);
+        emit({ type: 'step_update', goalId: gid, stepId: step.id, status: 'running' });
+        try {
+          const result = await executeSingleStep(step);
+          step.status = 'completed';
+          step.completedAt = Date.now();
+          step.result = result.slice(0, 200);
+          conversationHistoryRef.current.push({ role: 'user', content: step.description });
+          conversationHistoryRef.current.push({ role: 'assistant', content: result });
+          if (conversationHistoryRef.current.length > 20) {
+            conversationHistoryRef.current = conversationHistoryRef.current.slice(-20);
+          }
+          blackboard?.addCompletedStep(step.id, 'coder', result ?? '');
+          emit({
+            type: 'step_update',
+            goalId: gid,
+            stepId: step.id,
+            status: 'completed',
+            durationMs: step.startedAt ? Date.now() - step.startedAt : undefined,
+          });
+          addSystemMessage(`✅ 子任务 ${step.id} 完成`);
+          return result;
+        } catch (error) {
+          step.status = 'failed';
+          step.completedAt = Date.now();
+          step.error = error instanceof Error ? error.message : String(error);
+          emit({
+            type: 'step_update',
+            goalId: gid,
+            stepId: step.id,
+            status: 'failed',
+            error: step.error,
+            durationMs: step.startedAt ? Date.now() - step.startedAt : undefined,
+          });
+          addSystemMessage(`❌ 子任务 ${step.id} 失败: ${step.error}`);
+          // 重新抛出：DagEngine 记录到 failedNodes 并按 retryLimit 决定是否重试
+          throw error;
+        }
+      };
+
+      const dagResult = await dagEngine.execute(workflow, executor);
+
+      // 部分节点失败（重试耗尽）时记录日志 + emit，不降级——成功节点结果已写入 blackboard
+      if (dagResult.failedNodes.length > 0) {
+        logger.warn('Compose DAG 执行部分节点失败', { failedNodes: dagResult.failedNodes });
+        for (const nodeId of dagResult.failedNodes) {
+          const idx = skillDagPlan.nodes.findIndex(n => n.id === nodeId);
+          if (idx >= 0) emit({ type: 'step_update', goalId: gid, stepId: idx + 1, status: 'failed' });
+        }
+      }
+    } catch (error) {
+      // 异常降级：整个 compose 流程出错时回到 executePlanWithDag（用原始 plan）
+      logger.warn('CompositionalRouter 异常，降级到 DAG', { error: String(error) });
+      addSystemMessage('⚠️ 组合路由异常，降级到 DAG 执行');
+      return executePlanWithDag(plan);
+    }
   }
 
   // Phase 55：legacy fallback 路径，验证通过后删除（见设计文档第 9 节）

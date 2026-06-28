@@ -267,6 +267,8 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     dualLoopOrchestratorRef: deps.dualLoopOrchestratorRef,
     // Phase 55：DAG 引擎（app-init.ts 异步创建，ref 延迟读取，未注入时 executePlanWithDag 降级到 single）
     dagEngine: deps.dagEngineRef?.current ?? undefined,
+    // Phase 55 Task 11：CompositionalRouter（app-init.ts 实例化，未注入时 executePlanWithCompose 降级到 DAG）
+    compositionalRouter: deps.compositionalRouter,
   }));
 
   // ChatRunner（非命令聊天执行）
