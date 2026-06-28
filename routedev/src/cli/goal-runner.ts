@@ -12,7 +12,7 @@ import type { TokenProfiler } from '../agent/token-profiler.js';
 import type { CheckpointManager } from '../harness/checkpoint-manager.js';
 import type { ContextManager } from '../agent/memory/context-manager.js';
 import type { AppConfig } from '../config/schema.js';
-import type { GoalPlan, GoalStep, PlanStep, GoalEvent } from '../agent/goal-types.js';
+import type { GoalPlan, GoalPlanStatus, GoalStep, PlanStep, GoalEvent } from '../agent/goal-types.js';
 // Phase 55 Task 6：执行路径判定器（/goal 路径分发）
 import type { ExecutionRouter } from '../agent/execution-router.js';
 // Phase 55 Task 9：DualLoop + BoundedRecovery 替代迭代闭环
@@ -973,194 +973,6 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
         break;
     }
 
-    // Phase 55 Task 6：原串行 for 循环已提取为 executePlanWithSingleAgent 函数（见下方定义）
-    // 以下 for 循环体保留作为函数源代码参考，用 if (false as boolean) 临时禁用（避免常量折叠导致类型窄化）
-    if (false as boolean)
-    for (const step of plan.steps) {
-      // 检查中断
-      if (abortControllerRef.current?.signal.aborted) {
-        addSystemMessage(`⏸ 目标已暂停。已完成 ${plan.steps.indexOf(step)}/${plan.steps.length} 个步骤。`);
-        plan.status = 'failed';
-        break;
-      }
-
-      // 步骤执行前自动创建检查点
-      if (config.checkpoint.enabled) {
-        const checkpoint = await checkpointManager.create({
-          description: `步骤 ${step.id} 前快照: ${step.description.slice(0, 40)}`,
-          stepId: step.id,
-          goalId: plan.id,
-          isAutoCreated: true,
-        });
-        if (checkpoint) {
-          addSystemMessage(`💾 检查点已创建: cp-${checkpoint.id} (${checkpoint.filesSnapshot.length} 个文件)`);
-        }
-      }
-
-      step.status = 'in_progress';
-      step.startedAt = Date.now();
-      addSystemMessage(`▶ 步骤 ${step.id}/${plan.steps.length}: ${step.description}`);
-      // Phase 54：step_update running
-      emit({ type: 'step_update', goalId: gid, stepId: step.id, status: 'running' });
-
-      try {
-        const classifyResult = await classifier.classify({ query: step.description });
-        const routeDecision = await modelRouter.route(classifyResult);
-        const stepFallbackNotice = notifyRoutingFallback(routeDecision);
-        if (stepFallbackNotice) addSystemMessage(stepFallbackNotice);
-        const client = clientManager.get(routeDecision.providerId);
-        if (!client || !client.isReady()) {
-          step.status = 'failed';
-          step.error = `提供商 ${routeDecision.providerId} 不可用`;
-          addSystemMessage(`❌ 步骤 ${step.id} 失败: ${step.error}`);
-          continue;
-        }
-
-        let stepContent = '';
-        const stepAbort = new AbortController();
-        abortControllerRef.current = stepAbort;
-        for await (const event of agentLoop.run({
-          userMessage: step.description,
-          llmClient: client,
-          routeDecision,
-          conversationHistory: conversationHistoryRef.current,
-          systemPrompt: systemPromptRef.current,
-          signal: stepAbort.signal,
-          onConfirmTool: async (toolName, args) => {
-            // Phase 54 修复：自主度模式判定——auto/semi 直接批准
-            const mode = (config.autonomy?.defaultMode ?? 'semi') as AutonomyMode;
-            if (!AUTONOMY_BEHAVIOR[mode].requireToolConfirmation && toolName !== 'ask_user') {
-              return true;
-            }
-            return new Promise<boolean>(resolve => {
-              pendingConfirmRef.current = {
-            resolve: (r) => resolve(typeof r === 'boolean' ? r : r.approved),
-            toolName,
-          };
-              const argsStr = JSON.stringify(args, null, 2).slice(0, 200);
-              addSystemMessage(`⚠️  目标步骤 · 工具 ${toolName} 需要确认 [y/n]\n参数: ${argsStr}`);
-            });
-          },
-        })) {
-          if (event.type === 'text_delta') stepContent += event.text;
-        if (event.type === 'done') {
-          tracker.record(event.usage, {
-            modelId: routeDecision.model.id,
-            agentId: 'goal',
-            stepId: `step-${step.id}`,
-          });
-          // Phase 31/32 P0 接线：任务级 Token 预算追踪
-          // record() 同时累加日预算和 taskSpent，recordTaskUsage() 只查询状态（不累加，避免双计数）
-          const taskStatus = tracker.recordTaskUsage(event.usage);
-          const taskUsagePercent = tracker.getTaskUsagePercent();
-          if (taskStatus === 'exceeded' || taskUsagePercent >= 1) {
-            addSystemMessage('⏹ 任务级 Token 预算已耗尽，goal 执行中止');
-            step.status = 'failed';
-            step.error = '任务级 Token 预算耗尽';
-            gateManager.updateGate(`step-${step.id}`, 'failed', step.error);
-            plan.status = 'failed';
-            break;
-          }
-          // Phase 43：使用 config.goal.softStopRatio 作为软停止阈值（默认 0.9）
-          if (taskUsagePercent >= softStopRatio) {
-            addSystemMessage(`⚠️ 任务级 Token 预算接近上限 (${(taskUsagePercent * 100).toFixed(0)}%，软停止阈值 ${(softStopRatio * 100).toFixed(0)}%)`);
-          }
-          // Phase 30：修复 goal-runner 缺失 setTodayTokensUsed 的 bug
-          if (setTodayTokensUsed) {
-            setTodayTokensUsed(prev => prev + event.usage.totalTokens);
-          }
-          // 预算检查：超限时中止后续步骤，避免长时间运行的 goal 无限消耗 token
-          // checkBudget 返回 false 表示已超限（enforce 模式下）
-          if (!tracker.checkBudget()) {
-            addSystemMessage('⏹ Token 日预算已耗尽，goal 执行中止');
-            step.status = 'failed';
-            step.error = 'Token 预算耗尽';
-            gateManager.updateGate(`step-${step.id}`, 'failed', step.error);
-            plan.status = 'failed';
-            break;
-          }
-        }
-        // Phase 30：token_profile 事件由 profiler 内部记录，无需额外处理
-      }
-
-        // 用户中断时，当前步骤标记为 failed 而非 completed
-        if (stepAbort.signal.aborted) {
-          step.status = 'failed';
-          step.error = '用户中断';
-          gateManager.updateGate(`step-${step.id}`, 'failed', step.error);
-          addSystemMessage(`⏸ 步骤 ${step.id} 已中断`);
-          plan.status = 'failed';
-          break;
-        }
-        step.status = 'completed';
-        step.completedAt = Date.now();
-        step.result = stepContent.slice(0, 200);
-        addSystemMessage(renderGoalProgressText(plan));
-        conversationHistoryRef.current.push({ role: 'user', content: step.description });
-        conversationHistoryRef.current.push({ role: 'assistant', content: stepContent });
-        if (conversationHistoryRef.current.length > 20) {
-          conversationHistoryRef.current = conversationHistoryRef.current.slice(-20);
-        }
-
-        // Phase 21 Task 2：更新对应 gate 状态为 passed
-        gateManager.updateGate(`step-${step.id}`, 'passed', step.result);
-
-        // 步骤间 checkpoint + 压缩
-        if (config.checkpoint.enabled) {
-          const usagePercent = tracker.getUsagePercent();
-          const triggers = config.checkpoint.triggers.map(t => ({
-            level: t.level,
-            action: t.action as 'initial' | 'incremental' | 'compress',
-          }));
-
-          const triggerAction = contextManager.shouldTriggerCheckpoint(usagePercent, triggers);
-          if (triggerAction) {
-            await contextManager.triggerCheckpoint(triggerAction, conversationHistoryRef.current, usagePercent);
-            await contextManager.saveCheckpoint();
-            addSystemMessage(`🧠 步骤间记忆已保存 (${triggerAction})`);
-          }
-
-          const estimatedTokens = conversationHistoryRef.current.reduce((acc, msg) => {
-            const t = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-            return acc + estimateTokens(t);
-          }, 0);
-
-          // Phase 21 Task 5：使用 compressEnhanced 替代 compress（两轮压缩 + offload）
-          if (contextManager.shouldCompress(conversationHistoryRef.current.length, estimatedTokens)) {
-            const { compressed } = await contextManager.compressEnhanced(conversationHistoryRef.current);
-            conversationHistoryRef.current = compressed;
-            addSystemMessage('📦 上下文已压缩（步骤间）');
-          }
-        }
-        addSystemMessage(`✅ 步骤 ${step.id} 完成`);
-        // Phase 54：step_update completed
-        emit({
-          type: 'step_update',
-          goalId: gid,
-          stepId: step.id,
-          status: 'completed',
-          durationMs: step.startedAt ? Date.now() - step.startedAt : undefined,
-        });
-      } catch (error) {
-        step.status = 'failed';
-        step.completedAt = Date.now();
-        step.error = error instanceof Error ? error.message : String(error);
-        // Phase 21 Task 2：更新对应 gate 状态为 failed
-        gateManager.updateGate(`step-${step.id}`, 'failed', step.error);
-        addSystemMessage(`❌ 步骤 ${step.id} 失败: ${step.error}`);
-        addSystemMessage(renderGoalProgressText(plan));
-        // Phase 54：step_update failed
-        emit({
-          type: 'step_update',
-          goalId: gid,
-          stepId: step.id,
-          status: 'failed',
-          error: step.error,
-          durationMs: step.startedAt ? Date.now() - step.startedAt : undefined,
-        });
-      }
-    }
-
     // 验证目标完成度
     // Phase 43：根据 config.goal.auditMode 控制验证与代码验证门的顺序/开关
     plan.completedAt = Date.now();
@@ -1183,7 +995,9 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     // Phase 55 Task 9：用 DualLoop + BoundedRecovery 替代迭代闭环
     // 旧迭代闭环代码保留为 P2 降级 fallback（见设计文档第 7 节）
     const dualLoopOrchestrator = dualLoopOrchestratorRef?.current ?? null;
-    if (plan.status === 'failed' && config.phase49Integration?.dualLoopEnabled && dualLoopOrchestrator) {
+    // 注意：runCompletionGate / verifyPlan 可能将 plan.status 置为 'failed'，
+    // 但 TS 无法透过函数调用感知突变，故显式断言回声明类型 GoalPlanStatus。
+    if ((plan.status as GoalPlanStatus) === 'failed' && config.phase49Integration?.dualLoopEnabled && dualLoopOrchestrator) {
       try {
         // 调用 DualLoopOrchestrator.runDualLoop（完整 inner/outer 循环）
         // 注意：不是调用 run 占位方法，而是调用包含完整双循环逻辑的 runDualLoop
