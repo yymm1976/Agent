@@ -105,6 +105,8 @@ import { SkillLifecycleManager } from '../skills/skill-lifecycle.js';
 import { createBoundedRecoveryManager } from '../agent/bounded-recovery.js';
 // Phase 55 Task 9：DualLoopOrchestrator 类型（goal-runner 通过 ref 引用实例）
 import type { DualLoopOrchestrator } from '../agent/dual-loop-orchestrator.js';
+// Phase 55：DagEngine 类型（异步创建，goal-runner 通过 ref 延迟读取）
+import type { DagEngine } from '../agent/workflow/dag-engine.js';
 import { ArchitectureAwareMetricsCollector } from '../evaluation/architecture-aware-metrics.js';
 import { SaturationMonitor } from '../evaluation/saturation-monitor.js';
 import { MCPSecurityFramework } from '../mcp/security-framework.js';
@@ -241,6 +243,8 @@ export interface AppDependencies {
   executionRouter: ExecutionRouter;
   /** Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，goal-runner 通过 ref 延迟读取） */
   dualLoopOrchestratorRef: { current: DualLoopOrchestrator | null };
+  /** Phase 55：DagEngine ref（异步创建，goal-runner 通过 ref 延迟读取，未注入时 executePlanWithDag 降级到 single） */
+  dagEngineRef: { current: DagEngine | null };
 }
 
 /**
@@ -1179,16 +1183,20 @@ export function createAppDependencies(
   const executionRouter = new ExecutionRouter();
   // Phase 53 Task 10：DAG 引擎（受 config.phase53Integration.dagEngine.enabled 守护，fail-open）
   // 使用变量路径让 TypeScript 无法静态解析，避免模块尚未生成时 typecheck 失败
+  // Phase 55：dagEngine ref（异步创建，供 goal-runner 通过 ref 延迟读取，与 dualLoopOrchestratorRef 同模式）
+  const dagEngineRef: { current: DagEngine | null } = { current: null };
   const phase53DagCfg = config.phase53Integration?.dagEngine;
   if (phase53DagCfg?.enabled) {
     const dagEngineModulePath = '../agent/workflow/dag-engine.js';
     import(dagEngineModulePath)
-      .then((mod: { DagEngine: new (opts?: { maxParallel?: number; retryLimit?: number; humanEscalationThreshold?: number }) => unknown }) => {
+      .then((mod: { DagEngine: new (opts?: { maxParallel?: number; retryLimit?: number; humanEscalationThreshold?: number }) => DagEngine }) => {
         const engine = new mod.DagEngine({
           maxParallel: phase53DagCfg.maxParallel,
           retryLimit: phase53DagCfg.retryLimit,
           humanEscalationThreshold: phase53DagCfg.humanEscalationThreshold,
         });
+        // Phase 55：立即写入 ref，让 goal-runner 在 /goal 触发时能读取到实例
+        dagEngineRef.current = engine;
         // feature-detect：方法可能由其他子代理添加
         const gp = goalParser as unknown as { setDagEngine?: (e: unknown) => void };
         if (typeof gp.setDagEngine === 'function') {
@@ -2309,5 +2317,7 @@ export function createAppDependencies(
     executionRouter,
     // Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，goal-runner 通过 ref 延迟读取）
     dualLoopOrchestratorRef,
+    // Phase 55：DagEngine ref（异步创建，goal-runner 通过 ref 延迟读取）
+    dagEngineRef,
   };
 }

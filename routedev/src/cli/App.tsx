@@ -265,6 +265,8 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     executionRouter: deps.executionRouter,
     // Phase 55 Task 9：DualLoop 编排器 ref（异步创建，ref 延迟绑定，未注入时降级到 legacyIterativeLoop）
     dualLoopOrchestratorRef: deps.dualLoopOrchestratorRef,
+    // Phase 55：DAG 引擎（app-init.ts 异步创建，ref 延迟读取，未注入时 executePlanWithDag 降级到 single）
+    dagEngine: deps.dagEngineRef?.current ?? undefined,
   }));
 
   // ChatRunner（非命令聊天执行）

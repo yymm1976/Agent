@@ -18,6 +18,8 @@ import type { ExecutionRouter } from '../agent/execution-router.js';
 // Phase 55 Task 9：DualLoop + BoundedRecovery 替代迭代闭环
 import type { DualLoopOrchestrator } from '../agent/dual-loop-orchestrator.js';
 import type { DualLoopParams } from '../agent/dual-loop-types.js';
+// Phase 55：DagEngine 真实类型（替代 unknown 占位，适配 execute(workflow, executor) 签名）
+import type { DagEngine, DagWorkflow, DagNode } from '../agent/workflow/dag-engine.js';
 // Phase 54 Task 5：自主度行为映射（auto/semi/manual → 具体行为开关）
 import { AUTONOMY_BEHAVIOR, type AutonomyMode } from '../config/schema.js';
 // Phase 32 Task 1.4：接入 CompletionGate（独立代码验证门）
@@ -106,10 +108,9 @@ export interface GoalRunnerDeps {
   dualLoopOrchestratorRef?: { current: DualLoopOrchestrator | null };
   /**
    * Phase 55：DAG 引擎（由 app-init.ts 注入，可选，未注入时降级到单 Agent）
-   * TODO: Task 8 接入真实 DagEngine 类型（src/agent/workflow/dag-engine.ts），
-   * 当前用 unknown 占位——实际 execute 签名与任务描述不同，需在 Task 8 对齐
+   * 真实签名 execute(workflow: DagWorkflow, executor: (node, action) => Promise<unknown>)
    */
-  dagEngine?: unknown;
+  dagEngine?: DagEngine;
   /** 生成消息 ID */
   nextId: () => string;
   /**
@@ -126,6 +127,17 @@ export interface GoalRunnerDeps {
    * CLI 端不传——澄清环节跳过，直接用原描述
    */
   onToolConfirmRequest?: (toolName: string, params: Record<string, unknown>) => void;
+}
+
+/**
+ * Phase 55：计划中止错误（预算耗尽/用户中断时抛出）
+ * executeSingleStep 抛出后，调用方据此中止整个 plan（区别于普通步骤失败）
+ */
+class PlanAbortError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'PlanAbortError';
+  }
 }
 
 /** 创建目标运行器 */
@@ -1209,13 +1221,98 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
   }
 
   /**
+   * Phase 55：单步执行核心逻辑（classify → route → agentLoop.run → 返回内容）
+   * 从 executePlanWithSingleAgent 提取，供 single 和 dag 路径复用，避免代码重复。
+   * 不管理 step.status/gate/emit/checkpoint——这些由调用方负责。
+   * 预算耗尽或用户中断时抛 PlanAbortError，调用方据此中止整个 plan。
+   * @param step 待执行的步骤
+   * @returns 步骤执行内容（assistant 回复全文）
+   */
+  async function executeSingleStep(step: GoalStep): Promise<string> {
+    const softStopRatio = goalCfg?.softStopRatio ?? 0.9;
+    const classifyResult = await classifier.classify({ query: step.description });
+    const routeDecision = await modelRouter.route(classifyResult);
+    const stepFallbackNotice = notifyRoutingFallback(routeDecision);
+    if (stepFallbackNotice) addSystemMessage(stepFallbackNotice);
+    const client = clientManager.get(routeDecision.providerId);
+    if (!client || !client.isReady()) {
+      throw new Error(`提供商 ${routeDecision.providerId} 不可用`);
+    }
+
+    let stepContent = '';
+    const stepAbort = new AbortController();
+    abortControllerRef.current = stepAbort;
+    for await (const event of agentLoop.run({
+      userMessage: step.description,
+      llmClient: client,
+      routeDecision,
+      conversationHistory: conversationHistoryRef.current,
+      systemPrompt: systemPromptRef.current,
+      signal: stepAbort.signal,
+      onConfirmTool: async (toolName, args) => {
+        // Phase 54 修复：自主度模式判定——auto/semi 直接批准
+        const mode = (config.autonomy?.defaultMode ?? 'semi') as AutonomyMode;
+        if (!AUTONOMY_BEHAVIOR[mode].requireToolConfirmation && toolName !== 'ask_user') {
+          return true;
+        }
+        return new Promise<boolean>(resolve => {
+          pendingConfirmRef.current = {
+            resolve: (r) => resolve(typeof r === 'boolean' ? r : r.approved),
+            toolName,
+          };
+          const argsStr = JSON.stringify(args, null, 2).slice(0, 200);
+          addSystemMessage(`⚠️  目标步骤 · 工具 ${toolName} 需要确认 [y/n]\n参数: ${argsStr}`);
+        });
+      },
+    })) {
+      if (event.type === 'text_delta') stepContent += event.text;
+      if (event.type === 'done') {
+        tracker.record(event.usage, {
+          modelId: routeDecision.model.id,
+          agentId: 'goal',
+          stepId: `step-${step.id}`,
+        });
+        // Phase 31/32 P0 接线：任务级 Token 预算追踪
+        // record() 同时累加日预算和 taskSpent，recordTaskUsage() 只查询状态（不累加，避免双计数）
+        const taskStatus = tracker.recordTaskUsage(event.usage);
+        const taskUsagePercent = tracker.getTaskUsagePercent();
+        if (taskStatus === 'exceeded' || taskUsagePercent >= 1) {
+          addSystemMessage('⏹ 任务级 Token 预算已耗尽，goal 执行中止');
+          throw new PlanAbortError('任务级 Token 预算耗尽');
+        }
+        // Phase 43：使用 config.goal.softStopRatio 作为软停止阈值（默认 0.9）
+        if (taskUsagePercent >= softStopRatio) {
+          addSystemMessage(`⚠️ 任务级 Token 预算接近上限 (${(taskUsagePercent * 100).toFixed(0)}%，软停止阈值 ${(softStopRatio * 100).toFixed(0)}%)`);
+        }
+        // Phase 30：修复 goal-runner 缺失 setTodayTokensUsed 的 bug
+        if (setTodayTokensUsed) {
+          setTodayTokensUsed(prev => prev + event.usage.totalTokens);
+        }
+        // 预算检查：超限时中止后续步骤，避免长时间运行的 goal 无限消耗 token
+        // checkBudget 返回 false 表示已超限（enforce 模式下）
+        if (!tracker.checkBudget()) {
+          addSystemMessage('⏹ Token 日预算已耗尽，goal 执行中止');
+          throw new PlanAbortError('Token 预算耗尽');
+        }
+      }
+      // Phase 30：token_profile 事件由 profiler 内部记录，无需额外处理
+    }
+
+    // 用户中断：抛 PlanAbortError，调用方据此中止整个 plan
+    if (stepAbort.signal.aborted) {
+      throw new PlanAbortError('用户中断');
+    }
+    return stepContent;
+  }
+
+  /**
    * Phase 55 Task 6：单 Agent 串行执行路径
    * 从 executeGoalPlan 提取的 for 循环逻辑：逐步骤运行 Agent Loop + 检查点 + 上下文压缩
-   * 闭包变量（gid/emit/gateManager/tracker 等）直接复用，softStopRatio 在函数内重新计算
+   * 闭包变量（gid/emit/gateManager/tracker 等）直接复用，softStopRatio 在 executeSingleStep 内读取
+   * Phase 55：单步执行逻辑已提取为 executeSingleStep，本函数负责步骤生命周期管理（status/gate/emit/checkpoint）
    * @param plan 目标计划
    */
   async function executePlanWithSingleAgent(plan: GoalPlan): Promise<void> {
-    const softStopRatio = goalCfg?.softStopRatio ?? 0.9;
     for (const step of plan.steps) {
       // 检查中断
       if (abortControllerRef.current?.signal.aborted) {
@@ -1244,94 +1341,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       emit({ type: 'step_update', goalId: gid, stepId: step.id, status: 'running' });
 
       try {
-        const classifyResult = await classifier.classify({ query: step.description });
-        const routeDecision = await modelRouter.route(classifyResult);
-        const stepFallbackNotice = notifyRoutingFallback(routeDecision);
-        if (stepFallbackNotice) addSystemMessage(stepFallbackNotice);
-        const client = clientManager.get(routeDecision.providerId);
-        if (!client || !client.isReady()) {
-          step.status = 'failed';
-          step.error = `提供商 ${routeDecision.providerId} 不可用`;
-          addSystemMessage(`❌ 步骤 ${step.id} 失败: ${step.error}`);
-          continue;
-        }
-
-        let stepContent = '';
-        const stepAbort = new AbortController();
-        abortControllerRef.current = stepAbort;
-        for await (const event of agentLoop.run({
-          userMessage: step.description,
-          llmClient: client,
-          routeDecision,
-          conversationHistory: conversationHistoryRef.current,
-          systemPrompt: systemPromptRef.current,
-          signal: stepAbort.signal,
-          onConfirmTool: async (toolName, args) => {
-            // Phase 54 修复：自主度模式判定——auto/semi 直接批准
-            const mode = (config.autonomy?.defaultMode ?? 'semi') as AutonomyMode;
-            if (!AUTONOMY_BEHAVIOR[mode].requireToolConfirmation && toolName !== 'ask_user') {
-              return true;
-            }
-            return new Promise<boolean>(resolve => {
-              pendingConfirmRef.current = {
-            resolve: (r) => resolve(typeof r === 'boolean' ? r : r.approved),
-            toolName,
-          };
-              const argsStr = JSON.stringify(args, null, 2).slice(0, 200);
-              addSystemMessage(`⚠️  目标步骤 · 工具 ${toolName} 需要确认 [y/n]\n参数: ${argsStr}`);
-            });
-          },
-        })) {
-          if (event.type === 'text_delta') stepContent += event.text;
-        if (event.type === 'done') {
-          tracker.record(event.usage, {
-            modelId: routeDecision.model.id,
-            agentId: 'goal',
-            stepId: `step-${step.id}`,
-          });
-          // Phase 31/32 P0 接线：任务级 Token 预算追踪
-          // record() 同时累加日预算和 taskSpent，recordTaskUsage() 只查询状态（不累加，避免双计数）
-          const taskStatus = tracker.recordTaskUsage(event.usage);
-          const taskUsagePercent = tracker.getTaskUsagePercent();
-          if (taskStatus === 'exceeded' || taskUsagePercent >= 1) {
-            addSystemMessage('⏹ 任务级 Token 预算已耗尽，goal 执行中止');
-            step.status = 'failed';
-            step.error = '任务级 Token 预算耗尽';
-            gateManager.updateGate(`step-${step.id}`, 'failed', step.error);
-            plan.status = 'failed';
-            break;
-          }
-          // Phase 43：使用 config.goal.softStopRatio 作为软停止阈值（默认 0.9）
-          if (taskUsagePercent >= softStopRatio) {
-            addSystemMessage(`⚠️ 任务级 Token 预算接近上限 (${(taskUsagePercent * 100).toFixed(0)}%，软停止阈值 ${(softStopRatio * 100).toFixed(0)}%)`);
-          }
-          // Phase 30：修复 goal-runner 缺失 setTodayTokensUsed 的 bug
-          if (setTodayTokensUsed) {
-            setTodayTokensUsed(prev => prev + event.usage.totalTokens);
-          }
-          // 预算检查：超限时中止后续步骤，避免长时间运行的 goal 无限消耗 token
-          // checkBudget 返回 false 表示已超限（enforce 模式下）
-          if (!tracker.checkBudget()) {
-            addSystemMessage('⏹ Token 日预算已耗尽，goal 执行中止');
-            step.status = 'failed';
-            step.error = 'Token 预算耗尽';
-            gateManager.updateGate(`step-${step.id}`, 'failed', step.error);
-            plan.status = 'failed';
-            break;
-          }
-        }
-        // Phase 30：token_profile 事件由 profiler 内部记录，无需额外处理
-      }
-
-        // 用户中断时，当前步骤标记为 failed 而非 completed
-        if (stepAbort.signal.aborted) {
-          step.status = 'failed';
-          step.error = '用户中断';
-          gateManager.updateGate(`step-${step.id}`, 'failed', step.error);
-          addSystemMessage(`⏸ 步骤 ${step.id} 已中断`);
-          plan.status = 'failed';
-          break;
-        }
+        // Phase 55：单步执行委托给 executeSingleStep（与 DAG 路径复用同一实现）
+        const stepContent = await executeSingleStep(step);
         step.status = 'completed';
         step.completedAt = Date.now();
         step.result = stepContent.slice(0, 200);
@@ -1398,16 +1409,22 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
           error: step.error,
           durationMs: step.startedAt ? Date.now() - step.startedAt : undefined,
         });
+        // Phase 55：预算耗尽/用户中断（PlanAbortError）→ 中止整个 plan
+        if (error instanceof PlanAbortError) {
+          plan.status = 'failed';
+          break;
+        }
       }
     }
   }
 
   /**
    * Phase 55 Task 6：DAG 引擎执行路径
-   * DagEngine 未注入时降级到单 Agent 串行
-   * TODO: Task 8 接入真实 DagEngine 类型——当前 DagEngine.execute 签名为
-   *       execute(workflow: DagWorkflow, executor: (node, action) => Promise<unknown>)，
-   *       与本任务的 (plan, options) 调用方式不同，需在 Task 8 中适配（GoalPlan → DagWorkflow 转换）
+   * DagEngine 未注入时降级到单 Agent 串行。
+   * Phase 55：已适配真实 DagEngine API——execute(workflow, executor)。
+   *   - GoalPlan → DagWorkflow 转换：step.id(number) → node.id(`step-${id}`)，
+   *     dependencies(number[]) → dependsOn(string[])，description → action
+   *   - executor 回调复用 executeSingleStep 执行单步，DagEngine 负责拓扑排序/分层并行/重试
    * @param plan 目标计划
    */
   async function executePlanWithDag(plan: GoalPlan): Promise<void> {
@@ -1417,28 +1434,80 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       return executePlanWithSingleAgent(plan);
     }
     try {
-      // Phase 55：dagEngine 类型暂为 unknown（Task 8 接入真实 DagEngine 类型）
-      // 调用方式按任务描述占位，Task 8 会改为 GoalPlan → DagWorkflow 转换 + DagEngine.execute(workflow, executor)
-      await (dagEngine as { execute: (plan: GoalPlan, options: {
-        workerExecutor: WorkerExecutor | undefined;
-        onStepComplete: (step: GoalStep) => void;
-        onStepFailed: (step: GoalStep) => void;
-      }) => Promise<void> }).execute(plan, {
-        workerExecutor,
-        onStepComplete: (step) => {
-          blackboard?.addCompletedStep(step.id, 'coder', step.result ?? '');
-          emit({ type: 'step_update', goalId: gid, stepId: step.id, status: 'completed' });
-        },
-        onStepFailed: (step) => {
+      // Phase 55：GoalPlan → DagWorkflow 转换
+      // step.id(number) → node.id(`step-${id}`)；dependencies(number[]) → dependsOn(`step-${depId}`[])
+      // action 用 step.description（无模板变量，resolvedAction 与 description 等价）
+      const workflow: DagWorkflow = {
+        nodes: plan.steps.map(step => ({
+          id: `step-${step.id}`,
+          dependsOn: step.dependencies.map(depId => `step-${depId}`),
+          action: step.description,
+        })),
+        variables: {},
+      };
+
+      // Phase 55：node.id → GoalStep 反查映射，executor 回调内按 node.id 找回原 step
+      const stepMap = new Map(plan.steps.map(s => [`step-${s.id}`, s]));
+
+      // Phase 55：executor 回调——复用 executeSingleStep 执行单步，结果写 blackboard + emit
+      // DagEngine 负责拓扑排序/分层并行/失败重试，executor 只关心单步执行与状态更新
+      const executor = async (node: DagNode, _resolvedAction: string): Promise<unknown> => {
+        const step = stepMap.get(node.id);
+        if (!step) throw new Error(`未找到节点 ${node.id} 对应的 GoalStep`);
+        step.status = 'in_progress';
+        step.startedAt = Date.now();
+        addSystemMessage(`▶ 步骤 ${step.id}/${plan.steps.length}: ${step.description}`);
+        emit({ type: 'step_update', goalId: gid, stepId: step.id, status: 'running' });
+        try {
+          const result = await executeSingleStep(step);
+          step.status = 'completed';
+          step.completedAt = Date.now();
+          step.result = result.slice(0, 200);
+          conversationHistoryRef.current.push({ role: 'user', content: step.description });
+          conversationHistoryRef.current.push({ role: 'assistant', content: result });
+          if (conversationHistoryRef.current.length > 20) {
+            conversationHistoryRef.current = conversationHistoryRef.current.slice(-20);
+          }
+          gateManager.updateGate(`step-${step.id}`, 'passed', step.result);
+          blackboard?.addCompletedStep(step.id, 'coder', result ?? '');
+          emit({
+            type: 'step_update',
+            goalId: gid,
+            stepId: step.id,
+            status: 'completed',
+            durationMs: step.startedAt ? Date.now() - step.startedAt : undefined,
+          });
+          addSystemMessage(`✅ 步骤 ${step.id} 完成`);
+          return result;
+        } catch (error) {
+          step.status = 'failed';
+          step.completedAt = Date.now();
+          step.error = error instanceof Error ? error.message : String(error);
+          gateManager.updateGate(`step-${step.id}`, 'failed', step.error);
           emit({
             type: 'step_update',
             goalId: gid,
             stepId: step.id,
             status: 'failed',
             error: step.error,
+            durationMs: step.startedAt ? Date.now() - step.startedAt : undefined,
           });
-        },
-      });
+          addSystemMessage(`❌ 步骤 ${step.id} 失败: ${step.error}`);
+          // 重新抛出：DagEngine 记录到 failedNodes 并按 retryLimit 决定是否重试
+          throw error;
+        }
+      };
+
+      const dagResult = await dagEngine.execute(workflow, executor);
+
+      // Phase 55：部分节点失败（重试耗尽）时记录日志 + emit，不降级——成功节点结果已写入 blackboard
+      if (dagResult.failedNodes.length > 0) {
+        logger.warn('DAG 执行部分节点失败', { failedNodes: dagResult.failedNodes });
+        for (const nodeId of dagResult.failedNodes) {
+          const stepId = parseInt(nodeId.replace('step-', ''), 10);
+          emit({ type: 'step_update', goalId: gid, stepId, status: 'failed' });
+        }
+      }
     } catch (error) {
       logger.warn('DAG 引擎异常，降级到单 Agent 串行', { error: String(error) });
       addSystemMessage('⚠️ DAG 引擎异常，降级到串行执行');
