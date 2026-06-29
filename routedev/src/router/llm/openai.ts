@@ -73,7 +73,13 @@ export class OpenAIClient extends BaseLLMClient {
 
     try {
       const params = this.buildRequestParams(options, false);
-      const response = await this.client.chat.completions.create(params) as ChatCompletion;
+      // Phase 55 修复：透传 options.timeoutMs 到 SDK RequestOptions
+      // 修复前：SDK 仅用构造时的 defaultTimeoutMs（30s），requestOptions.timeoutMs 不生效
+      // 修复后：requestOptions.timeoutMs 优先于构造时 defaultTimeoutMs
+      const requestOptions = options.timeoutMs
+        ? { timeout: options.timeoutMs }
+        : undefined;
+      const response = await this.client.chat.completions.create(params, requestOptions) as ChatCompletion;
 
       const usage = this.extractUsage(response);
       const toolCalls = this.extractToolCalls(response.choices[0]?.message);
@@ -106,7 +112,11 @@ export class OpenAIClient extends BaseLLMClient {
 
     try {
       const params = this.buildRequestParams(options, true);
-      const stream = await this.client.chat.completions.create(params) as AsyncIterable<ChatCompletionChunk>;
+      // Phase 55 修复：透传 options.timeoutMs 到 SDK RequestOptions（与 complete 一致）
+      const requestOptions = options.timeoutMs
+        ? { timeout: options.timeoutMs }
+        : undefined;
+      const stream = await this.client.chat.completions.create(params, requestOptions) as AsyncIterable<ChatCompletionChunk>;
 
       let currentToolId = '';
       let currentToolName = '';

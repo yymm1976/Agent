@@ -360,6 +360,9 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       verificationCriteria,
       routeDecision,
       llmClient: client,
+      // Phase 55 修复：goal 分解是复杂任务，30s 默认超时不足，提升到 120s
+      // 修复前：默认 30s，复杂目标分解易超时（OpenAI SDK "Request timed out."）
+      timeoutMs: 120000,
     });
 
     // Phase 20：通过 StepEditor 让用户编辑计划步骤
@@ -752,6 +755,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
           verificationCriteria: plan.verificationCriteria,
           routeDecision: remediateRoute,
           llmClient: remediateClient,
+          // Phase 55 修复：补救计划分解同样需要更长超时（与主路径一致）
+          timeoutMs: 120000,
         });
 
         addSystemMessage(`📋 补救计划已生成（${remediationPlan.steps.length} 个步骤），开始执行...`);

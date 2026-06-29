@@ -77,7 +77,11 @@ export class AnthropicClient extends BaseLLMClient {
 
     try {
       const params = await this.buildRequestParams(options, false);
-      const response = await this.client.messages.create(params) as Message;
+      // Phase 55 修复：透传 options.timeoutMs 到 SDK RequestOptions（与 openai.ts 一致）
+      const requestOptions = options.timeoutMs
+        ? { timeout: options.timeoutMs }
+        : undefined;
+      const response = await this.client.messages.create(params, requestOptions) as Message;
 
       const usage = this.extractUsage(response);
       const { content, toolCalls } = this.extractContent(response.content);
