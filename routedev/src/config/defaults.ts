@@ -442,10 +442,12 @@ export const DEFAULT_CONFIG: AppConfig = {
     requirementChangeEnabled: false,
   },
   // Phase 50 Task 2：多 Agent 编排模块接入开关（默认全部 false）
+  // Phase 55 RISK 1 修复：原值 true 与 schema(default:false) 和注释矛盾，统一改为 false
+  // 用户需在设置页显式开启（保守启用，配合 legacy fallback）
   orchestrationIntegration: {
-    strategyEnabled: true,
-    stateGraphEnabled: true,
-    branchOrchestrationEnabled: true,
+    strategyEnabled: false,
+    stateGraphEnabled: false,
+    branchOrchestrationEnabled: false,
   },
   // Phase 50 Task 3：子 Agent 委托体系模块接入开关（默认全部 false）
   delegationIntegration: {

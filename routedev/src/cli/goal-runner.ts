@@ -140,6 +140,21 @@ export interface GoalRunnerDeps {
 }
 
 /**
+ * Phase 55 RISK 3 修复：compose 路径临时 GoalStep id 偏移量
+ *
+ * 问题：compose 路径用 `idx + 1`（从 1 递增）作为临时 GoalStep id，
+ * 与原 plan.steps id（GoalParser 输出 1..N）命名空间重叠。
+ * 影响：
+ *   - GoalExecutionCard 按 stepId 匹配原 plan 步骤显示状态，id 重叠会导致 UI 混淆
+ *   - blackboard.addCompletedStep(step.id, ...) 会覆盖原 plan 同 id 步骤的记录
+ *
+ * 修复：compose 路径临时 GoalStep id 用 `COMPOSE_STEP_ID_OFFSET + idx`，
+ * 确保与原 plan.steps id（通常 1-20）不冲突。
+ * UI 可通过 stepId >= COMPOSE_STEP_ID_OFFSET 识别 compose 子任务。
+ */
+const COMPOSE_STEP_ID_OFFSET = 10000;
+
+/**
  * Phase 55：计划中止错误（预算耗尽/用户中断时抛出）
  * executeSingleStep 抛出后，调用方据此中止整个 plan（区别于普通步骤失败）
  */
@@ -1429,11 +1444,13 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       };
 
       // 节点 id → 临时 GoalStep 反查映射（compose 路径节点是 subTask 不是 GoalStep，
-      // 构造临时 GoalStep 让 executeSingleStep 可消费；id 用 index+1）
+      // 构造临时 GoalStep 让 executeSingleStep 可消费；id 用 COMPOSE_STEP_ID_OFFSET + idx
+      // 避免与原 plan.steps id 命名空间重叠——RISK 3 修复）
       const stepMap = new Map<number, GoalStep>();
       skillDagPlan.nodes.forEach((node, idx) => {
-        stepMap.set(idx + 1, {
-          id: idx + 1,
+        const stepId = COMPOSE_STEP_ID_OFFSET + idx;
+        stepMap.set(stepId, {
+          id: stepId,
           description: node.subTask.description,
           acceptanceCriteria: '',
           dependencies: [],
@@ -1445,7 +1462,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       // executor 回调——复用 executeSingleStep 执行单步，状态更新 + emit + blackboard 写入
       const executor = async (node: DagNode, _resolvedAction: string): Promise<unknown> => {
         const idx = skillDagPlan.nodes.findIndex(n => n.id === node.id);
-        const step = stepMap.get(idx + 1);
+        const stepId = COMPOSE_STEP_ID_OFFSET + idx;
+        const step = stepMap.get(stepId);
         if (!step) throw new Error(`未找到节点 ${node.id} 对应的 GoalStep`);
         step.status = 'in_progress';
         step.startedAt = Date.now();
@@ -1469,7 +1487,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
             status: 'completed',
             durationMs: step.startedAt ? Date.now() - step.startedAt : undefined,
           });
-          addSystemMessage(`✅ 子任务 ${step.id} 完成`);
+          addSystemMessage(`✅ 子任务 ${idx + 1} 完成`);
           return result;
         } catch (error) {
           step.status = 'failed';
@@ -1483,7 +1501,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
             error: step.error,
             durationMs: step.startedAt ? Date.now() - step.startedAt : undefined,
           });
-          addSystemMessage(`❌ 子任务 ${step.id} 失败: ${step.error}`);
+          addSystemMessage(`❌ 子任务 ${idx + 1} 失败: ${step.error}`);
           // 重新抛出：DagEngine 记录到 failedNodes 并按 retryLimit 决定是否重试
           throw error;
         }
@@ -1496,7 +1514,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
         logger.warn('Compose DAG 执行部分节点失败', { failedNodes: dagResult.failedNodes });
         for (const nodeId of dagResult.failedNodes) {
           const idx = skillDagPlan.nodes.findIndex(n => n.id === nodeId);
-          if (idx >= 0) emit({ type: 'step_update', goalId: gid, stepId: idx + 1, status: 'failed' });
+          if (idx >= 0) emit({ type: 'step_update', goalId: gid, stepId: COMPOSE_STEP_ID_OFFSET + idx, status: 'failed' });
         }
       }
     } catch (error) {

@@ -127,7 +127,7 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
             </div>
             <Switch
               id="delegation-detached"
-              checked={policy.detachedSessionEnabled ?? false}
+              checked={policy.detachedSessionEnabled ?? true}
               onCheckedChange={(checked) => updatePolicy({ detachedSessionEnabled: checked })}
             />
           </div>
