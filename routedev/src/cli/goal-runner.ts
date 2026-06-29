@@ -1679,6 +1679,9 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
         role: dep.role,
         rolePrompt: dep.rolePrompt,
         blackboardSnapshot: blackboard!.getSnapshot(),
+        // Phase 55 Task 15 修复：传入 goalId 让 WorkerExecutor 记录 Worker 级别缓存命中
+        // 缺失时 WorkerExecutor 跳过 recordWorkerCacheHit()（向后兼容）
+        goalId: gid,
       };
 
       const stepAbort = new AbortController();

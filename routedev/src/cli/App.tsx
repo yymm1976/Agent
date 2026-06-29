@@ -153,7 +153,11 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   const cacheStatsTrackerRef = useRef(new CacheStatsTracker());
   useEffect(() => {
     tracker.setCacheStatsTracker(cacheStatsTrackerRef.current);
-  }, [tracker]);
+    // Phase 55 Task 15 修复：同一 CacheStatsTracker 注入 WorkerExecutor
+    // WorkerExecutor.execute() 完成时调用 recordWorkerCacheHit()（task.goalId 存在时）
+    // 修复前：workerStats 永远为空，getGoalCacheStats() 返回零结果
+    deps.workerExecutor.setCacheStatsTracker(cacheStatsTrackerRef.current);
+  }, [tracker, deps.workerExecutor]);
   const autonomyModeRef = useRef(autonomyMode);
   autonomyModeRef.current = autonomyMode;
   const commandBridgeRef = useRef<{ requestConfirm: (p: string) => Promise<boolean> } | null>(null);

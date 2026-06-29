@@ -76,6 +76,12 @@ export interface WorkerTask {
   rolePrompt: string;
   /** Blackboard 快照（Worker 可读的上下文） */
   blackboardSnapshot: BlackboardSnapshot;
+  /**
+   * Phase 55 Task 15 修复：所属 Goal ID（可选，由 /goal 路径调用方传入）
+   * 注入后 WorkerExecutor.execute() 会在完成时调用 cacheStatsTracker.recordWorkerCacheHit()
+   * 未传时跳过 Worker 级别缓存统计（如 unified-reviewer 的 review task）
+   */
+  goalId?: string;
 }
 
 /** Worker 执行结果 */

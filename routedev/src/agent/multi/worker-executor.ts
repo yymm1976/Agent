@@ -40,6 +40,8 @@ import type { WorkerContextConfig } from '../../config/schema.js';
 import { estimateTokens } from '../../utils/token-estimate.js';
 // Phase 53 Task 11：熔断器（type-only import，避免运行时循环依赖）
 import type { CircuitBreaker } from '../circuit-breaker.js';
+// Phase 55 Task 15 修复：CacheStatsTracker（type-only import，避免运行时循环依赖）
+import type { CacheStatsTracker } from '../../router/cache-optimizer.js';
 // Phase 54 Task 2：ContextPacker 接线（type-only import，避免运行时循环依赖）
 // 注：ContextPackage 已被 Phase 50 Task 9 清理为非 export，这里用 ReturnType 推导 pack() 的返回类型
 import type { ContextPacker, AgentRole, ContextSources } from '../../agents/context-packer.js';
@@ -107,6 +109,13 @@ export class WorkerExecutor {
    * execute 完成后会记录成功/失败结果
    */
   private circuitBreaker?: CircuitBreaker;
+  /**
+   * Phase 55 Task 15 修复：CacheStatsTracker（可选）
+   * 接入后，execute 完成时会调用 recordWorkerCacheHit() 记录 Worker 级别缓存命中
+   * task.goalId 存在时才记录（unified-reviewer 等 review task 不传 goalId，跳过统计）
+   * 未注入时 workerStats 永远为空，getGoalCacheStats() 返回零结果（向后兼容）
+   */
+  private cacheStatsTracker?: CacheStatsTracker;
 
   constructor(agentLoop: ReActAgentLoop, options?: WorkerExecutorOptions) {
     this.agentLoop = agentLoop;
@@ -124,6 +133,17 @@ export class WorkerExecutor {
    */
   setCircuitBreaker(breaker: CircuitBreaker | null): void {
     this.circuitBreaker = breaker ?? undefined;
+  }
+
+  /**
+   * Phase 55 Task 15 修复：注入 CacheStatsTracker
+   * 接入后，execute 完成时会调用 recordWorkerCacheHit() 记录 Worker 级别缓存命中
+   * 修复前：WorkerExecutor 捕获 cacheReadTokens/cacheCreationTokens 后仅 logger.info 输出，
+   *         未调用 tracker.recordWorkerCacheHit()，导致 workerStats 永远为空
+   * 修复后：在成功/失败路径都调用 tracker.recordWorkerCacheHit()（task.goalId 存在时）
+   */
+  setCacheStatsTracker(tracker: CacheStatsTracker | null): void {
+    this.cacheStatsTracker = tracker ?? undefined;
   }
 
   /**
@@ -421,6 +441,24 @@ export class WorkerExecutor {
         this.circuitBreaker.recordResult(outcome.success);
       } catch {
         // fail-open：记录异常不影响结果返回
+      }
+    }
+
+    // Phase 55 Task 15 修复：记录 Worker 级别缓存命中到 CacheStatsTracker
+    // 修复前：仅 logger.info 输出，workerStats 永远为空，getGoalCacheStats() 返回零结果
+    // 修复后：task.goalId 存在且 cacheStatsTracker 注入时调用 recordWorkerCacheHit()
+    // 成功/失败路径统一记录（失败时缓存字段可能为 0，但仍记录以便统计 Worker 调用次数）
+    if (this.cacheStatsTracker && task.goalId) {
+      try {
+        this.cacheStatsTracker.recordWorkerCacheHit(
+          task.goalId,
+          workerId,
+          capturedCacheReadTokens,
+          capturedCacheCreationTokens,
+          capturedInputTokens,
+        );
+      } catch {
+        // fail-open：统计异常不影响结果返回
       }
     }
 
