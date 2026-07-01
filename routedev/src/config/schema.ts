@@ -1592,23 +1592,6 @@ export const Phase52IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.obj
     semanticRetrieval: z.boolean().default(true),
     maxParallelSkills: z.number().int().min(1).max(4).default(2),
   })),
-  /** Task 5：自演化 */
-  selfEvolution: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(true),
-    // Phase 53 收尾修复：targets/trigger 需要 preprocess 包裹，否则 AppConfigSchema.parse({}) 失败
-    targets: z.preprocess((v) => v ?? {}, z.object({
-      prompt: z.boolean().default(true),
-      memory: z.boolean().default(true),
-      tools: z.boolean().default(false),
-      workflow: z.boolean().default(true),
-      communication: z.boolean().default(false),
-    })),
-    trigger: z.preprocess((v) => v ?? {}, z.object({
-      failureThreshold: z.number().int().min(2).max(20).default(5),
-      qualityDropThreshold: z.number().min(0).max(1).default(0.3),
-      evaluationInterval: z.number().int().min(5).max(100).default(20),
-    })),
-  })),
   /** Task 6：架构感知指标 */
   archAwareMetrics: z.preprocess((v) => v ?? {}, z.object({
     enabled: z.boolean().default(false),
@@ -1617,37 +1600,6 @@ export const Phase52IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.obj
   })),
   /** Task 7：饱和度监测（Phase 52 Task 7 完整 schema） */
   saturationMonitor: z.preprocess((v) => v ?? {}, SaturationMonitorConfigSchema),
-  /** Task 8：Gödel 提议器 */
-  godelProposer: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(true),
-    maxProposalsPerRun: z.number().int().min(1).max(20).default(5),
-    autoApplyLowRisk: z.boolean().default(false),
-    requireUserApproval: z.boolean().default(true),
-    // 新字段（Phase 52 蓝图对齐）
-    /** 提议运行间隔（收集多少次信号后产出一轮提议，10-200，默认 50） */
-    proposalInterval: z.number().int().min(10).max(200).default(50),
-    /** 是否允许高风险提案（默认 false——高风险提案默认不产出） */
-    allowHighRiskProposals: z.boolean().default(false),
-    /** 提案保留天数（1-90，默认 14，超期清理） */
-    proposalRetentionDays: z.number().int().min(1).max(90).default(14),
-  })),
-  /** Task 9：自安全套件 */
-  selfHarness: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(true),
-    weaknessDetectionSensitivity: z.enum(['low', 'medium', 'high']).default('medium'),
-    maxProposalsPerCycle: z.number().int().min(1).max(20).default(5),
-    requireRegressionTest: z.boolean().default(true),
-    autoApplyLowRiskProposals: z.boolean().default(false),
-    // 新字段（Phase 52 蓝图对齐）
-    /** 弱点挖掘样本量（10-500，默认 50——历史失败日志采样数） */
-    miningSampleSize: z.number().int().min(10).max(500).default(50),
-    /** 模式频率阈值（2-20，默认 3——出现次数达到此值才视为模式） */
-    patternFrequencyThreshold: z.number().int().min(2).max(20).default(3),
-    /** 是否自动应用已通过验证的提案（默认 false——仍需用户确认） */
-    autoApplyValidated: z.boolean().default(false),
-    /** 回归测试存放目录（相对路径，默认 '.routedev/regression-tests/'） */
-    regressionTestPath: z.string().default('.routedev/regression-tests/'),
-  })),
   /** Task 10：MCP 安全形式化框架（4 层深度防御 + 7 类威胁检测） */
   mcpSecurity: z.preprocess((v) => v ?? {}, MCPSecurityConfigSchema),
 }));

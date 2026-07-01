@@ -70,15 +70,6 @@ import type {
   ArchitectureAwareMetricsCollector,
   TrajectoryInput,
 } from '../evaluation/architecture-aware-metrics.js';
-import type {
-  GodelProposer,
-  ExecutionHistoryEntry,
-  CurrentRuleEntry,
-} from './self-evolution/godel-proposer.js';
-import type { SelfHarnessLoop } from './self-evolution/self-harness-loop.js';
-// Phase 55 Task 13：SelfEvolutionFramework（消费执行信号产出优化提案）
-import { SelfEvolutionFramework } from './self-evolution/framework.js';
-import type { EvolutionSignal } from './self-evolution/types.js';
 
 /** 陷阱 #141：maxReruns 默认 2 而非 3，避免 Token 爆炸 */
 export const DEFAULT_MAX_RERUNS = 2;
@@ -142,13 +133,9 @@ export class DualLoopOrchestrator {
   private boundedRecoveryConfig?: BoundedRecoveryConfig;
   // Phase 52 Task 3：有界恢复管理器（仅在 boundedRecoveryConfig.enabled=true 时使用）
   private recoveryManager?: BoundedRecoveryManager;
-  // Phase 52 消费方接入（I-2）：以下三个实例由 app-init.ts 创建并通过 setter 注入
+  // Phase 52 消费方接入（I-2）：实例由 app-init.ts 创建并通过 setter 注入
   // 未注入时 run() 中的相关分支自动跳过（向后兼容）；调用失败时降级为 warn 日志，不中断主流程
   private metricsCollector?: ArchitectureAwareMetricsCollector;
-  private godelProposer?: GodelProposer;
-  private selfHarnessLoop?: SelfHarnessLoop;
-  // Phase 55 Task 13：SelfEvolution 框架（消费执行信号产出提案，未注入时跳过）
-  private selfEvolutionFramework?: SelfEvolutionFramework;
   // Phase 55 Task 7：内循环 Agent（占位，Task 9 完整接入 inner/outer 循环逻辑）
   private innerAgent?: ReActAgentLoop;
 
@@ -212,142 +199,6 @@ export class DualLoopOrchestrator {
     logger.debug('DualLoopOrchestrator: metrics collector injected', {
       sensitivity: collector.getAnomalySensitivity(),
     });
-  }
-
-  /**
-   * 注入 Gödel 提案器（Phase 52 Task 8，I-2 消费方接入）
-   *
-   * 由 app-init.ts 在创建 GodelProposer 后调用。
-   * 未注入时 run() 中的优化提案生成分支自动跳过（向后兼容）。
-   *
-   * 注入后,runDualLoop 在外循环失败后会调用 proposeModifications 产出修改提案,
-   * 输入 executionHistory 从 loopMemory 失败历史构造(failurePoint=LoopFailure.reason),
-   * currentRules 从当前 systemPrompt 构造(仅 prompt 类型);tokensUsed/durationMs 置 0。
-   * 调用失败时降级为 warn 日志,不中断主流程。
-   */
-  setGodelProposer(proposer: GodelProposer): void {
-    this.godelProposer = proposer;
-    logger.debug('DualLoopOrchestrator: godel proposer injected');
-  }
-
-  /**
-   * 注入 Self-Harness 循环（Phase 52 Task 9，I-2 消费方接入）
-   *
-   * 由 app-init.ts 在创建 SelfHarnessLoop 后调用。
-   * 未注入时 run() 中的自安全套件分支自动跳过（向后兼容）。
-   *
-   * 注入后,runDualLoop 在外循环失败后会调用 discoverWeaknesses + proposeModifications
-   * 产出 Harness 提案。failureLogs 从 loopMemory 失败历史构造
-   * (errorType=首个 gateFailure.name,failurePoint=LoopFailure.reason),
-   * currentHarness 从当前 systemPrompt 构造(prompts/rules/checkpoints 中仅 prompts 有值)。
-   * 注:validateProposal 需要 testRunner,当前未注入,故仅产出提案不自动应用。
-   * 调用失败时降级为 warn 日志,不中断主流程。
-   */
-  setSelfHarnessLoop(loop: SelfHarnessLoop): void {
-    this.selfHarnessLoop = loop;
-    logger.debug('DualLoopOrchestrator: self-harness loop injected');
-  }
-
-  /**
-   * 注入 SelfEvolution 框架（Phase 55 Task 13）
-   *
-   * 由 app-init.ts 在创建 SelfEvolutionFramework 后调用。
-   * 未注入时 runDualLoop 末尾的提案生成分支自动跳过（向后兼容）。
-   *
-   * 注入后,runDualLoop 的三个退出点（成功/重复失败/maxReruns 耗尽）之前会:
-   *   1. collectSignals() 拉取已注册源信号 + 递增 collectionCount
-   *   2. 从 loopMemory 失败历史 + evaluation 结果构造 EvolutionSignal[]
-   *   3. shouldTriggerOptimization 判定是否触发
-   *   4. 触发时 selectOptimizationTarget + optimize 产出 OptimizationProposal（applied=false）
-   */
-  setSelfEvolutionFramework(framework: SelfEvolutionFramework): void {
-    this.selfEvolutionFramework = framework;
-    logger.debug('DualLoopOrchestrator: self-evolution framework injected');
-  }
-
-  /**
-   * Phase 55 Task 13：触发 SelfEvolution 优化（若已注入且触发条件满足）
-   *
-   * 在 runDualLoop 的三个退出点之前调用：
-   *   1. 成功完成（dual-loop-complete）
-   *   2. 重复失败触发 Pilot 模式（pilot-mode-triggered）
-   *   3. maxReruns 耗尽（dual-loop-exhausted）
-   *
-   * 信号构造：
-   *   - loopMemory.getHistory() 的每条 LoopFailure → type='failure' 信号
-   *   - evaluationResult（若传入且 !passed）→ type='quality_drop' 信号
-   *
-   * 向后兼容：未注入 selfEvolutionFramework 时直接 return（零开销）
-   * 错误隔离：try/catch 降级,失败不阻塞主流程（仅 logger.warn）
-   *
-   * @param loopMemory 本次 runDualLoop 的循环记忆（含失败历史）
-   * @param evaluationResult 最后一次外循环评估结果（可选,成功时为 null 或不传）
-   */
-  private triggerSelfEvolutionIfEnabled(
-    loopMemory: { getHistory(): import('./dual-loop-types.js').LoopFailure[] },
-    evaluationResult?: { passed: boolean; reason: string } | null,
-  ): void {
-    if (!this.selfEvolutionFramework) return;
-    try {
-      // 1. collectSignals 递增 collectionCount（用于 shouldTriggerOptimization 规则 3: evaluationInterval）
-      //    即使无注册源,调用此方法也能让 collectionCount 递增,保证规则 3 正常工作
-      const collectedSignals = this.selfEvolutionFramework.collectSignals();
-
-      // 2. 从 loopMemory 失败历史构造 failure 信号
-      const failures = loopMemory.getHistory();
-      const failureSignals: EvolutionSignal[] = failures.map(f => ({
-        source: 'loop_memory',
-        type: 'failure',
-        severity: 'medium',
-        description: `[迭代${f.iteration}] ${f.reason}`,
-        data: f,
-        timestamp: Date.now(),
-      }));
-
-      // 3. evaluation 不通过时追加 quality_drop 信号
-      const qualitySignals: EvolutionSignal[] = [];
-      if (evaluationResult && !evaluationResult.passed) {
-        qualitySignals.push({
-          source: 'loop_memory',
-          type: 'quality_drop',
-          severity: 'high',
-          description: evaluationResult.reason,
-          data: evaluationResult,
-          timestamp: Date.now(),
-        });
-      }
-
-      const allSignals = [...collectedSignals, ...failureSignals, ...qualitySignals];
-      if (allSignals.length === 0) {
-        logger.debug('SelfEvolution: 无信号可分析,跳过优化判定');
-        return;
-      }
-
-      // 4. 判定是否触发优化
-      const trigger = this.selfEvolutionFramework.shouldTriggerOptimization(allSignals);
-      if (!trigger.trigger) {
-        logger.debug('SelfEvolution: 未触发优化', { reason: trigger.reason, signalCount: allSignals.length });
-        return;
-      }
-
-      // 5. 选择优化目标 + 产出提案
-      const target = this.selfEvolutionFramework.selectOptimizationTarget(allSignals);
-      if (!target) {
-        logger.debug('SelfEvolution: 无可用优化目标,跳过');
-        return;
-      }
-      const proposal = this.selfEvolutionFramework.optimize(target, allSignals);
-      logger.info('SelfEvolution: 提案已生成（待用户确认）', {
-        proposalId: proposal.id,
-        target,
-        expectedImpact: proposal.expectedImpact,
-        riskLevel: proposal.riskLevel,
-        applied: proposal.applied,
-        signalCount: allSignals.length,
-      });
-    } catch (error) {
-      logger.warn('SelfEvolution 提案生成失败（非阻塞）', { error: error instanceof Error ? error.message : String(error) });
-    }
   }
 
   /**
@@ -604,8 +455,6 @@ export class DualLoopOrchestrator {
 
       if (evaluation.passed) {
         logger.info('DualLoopOrchestrator: outer loop passed', { iteration });
-        // Phase 55 Task 13：成功完成时也触发 SelfEvolution（收集成功模式信号 + 失败历史）
-        this.triggerSelfEvolutionIfEnabled(loopMemory, evaluation);
         yield {
           type: 'dual-loop-complete',
           iteration,
@@ -684,116 +533,12 @@ export class DualLoopOrchestrator {
         crossModelReview,
       };
 
-      // ===== Phase 52 Task 8/9（I-2 消费方接入）：外循环失败后生成优化提案 =====
-      // 向后兼容：未注入实例时跳过
-      // 失败不中断主流程：try/catch 降级为 warn 日志
-      if (this.godelProposer) {
-        try {
-          logger.info('DualLoopOrchestrator: 生成 Gödel 提案', {
-            iteration,
-            reason: evaluation.reason,
-          });
-          // 真实调用：从 loopMemory 失败历史构造 executionHistory
-          //   - task：goal.description（loopMemory 未保存 task 文本，用目标描述近似）
-          //   - outcome：恒为 failure（loopMemory 只存失败记录）
-          //   - failurePoint：失败原因（LoopFailure.reason）
-          //   - tokensUsed / durationMs：loopMemory 未保存，置 0（不影响风险判定逻辑）
-          const failures = loopMemory.getHistory();
-          const executionHistory: ExecutionHistoryEntry[] = failures.map(f => ({
-            task: goal.description,
-            outcome: 'failure' as const,
-            failurePoint: f.reason,
-            tokensUsed: 0,
-            durationMs: 0,
-          }));
-          // 真实调用：从当前 system prompt 构造 currentRules（最小输入，仅 prompt 类型）
-          //   - 实际场景下可注入更多规则，此处用 systemPrompt 作为最常被优化的 prompt
-          const currentRules: CurrentRuleEntry[] = [
-            {
-              file: 'system-prompt',
-              content: reactParams.systemPrompt ?? '',
-              type: 'prompt' as const,
-            },
-          ];
-          const proposals = await this.godelProposer.proposeModifications(
-            executionHistory,
-            currentRules,
-          );
-          logger.info('Gödel proposal generated', {
-            count: proposals.length,
-            proposals: proposals.map(p => ({
-              id: p.id,
-              targetFile: p.targetFile,
-              targetType: p.targetType,
-              risk: p.riskAssessment,
-              reversible: p.reversible,
-            })),
-          });
-        } catch (err) {
-          logger.warn('DualLoopOrchestrator: Gödel 提案生成失败', {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-      if (this.selfHarnessLoop) {
-        try {
-          logger.info('DualLoopOrchestrator: Self-Harness 弱点挖掘', {
-            iteration,
-            reason: evaluation.reason,
-          });
-          // 真实调用：从 loopMemory 失败历史构造 failureLogs（discoverWeaknesses 的输入）
-          //   - failurePoint：失败原因（LoopFailure.reason）
-          //   - errorType：取首个 gateFailure 的 name 作为错误类型；无则用 'unknown'
-          //   - component：loopMemory 未保存组件信息，置 undefined（可选字段）
-          //   - timestamp：用当前时间近似（loopMemory 未保存精确时间戳）
-          const failures = loopMemory.getHistory();
-          const failureLogs = failures.map(f => ({
-            timestamp: Date.now(),
-            task: goal.description,
-            failurePoint: f.reason,
-            errorType: f.gateFailures[0]?.name ?? 'unknown',
-            component: undefined,
-          }));
-          const weaknesses = await this.selfHarnessLoop.discoverWeaknesses(failureLogs);
-          if (weaknesses.length === 0) {
-            logger.debug('Self-Harness: 无重复弱点，跳过提案生成');
-          } else {
-            // 真实调用：用当前 system prompt 构造 currentHarness（最小输入）
-            //   - prompts：当前 system prompt（最常被优化的对象）
-            //   - rules / checkpoints：当前未在内循环中追踪，置空数组
-            const currentHarness = {
-              rules: [] as string[],
-              prompts: [reactParams.systemPrompt ?? ''],
-              checkpoints: [] as string[],
-            };
-            const harnessProposals =
-              await this.selfHarnessLoop.proposeModifications(weaknesses, currentHarness);
-            logger.info('Self-Harness validation completed', {
-              weaknessCount: weaknesses.length,
-              proposalCount: harnessProposals.length,
-              proposals: harnessProposals.map(p => ({
-                id: p.id,
-                modificationType: p.modificationType,
-                riskLevel: p.riskLevel,
-                target: p.target,
-              })),
-            });
-          }
-        } catch (err) {
-          logger.warn('DualLoopOrchestrator: Self-Harness 弱点挖掘失败', {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-
       // 2.5 节约束 4：连续 maxReruns 次同一原因失败 → Pilot 模式
       if (lastFailureReason === evaluation.reason && rerunCount === maxReruns - 1) {
         logger.warn('DualLoopOrchestrator: 同一原因重复失败，触发 Pilot 模式', {
           iteration,
           repeatedReason: evaluation.reason,
         });
-        // Phase 55 Task 13：Pilot 模式触发时收集失败信号
-        this.triggerSelfEvolutionIfEnabled(loopMemory, evaluation);
         yield {
           type: 'pilot-mode-triggered',
           iteration,
@@ -808,8 +553,6 @@ export class DualLoopOrchestrator {
 
     // 达到最大重跑次数
     logger.warn('DualLoopOrchestrator: max reruns exhausted', { maxReruns });
-    // Phase 55 Task 13：maxReruns 耗尽时收集失败信号（evaluation 可能未定义,传 null）
-    this.triggerSelfEvolutionIfEnabled(loopMemory, null);
     yield {
       type: 'dual-loop-exhausted',
       maxReruns,

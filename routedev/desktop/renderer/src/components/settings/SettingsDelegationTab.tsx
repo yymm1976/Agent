@@ -176,7 +176,7 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
         <CardHeader>
           <CardTitle>子 Agent 模块开关</CardTitle>
           <CardDescription>
-            Phase 55 新增的委托体系模块、自演化框架等开关。
+            Phase 55 新增的委托体系模块开关。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -246,44 +246,7 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
             />
           </div>
 
-          {/* 6. 自进化框架开关 */}
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="self-evolution-enabled">自进化框架</Label>
-              <p className="text-xs text-rd-textMuted">收集执行信号,产出优化提案（不自动应用）。</p>
-            </div>
-            <Switch
-              id="self-evolution-enabled"
-              checked={draft.phase52Integration?.selfEvolution?.enabled ?? true}
-              onCheckedChange={(checked) => updatePhase52({ selfEvolution: { ...draft.phase52Integration?.selfEvolution, enabled: checked } })}
-            />
-          </div>
-
-          {/* 7. Gödel 提案器开关 */}
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="godel-proposer-enabled">Gödel 提案器</Label>
-              <p className="text-xs text-rd-textMuted">基于执行历史的提案生成,需用户确认后应用。</p>
-            </div>
-            <Switch
-              id="godel-proposer-enabled"
-              checked={draft.phase52Integration?.godelProposer?.enabled ?? true}
-              onCheckedChange={(checked) => updatePhase52({ godelProposer: { ...draft.phase52Integration?.godelProposer, enabled: checked } })}
-            />
-          </div>
-
-          {/* 8. Self-Harness 循环开关 */}
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="self-harness-enabled">Self-Harness 循环</Label>
-              <p className="text-xs text-rd-textMuted">弱点挖掘 + 回归测试,保障提案质量。</p>
-            </div>
-            <Switch
-              id="self-harness-enabled"
-              checked={draft.phase52Integration?.selfHarness?.enabled ?? true}
-              onCheckedChange={(checked) => updatePhase52({ selfHarness: { ...draft.phase52Integration?.selfHarness, enabled: checked } })}
-            />
-          </div>
+          {/* 6. 自进化框架开关已移除（Phase 56 D 档清除） */}
 
         </CardContent>
       </Card>

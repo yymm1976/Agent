@@ -16,7 +16,7 @@ export const COMMAND_COMPLETIONS: CompletionItem[] = [
   { name: 'clear', subcommands: [] },
   { name: 'goal', subcommands: [] },
   { name: 'init', subcommands: [] },
-  { name: 'dream', subcommands: [] },
+
   { name: 'branch', subcommands: ['list', 'edit', 'switch'] },
   { name: 'checkpoint', subcommands: ['list', 'create'] },
   { name: 'rollback', subcommands: [] },

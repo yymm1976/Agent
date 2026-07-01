@@ -40,7 +40,7 @@ import { getGlobalConfigPath, getProjectConfigPath } from '../utils/paths.js';
 import { handleConfigReload } from './components/ConfigReloadUI.js';
 import {
   autoCommand, semiCommand, manualCommand, pauseCommand, checkpointCommand, rollbackCommand, goalCommand,
-  branchCommand, initCommand, dreamCommand, quitCommand, clearCommand, helpCommand, statusCommand, traceCommand,
+  branchCommand, initCommand, quitCommand, clearCommand, helpCommand, statusCommand, traceCommand,
   promptCommand, channelsCommand, costCommand, historyCommand, pluginCommand, diffCommand,
   buildCommand, planCommand, composeCommand, resumeCommand, tokenCommand,
   // Phase 31 Task 7.3：注册已定义但未注册的命令
@@ -186,7 +186,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   }
   const commandRegistry = commandRegistryRef.current;
   useEffect(() => {
-    [autoCommand, semiCommand, manualCommand, pauseCommand, checkpointCommand, rollbackCommand, goalCommand, branchCommand, initCommand, dreamCommand, quitCommand, clearCommand, helpCommand, statusCommand, traceCommand, promptCommand, channelsCommand, costCommand, historyCommand, pluginCommand, diffCommand, buildCommand, planCommand, composeCommand, resumeCommand, tokenCommand, memoryCommand, permissionsCommand, configCommand, outputStyleCommand, techDebtCommand, swarmCommand, btwCommand, reviewCommand, clarifyCommand, experimentCommand, qualityCommand, scheduleCommand, trustCommand, doctorCommand].forEach(c => commandRegistry.register(c));
+    [autoCommand, semiCommand, manualCommand, pauseCommand, checkpointCommand, rollbackCommand, goalCommand, branchCommand, initCommand, quitCommand, clearCommand, helpCommand, statusCommand, traceCommand, promptCommand, channelsCommand, costCommand, historyCommand, pluginCommand, diffCommand, buildCommand, planCommand, composeCommand, resumeCommand, tokenCommand, memoryCommand, permissionsCommand, configCommand, outputStyleCommand, techDebtCommand, swarmCommand, btwCommand, reviewCommand, clarifyCommand, experimentCommand, qualityCommand, scheduleCommand, trustCommand, doctorCommand].forEach(c => commandRegistry.register(c));
 
     // Phase 47 Task 7：加载自定义 Slash 命令（.routedev/commands/ 目录）
     // 命名空间隔离：自定义命令与内置命令同名时，内置命令优先，自定义命令被忽略并 logger.warn（陷阱 #139）
@@ -321,7 +321,6 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       branchManager: deps.branchManager,
       vision: deps.visionAssistant,
       initAnalyzer: deps.initAnalyzer!,
-      dream: deps.dreamConsolidator,
       goalParser: deps.goalParser,
       goalVerifier: deps.goalVerifier,
       blackboard: deps.blackboard,

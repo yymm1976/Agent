@@ -20,7 +20,6 @@ import { ContextManager } from '../../src/agent/memory/context-manager.js';
 import { VisionAssistant } from '../../src/agent/vision.js';
 import { BranchManager } from '../../src/agent/branch.js';
 import { InitAnalyzer } from '../../src/agent/init-analyzer.js';
-import { DreamConsolidator } from '../../src/agent/dream-consolidator.js';
 import { Blackboard } from '../../src/agent/multi/blackboard.js';
 import { Orchestrator } from '../../src/agent/multi/orchestrator.js';
 import { WorkerExecutor } from '../../src/agent/multi/worker-executor.js';
@@ -259,7 +258,6 @@ describe('createAppDependencies', () => {
       // 辅助 Agent
       expect(deps.visionAssistant).toBeInstanceOf(VisionAssistant);
       expect(deps.branchManager).toBeInstanceOf(BranchManager);
-      expect(deps.dreamConsolidator).toBeInstanceOf(DreamConsolidator);
       // 基础设施
       expect(deps.prompts).toBeInstanceOf(PromptTemplateManager);
       expect(deps.blackboard).toBeInstanceOf(Blackboard);
@@ -525,7 +523,7 @@ describe('createAppDependencies', () => {
         'middlewarePipeline', 'pluginRegistry', 'skillsRouter', 'filesystemDiscovery',
         'permissionEngine', 'orchestrator', 'workerExecutor',
         'checkpointManager', 'checkpointWriter', 'contextManager',
-        'visionAssistant', 'branchManager', 'initAnalyzer', 'dreamConsolidator',
+        'visionAssistant', 'branchManager', 'initAnalyzer',
         'prompts', 'blackboard', 'trace', 'audit', 'projectMemory',
         'goalParser', 'goalVerifier', 'hookRunner',
         'primaryClient', 'checkpointClient', 'profiler',

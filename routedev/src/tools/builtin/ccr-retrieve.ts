@@ -1,4 +1,4 @@
-﻿// src/tools/builtin/ccr-retrieve.ts
+// src/tools/builtin/ccr-retrieve.ts
 // Phase 55 Task 9：CCR 可逆压缩的取回工具
 // 让 LLM 通过 hash 取回被上下文压缩的原始消息，实现 compact 从破坏性变可逆
 
@@ -7,7 +7,7 @@ import type { CCRCache } from '../../agent/ccr-cache.js';
 
 const DEFINITION: ToolDefinition = {
   name: 'ccr_retrieve',
-  description: '取回被上下文压缩的原始消息（CCR 可逆压缩）。通过 hash 或 hash 前缀取回完整的被压缩上下文。',
+  description: '使用 hash 或 hash 前缀取回被上下文压缩的原始消息（CCR 可逆压缩）。',
   parameters: {
     type: 'object',
     properties: {

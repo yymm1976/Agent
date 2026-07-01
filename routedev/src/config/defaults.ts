@@ -598,22 +598,6 @@ export const DEFAULT_CONFIG: AppConfig = {
       semanticRetrieval: true,
       maxParallelSkills: 2,
     },
-    // Task 5：自进化框架
-    selfEvolution: {
-      enabled: true,
-      targets: {
-        prompt: true,
-        memory: true,
-        tools: false,
-        workflow: true,
-        communication: false,
-      },
-      trigger: {
-        failureThreshold: 5,
-        qualityDropThreshold: 0.3,
-        evaluationInterval: 20,
-      },
-    },
     // Task 6：架构感知指标
     archAwareMetrics: {
       enabled: false,
@@ -626,30 +610,6 @@ export const DEFAULT_CONFIG: AppConfig = {
       passRateThreshold: 0.95,
       varianceThreshold: 0.05,
       checkInterval: 10,
-    },
-    // Task 8：Gödel 提议器
-    godelProposer: {
-      enabled: true,
-      maxProposalsPerRun: 5,
-      autoApplyLowRisk: false,
-      requireUserApproval: true,
-      // Phase 52 蓝图对齐字段（与 schema.ts 中 Phase52IntegrationConfigSchema 一致）
-      proposalInterval: 50,
-      allowHighRiskProposals: false,
-      proposalRetentionDays: 14,
-    },
-    // Task 9：Self-Harness 循环
-    selfHarness: {
-      enabled: true,
-      weaknessDetectionSensitivity: 'medium',
-      maxProposalsPerCycle: 5,
-      requireRegressionTest: true,
-      autoApplyLowRiskProposals: false,
-      // Phase 52 蓝图对齐字段（与 schema.ts 中 Phase52IntegrationConfigSchema 一致）
-      miningSampleSize: 50,
-      patternFrequencyThreshold: 3,
-      autoApplyValidated: false,
-      regressionTestPath: '.routedev/regression-tests/',
     },
     // Task 10：MCP 安全形式化框架
     mcpSecurity: {

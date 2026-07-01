@@ -52,7 +52,6 @@ import { estimateTokens } from '../utils/token-estimate.js';
 import { VisionAssistant } from '../agent/vision.js';
 import { BranchManager } from '../agent/branch.js';
 import { InitAnalyzer } from '../agent/init-analyzer.js';
-import { DreamConsolidator } from '../agent/dream-consolidator.js';
 import { Blackboard } from '../agent/multi/blackboard.js';
 import { Orchestrator, type OrchestrationIntegrationOptions } from '../agent/multi/orchestrator.js';
 // Phase 50 Task 1：Goal 流程核心模块（按 config.goalIntegration 渐进接入）
@@ -109,9 +108,6 @@ import type { DualLoopOrchestrator } from '../agent/dual-loop-orchestrator.js';
 import type { DagEngine } from '../agent/workflow/dag-engine.js';
 import { ArchitectureAwareMetricsCollector } from '../evaluation/architecture-aware-metrics.js';
 import { SaturationMonitor } from '../evaluation/saturation-monitor.js';
-import { SelfEvolutionFramework } from '../agent/self-evolution/framework.js';
-import { GodelProposer } from '../agent/self-evolution/godel-proposer.js';
-import { SelfHarnessLoop } from '../agent/self-evolution/self-harness-loop.js';
 // CR-4b：接入 compositional-router（Phase 52 Task 4 组合式路由）
 import { decomposeWithSkillAwareness, retrieveSkill, composeDAG, DEFAULT_ROUTING_CONFIG, type AtomicSubTask, type SkillMatch, type SkillDAGPlan, type CompositionalRoutingConfig } from '../skills/compositional-router.js';
 // Phase 53 Task 5/7：MCP 安全扫描器 + 配置保护守卫（Task 6 SkillSecurityGate 使用动态 import）
@@ -173,7 +169,6 @@ export interface AppDependencies {
   visionAssistant: VisionAssistant;
   branchManager: BranchManager;
   initAnalyzer: InitAnalyzer | null;
-  dreamConsolidator: DreamConsolidator;
   // 基础设施
   prompts: PromptTemplateManager;
   blackboard: Blackboard;
@@ -224,12 +219,6 @@ export interface AppDependencies {
   metricsCollector?: ArchitectureAwareMetricsCollector;
   /** Phase 52 Task 7：评估集饱和监测器（未启用时为 undefined） */
   saturationMonitor?: SaturationMonitor;
-  /** Phase 52 Task 5：自进化统一框架（未启用时为 undefined） */
-  selfEvolutionFramework?: SelfEvolutionFramework;
-  /** Phase 52 Task 8：Gödel 提议器（未启用时为 undefined） */
-  godelProposer?: GodelProposer;
-  /** Phase 52 Task 9：Self-Harness 循环（未启用时为 undefined） */
-  selfHarnessLoop?: SelfHarnessLoop;
   // CR-4b：孤立模块接线点（按各自 config 开关守护，未启用时为 undefined）
   /** 子 Agent 活动面板存储（config.activityPanel.enabled） */
   activityStore?: AgentActivityStore;
@@ -354,13 +343,6 @@ export function createAppDependencies(
   const initAnalyzer = primaryClient
     ? new InitAnalyzer({ llmClient: primaryClient, modelId: config.router.classifierModel, rootPath: cwd })
     : null;
-  const dreamConsolidator = new DreamConsolidator({
-    llmClient: primaryClient ?? checkpointClient,
-    modelId: config.router.classifierModel,
-    // 传入 ContextCompactor 启用渐进压缩管线，避免增强压缩路径在生产中从不执行
-    compactor: contextCompactor,
-  });
-
   // ===== 基础设施 =====
   const prompts = new PromptTemplateManager({ projectOverrides: true });
   const blackboard = new Blackboard();
@@ -1581,9 +1563,9 @@ export function createAppDependencies(
       });
   }
 
-  // ===== Phase 45：PersonaEngine / PreferenceManager / EQDetector / VoiceManager 接线 =====
+  // ===== Phase 45：PersonaEngine / PreferenceManager / VoiceManager 接线 =====
   // 全部使用动态 import + fail-open，模块不可用时跳过不影响主流程
-  // 注：persona-engine.ts / preference-manager.ts / eq-detector.ts 由其他子代理并行创建，
+  // 注：persona-engine.ts / preference-manager.ts 由其他子代理并行创建，
   //     voice-manager.ts 已由本 Phase 创建，使用变量路径动态 import 保持一致性
 
   // 1. PersonaEngine 接线：人格引擎（intensity=none 时不注入 system prompt）
@@ -1634,25 +1616,6 @@ export function createAppDependencies(
     .catch((err: unknown) => {
       // fail-open：preference-manager.ts 尚未创建时跳过，不影响主流程
       logger.debug('PreferenceManager not available yet', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-
-  // 3. EQDetector 接线：情绪检测器（注册到中间件管线 onReasoning 阶段）
-  const eqModulePath = '../agent/eq-detector.js';
-  import(eqModulePath)
-    .then((mod: { EQDetector: new (opts?: unknown) => { getHandler: () => import('../agent/middleware.js').MiddlewareHandler } }) => {
-      const detector = new mod.EQDetector();
-      // 注册到 service context（feature-detect：方法可能由其他子代理添加）
-      const loop = agentLoop as unknown as { setEQDetector?: (d: unknown) => void };
-      if (typeof loop.setEQDetector === 'function') {
-        loop.setEQDetector(detector);
-      }
-      logger.info('EQDetector registered');
-    })
-    .catch((err: unknown) => {
-      // fail-open：eq-detector.ts 尚未创建时跳过，不影响主流程
-      logger.debug('EQDetector not available yet', {
         error: err instanceof Error ? err.message : String(err),
       });
     });
@@ -1880,28 +1843,10 @@ export function createAppDependencies(
             maxBacktrack: config.phase52Integration.boundedRecovery.maxBacktrack,
           });
         }
-        // Phase 52 消费方接入（I-2）：注入架构感知指标 / Gödel 提案器 / Self-Harness 循环
-        // 注：这三个实例在下方同步创建（晚于本 .then() 注册），但由于 .then() 回调异步执行，
-        //     此时它们已完成赋值；未启用对应 config 开关时为 undefined，跳过注入（向后兼容）。
-        //     run() 中的完整消费逻辑（extractFromTrajectory / proposeModifications / discoverWeaknesses）
-        //     待 Phase 53 接入，当前仅记录采集 / 提案意图。
+        // Phase 52 消费方接入（I-2）：注入架构感知指标
         if (metricsCollector) {
           orchestrator.setMetricsCollector(metricsCollector);
           logger.info('app-init: metricsCollector 已注入 DualLoopOrchestrator（消费方待 Phase 53）');
-        }
-        if (godelProposer) {
-          orchestrator.setGodelProposer(godelProposer);
-          logger.info('app-init: godelProposer 已注入 DualLoopOrchestrator（消费方待 Phase 53）');
-        }
-        if (selfHarnessLoop) {
-          orchestrator.setSelfHarnessLoop(selfHarnessLoop);
-          logger.info('app-init: selfHarnessLoop 已注入 DualLoopOrchestrator（消费方待 Phase 53）');
-        }
-        // Phase 55 Task 13：注入 SelfEvolutionFramework（runDualLoop 末尾收集信号 + 产出提案）
-        // config 守护：仅在 selfEvolutionFramework 已创建时调用（config.phase52Integration.selfEvolution.enabled）
-        if (selfEvolutionFramework) {
-          orchestrator.setSelfEvolutionFramework(selfEvolutionFramework);
-          logger.info('app-init: selfEvolutionFramework 已注入 DualLoopOrchestrator（Task 13 接入）');
         }
         // Phase 55 Task 8：注入 innerAgent（独立 ReActAgentLoop 实例，不注入 orchestrator，避免无限递归）
         // orchestrator.run(params) 会转交给 innerAgent.run(params)；若 innerAgent 是已注入 orchestrator 的
@@ -2040,90 +1985,6 @@ export function createAppDependencies(
     }
   }
 
-  // Task 5：自进化框架
-  let selfEvolutionFramework: SelfEvolutionFramework | undefined;
-  if (config.phase52Integration?.selfEvolution?.enabled) {
-    selfEvolutionFramework = new SelfEvolutionFramework({
-      enabled: true,
-      targets: config.phase52Integration.selfEvolution.targets ?? {
-        prompt: true,
-        memory: true,
-        tools: false,
-        workflow: true,
-        communication: false,
-      },
-      trigger: config.phase52Integration.selfEvolution.trigger ?? {
-        failureThreshold: 5,
-        qualityDropThreshold: 0.3,
-        evaluationInterval: 20,
-      },
-    });
-    logger.info('app-init: SelfEvolutionFramework 已启用');
-    // CR-4b：接入过程级缺陷评估（config.phase52Integration.processEvaluation.enabled 守护）
-    // 启用后 optimize 分析失败信号时调用 classifyDefect + buildCalibratedScorecard 生成评分卡
-    const processEvalCfg = config.phase52Integration?.processEvaluation;
-    if (processEvalCfg?.enabled) {
-      selfEvolutionFramework.setProcessDefectIntegration(true, {
-        sensitivity: processEvalCfg.sensitivity ?? 'medium',
-        controlPreservationThreshold: processEvalCfg.controlPreservationThreshold ?? 0.7,
-      });
-      logger.info('app-init: SelfEvolutionFramework 过程缺陷评估已启用', {
-        sensitivity: processEvalCfg.sensitivity ?? 'medium',
-        controlPreservationThreshold: processEvalCfg.controlPreservationThreshold ?? 0.7,
-      });
-    }
-  }
-
-  // Task 8：Gödel 提议器
-  let godelProposer: GodelProposer | undefined;
-  if (config.phase52Integration?.godelProposer?.enabled) {
-    godelProposer = new GodelProposer({
-      enabled: true,
-      maxProposalsPerRun: config.phase52Integration.godelProposer.maxProposalsPerRun ?? 5,
-      autoApplyLowRisk: config.phase52Integration.godelProposer.autoApplyLowRisk ?? false,
-      requireUserApproval: config.phase52Integration.godelProposer.requireUserApproval ?? true,
-      allowedTargetTypes: ['prompt', 'config', 'skill', 'rule'],
-    });
-    logger.info('app-init: GodelProposer 已启用');
-  }
-
-  // Task 9：Self-Harness 循环
-  let selfHarnessLoop: SelfHarnessLoop | undefined;
-  if (config.phase52Integration?.selfHarness?.enabled) {
-    selfHarnessLoop = new SelfHarnessLoop({
-      enabled: true,
-      weaknessDetectionSensitivity: config.phase52Integration.selfHarness.weaknessDetectionSensitivity ?? 'medium',
-      maxProposalsPerCycle: config.phase52Integration.selfHarness.maxProposalsPerCycle ?? 5,
-      requireRegressionTest: config.phase52Integration.selfHarness.requireRegressionTest ?? true,
-      autoApplyLowRiskProposals: config.phase52Integration.selfHarness.autoApplyLowRiskProposals ?? false,
-    });
-    logger.info('app-init: SelfHarnessLoop 已启用');
-  }
-
-  // Phase 52 Task 8/9 深度接入：把 GodelProposer 和 SelfHarnessLoop 注入到 SelfEvolutionFramework
-  // config 守护：仅在 selfEvolutionFramework 已启用且 godelProposer/selfHarnessLoop 已创建时调用
-  // 注：executionHistory 和 currentRules 暂传 undefined，由后续 Phase 53 接入真实数据源
-  if (selfEvolutionFramework && godelProposer) {
-    try {
-      selfEvolutionFramework.setGodelProposer(godelProposer);
-      logger.info('app-init: GodelProposer 已注入 SelfEvolutionFramework（消费方待 Phase 53）');
-    } catch (err) {
-      logger.warn('app-init: setGodelProposer 失败 (non-blocking)', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-  if (selfEvolutionFramework && selfHarnessLoop) {
-    try {
-      selfEvolutionFramework.setSelfHarnessLoop(selfHarnessLoop);
-      logger.info('app-init: SelfHarnessLoop 已注入 SelfEvolutionFramework（消费方待 Phase 53）');
-    } catch (err) {
-      logger.warn('app-init: setSelfHarnessLoop 失败 (non-blocking)', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
   // CR-4b：组合式路由器（config.phase52Integration.compositionalRouting.enabled 守护）
   // 包装 decomposeWithSkillAwareness / composeDAG，按配置注入路由参数，供上层 planner 调用
   let compositionalRouter: CompositionalRouterInstance | undefined;
@@ -2208,7 +2069,6 @@ export function createAppDependencies(
     visionAssistant,
     branchManager,
     initAnalyzer,
-    dreamConsolidator,
     prompts,
     blackboard,
     trace,
@@ -2244,9 +2104,6 @@ export function createAppDependencies(
     skillLifecycleManager,
     metricsCollector,
     saturationMonitor,
-    selfEvolutionFramework,
-    godelProposer,
-    selfHarnessLoop,
     // CR-4b：孤立模块接线点实例（按各自 config 开关守护，未启用时为 undefined）
     activityStore,
     compositionalRouter,

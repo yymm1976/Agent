@@ -15,7 +15,6 @@ import type { ContextManager } from '../agent/memory/context-manager.js';
 import type { BranchManager } from '../agent/branch.js';
 import type { VisionAssistant } from '../agent/vision.js';
 import type { InitAnalyzer } from '../agent/init-analyzer.js';
-import type { DreamConsolidator } from '../agent/dream-consolidator.js';
 import type { GoalParser } from '../agent/goal-parser.js';
 import type { GoalVerifier } from '../agent/goal-verifier.js';
 import type { Blackboard } from '../agent/multi/blackboard.js';
@@ -99,7 +98,6 @@ export interface ServiceContext {
   branchManager: BranchManager;
   vision: VisionAssistant;
   initAnalyzer: InitAnalyzer;
-  dream: DreamConsolidator;
   goalParser: GoalParser;
   goalVerifier: GoalVerifier;
   blackboard: Blackboard;
@@ -155,7 +153,6 @@ export function createServiceContext(deps: ServiceContextDeps): ServiceContext {
     branchManager: deps.branchManager,
     vision: deps.vision,
     initAnalyzer: deps.initAnalyzer,
-    dream: deps.dream,
     goalParser: deps.goalParser,
     goalVerifier: deps.goalVerifier,
     blackboard: deps.blackboard,
@@ -198,7 +195,6 @@ export interface ServiceContextDeps {
   branchManager: BranchManager;
   vision: VisionAssistant;
   initAnalyzer: InitAnalyzer;
-  dream: DreamConsolidator;
   goalParser: GoalParser;
   goalVerifier: GoalVerifier;
   blackboard: Blackboard;

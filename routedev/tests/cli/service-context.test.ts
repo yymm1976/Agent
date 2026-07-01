@@ -28,7 +28,6 @@ function createMockDeps(overrides?: Partial<ServiceContextDeps>): ServiceContext
     branchManager: {} as ServiceContextDeps['branchManager'],
     vision: {} as ServiceContextDeps['vision'],
     initAnalyzer: {} as ServiceContextDeps['initAnalyzer'],
-    dream: {} as ServiceContextDeps['dream'],
     goalParser: {} as ServiceContextDeps['goalParser'],
     goalVerifier: {} as ServiceContextDeps['goalVerifier'],
     blackboard: {} as ServiceContextDeps['blackboard'],
@@ -67,7 +66,6 @@ describe('Phase 0c Task 3: createServiceContext 装配入口', () => {
     expect(ctx.branchManager).toBeDefined();
     expect(ctx.vision).toBeDefined();
     expect(ctx.initAnalyzer).toBeDefined();
-    expect(ctx.dream).toBeDefined();
     expect(ctx.goalParser).toBeDefined();
     expect(ctx.goalVerifier).toBeDefined();
     expect(ctx.blackboard).toBeDefined();

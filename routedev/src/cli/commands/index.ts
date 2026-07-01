@@ -12,7 +12,6 @@ export * from './config.js';
 export * from './cost.js';
 export * from './diff.js';
 export * from './doctor.js';
-export * from './dream.js';
 export * from './experiment.js';
 export * from './goal.js';
 export * from './help.js';

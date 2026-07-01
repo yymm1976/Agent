@@ -3,13 +3,10 @@
 // 按模型 ID 聚合质量信号，计算负面信号率，提供降级建议
 // 冷启动期内（totalCalls < coldStartThreshold）不降级，避免样本不足误判
 //
-// 现状说明（Phase 52 processEvaluation 接线核查）：
-//   预期的 "class ProcessEvaluation" 在代码库中不存在（Grep "class ProcessEvaluation" 无匹配）。
-//   processEvaluation 能力实际由 SelfEvolutionFramework.setProcessDefectIntegration /
-//   EvaluationFramework.setProcessDefectIntegration 承载，在 app-init.ts 中已按
-//   config.phase52Integration.processEvaluation.enabled 守护接入（仅 selfEvolution
-//   同步启用时生效，optimize 时调用 classifyDefect + buildCalibratedScorecard 产出评分卡）。
-//   因此本聚合器不追加对 ProcessEvaluation 的调用——无独立类可注入。
+// 现状说明（Phase 56 D 档清除后）：
+//   SelfEvolutionFramework 已在 Phase 56 中删除。processEvaluation 配置字段仍保留
+//   （由 EvaluationFramework 消费），但 selfEvolution 依赖链已断裂。
+//   本聚合器不追加对 ProcessEvaluation 的调用——无独立类可注入。
 
 /** 单个模型的质量统计 */
 interface ModelQualityStats {

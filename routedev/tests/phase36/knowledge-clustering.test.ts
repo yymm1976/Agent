@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { KnowledgeGraph } from '../../src/agent/memory/graph.js';
 import type { GraphNode, GraphEdge } from '../../src/agent/memory/graph.js';
 import { ingestToGraph } from '../../src/agent/memory/dream-to-graph.js';
-import type { DreamResult } from '../../src/agent/dream-consolidator.js';
+import type { DreamResult } from '../../src/agent/memory/dream-to-graph.js';
 import type { CheckpointData } from '../../src/agent/memory/types.js';
 
 // ============================================================

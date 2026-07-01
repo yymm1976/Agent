@@ -19,9 +19,17 @@
 //   通过显式调用 ingestToGraph() 桥接。禁止在 DreamConsolidator 内部硬编码 KG 依赖。
 
 import type { KnowledgeGraph, GraphNode, NodeType } from './graph.js';
-import type { DreamResult } from '../dream-consolidator.js';
 import type { CheckpointData, DesignDecision, ErrorAndFix } from './types.js';
 import { logger } from '../../utils/logger.js';
+
+/**
+ * Dream 整理结果（Phase 56：从 dream-consolidator.ts 内联最小类型）
+ * Phase 57 将把本文件改名为 consolidation.ts，届时统一命名。
+ */
+export interface DreamResult {
+  /** 整理后的 checkpoint（已合并重复项） */
+  consolidated: CheckpointData;
+}
 
 /** ingestToGraph 结果统计 */
 interface IngestResult {

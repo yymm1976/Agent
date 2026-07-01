@@ -57,7 +57,6 @@ const CLEANED_SAMPLES: Array<{ file: string; symbols: string[] }> = [
   { file: 'src/agent/voice-manager.ts', symbols: ['VoiceProvider', 'TTSProvider', 'TranscriptionResult'] },
   // E11 移除：durable-executor.ts 已整体删除（E1：GoalPersistence + CheckpointManager + HookRunner.fire 替代）
   { file: 'src/agent/goal-types.ts', symbols: ['GoalStepStatus'] },
-  { file: 'src/agent/eq-detector.ts', symbols: ['EQState', 'EQAdjustment'] },
   { file: 'src/agent/persona-templates.ts', symbols: ['EmojiUsage', 'ConfirmationStyle'] },
 ];
 

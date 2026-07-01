@@ -45,18 +45,6 @@ export function SettingsPhase52IntegrationTab({ draft, updateDraft }: SettingsPh
     update({ saturationMonitor: { ...saturationMonitor, ...patch } });
   };
 
-  // Gödel 提案器（Task 8）
-  const godelProposer = cfg.godelProposer ?? {};
-  const updateGodelProposer = (patch: Partial<typeof godelProposer>) => {
-    update({ godelProposer: { ...godelProposer, ...patch } });
-  };
-
-  // Self-Harness 循环（Task 9）
-  const selfHarness = cfg.selfHarness ?? {};
-  const updateSelfHarness = (patch: Partial<typeof selfHarness>) => {
-    update({ selfHarness: { ...selfHarness, ...patch } });
-  };
-
   // MCP 安全形式化框架（Task 10）
   const mcpSecurity = cfg.mcpSecurity ?? {};
   const updateMcpSecurity = (patch: Partial<typeof mcpSecurity>) => {
@@ -255,92 +243,6 @@ export function SettingsPhase52IntegrationTab({ draft, updateDraft }: SettingsPh
               onChange={(e) => updateSaturationMonitor({ checkInterval: Number(e.target.value) })}
             />
             <p className="text-xs text-rd-textMuted">至少积累多少次运行结果才开始评估。</p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Task 8：Gödel 提案器 */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Gödel 提案器（Task 8）</CardTitle>
-          <CardDescription>外循环失败后基于执行历史生成优化提案。</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="p52-godel-enabled">启用 Gödel 提案器</Label>
-              <p className="text-xs text-rd-textMuted">开启后在外循环失败时生成优化提案。</p>
-            </div>
-            <Switch
-              id="p52-godel-enabled"
-              checked={godelProposer.enabled ?? false}
-              onCheckedChange={(checked) => updateGodelProposer({ enabled: checked })}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="p52-godel-max">单次最大提案数（1-20）</Label>
-            <Input
-              id="p52-godel-max"
-              type="number"
-              min={1}
-              max={20}
-              value={godelProposer.maxProposalsPerRun ?? 5}
-              onChange={(e) => updateGodelProposer({ maxProposalsPerRun: Number(e.target.value) })}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="p52-godel-approve">需要用户审批</Label>
-              <p className="text-xs text-rd-textMuted">提案应用前必须经用户确认。</p>
-            </div>
-            <Switch
-              id="p52-godel-approve"
-              checked={godelProposer.requireUserApproval ?? true}
-              onCheckedChange={(checked) => updateGodelProposer({ requireUserApproval: checked })}
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Task 9：Self-Harness 循环 */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Self-Harness 循环（Task 9）</CardTitle>
-          <CardDescription>自安全套件：弱点发现 → 提案 → 验证 → 应用。</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="p52-harness-enabled">启用 Self-Harness 循环</Label>
-              <p className="text-xs text-rd-textMuted">开启后在外循环失败时触发弱点分析与改进。</p>
-            </div>
-            <Switch
-              id="p52-harness-enabled"
-              checked={selfHarness.enabled ?? false}
-              onCheckedChange={(checked) => updateSelfHarness({ enabled: checked })}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="p52-harness-max">单周期最大提案数（1-20）</Label>
-            <Input
-              id="p52-harness-max"
-              type="number"
-              min={1}
-              max={20}
-              value={selfHarness.maxProposalsPerCycle ?? 5}
-              onChange={(e) => updateSelfHarness({ maxProposalsPerCycle: Number(e.target.value) })}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="p52-harness-regression">要求回归测试</Label>
-              <p className="text-xs text-rd-textMuted">提案应用前必须通过回归测试。</p>
-            </div>
-            <Switch
-              id="p52-harness-regression"
-              checked={selfHarness.requireRegressionTest ?? true}
-              onCheckedChange={(checked) => updateSelfHarness({ requireRegressionTest: checked })}
-            />
           </div>
         </CardContent>
       </Card>

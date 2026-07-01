@@ -42,8 +42,7 @@ import type { GraphNode, GraphEdge } from '../../src/agent/memory/graph.js';
 import { ContextManager } from '../../src/agent/memory/context-manager.js';
 import { CheckpointWriter } from '../../src/agent/memory/checkpoint-writer.js';
 import { ingestToGraph } from '../../src/agent/memory/dream-to-graph.js';
-import { dreamCommand } from '../../src/cli/commands/dream.js';
-import type { DreamResult } from '../../src/agent/dream-consolidator.js';
+import type { DreamResult } from '../../src/agent/memory/dream-to-graph.js';
 import type { CheckpointData } from '../../src/agent/memory/types.js';
 
 import * as fs from 'node:fs';
@@ -498,112 +497,6 @@ describe('集成测试 3：知识图谱完整生命周期', () => {
     expect(activeNodes.length).toBe(1);
     // 验证新节点是 k2 的修正版
     expect(activeNodes[0].content).toBe('React 组件设计模式已更新');
-  });
-
-  it('3.2 /dream 命令调用 ingestToGraph 桥接知识图谱', async () => {
-    // 准备临时目录用于 ContextManager 持久化
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'routedev-dream-test-'));
-    try {
-      // 创建 mock CheckpointWriter
-      const mockClient: ILLMClient = {
-        isReady: () => true,
-        complete: vi.fn(async (): Promise<LLMResponse> => ({
-          content: '{}',
-          toolCalls: [],
-          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-          finishReason: 'stop',
-          model: 'mock',
-        })),
-        stream: vi.fn(async function* () { /* not used */ }),
-      };
-      const writer = new CheckpointWriter(mockClient, 'mock', 500, '/nonexistent.md');
-
-      const contextManager = new ContextManager(
-        {
-          contextWindow: 1000,
-          compressionThreshold: 0.8,
-          keepRecentMessages: 2,
-          checkpointEnabled: true,
-          cwd: tmpDir,
-        },
-        writer,
-      );
-
-      // 预设一个 checkpoint
-      const checkpoint: CheckpointData = {
-        currentIntent: '测试 /dream',
-        nextAction: '验证 ingestToGraph',
-        workingConstraints: [],
-        taskTree: { description: '测试', status: 'in_progress', children: [] },
-        currentWorkingFiles: [],
-        involvedFiles: [],
-        crossTaskDiscoveries: ['TypeScript 严格模式可提升类型安全'],
-        errorsAndFixes: [{ error: '类型推断失败', fix: '添加显式类型注解', resolved: true }],
-        runtimeState: {},
-        designDecisions: [{ decision: '采用 TypeScript 严格模式', reason: '提升类型安全' }],
-        miscNotes: [],
-      };
-      contextManager.setCheckpoint(checkpoint);
-
-      // 构造 DreamResult（模拟 DreamConsolidator.consolidate 的输出）
-      const dreamResult: DreamResult = {
-        beforeSize: 100,
-        afterSize: 80,
-        mergedCount: 2,
-        consolidated: checkpoint,
-        summary: '记忆整理完成',
-      };
-
-      // mock dream 对象
-      const mockDream = {
-        consolidate: vi.fn(async () => dreamResult),
-        saveToDisk: vi.fn(async () => {}),
-      };
-
-      // mock commandBridge
-      const systemMessages: string[] = [];
-      const mockCommandBridge = {
-        addSystemMessage: vi.fn((msg: string) => systemMessages.push(msg)),
-      };
-
-      // 调用 /dream 命令
-      const result = await dreamCommand.handler('', {
-        dream: mockDream as any,
-        contextManager,
-        commandBridge: mockCommandBridge as any,
-      } as any);
-
-      // 验证命令执行成功
-      expect(result.type).toBe('handled');
-      expect(result.messages).toBeDefined();
-      expect(result.messages!.length).toBeGreaterThan(0);
-
-      // 验证 dream.consolidate 被调用
-      expect(mockDream.consolidate).toHaveBeenCalledTimes(1);
-
-      // 验证 ingestToGraph 被调用（通过知识图谱中有新节点间接验证）
-      const graph = contextManager.getKnowledgeGraph();
-      const nodes = graph.listNodes();
-      // ingestToGraph 应该从 checkpoint 提取知识并创建节点
-      // designDecisions → decision 节点，crossTaskDiscoveries → fact 节点，errorsAndFixes(resolved) → fact 节点
-      expect(nodes.length).toBeGreaterThan(0);
-
-      // 验证消息中包含知识图谱注入统计
-      const ingestMessage = result.messages!.find(m => m.includes('知识图谱注入'));
-      expect(ingestMessage).toBeTruthy();
-      expect(ingestMessage).toContain('新建');
-      expect(ingestMessage).toContain('合并');
-
-      // 验证 addSystemMessage 被调用
-      expect(systemMessages.length).toBeGreaterThan(0);
-      expect(systemMessages[0]).toContain('整理记忆');
-    } finally {
-      try {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
-        // 忽略清理错误
-      }
-    }
   });
 
   it('3.3 ingestToGraph 直接调用验证完整归纳流程', () => {
