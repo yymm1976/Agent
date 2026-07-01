@@ -72,7 +72,8 @@ export const DEFAULT_CONFIG: AppConfig = {
     strictBashMode: false,
     httpsOnly: true,
     rateLimitMaxSize: 10000,
-    devModeAuth: false,
+    // I3 修复：默认 true（要求认证），仅显式 false 时开发模式放行
+    devModeAuth: true,
     // Phase 47 Task 4：沙箱级默认 workspace-write
     sandbox: 'workspace-write',
     // approval 为可选字段，不配置时使用引擎内置的 DEFAULT_APPROVAL
@@ -82,6 +83,8 @@ export const DEFAULT_CONFIG: AppConfig = {
     port: 9800,
     maxResponseLength: 2000,
     requestTimeout: 60000,
+    // Phase 53 接线修复：默认不信任反代头，未启用 Bearer Token 认证
+    trustProxy: false,
   },
   autonomy: {
     defaultMode: 'semi',
@@ -353,6 +356,17 @@ export const DEFAULT_CONFIG: AppConfig = {
       singleAgentMaxSteps: 2,
       dagMaxDomains: 1,
     },
+    difficultyRouting: {
+      enabled: false,
+      refineLevelAtExecution: true,
+      dynamicLevelSwitchEnabled: false,
+      confidenceThreshold: 0.6,
+    },
+  },
+  // Phase 55 Task 9：CCR 可逆压缩
+  ccrCompression: {
+    enabled: false,
+    maxCacheSize: 50,
   },
   // Phase 43：Hook 增强（函数级 Hook + 沙箱 + 试用期 + 分组）
   hookEnhancement: {
@@ -435,9 +449,11 @@ export const DEFAULT_CONFIG: AppConfig = {
   // Phase 50 Task 1：Goal 流程模块接入开关
   // Phase 54 修复：auditEnabled 默认改为 true——三层独立审计（completion_gate + verifier_llm + reviewer_agent）
   // 是用户质疑"不确定是不是真的交叉验证"的根因，默认关闭导致交叉验证形同虚设
+  // Phase 47 P1-2 修复：persistenceEnabled 默认改为 true——原值 false 导致 GoalPersistence 模块
+  // 装配完整但 executeGoalPlan 中 if 判定永远不进入，目标执行状态不落盘，崩溃后无法恢复
   goalIntegration: {
     auditEnabled: true,
-    persistenceEnabled: false,
+    persistenceEnabled: true,
     promptBuilderEnabled: false,
     requirementChangeEnabled: false,
   },
@@ -573,7 +589,7 @@ export const DEFAULT_CONFIG: AppConfig = {
       showProcessGrade: true,
       controlPreservationThreshold: 0.7,
     },
-    // Task 3：有界局部恢复（schema.ts 中仍为占位，仅 enabled 字段；完整字段见顶层 boundedRecovery）
+    // Task 3：有界局部恢复
     boundedRecovery: { enabled: true, maxBacktrack: 3, artifactBinding: true, validateConsistency: true },
     // Task 4：组合技能路由
     compositionalRouting: {

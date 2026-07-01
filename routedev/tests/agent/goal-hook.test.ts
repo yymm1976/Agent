@@ -1,6 +1,9 @@
 // tests/agent/goal-hook.test.ts
 // Phase 40 Task 8 & 9：/goal 生命周期进化 + Hook 增强 测试
-// 覆盖：GoalPromptBuilder(7) + GoalPersistence(5) + GoalAuditor(5) + HookEnhancementManager(9) = 26
+// 覆盖：GoalPromptBuilder(7) + GoalPersistence(5) + GoalAuditor(5) + HookEnhancementManager(2) = 19
+//
+// 本任务：已移除 HookEnhancementManager 的试用模式/Hook Group/函数型 Hook 注册测试
+//        （这些 API 作为死代码删除，仅保留 analyzeCommand/detectBase64Command 等安全审查测试）
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs/promises';
@@ -18,12 +21,7 @@ import {
   GoalAuditor,
   DEFAULT_AUDIT_CONFIG,
 } from '../../src/agent/goal-audit.js';
-import {
-  HookEnhancementManager,
-  type HookContext,
-  type HookResult,
-  type HookGroup,
-} from '../../src/hooks/hook-enhancement.js';
+import { HookEnhancementManager } from '../../src/hooks/hook-enhancement.js';
 
 // ============================================================
 // 辅助工厂
@@ -338,81 +336,10 @@ describe('GoalAuditor', () => {
 });
 
 // ============================================================
-// HookEnhancementManager（9 个）
+// HookEnhancementManager（2 个：仅静态安全审查方法）
 // ============================================================
 
 describe('HookEnhancementManager', () => {
-  let manager: HookEnhancementManager;
-
-  beforeEach(() => {
-    manager = new HookEnhancementManager();
-  });
-
-  function makeCtx(overrides?: Partial<HookContext>): HookContext {
-    return {
-      event: 'pre-step-execution',
-      goalId: 'goal-1',
-      stepId: 'step-1',
-      ...overrides,
-    };
-  }
-
-  it('18. startTrial + checkTrialStatus', () => {
-    manager.startTrial('hook-a', 7);
-    const trial = manager.checkTrialStatus('hook-a');
-    expect(trial.hookId).toBe('hook-a');
-    expect(trial.status).toBe('trial');
-    expect(trial.trialDays).toBe(7);
-    expect(trial.triggeredCount).toBe(0);
-    expect(trial.startedAt).toBeGreaterThan(0);
-  });
-
-  it('19. 试用期间 shouldExecuteBlock 返回 false', () => {
-    manager.startTrial('hook-b');
-    const trial = manager.checkTrialStatus('hook-b');
-    expect(HookEnhancementManager.shouldExecuteBlock(trial)).toBe(false);
-  });
-
-  it('20. promoteToEnabled 后 shouldExecuteBlock 返回 true', () => {
-    manager.startTrial('hook-c');
-    manager.promoteToEnabled('hook-c');
-    const trial = manager.checkTrialStatus('hook-c');
-    expect(trial.status).toBe('enabled');
-    expect(HookEnhancementManager.shouldExecuteBlock(trial)).toBe(true);
-  });
-
-  it('21. disableForAnomaly 后 status=disabled', () => {
-    manager.startTrial('hook-d');
-    manager.disableForAnomaly('hook-d', '频繁误报');
-    const trial = manager.checkTrialStatus('hook-d');
-    expect(trial.status).toBe('disabled');
-    expect(trial.anomalies).toContain('频繁误报');
-  });
-
-  it('22. executeFunctionHook 执行函数型 Hook', async () => {
-    let called = false;
-    manager.registerFunctionHook('hook-exec', async (ctx) => {
-      called = true;
-      return { action: 'continue', message: `goal=${ctx.goalId}` };
-    });
-    const result = await manager.executeFunctionHook('hook-exec', makeCtx());
-    expect(called).toBe(true);
-    expect(result.action).toBe('continue');
-    expect(result.message).toContain('goal-1');
-  });
-
-  it('23. detectCircularDependency 检测到循环', () => {
-    // g1 -> g2 -> g1
-    const groups: HookGroup[] = [
-      { id: 'g1', name: '组1', hooks: ['g2'], sequence: 'sequential', onFailure: 'abort' },
-      { id: 'g2', name: '组2', hooks: ['g1'], sequence: 'sequential', onFailure: 'abort' },
-    ];
-    const cycle = HookEnhancementManager.detectCircularDependency(groups);
-    expect(cycle).not.toBeNull();
-    expect(cycle!.length).toBeGreaterThanOrEqual(3); // 如 ['g1','g2','g1']
-    expect(cycle![0]).toBe(cycle![cycle!.length - 1]);
-  });
-
   it('24. analyzeCommand 检测危险命令', () => {
     const dangerous = HookEnhancementManager.analyzeCommand('rm -rf /');
     expect(dangerous.safe).toBe(false);
@@ -432,35 +359,5 @@ describe('HookEnhancementManager', () => {
     expect(HookEnhancementManager.detectBase64Command('eval(atob("dGVzdA=="))')).toBe(true);
     expect(HookEnhancementManager.detectBase64Command('pnpm test')).toBe(false);
     expect(HookEnhancementManager.detectBase64Command('echo hello')).toBe(false);
-  });
-
-  it('26. executeGroup sequential 模式失败时 abort', async () => {
-    const callOrder: string[] = [];
-    manager.registerFunctionHook('h1', async () => {
-      callOrder.push('h1');
-      return { action: 'continue' };
-    });
-    manager.registerFunctionHook('h2', async () => {
-      callOrder.push('h2');
-      return { action: 'abort', message: '检测到危险' };
-    });
-    manager.registerFunctionHook('h3', async () => {
-      callOrder.push('h3');
-      return { action: 'continue' };
-    });
-
-    manager.createGroup({
-      id: 'grp-1',
-      name: '顺序组',
-      hooks: ['h1', 'h2', 'h3'],
-      sequence: 'sequential',
-      onFailure: 'abort',
-    });
-
-    const outcome = await manager.executeGroup('grp-1', makeCtx());
-    expect(outcome.aborted).toBe(true);
-    expect(callOrder).toEqual(['h1', 'h2']); // h3 不应执行
-    expect(outcome.results.length).toBe(2);
-    expect(outcome.results[1].result.action).toBe('abort');
   });
 });

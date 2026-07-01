@@ -43,11 +43,12 @@ export interface CleanResult {
 
 /** 默认清理选项，keep 需与 electron-builder.yml 中 directories.output 一致 */
 export const DEFAULT_CLEAN_OPTIONS: CleanOptions = {
-  keep: 'release-v3',
+  // Phase 54：v5 → v6，与 electron-builder.yml 同步（临时绕过 release-v4/v5 锁定问题）
+  keep: 'release-v6',
   stalePattern: /^release-v\d+\w*$/,
   dryRun: false,
-  maxRetries: 10,
-  retryDelayMs: 3000,
+  maxRetries: 1,
+  retryDelayMs: 1000,
 };
 
 // ============================================================

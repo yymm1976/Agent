@@ -30,7 +30,7 @@ import { PromptTemplateManager } from '../../src/prompts/manager.js';
 import { ProjectMemoryManager } from '../../src/memory/project-memory.js';
 import { GoalParser } from '../../src/agent/goal-parser.js';
 import { GoalVerifier } from '../../src/agent/goal-verifier.js';
-import { DurableExecutor } from '../../src/agent/durable-executor.js';
+// E1 删除：DurableExecutor 已被 GoalPersistence + CheckpointManager + HookRunner.fire 替代
 import { HookRunner } from '../../src/agent/hooks.js';
 import { TokenProfiler } from '../../src/agent/token-profiler.js';
 import { TaskOrchestrator } from '../../src/agent/task-orchestrator.js';
@@ -269,8 +269,7 @@ describe('createAppDependencies', () => {
       // 目标解析与验证
       expect(deps.goalParser).toBeInstanceOf(GoalParser);
       expect(deps.goalVerifier).toBeInstanceOf(GoalVerifier);
-      // 持久化执行器
-      expect(deps.durableExecutor).toBeInstanceOf(DurableExecutor);
+      // E1 删除：durableExecutor 字段已从 AppDependencies 移除（上位替代为 GoalPersistence）
       expect(deps.hookRunner).toBeInstanceOf(HookRunner);
       // LLM 客户端
       expect(deps.primaryClient).toBeDefined();
@@ -402,8 +401,7 @@ describe('createAppDependencies', () => {
       // 不传 classifier 和 modelRouter
       const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
 
-      // durableExecutor 仍然创建成功（内部使用桩 step executor）
-      expect(deps.durableExecutor).toBeInstanceOf(DurableExecutor);
+      // E1 删除：durableExecutor 字段已从 AppDependencies 移除（上位替代为 GoalPersistence）
       // taskOrchestrator 仍然创建（内部用 null 断言，生产路径必传）
       expect(deps.taskOrchestrator).toBeInstanceOf(TaskOrchestrator);
     });
@@ -438,7 +436,7 @@ describe('createAppDependencies', () => {
         tracker as never,
       );
 
-      expect(deps.durableExecutor).toBeInstanceOf(DurableExecutor);
+      // E1 删除：durableExecutor 字段已从 AppDependencies 移除（上位替代为 GoalPersistence）
       expect(deps.executionOrchestrator).toBeInstanceOf(ExecutionOrchestrator);
       expect(deps.unifiedReviewer).toBeInstanceOf(UnifiedReviewer);
     });
@@ -529,11 +527,13 @@ describe('createAppDependencies', () => {
         'checkpointManager', 'checkpointWriter', 'contextManager',
         'visionAssistant', 'branchManager', 'initAnalyzer', 'dreamConsolidator',
         'prompts', 'blackboard', 'trace', 'audit', 'projectMemory',
-        'goalParser', 'goalVerifier', 'durableExecutor', 'hookRunner',
+        'goalParser', 'goalVerifier', 'hookRunner',
         'primaryClient', 'checkpointClient', 'profiler',
         'taskOrchestrator', 'requirementsGatherer', 'complexityAnalyzer',
         'executionOrchestrator', 'unifiedReviewer', 'completionGate',
         'readTracker', 'resultSanitizer', 'sharedSystemPromptRef',
+        // E9-B：新增 experimentManager 单例字段
+        'experimentManager',
       ];
 
       for (const key of requiredKeys) {

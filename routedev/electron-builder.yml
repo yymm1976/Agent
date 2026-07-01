@@ -3,8 +3,8 @@ productName: RouteDev
 copyright: Copyright © 2026
 asar: true
 directories:
-  # 固定输出目录，避免 release-v12/release-v13 并存导致误启动旧版本
-  output: release-v3
+  # Phase 54：临时改为 release-v6 绕过 release-v4/v5 目录被锁定问题（TODO: 改回 release-v4）
+  output: release-v6
   buildResources: build
 files:
   - out/main/**/*

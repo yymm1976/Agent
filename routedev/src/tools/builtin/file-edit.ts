@@ -15,6 +15,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '../types.js';
 import { checkPathBoundary } from './search-utils.js';
+// Phase 53 Task 7：配置保护守卫（阻止弱化安全/治理配置）
+import { ConfigGuard } from './config-guard.js';
 
 /** 单条替换编辑 */
 interface EditEntry {
@@ -26,6 +28,14 @@ interface EditEntry {
 const MAX_EDIT_FILE_BYTES = 1024 * 1024;
 
 export class FileEditTool implements ITool {
+  // Phase 53 Task 7：配置保护守卫（可选，未注入时跳过检查）
+  private configGuard?: ConfigGuard;
+
+  /** Phase 53 Task 7：注入配置保护守卫 */
+  setConfigGuard(guard: ConfigGuard): void {
+    this.configGuard = guard;
+  }
+
   readonly definition: ToolDefinition = {
     name: 'file_edit',
     description: '当用户需要精确修改文件中的某段字符串、避免全量重写时，使用此工具。要求 oldString 在文件中唯一匹配，支持批量替换。',
@@ -179,6 +189,19 @@ export class FileEditTool implements ITool {
         // 唯一匹配，执行替换（替换仍作用于 modified）
         modified = modified.replace(oldString, newString);
         appliedEdits.push({ oldString: oldString.slice(0, 60), replaced: true });
+      }
+
+      // Phase 53 Task 7：配置保护守卫（受 guard 注入控制，检查修改后的内容是否弱化安全/治理配置）
+      if (this.configGuard) {
+        const guardResult = this.configGuard.checkModification(filePath, modified, original);
+        if (!guardResult.allowed) {
+          return {
+            success: false,
+            output: '',
+            error: guardResult.reason ?? '配置保护守卫阻止了此操作',
+            durationMs: 0,
+          };
+        }
       }
 
       // 内容未变化

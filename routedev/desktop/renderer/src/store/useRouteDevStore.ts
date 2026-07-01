@@ -10,6 +10,7 @@ import type {
   ConfigSaveResult,
   ToolConfirmPayload,
   TokenProfileSnapshot,
+  GoalEvent,
 } from '../../../shared/ipc-types.js';
 import type { TraceSpan } from '../../../../src/harness/trace-types.js';
 // 静态导入 useProjectsStore：该 store 仅导入本文件的类型（编译后移除），运行时无循环依赖
@@ -45,11 +46,38 @@ export interface ChatMessage {
   taskDuration?: number;
   /** 任务是否已完成（用于折叠判断） */
   taskCompleted?: boolean;
+  /** Phase 54：Goal 执行标识——非空时用 GoalExecutionCard 替代文本渲染 */
+  goalId?: string;
 }
 
 export interface PendingConfirm {
   toolName: string;
   params: Record<string, unknown>;
+}
+
+// ===== Phase 54：Goal 执行聚合状态（渲染层消费，按 goalId 聚合 GoalEvent） =====
+export interface GoalStepState {
+  id: number;
+  description: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  error?: string;
+  durationMs?: number;
+  /** Phase 54：步骤开始时间戳（运行态实时耗时计算用） */
+  startedAt?: number;
+  /** 多 Agent 路径的 Worker 活动日志（按时间线累积） */
+  activities: { role: string; activity: string; timestamp: number }[];
+}
+
+export interface GoalExecution {
+  goalId: string;
+  description: string;
+  autonomyMode: string;
+  verificationCriteria?: string;
+  steps: GoalStepState[];
+  status: 'running' | 'completed' | 'failed';
+  verification?: { passed: boolean; confidence: number; reasoning: string; missingItems: string[] };
+  done?: { success: boolean; totalDurationMs: number; summary: string };
+  createdAt: number;
 }
 
 // ===== Store 状态接口 =====
@@ -65,6 +93,20 @@ export interface RouteDevState {
   pendingConfirm: PendingConfirm | null;
   tokenSnapshots: TokenProfileSnapshot[];
   traceEvents: TraceSpan[];
+  // Phase 54：Goal 执行聚合状态（按 goalId 索引，驱动 GoalExecutionCard 就地刷新）
+  goalExecutions: GoalExecution[];
+  /**
+   * Phase 54：待编辑的计划（semi/manual 模式触发 StepEditor 显示）
+   * 由 plan:edit-request 事件设置；confirmPlanEdit/cancelPlanEdit 后清空
+   */
+  pendingPlanEdit: {
+    requestId: string;
+    plan: {
+      description: string;
+      verificationCriteria?: string;
+      steps: { id: number; description: string; acceptanceCriteria?: string; dependencies: number[]; suggestedRole?: 'researcher' | 'executor' | 'reviewer' }[];
+    };
+  } | null;
   // 瞬态进度文案（不落盘到对话历史）
   progressLabel: string | null;
 
@@ -84,6 +126,12 @@ export interface RouteDevState {
    * - 若 messageId 是助手消息：删除该消息及之后所有消息，重新发送上一条用户消息
    */
   retryMessage: (messageId: string) => void;
+
+  // Phase 54：计划编辑（StepEditor）操作
+  /** 用户确认计划编辑，回传编辑后的步骤列表到主进程 */
+  confirmPlanEdit: (steps: { id: number; description: string; acceptanceCriteria?: string; dependencies: number[]; suggestedRole?: 'researcher' | 'executor' | 'reviewer' }[]) => void;
+  /** 用户取消计划编辑，回传 null 到主进程 */
+  cancelPlanEdit: () => void;
 
   // ===== 内部状态 =====
   _assistantBuffer: string;
@@ -117,6 +165,10 @@ export interface RouteDevState {
   _setPendingConfirm: (confirm: PendingConfirm | null) => void;
   _addTokenSnapshot: (snapshot: TokenProfileSnapshot) => void;
   _addTraceEvent: (span: TraceSpan) => void;
+  /** Phase 54：处理 Goal 执行结构化事件（聚合到 goalExecutions） */
+  _handleGoalEvent: (event: GoalEvent) => void;
+  /** Phase 54：设置待编辑计划（由 plan:edit-request 事件触发） */
+  _setPendingPlanEdit: (planEdit: RouteDevState['pendingPlanEdit']) => void;
   _setConfig: (config: AppConfig) => void;
   _setConfigLoading: (loading: boolean) => void;
   _setCurrentModel: (model: string) => void;
@@ -135,6 +187,8 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
   pendingConfirm: null,
   tokenSnapshots: [],
   traceEvents: [],
+  goalExecutions: [],
+  pendingPlanEdit: null,
   progressLabel: null,
 
   // 内部状态初始值
@@ -197,12 +251,18 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
 
   deleteMessage: (messageId) => {
     const state = get();
-    // 从消息列表中移除指定消息
-    const newMessages = state.messages.filter((m) => m.id !== messageId);
+    const target = state.messages.find((m) => m.id === messageId);
+    if (!target) {
+      set({ messages: state.messages.filter((m) => m.id !== messageId) });
+      return;
+    }
+    // Phase 54 修复：TaskBlock 按 taskId 聚合渲染 reasoning（ChatPage.tsx reasoningText），
+    // 删除单条消息后剩余消息仍属同 task，会继续显示思考过程。
+    // 因此有 taskId 的消息按整组删除（与 retryMessage 行为一致），无 taskId 的独立消息按单条删除。
+    const newMessages = target.taskId
+      ? state.messages.filter((m) => m.taskId !== target.taskId)
+      : state.messages.filter((m) => m.id !== messageId);
     set({ messages: newMessages });
-    // 注意：删除消息后，下次 sendMessage 时引擎会收到当前 messages 作为上下文
-    // 但引擎内部有自己的上下文管理，需要通过 /clear + 重新发送历史来同步
-    // 这里只更新 UI 层的消息列表，引擎上下文同步在切换对话或 /clear 时处理
   },
 
   retryMessage: (messageId) => {
@@ -280,6 +340,26 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
     if (state._reasoningRafHandle !== null) {
       window.clearTimeout(state._reasoningRafHandle);
     }
+    // Phase 54 修复兜底：终止时把所有 running 的 GoalExecution 标记为终止
+    // 防止 abort 后 done 事件漏发导致 GoalExecutionCard 卡在转圈状态
+    const runningGoals = state.goalExecutions.filter(g => g.status === 'running');
+    if (runningGoals.length > 0) {
+      set({
+        goalExecutions: state.goalExecutions.map(g =>
+          g.status === 'running'
+            ? {
+                ...g,
+                status: 'failed' as const,
+                done: {
+                  success: false,
+                  totalDurationMs: Date.now() - g.createdAt,
+                  summary: `${g.steps.filter(s => s.status === 'completed').length}/${g.steps.length} 步骤完成 · 用户已终止`,
+                },
+              }
+            : g,
+        ),
+      });
+    }
     if (state._assistantId) {
       set({
         messages: state.messages.map((m) =>
@@ -296,6 +376,22 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
         _reasoningRafHandle: null,
       });
     }
+  },
+
+  // Phase 54：用户确认计划编辑——回传编辑后的步骤到主进程，清空 pendingPlanEdit
+  confirmPlanEdit: (steps) => {
+    const { pendingPlanEdit } = get();
+    if (!pendingPlanEdit) return;
+    window.routedev.plan.respondEdit({ requestId: pendingPlanEdit.requestId, steps });
+    set({ pendingPlanEdit: null });
+  },
+
+  // Phase 54：用户取消计划编辑——回传 null 到主进程，清空 pendingPlanEdit
+  cancelPlanEdit: () => {
+    const { pendingPlanEdit } = get();
+    if (!pendingPlanEdit) return;
+    window.routedev.plan.respondEdit({ requestId: pendingPlanEdit.requestId, steps: null });
+    set({ pendingPlanEdit: null });
   },
 
   saveConfig: async (cfg) => {
@@ -590,6 +686,124 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
     set({ traceEvents: [...state.traceEvents, span] });
   },
 
+  // Phase 54：聚合 GoalEvent 到 goalExecutions（按 goalId 索引，就地刷新）
+  _handleGoalEvent: (event) => {
+    const state = get();
+    const existing = state.goalExecutions.find(g => g.goalId === event.goalId);
+
+    // plan_created：新建 GoalExecution 条目 + 把 goalId 打到最近的 user 消息上（合并渲染）
+    // Phase 54 修复：原方案插入独立 goal marker system 消息，会排在 user 消息的 actions 下方
+    // 改为把 goalId 打到 /goal 命令的 user 消息上，MessageBubble 检测到 goalId 时用 GoalExecutionCard 取代 user 气泡
+    if (event.type === 'plan_created') {
+      const now = Date.now();
+      const newExec: GoalExecution = {
+        goalId: event.goalId,
+        description: event.description,
+        autonomyMode: event.autonomyMode,
+        verificationCriteria: event.verificationCriteria,
+        steps: event.steps.map(s => ({
+          id: s.id,
+          description: s.description,
+          status: 'pending' as const,
+          activities: [],
+        })),
+        status: 'running',
+        createdAt: now,
+      };
+      // 找到最近的 user 消息，给它打上 goalId（从后往前找）
+      const messages = [...state.messages];
+      let userMsgIdx = -1;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          userMsgIdx = i;
+          break;
+        }
+      }
+      if (userMsgIdx >= 0) {
+        // 合并方案：把 goalId 打到 user 消息上，渲染时用 GoalExecutionCard 取代 user 气泡
+        messages[userMsgIdx] = { ...messages[userMsgIdx], goalId: event.goalId };
+      } else {
+        // 降级方案：找不到 user 消息（异常情况），插入独立 goal marker system 消息
+        messages.push({
+          id: `goal-marker-${event.goalId}`,
+          role: 'system',
+          content: event.description,
+          goalId: event.goalId,
+          timestamp: now,
+        });
+      }
+      set({
+        goalExecutions: [...state.goalExecutions, newExec],
+        messages,
+      });
+      return;
+    }
+
+    // 其余事件需要已有 GoalExecution（若不存在则忽略，防御性编程）
+    if (!existing) return;
+
+    const updated = { ...existing, steps: existing.steps.map(s => ({ ...s, activities: [...s.activities] })) };
+
+    switch (event.type) {
+      case 'plan_confirmed':
+        // 计划确认后状态不变（保持 running），仅触发刷新
+        break;
+
+      case 'step_update': {
+        const step = updated.steps.find(s => s.id === event.stepId);
+        if (step) {
+          step.status = event.status;
+          if (event.error) step.error = event.error;
+          if (event.durationMs !== undefined) step.durationMs = event.durationMs;
+          // Phase 54：running 时记录开始时间戳（供 GoalExecutionCard 显示实时耗时）
+          if (event.status === 'running' && !step.startedAt) {
+            step.startedAt = Date.now();
+          }
+          // 完成/失败时清空 startedAt（避免后续误显示）
+          if (event.status === 'completed' || event.status === 'failed') {
+            step.startedAt = undefined;
+          }
+        }
+        break;
+      }
+
+      case 'agent_activity': {
+        const step = updated.steps.find(s => s.id === event.stepId);
+        if (step) {
+          step.activities.push({
+            role: event.role,
+            activity: event.activity,
+            timestamp: event.timestamp,
+          });
+        }
+        break;
+      }
+
+      case 'verification':
+        updated.verification = {
+          passed: event.passed,
+          confidence: event.confidence,
+          reasoning: event.reasoning,
+          missingItems: event.missingItems,
+        };
+        break;
+
+      case 'done':
+        updated.status = event.success ? 'completed' : 'failed';
+        updated.done = {
+          success: event.success,
+          totalDurationMs: event.totalDurationMs,
+          summary: event.summary,
+        };
+        break;
+    }
+
+    set({ goalExecutions: state.goalExecutions.map(g => g.goalId === event.goalId ? updated : g) });
+  },
+
+  // Phase 54：设置待编辑计划（由 plan:edit-request 事件触发，驱动 StepEditor 显示）
+  _setPendingPlanEdit: (planEdit) => set({ pendingPlanEdit: planEdit }),
+
   _setConfig: (config) => set({ config }),
 
   _setConfigLoading: (loading) => set({ configLoading: loading }),
@@ -700,6 +914,18 @@ export function initIPCListeners(): () => void {
     store.getState()._addTraceEvent(payload);
   };
 
+  // Phase 54：Goal 执行结构化事件
+  const handleGoalEvent = (raw: unknown) => {
+    const payload = raw as GoalEvent;
+    store.getState()._handleGoalEvent(payload);
+  };
+
+  // Phase 54：计划编辑请求（semi/manual 模式触发 StepEditor 显示）
+  const handlePlanEditRequest = (raw: unknown) => {
+    const payload = raw as { requestId: string; plan: import('../../../shared/ipc-types.js').PlanEditRequestPayload['plan'] };
+    store.getState()._setPendingPlanEdit({ requestId: payload.requestId, plan: payload.plan });
+  };
+
   // 配置热重载事件
   const handleConfigReloaded = (raw: unknown) => {
     const payload = raw as AppConfig;
@@ -712,6 +938,8 @@ export function initIPCListeners(): () => void {
   api.on('token:profile', handleTokenProfile);
   api.on('trace:event', handleTraceEvent);
   api.on('config:reloaded', handleConfigReloaded);
+  api.on('goal:event', handleGoalEvent);
+  api.on('plan:edit-request', handlePlanEditRequest);
 
   // 返回清理函数
   return () => {
@@ -720,6 +948,8 @@ export function initIPCListeners(): () => void {
     api.off('token:profile', handleTokenProfile);
     api.off('trace:event', handleTraceEvent);
     api.off('config:reloaded', handleConfigReloaded);
+    api.off('goal:event', handleGoalEvent);
+    api.off('plan:edit-request', handlePlanEditRequest);
   };
 }
 

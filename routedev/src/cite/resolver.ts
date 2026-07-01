@@ -123,7 +123,9 @@ export class CiteResolver {
    * @returns CiteResolution（包含 injectedContext、preflight、prompts、allowedTools、blocked）
    */
   async resolve(options: {
-    items: CiteItem[];
+    // 形参接受 readonly 数组：resolver 只读迭代 items，不修改数组本身
+    // 这样 CiteManager.list() 返回的 readonly CiteItem[] 可直接传入，无需调用方 spread 复制
+    items: readonly CiteItem[];
     autoRunPreflight?: boolean;
     sessionContext?: SessionContext;
   }): Promise<CiteResolution> {

@@ -24,7 +24,7 @@ import type { AgentMiddlewarePipeline } from '../agent/middleware.js';
 import { logger } from '../utils/logger.js';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { existsSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getAppDataDir, ensureDir } from '../utils/paths.js';
 
@@ -164,6 +164,31 @@ interface PluginRecord {
   registeredHookHandlers: Array<{ phase: import('../agent/middleware.js').MiddlewarePhase; handler: import('../agent/middleware.js').MiddlewareHandler }>;
 }
 
+const ALLOWED_PLUGIN_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
+
+function resolvePluginEntry(pluginDir: string, entry: string): string {
+  if (isAbsolute(entry)) {
+    throw new Error(`插件入口必须为相对路径: ${entry}`);
+  }
+
+  const resolvedPluginDir = resolve(pluginDir);
+  const resolvedEntry = resolve(pluginDir, entry);
+  const relativePrefix = resolvedPluginDir.endsWith('\\') || resolvedPluginDir.endsWith('/')
+    ? resolvedPluginDir
+    : `${resolvedPluginDir}${sep}`;
+
+  if (resolvedEntry !== resolvedPluginDir && !resolvedEntry.startsWith(relativePrefix)) {
+    throw new Error(`插件入口越界: ${entry}`);
+  }
+
+  const extension = extname(resolvedEntry);
+  if (!ALLOWED_PLUGIN_EXTENSIONS.has(extension)) {
+    throw new Error(`插件入口扩展名不受支持: ${extension || '<none>'}`);
+  }
+
+  return resolvedEntry;
+}
+
 // ============================================================
 // PluginRegistry
 // ============================================================
@@ -269,8 +294,8 @@ export class PluginRegistry {
    * 失败时记录 error，不抛异常
    */
   async loadPlugin(manifest: PluginManifest, pluginDir: string): Promise<void> {
-    const entryFile = join(pluginDir, manifest.entry);
     try {
+      const entryFile = resolvePluginEntry(pluginDir, manifest.entry);
       const fileUrl = pathToFileURL(entryFile).href;
       const mod = await import(fileUrl);
       const instance: Plugin | undefined = mod.default ?? mod.plugin;
@@ -283,6 +308,18 @@ export class PluginRegistry {
         throw new Error(
           `插件类型不匹配：清单声明 ${manifest.type}，实例为 ${instance.type}`,
         );
+      }
+
+      if (instance.id !== manifest.id) {
+        throw new Error(`插件 id 不匹配：清单声明 ${manifest.id}，实例为 ${instance.id}`);
+      }
+
+      if (instance.name !== manifest.name) {
+        throw new Error(`插件 name 不匹配：清单声明 ${manifest.name}，实例为 ${instance.name}`);
+      }
+
+      if (instance.version !== manifest.version) {
+        throw new Error(`插件 version 不匹配：清单声明 ${manifest.version}，实例为 ${instance.version}`);
       }
 
       this.plugins.set(manifest.id, {
@@ -341,6 +378,7 @@ export class PluginRegistry {
     for (const pluginId of this.loadOrder) {
       const record = this.plugins.get(pluginId);
       if (!record || record.error) continue; // 加载失败的跳过
+      if (record.loaded) continue;
 
       try {
         // C5 修复：为每个插件创建受限的初始化上下文（基于声明的权限）
@@ -366,56 +404,75 @@ export class PluginRegistry {
    * 仅当插件 enabled 时注册
    * C5 修复：根据声明的权限决定是否桥接（未声明对应权限的插件不桥接）
    */
-  private bridgePlugin(record: PluginRecord): void {
+  private bridgePlugin(record: PluginRecord): boolean {
     const plugin = record.instance;
-    if (!plugin.enabled) return;
+    if (!plugin.enabled) return true;
 
     // C5 修复：获取插件声明的权限
     const permissions = new Set<PluginPermission>(record.manifest.permissions ?? []);
+    const registeredToolNames: string[] = [];
+    const registeredHookHandlers: Array<{ phase: Parameters<AgentMiddlewarePipeline['register']>[0]; handler: Parameters<AgentMiddlewarePipeline['register']>[1] }> = [];
 
     try {
       if (plugin.type === 'tool') {
+        const toolPlugin = plugin as ToolPlugin;
+        const tools = toolPlugin.getTools();
         // C5 修复：tool 类型插件需要 'registry' 权限才能注册工具
-        if (!permissions.has('registry')) {
+        if (tools.length > 0 && !permissions.has('registry')) {
           logger.warn(`Plugin ${plugin.id} 未声明 'registry' 权限，跳过工具注册`, {
             declaredPermissions: Array.from(permissions),
           });
-          return;
+          return false;
         }
-        const toolPlugin = plugin as ToolPlugin;
-        const tools = toolPlugin.getTools();
         for (const tool of tools) {
-          this.options.toolRegistry.register(tool);
-          record.registeredToolNames.push(tool.definition.name);
+          if (this.options.toolRegistry.has(tool.definition.name)) {
+            throw new Error(`工具名冲突: ${tool.definition.name}`);
+          }
+          this.options.toolRegistry.register(tool, false);
+          registeredToolNames.push(tool.definition.name);
         }
+        record.registeredToolNames = registeredToolNames;
         logger.debug(`Plugin ${plugin.id} registered ${tools.length} tools`, {
           tools: record.registeredToolNames,
         });
       } else if (plugin.type === 'hook') {
+        const hookPlugin = plugin as HookPlugin;
+        const hooks = hookPlugin.getHooks();
         // C5 修复：hook 类型插件需要 'middleware' 权限才能注册钩子
-        if (!permissions.has('middleware')) {
+        if (hooks.length > 0 && !permissions.has('middleware')) {
           logger.warn(`Plugin ${plugin.id} 未声明 'middleware' 权限，跳过钩子注册`, {
             declaredPermissions: Array.from(permissions),
           });
-          return;
+          return false;
         }
-        const hookPlugin = plugin as HookPlugin;
-        const hooks = hookPlugin.getHooks();
         for (const hook of hooks) {
           this.options.middlewarePipeline.register(hook.phase, hook.handler);
           record.registeredHookPhases.push(hook.phase);
-          record.registeredHookHandlers.push({ phase: hook.phase, handler: hook.handler });
+          registeredHookHandlers.push({ phase: hook.phase, handler: hook.handler });
         }
+        record.registeredHookHandlers = registeredHookHandlers;
         logger.debug(`Plugin ${plugin.id} registered ${hooks.length} hooks`, {
           phases: record.registeredHookPhases,
         });
       }
       // theme/router 类型无需桥接（router 由调用方按需查询）
+      return true;
     } catch (err) {
+      for (const toolName of registeredToolNames) {
+        this.options.toolRegistry.unregister(toolName);
+      }
+      for (const hook of registeredHookHandlers) {
+        this.options.middlewarePipeline.unregister(hook.phase, hook.handler);
+      }
+      record.registeredToolNames = [];
+      record.registeredHookPhases = [];
+      record.registeredHookHandlers = [];
       // 桥接失败：记录错误但不崩溃
       const errorMsg = err instanceof Error ? err.message : String(err);
       record.error = `bridge failed: ${errorMsg}`;
+      record.loaded = false;
       logger.warn(`Plugin bridge failed: ${record.manifest.id}`, { error: errorMsg });
+      return false;
     }
   }
 
@@ -433,7 +490,9 @@ export class PluginRegistry {
       const record = this.plugins.get(pluginId);
       if (!record || !record.loaded || !record.instance) continue;
       try {
+        this.disable(pluginId);
         await record.instance.destroy();
+        record.loaded = false;
       } catch (err) {
         // destroy 失败不阻塞其他插件
         logger.warn(`Plugin destroy failed: ${pluginId}`, {
@@ -463,7 +522,12 @@ export class PluginRegistry {
     record.registeredToolNames = [];
     record.registeredHookPhases = [];
     record.registeredHookHandlers = [];
-    this.bridgePlugin(record);
+    const bridged = this.bridgePlugin(record);
+    if (!bridged) {
+      record.instance.enabled = false;
+      this.persistState();
+      return false;
+    }
     logger.info(`Plugin enabled: ${pluginId}`);
     // Phase 27 Task 4：同步持久化状态
     this.persistState();

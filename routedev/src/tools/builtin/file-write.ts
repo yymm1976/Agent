@@ -6,8 +6,18 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '../types.js';
 import { checkPathBoundary } from './search-utils.js';
+// Phase 53 Task 7：配置保护守卫（阻止弱化安全/治理配置）
+import { ConfigGuard } from './config-guard.js';
 
 export class FileWriteTool implements ITool {
+  // Phase 53 Task 7：配置保护守卫（可选，未注入时跳过检查）
+  private configGuard?: ConfigGuard;
+
+  /** Phase 53 Task 7：注入配置保护守卫 */
+  setConfigGuard(guard: ConfigGuard): void {
+    this.configGuard = guard;
+  }
+
   readonly definition: ToolDefinition = {
     name: 'file_write',
     description: '当用户需要创建新文件或覆盖写入文件内容时，使用此工具。支持追加模式，写入前会校验路径安全性。',
@@ -64,6 +74,19 @@ export class FileWriteTool implements ITool {
         error: boundaryError,
         durationMs: 0,
       };
+    }
+
+    // Phase 53 Task 7：配置保护守卫（受 guard 注入控制，检查写入内容是否弱化安全/治理配置）
+    if (this.configGuard) {
+      const guardResult = this.configGuard.checkModification(filePath, content);
+      if (!guardResult.allowed) {
+        return {
+          success: false,
+          output: '',
+          error: guardResult.reason ?? '配置保护守卫阻止了此操作',
+          durationMs: 0,
+        };
+      }
     }
 
     try {

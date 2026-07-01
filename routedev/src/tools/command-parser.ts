@@ -38,7 +38,7 @@ export interface ParsedCommand {
 }
 
 /**
- * I1 修复：将命令字符串按命令链分隔符（&&、||、;）分割
+ * I1 修复：将命令字符串按命令链分隔符（&&、||、;、|）分割
  * 注意：仅在引号外分割，避免误分割引号内的分隔符
  * @returns 分割后的子命令字符串数组（已 trim）
  */
@@ -82,6 +82,13 @@ function splitCommandChain(command: string): string[] {
         if (current.trim()) parts.push(current.trim());
         current = '';
         i += 2;
+        continue;
+      }
+      // | 管道分隔符
+      if (ch === '|') {
+        if (current.trim()) parts.push(current.trim());
+        current = '';
+        i++;
         continue;
       }
       // ; 分隔符

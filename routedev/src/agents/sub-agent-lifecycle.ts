@@ -13,6 +13,9 @@
 //   aborted    → （终态）
 //   blocked    → pending / aborted（门控解除后回到 pending）
 
+// Phase 53 Task 11：熔断器（type-only import，避免运行时循环依赖）
+import type { CircuitBreaker } from '../agent/circuit-breaker.js';
+
 /** 子 Agent 状态 */
 type SubAgentStatus =
   | 'pending'
@@ -59,9 +62,33 @@ const TERMINAL_STATES: SubAgentStatus[] = ['completed', 'failed', 'aborted'];
  */
 export class SubAgentLifecycle {
   private agents: Map<string, SubAgentState> = new Map();
+  /**
+   * Phase 53 Task 11：熔断器（可选）
+   * 接入后，register 时会检查熔断器状态（fail-open：拒绝时仅记录日志，仍注册）
+   */
+  private circuitBreaker?: CircuitBreaker;
+
+  /**
+   * Phase 53 Task 11：注入熔断器
+   * 接入后，register 子 Agent 前会检查熔断器状态（fail-open，不阻塞状态管理）
+   */
+  setCircuitBreaker(breaker: CircuitBreaker | null): void {
+    this.circuitBreaker = breaker ?? undefined;
+  }
 
   /** 注册新子 Agent（初始状态 pending） */
   register(agentId: string, taskId: string, role: string, profileId: string): void {
+    // Phase 53 Task 11：熔断器检查（子 Agent 注册前，fail-open）
+    // 熔断器打开时仅记录日志，不阻塞注册（状态管理不应被熔断器阻断）
+    if (this.circuitBreaker) {
+      try {
+        if (!this.circuitBreaker.canCall()) {
+          console.warn(`[Phase53 Task 11] CircuitBreaker open, sub-agent registration may fail: ${agentId}`);
+        }
+      } catch {
+        // fail-open：熔断器检查异常不影响注册
+      }
+    }
     this.agents.set(agentId, {
       agentId,
       taskId,

@@ -1,9 +1,11 @@
 // src/harness/audit-logger.ts
 // 审计日志器：记录所有敏感/关键操作到 JSONL
+// Phase 53 Task 4：扩展为 SHA-256 哈希链，提供防篡改能力（可配置开关）
 
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import type {
   AuditRecord,
   AuditAction,
@@ -30,6 +32,31 @@ export interface QualityAuditRecord extends AuditRecord {
   qualityMetadata?: QualityMetadata;
 }
 
+/**
+ * Phase 53 Task 4：哈希链审计记录
+ * 每条记录包含 previousHash，形成防篡改链
+ * hash = SHA-256(timestamp + agentId + action + target + previousHash + details)
+ */
+export interface HashChainRecord extends AuditRecord {
+  /** 上一条记录的 hash（创世记录为 64 个 '0'） */
+  previousHash: string;
+  /** 当前记录的 hash */
+  hash: string;
+}
+
+/**
+ * Phase 53 Task 4：哈希链审计配置
+ * enabled=true 时启用哈希链（默认 false，向后兼容）
+ */
+export interface AuditChainConfig {
+  /** 是否启用哈希链 */
+  enabled: boolean;
+  /** 审计日志文件路径（可选，默认沿用 AuditLogger 的 storageDir） */
+  logFile?: string;
+  /** 溢出时保留的接缝哈希数 */
+  overflowSealCount?: number;
+}
+
 /** Phase 40 Task 3：质量信号统一接口（兼容 QualitySignal 与 FeedbackSignal） */
 export interface LoggableQualitySignal {
   source: 'implicit' | 'explicit';
@@ -46,13 +73,72 @@ const DEFAULT_CONFIG: AuditLoggerConfig = {
   retentionDays: 30,
 };
 
+/** Phase 53 Task 4：创世哈希（64 个 '0'） */
+const GENESIS_HASH = '0'.repeat(64);
+
 export class AuditLogger {
   private config: AuditLoggerConfig;
+  /**
+   * Phase 53 Task 4：哈希链配置
+   * enabled=false 时退回普通追加日志（向后兼容）
+   */
+  private chainConfig: AuditChainConfig = { enabled: false };
+  /** 上一条记录的 hash（链式） */
+  private previousHash: string = GENESIS_HASH;
   private sessionId: string;
 
   constructor(sessionId: string, config?: Partial<AuditLoggerConfig>) {
     this.sessionId = sessionId;
     this.config = { ...DEFAULT_CONFIG, ...config };
+  }
+
+  /**
+   * Phase 53 Task 4：启用/禁用哈希链
+   * 启用后，所有 log() 写入的记录会包含 previousHash + hash 字段
+   * 禁用时退回普通追加日志（向后兼容）
+   */
+  setChainConfig(chainConfig: AuditChainConfig): void {
+    this.chainConfig = chainConfig;
+    // 启用时重置 previousHash 为创世哈希（新链开始）
+    if (chainConfig.enabled) {
+      this.previousHash = GENESIS_HASH;
+    }
+  }
+
+  /** Phase 53 Task 4：计算记录的 SHA-256 哈希 */
+  private computeHash(record: AuditRecord, previousHash: string): string {
+    const data = `${record.timestamp}${record.agentId}${record.action}${record.target}${previousHash}${JSON.stringify(record.details)}`;
+    return crypto.createHash('sha256').update(data).digest('hex');
+  }
+
+  /**
+   * Phase 53 Task 4：验证哈希链完整性
+   * 用 timingSafeEqual 防止时序攻击
+   * @param records 按时间顺序排列的哈希链记录
+   * @returns true=链完整，false=被篡改或链断裂
+   */
+  verifyChain(records: HashChainRecord[]): boolean {
+    let prevHash = GENESIS_HASH;
+    for (const record of records) {
+      // 1. 验证 previousHash 链接正确
+      if (record.previousHash !== prevHash) {
+        return false; // 链断裂
+      }
+      // 2. 验证当前记录的 hash 未被篡改
+      const computed = this.computeHash(record, record.previousHash);
+      try {
+        // timingSafeEqual 要求两个 Buffer 长度相等
+        const computedBuf = Buffer.from(computed, 'hex');
+        const recordBuf = Buffer.from(record.hash, 'hex');
+        if (computedBuf.length !== recordBuf.length || !crypto.timingSafeEqual(computedBuf, recordBuf)) {
+          return false; // 哈希不匹配，记录被篡改
+        }
+      } catch {
+        return false; // hash 格式无效
+      }
+      prevHash = record.hash;
+    }
+    return true;
   }
 
   /** 记录一条审计事件 */
@@ -272,9 +358,23 @@ export class AuditLogger {
     const dayDir = path.join(dir, today);
     const filePath = path.join(dayDir, `${this.sessionId}.audit.jsonl`);
     ensureDir(dayDir);
+
+    // Phase 53 Task 4：哈希链启用时，附加 previousHash + hash 字段
+    let recordToWrite: AuditRecord | HashChainRecord = record;
+    if (this.chainConfig.enabled) {
+      const hash = this.computeHash(record, this.previousHash);
+      const chainRecord: HashChainRecord = {
+        ...record,
+        previousHash: this.previousHash,
+        hash,
+      };
+      this.previousHash = hash; // 更新链指针
+      recordToWrite = chainRecord;
+    }
+
     // 同步写入保证测试可读性；生产环境可换 appendFile
     try {
-      fsSync.appendFileSync(filePath, JSON.stringify(record) + '\n', 'utf-8');
+      fsSync.appendFileSync(filePath, JSON.stringify(recordToWrite) + '\n', 'utf-8');
     } catch (err) {
       logger.warn('AuditLogger: write failed', {
         error: err instanceof Error ? err.message : String(err),

@@ -1,35 +1,23 @@
 // src/cli/commands/schedule.ts
 // /schedule 命令：定时任务管理
 // Phase 37 Task 2：子命令 list / add / remove / toggle / run / next
-// 任务持久化到 ~/.qoderwork/routedev/scheduled-tasks.json
+// 任务持久化到 <cwd>/.routedev/schedule-tasks.json（与 ScheduleEngine 共享同一 store）
+//
+// Phase 53 接线修复：原实现使用 os.homedir()/.qoderwork/routedev/scheduled-tasks.json，
+// 与 app-init.ts 中 ScheduleEngine 的 store 路径（<cwd>/.routedev/schedule-tasks.json）不一致，
+// 导致命令侧增删改与引擎触发读不到同一份数据。现优先复用 ctx.scheduleEngine 实例，
+// 其次按引擎同款路径创建 ScheduleStore，并使用 config.scheduler 的 defaultTimezone/maxTasks。
 
 import type { CommandDefinition } from '../command-registry.js';
+import type { ServiceContext } from '../service-context.js';
 import path from 'node:path';
-import os from 'node:os';
 import { ScheduleStore } from '../../scheduler/store.js';
-import { validateCron, parseCron, getNextRun } from '../../scheduler/cron-parser.js';
+import { ScheduleEngine } from '../../scheduler/engine.js';
+import { validateCron } from '../../scheduler/cron-parser.js';
 import type { ScheduledTask } from '../../scheduler/types.js';
 
-/** 默认存储路径 */
-const DEFAULT_STORE_PATH = path.join(
-  os.homedir(),
-  '.qoderwork',
-  'routedev',
-  'scheduled-tasks.json',
-);
-
-/** 默认时区 */
-const DEFAULT_TIMEZONE = 'Asia/Shanghai';
-
-/** 获取默认 store 实例 */
-function getStore(): ScheduleStore {
-  return new ScheduleStore(DEFAULT_STORE_PATH);
-}
-
-/** 生成任务 ID */
-function generateId(): string {
-  return `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
+/** 默认时区（当 config.scheduler.defaultTimezone 未配置时的兜底） */
+const FALLBACK_TIMEZONE = 'Asia/Shanghai';
 
 /**
  * 解析带引号的参数
@@ -45,50 +33,39 @@ function parseQuotedArgs(args: string): string[] {
   return result;
 }
 
-/**
- * 将时区名称转换为 UTC 偏移分钟数
- * 使用 Intl.DateTimeFormat（内置，不引入外部库）
- */
-function getTimezoneOffsetMinutes(timezone: string): number {
-  try {
-    const now = new Date();
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      hour12: false,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    });
-    const parts = formatter.formatToParts(now);
-    const get = (type: string): number =>
-      parseInt(parts.find((p) => p.type === type)?.value ?? '0', 10);
-    const tzAsUtc = Date.UTC(
-      get('year'),
-      get('month') - 1,
-      get('day'),
-      get('hour') % 24,
-      get('minute'),
-      get('second'),
-    );
-    const diffMs = tzAsUtc - now.getTime();
-    return Math.round(diffMs / 60000);
-  } catch {
-    return -new Date().getTimezoneOffset();
-  }
+/** 生成任务 ID */
+function generateId(): string {
+  return `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** 计算指定 cron 在指定时区下的下次执行时间戳 */
-function calcNextRun(cron: string, timezone: string): number | undefined {
-  try {
-    const parsed = parseCron(cron);
-    const offset = getTimezoneOffsetMinutes(timezone);
-    return getNextRun(parsed, new Date(), offset).getTime();
-  } catch {
-    return undefined;
+/**
+ * 获取调度器实例：优先复用 ctx.scheduleEngine（与后台引擎同一 store），
+ * 否则用与引擎一致的路径（<cwd>/.routedev/schedule-tasks.json）创建独立 store + engine。
+ * 这样即便 ctx.scheduleEngine 未注入（如 CLI 直接调用），命令侧操作仍写入引擎会读取的文件。
+ */
+function getScheduler(ctx: ServiceContext): {
+  engine: ScheduleEngine;
+  timezone: string;
+  maxTasks: number;
+} {
+  const timezone = ctx.config.scheduler?.defaultTimezone ?? FALLBACK_TIMEZONE;
+  const maxTasks = ctx.config.scheduler?.maxTasks ?? 20;
+
+  if (ctx.scheduleEngine) {
+    return { engine: ctx.scheduleEngine, timezone, maxTasks };
   }
+
+  // 兜底：按 app-init.ts 中 ScheduleEngine 同款路径创建 store + engine
+  // 不调用 start()——只用于命令侧的增删改查，不重复触发定时器
+  const storePath = path.join(ctx.cwd, '.routedev', 'schedule-tasks.json');
+  const store = new ScheduleStore(storePath);
+  const engine = new ScheduleEngine({
+    store,
+    onTaskTrigger: async () => {
+      /* 命令侧 engine 不触发任务，触发由 ctx.scheduleEngine 负责 */
+    },
+  });
+  return { engine, timezone, maxTasks };
 }
 
 /** 格式化下次执行时间 */
@@ -108,11 +85,11 @@ export const scheduleCommand: CommandDefinition = {
     const spaceIdx = trimmed.search(/\s/);
     const sub = (spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx)).toLowerCase();
     const rest = spaceIdx === -1 ? '' : trimmed.slice(spaceIdx + 1).trim();
-    const store = getStore();
+    const { engine, timezone, maxTasks } = getScheduler(ctx);
 
     switch (sub) {
       case 'list': {
-        const tasks = store.list();
+        const tasks = engine.list();
         if (tasks.length === 0) {
           return { type: 'handled', messages: ['（暂无定时任务）'] };
         }
@@ -146,25 +123,46 @@ export const scheduleCommand: CommandDefinition = {
           };
         }
 
+        // 校验任务数量上限（防止无限添加拖垮调度循环）
+        const currentCount = engine.list().length;
+        if (currentCount >= maxTasks) {
+          return {
+            type: 'handled',
+            messages: [
+              `❌ 已达到最大任务数 ${maxTasks}（当前 ${currentCount} 个）。` +
+                `可在 config.scheduler.maxTasks 调整上限。`,
+            ],
+          };
+        }
+
+        // 由引擎统一计算 nextRun（与后台触发逻辑共用 getTimezoneOffsetMinutes/DST 修正）
+        let nextRun: number | undefined;
+        try {
+          nextRun = engine.getNextRun(cron, timezone).getTime();
+        } catch {
+          nextRun = undefined;
+        }
+
         const task: ScheduledTask = {
           id: generateId(),
           name,
           goal,
           cron,
-          timezone: DEFAULT_TIMEZONE,
+          timezone,
           enabled: true,
-          nextRun: calcNextRun(cron, DEFAULT_TIMEZONE),
+          nextRun,
           runCount: 0,
           notifyOnComplete: true,
           createdAt: Date.now(),
         };
-        store.add(task);
+        engine.add(task);
         return {
           type: 'handled',
           messages: [
             `✓ 定时任务已添加: ${task.id}`,
             `  名称: ${name}`,
             `  cron: ${cron}`,
+            `  时区: ${timezone}`,
             `  下次执行: ${formatNextRun(task)}`,
           ],
         };
@@ -175,10 +173,10 @@ export const scheduleCommand: CommandDefinition = {
         if (!id) {
           return { type: 'handled', messages: ['用法: /schedule remove <id>'] };
         }
-        const ok = store.remove(id);
+        engine.remove(id);
         return {
           type: 'handled',
-          messages: [ok ? `✓ 任务 ${id} 已删除` : `❌ 任务 ${id} 不存在`],
+          messages: [`✓ 任务 ${id} 已删除`],
         };
       }
 
@@ -187,17 +185,17 @@ export const scheduleCommand: CommandDefinition = {
         if (!id) {
           return { type: 'handled', messages: ['用法: /schedule toggle <id>'] };
         }
-        const task = store.get(id);
+        const task = engine.list().find((t) => t.id === id);
         if (!task) {
           return { type: 'handled', messages: [`❌ 任务 ${id} 不存在`] };
         }
         const newEnabled = !task.enabled;
-        const updates: Partial<ScheduledTask> = { enabled: newEnabled };
-        // 重新启用时计算 nextRun
-        if (newEnabled) {
-          updates.nextRun = calcNextRun(task.cron, task.timezone);
-        }
-        store.update(id, updates);
+        // 启用时由 engine.update 自动重算 nextRun；禁用时清空 nextRun
+        const updates: Partial<ScheduledTask> = {
+          enabled: newEnabled,
+          nextRun: newEnabled ? engine.getNextRun(task.cron, task.timezone).getTime() : undefined,
+        };
+        engine.update(id, updates);
         return {
           type: 'handled',
           messages: [`✓ 任务 ${id} 已${newEnabled ? '启用' : '禁用'}`],
@@ -209,14 +207,14 @@ export const scheduleCommand: CommandDefinition = {
         if (!id) {
           return { type: 'handled', messages: ['用法: /schedule run <id>'] };
         }
-        const task = store.get(id);
+        const task = engine.list().find((t) => t.id === id);
         if (!task) {
           return { type: 'handled', messages: [`❌ 任务 ${id} 不存在`] };
         }
         // 立即执行：通过 commandBridge 启动 goal
         ctx.commandBridge.startGoal(task.goal);
         // 更新执行计数（不改变 nextRun，让引擎按原计划继续）
-        store.update(id, {
+        engine.update(id, {
           lastRun: Date.now(),
           runCount: task.runCount + 1,
         });
@@ -227,7 +225,7 @@ export const scheduleCommand: CommandDefinition = {
       }
 
       case 'next': {
-        const tasks = store.list();
+        const tasks = engine.list();
         const enabled = tasks.filter((t) => t.enabled);
         if (enabled.length === 0) {
           return { type: 'handled', messages: ['（无启用的定时任务）'] };

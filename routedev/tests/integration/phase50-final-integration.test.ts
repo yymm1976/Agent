@@ -36,7 +36,8 @@ import { SubAgentScoreCardCollector } from '../../src/agents/sub-agent-score-car
 import { resumeCommand } from '../../src/cli/commands/resume.js';
 import { traceCommand } from '../../src/cli/commands/trace.js';
 import { diffCommand } from '../../src/cli/commands/diff.js';
-import type { ExecutionSnapshot } from '../../src/agent/durable-executor.js';
+// E11 更新：durable-executor 已删除，改用 PersistedGoal 类型
+import type { PersistedGoal } from '../../src/agent/goal-persistence.js';
 import type { TraceSpan } from '../../src/harness/trace-types.js';
 import type { ServiceContext } from '../../src/cli/service-context.js';
 
@@ -78,18 +79,24 @@ function makeInnerSpawnFn(): SpawnAgentFunction & { calls: SpawnAgentParams[] } 
   return fn;
 }
 
-/** 创建测试用执行快照 */
-function makeSnapshot(overrides: Partial<ExecutionSnapshot> = {}): ExecutionSnapshot {
+/** 创建测试用 PersistedGoal（替代旧 ExecutionSnapshot） */
+function makeGoal(overrides: Partial<PersistedGoal> = {}): PersistedGoal {
   return {
-    planId: 'plan-final-001',
-    goal: '端到端测试目标',
-    startedAt: Date.now() - 60000,
-    lastStepCompleted: 3,
-    totalSteps: 5,
+    id: 'plan-final-001',
+    spec: { goal: '端到端测试目标', context: '', steps: [], done: '', verification: '' },
+    plan: {
+      steps: [
+        { id: '1', description: 'step1', status: 'completed', dependencies: [] },
+        { id: '2', description: 'step2', status: 'completed', dependencies: [] },
+        { id: '3', description: 'step3', status: 'completed', dependencies: [] },
+      ],
+    },
     status: 'paused',
-    completedResults: [],
-    nextStep: null,
+    checkpointIds: [],
+    createdAt: Date.now() - 60000,
     updatedAt: Date.now() - 30000,
+    tokenUsed: 1000,
+    tokenBudget: 10000,
     ...overrides,
   };
 }
@@ -351,15 +358,16 @@ describe('Phase 50 Task 10 - UI 组件端到端', () => {
   });
 
   it('3.1 /resume 多快照 + resumePicker 开关开启时触发 showResumePicker 回调', async () => {
-    const snapshots = [
-      makeSnapshot({ planId: 'plan-a', goal: '任务A' }),
-      makeSnapshot({ planId: 'plan-b', goal: '任务B' }),
+    // E11 更新：durableExecutor → GoalPersistence.listResumable
+    const goals: PersistedGoal[] = [
+      makeGoal({ id: 'plan-a', spec: { goal: '任务A', context: '', steps: [], done: '', verification: '' } }),
+      makeGoal({ id: 'plan-b', spec: { goal: '任务B', context: '', steps: [], done: '', verification: '' } }),
     ];
+    const { GoalPersistence } = await import('../../src/agent/goal-persistence.js');
+    vi.spyOn(GoalPersistence.prototype, 'listResumable').mockResolvedValue(goals);
     const showResumePicker = vi.fn();
     const ctx = {
-      durableExecutor: {
-        listRecoverableAsync: vi.fn(async () => snapshots),
-      },
+      cwd: '/tmp/test-routedev',
       commandBridge: {
         addSystemMessage: vi.fn(),
         showResumePicker,
@@ -376,7 +384,7 @@ describe('Phase 50 Task 10 - UI 组件端到端', () => {
     const result = await resumeCommand.handler('', ctx);
     expect(result.type).toBe('handled');
     expect(showResumePicker).toHaveBeenCalledTimes(1);
-    expect(showResumePicker).toHaveBeenCalledWith(snapshots);
+    expect(showResumePicker).toHaveBeenCalledWith(goals);
   });
 
   it('3.2 /trace view tracePanel 开关开启时触发 showTracePanel 回调', async () => {
@@ -461,7 +469,7 @@ describe('Phase 50 Task 10 - 死代码清理后构建通过', () => {
     'src/utils/error-messages.ts',
     'src/config/codegraph-manager.ts',
     'src/harness/tracing-executor.ts',
-    'src/harness/experiment-runner.ts',
+    // E11 移除：experiment-runner.ts 已重写为活代码（不再是死代码）
     'src/hooks/market-manager.ts',
     'src/hooks/generator.ts',
     'src/plugins/sdk.ts',
@@ -576,8 +584,9 @@ describe('Phase 50 Task 10 - export 清理后构建通过', () => {
 
     // goalIntegration（Task 1）
     expect(parsed.goalIntegration).toBeDefined();
-    expect(parsed.goalIntegration.auditEnabled).toBe(false);
-    expect(parsed.goalIntegration.persistenceEnabled).toBe(false);
+    // E11 更新：audit/persistence 默认值 Phase 47/54 修复为 true（功能必需）
+    expect(parsed.goalIntegration.auditEnabled).toBe(true);
+    expect(parsed.goalIntegration.persistenceEnabled).toBe(true);
     expect(parsed.goalIntegration.promptBuilderEnabled).toBe(false);
     expect(parsed.goalIntegration.requirementChangeEnabled).toBe(false);
 
@@ -589,11 +598,12 @@ describe('Phase 50 Task 10 - export 清理后构建通过', () => {
 
     // delegationIntegration（Task 3）
     expect(parsed.delegationIntegration).toBeDefined();
-    expect(parsed.delegationIntegration.contextPackerEnabled).toBe(false);
-    expect(parsed.delegationIntegration.delegationGateEnabled).toBe(false);
-    expect(parsed.delegationIntegration.delegationEnforcerEnabled).toBe(false);
-    expect(parsed.delegationIntegration.lifecycleEnabled).toBe(false);
-    expect(parsed.delegationIntegration.scoreCardEnabled).toBe(false);
+    // E11 更新：5 个子开关默认值已修复为 true
+    expect(parsed.delegationIntegration.contextPackerEnabled).toBe(true);
+    expect(parsed.delegationIntegration.delegationGateEnabled).toBe(true);
+    expect(parsed.delegationIntegration.delegationEnforcerEnabled).toBe(true);
+    expect(parsed.delegationIntegration.lifecycleEnabled).toBe(true);
+    expect(parsed.delegationIntegration.scoreCardEnabled).toBe(true);
 
     // ui.components（Task 7）
     expect(parsed.ui?.components).toBeDefined();

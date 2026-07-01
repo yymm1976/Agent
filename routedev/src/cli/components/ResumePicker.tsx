@@ -5,7 +5,7 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { getColor } from '../design-system.js';
-import type { ExecutionSnapshot } from '../../agent/durable-executor.js';
+import type { PersistedGoal } from '../../agent/goal-persistence.js';
 
 // ============================================================
 // 类型定义
@@ -13,7 +13,7 @@ import type { ExecutionSnapshot } from '../../agent/durable-executor.js';
 
 export interface ResumePickerProps {
   /** 可恢复的执行快照列表 */
-  snapshots: ExecutionSnapshot[];
+  snapshots: PersistedGoal[];
   /** 选择恢复某个快照时回调 */
   onResume: (planId: string) => void;
   /** 取消选择时回调 */
@@ -29,16 +29,25 @@ export function formatSnapshotTime(timestamp: number): string {
   return new Date(timestamp).toLocaleString('zh-CN');
 }
 
+/** 从 PersistedGoal 计算进度（已完成步数 / 总步数） */
+function computeProgress(goal: PersistedGoal): { completed: number; total: number } {
+  const steps = goal.plan?.steps ?? [];
+  const total = steps.length;
+  const completed = steps.filter((s) => s.status === 'completed').length;
+  return { completed, total };
+}
+
 /** 格式化单个快照为一行摘要文本 */
-export function formatSnapshotLine(snapshot: ExecutionSnapshot, index: number): string {
-  const status = snapshot.status === 'paused' ? '⏸ 暂停' : '❌ 失败';
-  const progress = `${snapshot.lastStepCompleted}/${snapshot.totalSteps}`;
-  const goal = snapshot.goal.slice(0, 40);
-  return `  ${index + 1}. [${snapshot.planId}] ${status} | 进度 ${progress} | ${goal}`;
+export function formatSnapshotLine(snapshot: PersistedGoal, index: number): string {
+  const status = snapshot.status === 'paused' ? '⏸ 暂停' : '🔄 执行中';
+  const { completed, total } = computeProgress(snapshot);
+  const progress = `${completed}/${total}`;
+  const goal = (snapshot.spec?.goal ?? '').slice(0, 40);
+  return `  ${index + 1}. [${snapshot.id}] ${status} | 进度 ${progress} | ${goal}`;
 }
 
 /** 将快照列表渲染为纯文本（供 /resume 命令非交互模式使用） */
-export function renderSnapshotListText(snapshots: ExecutionSnapshot[]): string {
+export function renderSnapshotListText(snapshots: PersistedGoal[]): string {
   if (snapshots.length === 0) {
     return '无可恢复的执行。所有计划已完成或未启动。';
   }
@@ -75,7 +84,7 @@ export function ResumePicker({ snapshots, onResume, onCancel }: ResumePickerProp
     } else if (key.return) {
       // Enter 恢复选中的快照
       const snapshot = snapshots[selected];
-      if (snapshot) onResume(snapshot.planId);
+      if (snapshot) onResume(snapshot.id);
     } else if (key.escape) {
       // Esc 取消
       onCancel();
@@ -91,14 +100,15 @@ export function ResumePicker({ snapshots, onResume, onCancel }: ResumePickerProp
         const isSelected = idx === selected;
         const marker = isSelected ? '▶' : ' ';
         const color = isSelected ? getColor('accent') : getColor('info');
-        const status = snapshot.status === 'paused' ? '⏸ 暂停' : '❌ 失败';
-        const progress = `${snapshot.lastStepCompleted}/${snapshot.totalSteps}`;
-        const goal = snapshot.goal.slice(0, 40);
+        const status = snapshot.status === 'paused' ? '⏸ 暂停' : '🔄 执行中';
+        const { completed, total } = computeProgress(snapshot);
+        const progress = `${completed}/${total}`;
+        const goal = (snapshot.spec?.goal ?? '').slice(0, 40);
         return (
-          <Box key={snapshot.planId}>
+          <Box key={snapshot.id}>
             <Text color={color}>{marker} </Text>
             <Text color={color}>
-              {idx + 1}. [{snapshot.planId}] {status} | 进度 {progress} | {goal}
+              {idx + 1}. [{snapshot.id}] {status} | 进度 {progress} | {goal}
             </Text>
           </Box>
         );

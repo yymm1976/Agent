@@ -98,7 +98,8 @@ describe('WebhookServer Security', () => {
     });
 
     it('should accept body under 1MB', async () => {
-      server = new WebhookServer({ port: 19911 });
+      // I3 修复：默认要求认证，需显式 devModeAuth=false 才放行
+      server = new WebhookServer({ port: 19911, devModeAuth: false });
       server.registerAdapter(makeMockAdapter());
       await server.start();
 
@@ -177,8 +178,9 @@ describe('WebhookServer Security', () => {
       expect(res.status).toBe(200);
     });
 
-    it('should skip auth when authToken not configured (dev mode)', async () => {
-      server = new WebhookServer({ port: 19917 });
+    it('should skip auth when authToken not configured and devModeAuth=false', async () => {
+      // I3 修复：默认 devModeAuth=true 要求认证；需显式 false 才放行
+      server = new WebhookServer({ port: 19917, devModeAuth: false });
       server.registerAdapter(makeMockAdapter());
       await server.start();
 

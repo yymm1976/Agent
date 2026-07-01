@@ -4,6 +4,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from 'electron';
 import type { Tray } from 'electron';
 import * as path from 'node:path';
+import * as fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type {
   ChatSendPayload,
@@ -18,7 +19,6 @@ import type {
   ToolConfirmPayload,
   ToolExecutePayload,
   ExperimentInfo,
-  CodeGraphStatus,
   HookInfo,
 } from '../shared/ipc-types.js';
 import { loadConfig } from '../../src/config/loader.js';
@@ -36,9 +36,38 @@ let mainWindow: BrowserWindow | null = null;
 let engine: RouteDevEngine | null = null;
 // 系统托盘需保持全局引用，否则会被垃圾回收导致托盘消失
 let tray: Tray | null = null;
+// C2 修复：记录用户通过选择器授权过的工作目录集合
+// setCwd 只接受集合内路径，防止渲染层被劫持后切到任意本地目录
+const authorizedCwds = new Set<string>();
+
+/** 校验目标路径是否安全可用作项目工作目录 */
+function isValidProjectCwd(target: string): boolean {
+  if (!target || typeof target !== 'string') return false;
+  // 必须是绝对路径
+  if (!path.isAbsolute(target)) return false;
+  // 拒绝系统根目录 / 用户主目录
+  const resolved = path.resolve(target);
+  if (resolved === path.parse(resolved).root) return false;
+  try {
+    const os = require('node:os');
+    if (resolved === os.homedir()) return false;
+  } catch { /* ignore */ }
+  // 必须存在于磁盘且是目录
+  try {
+    const stat = fs.statSync(resolved);
+    if (!stat.isDirectory()) return false;
+  } catch {
+    return false;
+  }
+  return true;
+}
 
 // electron-vite dev 模式下 app.isPackaged 可能返回 true，用多重判断
-const isDev = !app.isPackaged || !!process.env.ELECTRON_RENDERER_URL;
+// 陷阱 #194：`pnpm start:gui`（electron .）时 app.isPackaged=false 会被误判为 dev 模式，
+// 但实际没有 dev server 在 5173 端口运行，导致渲染进程加载 http://localhost:5173 失败白屏。
+// 修复：只有显式设置 ELECTRON_RENDERER_URL 环境变量（electron-vite dev 会设置）才走 dev 模式，
+// 否则一律加载构建产物（app.isPackaged=false 时也走生产路径）
+const isDev = !!process.env.ELECTRON_RENDERER_URL;
 
 // 移除默认菜单栏（含 Help 等框架自带按钮），避免顶部突兀边框
 Menu.setApplicationMenu(null);
@@ -70,6 +99,11 @@ function sendTokenProfile(payload: import('../../src/agent/token-profiler.js').T
 /** 向渲染进程发送 Trace Span 事件 */
 function sendTraceEvent(payload: import('../../src/harness/trace-types.js').TraceSpan): void {
   mainWindow?.webContents.send('trace:event', payload);
+}
+
+/** Phase 54：向渲染进程发送 Goal 执行结构化事件（驱动 GoalExecutionCard 就地刷新） */
+function sendGoalEvent(payload: import('../shared/ipc-types.js').GoalEvent): void {
+  mainWindow?.webContents.send('goal:event', payload);
 }
 
 /** 创建主窗口
@@ -105,13 +139,13 @@ function createWindow(splash?: BrowserWindow | null): void {
   // 转发渲染进程 console 到主进程日志，便于诊断渲染层问题
   // 同时写入单独文件，确保即使主日志轮转也能看到
   // 安全：限制单文件 5MB，超过后轮转为 .old，防止长期运行占满磁盘
+  // 陷阱 #195：ESM 模式下 require 是 undefined，必须用顶层 import 的 fs 模块
   const rendererLogPath = path.join(app.getPath('userData'), 'renderer-console.log');
   const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB
   const rendererLog = (msg: string) => {
     const line = `[${new Date().toISOString()}] ${msg}\n`;
     console.log(line.trim());
     try {
-      const fs = require('node:fs');
       // 检查大小并轮转
       try {
         const stats = fs.statSync(rendererLogPath);
@@ -124,7 +158,9 @@ function createWindow(splash?: BrowserWindow | null): void {
         // 文件不存在，正常
       }
       fs.appendFileSync(rendererLogPath, line);
-    } catch {}
+    } catch (e) {
+      console.error('[rendererLog] 写入失败:', e);
+    }
   };
   mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
     const levelStr = ['log', 'warn', 'error'][level] || 'log';
@@ -234,7 +270,15 @@ app.whenReady().then(async () => {
       onConfigReloaded: (cfg) => {
         mainWindow?.webContents.send('config:reloaded', cfg);
       },
+      // Phase 54：Goal 执行结构化事件转发到渲染进程
+      onGoalEvent: sendGoalEvent,
+      // Phase 54：计划编辑请求转发到渲染进程（驱动 StepEditor 显示）
+      onPlanEditRequest: (requestId, plan) => {
+        mainWindow?.webContents.send('plan:edit-request', { requestId, plan });
+      },
     });
+    // C2 修复：将初始工作目录登记为已授权
+    authorizedCwds.add(path.resolve(process.cwd()));
     await engine.initialize();
   } catch (err) {
     console.error('Engine initialization failed:', err);
@@ -306,6 +350,11 @@ ipcMain.on('chat:send', (_event, payload: ChatSendPayload) => {
 // 聊天：确认/拒绝工具调用
 ipcMain.on('chat:confirm-tool', (_event, payload: ToolConfirmPayload) => {
   engine?.resolveToolConfirm(payload.approved, payload.payload);
+});
+
+// Phase 54：计划编辑响应（StepEditor 确认/取消后回传）
+ipcMain.on('plan:edit-response', (_event, payload: import('../shared/ipc-types.js').PlanEditResponsePayload) => {
+  engine?.resolvePlanEdit(payload.requestId, payload.steps);
 });
 
 // 聊天：停止当前生成（中止进行中的 LLM 请求与 Agent Loop）
@@ -430,6 +479,14 @@ ipcMain.handle('skill:create', async (_event, payload: import('../shared/ipc-typ
     ?? { success: false, error: '引擎未初始化' };
 });
 
+// Phase 37 Skill 市场接线：从市场安装 Skill 到 .routedev/skills/<name>/
+// 注：renderer 层当前未消费此 handler（SettingsPage 尚未实现 Skill 市场浏览 UI），
+// preload 已暴露 window.routedev.skill.install，待 UI 接入后即可生效
+ipcMain.handle('skill:install', async (_event, payload: import('../shared/ipc-types.js').SkillInstallPayload): Promise<import('../shared/ipc-types.js').SkillOpResult> => {
+  if (!engine) return { success: false, error: '引擎未初始化' };
+  return engine.installSkill(payload);
+});
+
 ipcMain.handle('skill:delete', async (_event, name: string) => {
   return engine?.deleteSkill(name) ?? { success: false, error: '引擎未初始化' };
 });
@@ -489,7 +546,10 @@ ipcMain.handle('fs:select-folder', async (_event, defaultPath?: string): Promise
     defaultPath: safeDefaultPath,
   });
   if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0];
+  // C2 修复：选择器返回的路径记入授权集合
+  const selected = path.resolve(result.filePaths[0]);
+  authorizedCwds.add(selected);
+  return selected;
 });
 
 // 在系统文件资源管理器中打开指定路径
@@ -532,12 +592,18 @@ ipcMain.handle('fs:open-folder', async (_event, filePath: string): Promise<boole
 // === 项目工作目录切换 ===
 // 用户切换项目或对话时，renderer 通知 main 更新 engine 的工作目录
 // 这样所有工具调用（file_read/file_write/shell_exec 等）都会基于正确的项目路径
+// C2 修复：只接受用户通过选择器授权过的路径，防止渲染层被劫持后切到任意目录
 ipcMain.on('project:set-cwd', (_event, cwd: string) => {
-  if (engine && cwd) {
-    engine.setCwd(cwd).catch((err) => {
-      console.error('[project:set-cwd] 切换工作目录失败:', err);
-    });
+  if (!engine || !cwd) return;
+  const resolved = path.resolve(cwd);
+  // 必须在授权集合内，或通过基础校验（启动时初始 cwd 由 engine 初始化注入）
+  if (!authorizedCwds.has(resolved) && !isValidProjectCwd(resolved)) {
+    console.error('[project:set-cwd] 拒绝未授权的工作目录:', resolved);
+    return;
   }
+  engine.setCwd(resolved).catch((err) => {
+    console.error('[project:set-cwd] 切换工作目录失败:', err);
+  });
 });
 
 // === 对话标题生成 ===
@@ -572,30 +638,9 @@ ipcMain.on('window:close', () => {
 });
 
 // ============================================================
-// Phase 39：代码地图 / 实验分支 / Hook IPC handler
+// Phase 39：实验分支 / Hook IPC handler
 // 直接调用 engine 桥接方法（fail-open：engine 未初始化或底层模块异常时返回默认值）
 // ============================================================
-
-// --- 代码地图相关 ---
-
-// 检查 CodeGraph 引擎状态
-ipcMain.handle('codemap:check-status', async (): Promise<CodeGraphStatus> => {
-  if (!engine) return { available: false, indexed: false };
-  const status = engine.getCodeGraphStatus();
-  return { available: status.available, indexed: status.indexed };
-});
-
-// 安装 CodeGraph 引擎
-ipcMain.handle('codemap:install', async (): Promise<{ success: boolean; error?: string }> => {
-  if (!engine) return { success: false, error: '引擎未初始化' };
-  return engine.installCodeGraph();
-});
-
-// 启动索引
-ipcMain.handle('codemap:start-index', async (): Promise<{ success: boolean; error?: string }> => {
-  if (!engine) return { success: false, error: '引擎未初始化' };
-  return engine.startIndexCodeGraph();
-});
 
 // --- 实验分支相关 ---
 
@@ -637,10 +682,19 @@ ipcMain.handle('hook:toggle', async (_event, payload: { hookId: string; enabled:
   return engine.toggleHook(payload.hookId, payload.enabled);
 });
 
-// 创建自定义 Hook（通过自然语言描述生成）
-ipcMain.handle('hook:create', async (_event, description: string): Promise<{ success: boolean; hookId?: string; error?: string }> => {
+// 创建自定义 Hook（模板模式或自定义模式）
+// 参数 payload：{ templateId: string } 或 { name, event, code, description?, ... }
+ipcMain.handle('hook:create', async (_event, payload: unknown): Promise<{ success: boolean; hookId?: string; error?: string }> => {
   if (!engine) return { success: false, error: '引擎未初始化' };
-  return engine.createHook(description);
+  return engine.createHook(payload as Parameters<typeof engine.createHook>[0]);
+});
+
+// 列出内置 Hook 模板（供 UI 选择创建）
+// 注：renderer 层当前未消费此 handler（Hook 管理 UI 尚未实现模板选择），
+// preload 已暴露 window.routedev.hook.templates，待 UI 接入后即可生效
+ipcMain.handle('hook:templates', async (): Promise<import('../shared/ipc-types.js').HookTemplate[]> => {
+  if (!engine) return [];
+  return engine.listHookTemplates();
 });
 
 // 删除自定义 Hook
@@ -664,4 +718,34 @@ ipcMain.handle('checkpoint:list', async (_event, projectId?: string) => {
 ipcMain.handle('checkpoint:rollback', async (_event, checkpointId: string): Promise<{ success: boolean; error?: string }> => {
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.rollbackCheckpoint(checkpointId);
+});
+
+// ============================================================
+// Phase 48 Task 4 接线修复：Agent Profile 管理 IPC handler
+// 渲染层调用 → engine → AgentProfileManager
+// 注：renderer 层当前未消费 profile:* handler（SettingsPage 尚未实现 Profile 编辑 UI），
+// preload 已暴露 window.routedev.profile.*，待 UI 接入后即可生效
+// ============================================================
+
+ipcMain.handle('profile:list', async () => {
+  return engine?.listProfiles() ?? [];
+});
+
+ipcMain.handle('profile:get', async (_event, id: string) => {
+  return engine?.getProfile(id) ?? null;
+});
+
+ipcMain.handle('profile:save', async (_event, payload: import('../shared/ipc-types.js').ProfileSavePayload): Promise<import('../shared/ipc-types.js').ProfileOpResult> => {
+  if (!engine) return { success: false, error: '引擎未初始化' };
+  return engine.saveProfile(payload);
+});
+
+ipcMain.handle('profile:delete', async (_event, id: string): Promise<import('../shared/ipc-types.js').ProfileOpResult> => {
+  if (!engine) return { success: false, error: '引擎未初始化' };
+  return engine.deleteProfile(id);
+});
+
+ipcMain.handle('profile:duplicate', async (_event, payload: { id: string; newName: string }): Promise<import('../shared/ipc-types.js').ProfileOpResult> => {
+  if (!engine) return { success: false, error: '引擎未初始化' };
+  return engine.duplicateProfile(payload.id, payload.newName);
 });

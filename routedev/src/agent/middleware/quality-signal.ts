@@ -9,6 +9,26 @@
 //     由外部（hook 或显式调用 recordToolResult）注入。重复调用检测基于 toolName 时间戳。
 
 import type { MiddlewareContext, MiddlewareHandler } from '../middleware.js';
+import { getGlobalQualityAggregator } from '../quality-aggregator.js';
+
+/**
+ * 判断信号是否为负面（用于聚合器统计）
+ * 接线修复：原中间件只把信号存在 this.signals，从不调用全局聚合器的 recordSignal，
+ * 导致 /quality 仪表盘永远显示"暂无质量数据"。
+ * 现在每次 pushSignal 时同步调用聚合器，让仪表盘有真实数据来源。
+ */
+function isNegativeSignal(signal: QualitySignal): boolean {
+  switch (signal.signalType) {
+    case 'tool_failure':
+    case 'error_pattern':
+    case 'repeated_call':
+      return true;
+    case 'tool_success':
+      return false;
+    default:
+      return false;
+  }
+}
 
 /** 质量信号 */
 export interface QualitySignal {
@@ -50,6 +70,22 @@ export class QualitySignalMiddleware {
     this.repeatWindowMs = repeatWindowMs;
   }
 
+  /**
+   * 采集信号：先存入本地列表（供 /trace audit 时间线展示），
+   * 再同步转发到全局聚合器（供 /quality 仪表盘统计）。
+   * 接线修复：原实现只调用 this.signals.push，全局聚合器永远收不到数据。
+   */
+  private pushSignal(signal: QualitySignal): void {
+    this.signals.push(signal);
+    if (signal.modelId) {
+      try {
+        getGlobalQualityAggregator().recordSignal(signal.modelId, isNegativeSignal(signal));
+      } catch {
+        // 聚合器失败不影响中间件主流程
+      }
+    }
+  }
+
   /** 返回符合 MiddlewareHandler 签名的处理器（注册到 onActing 阶段） */
   getHandler(): MiddlewareHandler {
     return async (ctx: MiddlewareContext, next: () => Promise<void>) => {
@@ -80,7 +116,7 @@ export class QualitySignalMiddleware {
   ): void {
     const timestamp = Date.now();
     if (success) {
-      this.signals.push({
+      this.pushSignal({
         source: 'implicit',
         signalType: 'tool_success',
         severity: 'low',
@@ -90,7 +126,7 @@ export class QualitySignalMiddleware {
         context: { resultLength: result.length },
       });
     } else {
-      this.signals.push({
+      this.pushSignal({
         source: 'implicit',
         signalType: 'tool_failure',
         severity: 'high',
@@ -103,7 +139,7 @@ export class QualitySignalMiddleware {
     // 检测错误模式
     const pattern = this.detectErrorPattern(result);
     if (pattern) {
-      this.signals.push({
+      this.pushSignal({
         source: 'implicit',
         signalType: 'error_pattern',
         severity: pattern.severity,
@@ -132,7 +168,7 @@ export class QualitySignalMiddleware {
     // 窗口内 >= 2 次调用算重复
     if (timestamps.length >= 2) {
       const modelId = ctx.metadata.modelId as string | undefined;
-      this.signals.push({
+      this.pushSignal({
         source: 'implicit',
         signalType: 'repeated_call',
         severity: 'medium',
@@ -158,7 +194,7 @@ export class QualitySignalMiddleware {
 
     // 1. 检测工具是否成功
     if (toolError === true) {
-      this.signals.push({
+      this.pushSignal({
         source: 'implicit',
         signalType: 'tool_failure',
         severity: 'high',
@@ -168,7 +204,7 @@ export class QualitySignalMiddleware {
         context: { error: typeof toolResult === 'string' ? toolResult.slice(0, 200) : undefined },
       });
     } else if (toolError === false) {
-      this.signals.push({
+      this.pushSignal({
         source: 'implicit',
         signalType: 'tool_success',
         severity: 'low',
@@ -183,7 +219,7 @@ export class QualitySignalMiddleware {
     if (typeof toolResult === 'string' && toolResult.length > 0) {
       const pattern = this.detectErrorPattern(toolResult);
       if (pattern) {
-        this.signals.push({
+        this.pushSignal({
           source: 'implicit',
           signalType: 'error_pattern',
           severity: pattern.severity,

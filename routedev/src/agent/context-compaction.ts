@@ -16,6 +16,7 @@ import type { LLMMessage, ContentPart, ToolResultContent } from '../router/types
 import { decideCompactionAction, DEFAULT_COMPACTION_THRESHOLDS, type CompactionThresholds } from '../router/cache-optimizer.js';
 import { createCompactionBoundary, type CompactionBoundary } from '../tools/trust-gradient.js';
 import { logger } from '../utils/logger.js';
+import type { CCRCache, CCRMarker } from './ccr-cache.js';
 
 /** 压缩结果 */
 export interface CompactionResult {
@@ -35,6 +36,7 @@ export interface CompactionResult {
   boundary?: CompactionBoundary;
   /** B12：L5 摘要是否失败（true 表示 summarize 抛错或未提供，已降级到 L4 结果） */
   summaryFailed?: boolean;
+  ccr?: CCRMarker;
 }
 
 /** 压缩配置 */
@@ -49,6 +51,7 @@ interface CompactionConfig {
   thresholds?: CompactionThresholds;
   /** 上下文窗口大小（用于计算使用率，默认 targetTokens * 1.25） */
   contextWindow?: number;
+  ccrCache?: CCRCache;
 }
 
 // 阈值常量
@@ -109,6 +112,7 @@ export class ContextCompactor {
     }
 
     // trigger 或 force：执行压缩
+    const ccrRecord = this.config.ccrCache?.store(messages);
     let current = [...messages];
     // L1 始终执行
     let maxStageReached: 1 | 2 | 3 | 4 | 5 = 1;
@@ -157,6 +161,9 @@ export class ContextCompactor {
     }
 
     const afterTokens = this.totalTokens(current);
+    const ccr = ccrRecord
+      ? this.config.ccrCache?.buildMarker(ccrRecord.hash, messages.length, current.length)
+      : undefined;
 
     // B12：判断 summaryFailed（L5 触发但未生成摘要）
     const summaryFailed = maxStageReached === 5 && !summary;
@@ -184,6 +191,7 @@ export class ContextCompactor {
         action: decision.action,
         boundary,
         summaryFailed,
+        ccr,
       },
     };
   }

@@ -3,6 +3,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { ContextCompactor } from '../../src/agent/context-compaction.js';
+import { CCRCache } from '../../src/agent/ccr-cache.js';
 import { estimateTokens } from '../../src/utils/token-estimate.js';
 import type { LLMMessage } from '../../src/router/types.js';
 
@@ -290,6 +291,25 @@ describe('ContextCompactor', () => {
       });
       const { result } = await compactor.compact(messages);
       expect(result.beforeTokens).toBe(estimateTokens(text));
+    });
+
+    it('启用 CCR 时压缩结果包含可逆检索标记', async () => {
+      const ccrCache = new CCRCache();
+      const messages: LLMMessage[] = [
+        msg('system', 'sys'),
+        msg('user', makeLongText(3000)),
+        msg('assistant', makeLongText(3000)),
+      ];
+      const compactor = new ContextCompactor({
+        targetTokens: 0,
+        estimateTokens,
+        ccrCache,
+      });
+
+      const { result } = await compactor.compact(messages);
+      expect(result.ccr?.marker).toContain('CCR:');
+      const restored = ccrCache.retrieve(result.ccr!.hash);
+      expect(restored).toEqual(messages);
     });
   });
 });

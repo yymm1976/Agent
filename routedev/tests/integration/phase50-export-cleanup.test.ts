@@ -42,7 +42,8 @@ const CLEANED_SAMPLES: Array<{ file: string; symbols: string[] }> = [
   { file: 'src/agents/profiles/types.ts', symbols: ['AgentOutputFormat', 'ChallengeSeverity'] },
   { file: 'src/agents/context-packer.ts', symbols: ['RelevantSymbol', 'ContextSection', 'ContextPackage'] },
   // src/skills/
-  { file: 'src/skills/skill-flow-types.ts', symbols: ['FlowNodeType', 'Attractor', 'RunReactCallback', 'EvaluateBranchCallback'] },
+  // E11 移除：skill-flow-types.ts 已整体删除（E3 清理：skill-flow-engine 上位替代已就位）
+  // { file: 'src/skills/skill-flow-types.ts', symbols: ['FlowNodeType', 'Attractor', 'RunReactCallback', 'EvaluateBranchCallback'] },
   // src/router/
   { file: 'src/router/cache-optimizer.ts', symbols: ['CompactionAction'] },
   // src/cli/
@@ -54,7 +55,7 @@ const CLEANED_SAMPLES: Array<{ file: string; symbols: string[] }> = [
   { file: 'src/agent/preference-manager.ts', symbols: ['PreferenceCategory', 'UserPreference', 'AuditLogEntry'] },
   { file: 'src/agent/requirements-clarifier.ts', symbols: ['ClarificationQuestion', 'ClarificationResult', 'RequirementsClarifierOptions'] },
   { file: 'src/agent/voice-manager.ts', symbols: ['VoiceProvider', 'TTSProvider', 'TranscriptionResult'] },
-  { file: 'src/agent/durable-executor.ts', symbols: ['ExecutionStatus', 'ExecutionResult'] },
+  // E11 移除：durable-executor.ts 已整体删除（E1：GoalPersistence + CheckpointManager + HookRunner.fire 替代）
   { file: 'src/agent/goal-types.ts', symbols: ['GoalStepStatus'] },
   { file: 'src/agent/eq-detector.ts', symbols: ['EQState', 'EQAdjustment'] },
   { file: 'src/agent/persona-templates.ts', symbols: ['EmojiUsage', 'ConfirmationStyle'] },
@@ -89,11 +90,12 @@ describe('Phase 50 Task 9 - export 清理验证', () => {
       expect(typeof mod.ContextPacker).toBe('function');
     });
 
-    it('skill-flow-types 仍导出 FlowNode / SkillFlow / FlowEvent / SkillFlowRunParams（type-only）', async () => {
-      // type-only 导入在运行时不会产生值，但模块应能正常加载
-      const mod = await import('../../src/skills/skill-flow-types.js');
-      expect(mod).toBeDefined();
-      expect(mod.default).toBeUndefined(); // 确认是命名导出而非 default
+    it('skill-flow-types 模块已删除（不再断言公共 API）', async () => {
+      // E11 更新：src/skills/skill-flow-types.ts 已整体删除
+      // （E3 清理：skill-flow-engine 上位替代已就位）
+      // 验证文件不存在即可，不再断言公共 API
+      const fs = await import('node:fs/promises');
+      await expect(fs.access('src/skills/skill-flow-types.ts')).rejects.toThrow();
     });
 
     it('cache-optimizer 仍导出 CompactionThresholds / DEFAULT_COMPACTION_THRESHOLDS / CacheStatsTracker', async () => {

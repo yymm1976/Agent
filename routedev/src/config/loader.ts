@@ -51,10 +51,15 @@ function processEnvVars(obj: unknown): unknown {
 
 /**
  * 深度合并两个对象（source 覆盖 target）
- * I11 修复：数组改为合并去重（concat + Set 去重），而非直接替换。
- *   - 非稀疏数组：concat 后用 Set 去重（基本类型按值去重，对象按 JSON 序列化去重）
- *   - 稀疏数组：保持替换行为（稀疏数组语义不明确，合并不安全）
+ * I5 修复：数组改为替换语义（source 直接覆盖 target），而非合并去重。
+ *   原因：安全字段（toolBlacklist、commandBlacklist、channels.entries 等）需要
+ *   项目级配置能完全覆盖全局配置。合并去重会导致用户以为已禁用的项仍被继承。
+ *   需要合并的字段请在 MERGE_ARRAY_KEYS 白名单中显式声明。
  */
+const MERGE_ARRAY_KEYS = new Set<string>([
+  // 暂无需要合并的数组字段；如未来需要，在此添加
+]);
+
 function deepMerge<T extends Record<string, unknown>>(target: T, source: Partial<T>): T {
   const result = { ...target };
   for (const key of Object.keys(source) as Array<keyof T>) {
@@ -75,16 +80,13 @@ function deepMerge<T extends Record<string, unknown>>(target: T, source: Partial
         sourceVal as Record<string, unknown>,
       ) as T[keyof T];
     } else if (Array.isArray(sourceVal) && Array.isArray(targetVal)) {
-      // I11 修复：数组合并去重
-      // 稀疏数组（含 empty slot）保持替换行为；非稀疏数组合并去重
-      const isSparse = (arr: unknown[]): boolean => arr.length !== Object.keys(arr).length;
-      if (isSparse(sourceVal) || isSparse(targetVal)) {
-        // 稀疏数组：直接替换
-        result[key] = sourceVal as T[keyof T];
-      } else {
-        // 非稀疏数组：concat + Set 去重
+      // I5 修复：默认数组替换语义；白名单字段才合并
+      if (MERGE_ARRAY_KEYS.has(String(key))) {
         const merged = mergeArraysUnique(targetVal as unknown[], sourceVal as unknown[]);
         result[key] = merged as T[keyof T];
+      } else {
+        // 默认替换：source 覆盖 target
+        result[key] = sourceVal as T[keyof T];
       }
     } else if (sourceVal !== undefined) {
       // 其它情况（基本类型、null、一方为数组另一方不是）：直接用 source 的值
@@ -279,6 +281,35 @@ export function loadConfig(options?: {
   }
 
   return result.data;
+}
+
+/**
+ * 加载合并后的配置（公共 API）
+ * 三层合并：default → global → project
+ * @param projectPath 项目路径(可选)
+ */
+export async function loadMergedConfig(projectPath?: string): Promise<AppConfig> {
+  return loadConfig({ projectPath });
+}
+
+/**
+ * 深度合并多个配置对象(公共 API)
+ * 借鉴 ohmypi deepMerge 语义:
+ *   - 对象:递归合并
+ *   - 数组:按 arrayMergeStrategy 处理('replace' 覆盖,'merge' 去重拼接)
+ *   - 原始值:后者覆盖前者
+ */
+export function deepMergeConfig<T>(...configs: Partial<T>[]): T {
+  // 复用现有私有 deepMerge,但需支持 arrayMergeStrategy 参数
+  // 简化实现:默认 'replace' 语义
+  if (configs.length === 0) return {} as T;
+  return configs.reduce<T>(
+    (acc, curr) => deepMerge(
+      acc as Record<string, unknown>,
+      curr as Record<string, unknown>,
+    ) as T,
+    {} as T,
+  );
 }
 
 /**

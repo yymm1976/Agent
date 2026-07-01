@@ -512,6 +512,7 @@ export class WorkerExecutor {
         cacheReadTokens: capturedCacheReadTokens,
         cacheCreationTokens: capturedCacheCreationTokens,
       },
+      suggestedAction: outcome.error.suggestedAction,
     };
   }
 

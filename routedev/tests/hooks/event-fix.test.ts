@@ -1,6 +1,9 @@
 // tests/hooks/event-fix.test.ts
 // 事件类型修复测试
-// 覆盖：on-model-call 合法性、isValidConfig 事件白名单、token-alert.json 事件类型
+// 覆盖：on-model-call 合法性、isValidConfig 事件白名单
+//
+// E11 清理：移除 token-alert.json 测试块（E8 改为 TS 模板注册后该 JSON 文件已不存在）
+//         —— 保留 on-model-call 合法性测试（仍在 HookEvent 白名单内）
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs/promises';
@@ -8,7 +11,6 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHookRunner, type HookEvent } from '../../src/agent/hooks.js';
 import { HookConfigRegistry } from '../../src/hooks/registry.js';
-import { fileURLToPath } from 'node:url';
 
 // ============================================================
 // 工具函数
@@ -22,13 +24,6 @@ async function makeTempDir(): Promise<string> {
   await fs.mkdir(dir, { recursive: true });
   return dir;
 }
-
-/** token-alert.json 模板路径 */
-const TEMPLATES_DIR = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../../src/hooks/templates',
-);
-const TOKEN_ALERT_PATH = path.join(TEMPLATES_DIR, 'token-alert.json');
 
 // ============================================================
 // 测试
@@ -140,12 +135,7 @@ describe('事件类型修复：on-model-call', () => {
     });
   });
 
-  // 8. token-alert.json 的 event 是 on-model-call
-  describe('token-alert.json 事件类型', () => {
-    it('event 字段为 on-model-call', async () => {
-      const raw = await fs.readFile(TOKEN_ALERT_PATH, 'utf-8');
-      const data = JSON.parse(raw);
-      expect(data.event).toBe('on-model-call');
-    });
-  });
+  // E11 清理：原 token-alert.json 事件类型测试块已移除
+  // 原因：E8 已将 hook 模板从 JSON 文件迁移到 TS 模板注册（src/hooks/templates.ts）
+  //       token-alert.json 文件已不存在；on-model-call 事件合法性已由上述测试覆盖
 });

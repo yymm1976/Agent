@@ -42,6 +42,15 @@ interface ContextSection {
   priority: number; // 1=最高
 }
 
+interface PassedFragment {
+  /** 来源（section.title） */
+  source: string;
+  /** 内容摘要（section.content 前 80 字符） */
+  summary: string;
+  /** 权重（section.priority，1=最高） */
+  weight: number;
+}
+
 interface ContextPackage {
   role: AgentRole;
   taskId: string;
@@ -54,6 +63,13 @@ interface ContextPackage {
     truncated: boolean;
     sourceSnapshot: string;
   };
+  // ===== Phase 54 Task 2 新增字段（用于选择性传递可视化） =====
+  /** 传递的片段摘要列表（从 sections 映射，供协作剧场面板展示） */
+  passedFragments: PassedFragment[];
+  /** 被过滤的片段数（候选数 - 入选数） */
+  filteredOutCount: number;
+  /** 被过滤内容摘要（被截断或超预算的 section 标题列表） */
+  filteredOutSummary: string;
 }
 
 // 角色权重表：决定各来源在上下文包中的优先级
@@ -119,6 +135,21 @@ export class ContextPacker {
       }
     }
 
+    // Phase 54 Task 2：填充选择性传递可视化字段
+    // passedFragments：从入选 sections 映射（含被截断的 section，因其内容已传递）
+    const passedFragments: PassedFragment[] = sections.map(s => ({
+      source: s.title,
+      summary: s.content.slice(0, 80),
+      weight: s.priority,
+    }));
+    // filteredOutCount：候选数 - 入选数（被截断的 section 计入入选）
+    const filteredOutCount = Math.max(0, candidates.length - sections.length);
+    // filteredOutSummary：被过滤的 section 标题列表
+    const filteredOutTitles = candidates
+      .slice(sections.length)
+      .map(c => c.title);
+    const filteredOutSummary = filteredOutTitles.join(', ');
+
     return {
       role,
       taskId,
@@ -131,6 +162,10 @@ export class ContextPacker {
         truncated,
         sourceSnapshot: this.generateSnapshot(sources),
       },
+      // Phase 54 Task 2 新增字段
+      passedFragments,
+      filteredOutCount,
+      filteredOutSummary,
     };
   }
 

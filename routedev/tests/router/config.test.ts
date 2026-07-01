@@ -95,4 +95,39 @@ describe('Router Config Builder', () => {
     const simpleRule = routerConfig.rules.find((r) => r.tier === 'simple');
     expect(simpleRule?.modelId).toBe('custom-simple');
   });
+
+  it('should fill missing router model ids from providers', () => {
+    const customConfig = {
+      ...mockAppConfig,
+      providers: [
+        {
+          id: 'openai',
+          name: 'OpenAI',
+          protocol: 'openai',
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'test-key',
+          models: [
+            {
+              id: 'custom-simple',
+              name: 'custom-simple',
+              provider: 'openai',
+              tier: 'simple' as const,
+              contextWindow: 128000,
+              capabilities: [],
+              latencyMs: 0,
+              available: true,
+            },
+          ],
+        },
+      ],
+      router: {
+        ...mockAppConfig.router,
+        rules: [
+          { tier: 'simple' as const },
+        ],
+      },
+    };
+    const routerConfig = buildRouterConfig(customConfig);
+    expect(routerConfig.rules[0]?.modelId).toBeDefined();
+  });
 });

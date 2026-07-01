@@ -85,8 +85,7 @@ export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 // 路由规则：把任务等级映射到具体模型
 export const RouterRuleSchema = z.object({
   tier: ScenarioTierSchema,                              // 任务等级
-  // 空字符串转 undefined 让 default 生效（兼容旧版配置残留的空值）
-  modelId: z.preprocess((v) => v === '' ? undefined : v, z.string().min(1).default('unconfigured')),   // 主选模型 id（未配置时为 'unconfigured' 占位）
+  modelId: z.preprocess((v) => v === '' ? undefined : v, z.string().min(1).optional()),                // 主选模型 id（缺省时由 buildRouterConfig 从 providers 修复）
   fallbackModelId: z.preprocess((v) => v === '' ? undefined : v, z.string().optional()),                // 降级模型 id
   maxTokensPerRequest: z.number().positive().int().optional(), // 单次请求上限
 });
@@ -150,6 +149,17 @@ export const ChannelsConfigSchema = z.object({
   publicUrl: z.string().optional(),
   maxResponseLength: z.number().positive().int().default(2000),
   requestTimeout: z.number().positive().int().default(60000),
+  /**
+   * Webhook Bearer Token 认证（Phase 53 接线修复）
+   * 配置后所有 webhook 请求需带 `Authorization: Bearer <token>` 头；
+   * 未配置时为开发模式，跳过认证（由 devModeAuth 控制是否要求认证）
+   */
+  authToken: z.string().optional(),
+  /**
+   * 是否信任 X-Forwarded-For 头（Phase 53 接线修复）
+   * 反向代理场景才应启用；直连时禁用以防客户端伪造 IP 绕过速率限制
+   */
+  trustProxy: z.boolean().default(false),
 });
 export type ChannelsConfig = z.infer<typeof ChannelsConfigSchema>;
 export type ChannelEntryConfig = z.infer<typeof ChannelEntrySchema>;
@@ -936,7 +946,7 @@ export const MarketConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   enabled: z.boolean().default(true),
   /** 自动发布（Skill/Hook 创建后自动发布到市场） */
   autoPublish: z.boolean().default(false),
-  /** 远程 Registry URL（未配置时使用 StubRegistryClient，返回空列表） */
+  /** 远程 Registry URL（未配置时不连接远程注册表） */
   registryUrl: z.string().optional(),
   /** Registry 认证 Token（可选，配合 registryUrl 使用） */
   registryToken: z.string().optional(),
@@ -1022,8 +1032,31 @@ export const GoalConfigSchema = z.preprocess((v) => v ?? {}, z.object({
     /** DAG 路径的最大领域数（超过则升级到 compose，1-5，默认 1） */
     dagMaxDomains: z.number().int().min(1).max(5).default(1),
   }).default({ mode: 'auto', singleAgentMaxSteps: 2, dagMaxDomains: 1 }),
+  difficultyRouting: z.object({
+    enabled: z.boolean().default(false),
+    refineLevelAtExecution: z.boolean().default(true),
+    dynamicLevelSwitchEnabled: z.boolean().default(false),
+    confidenceThreshold: z.number().min(0).max(1).default(0.6),
+  }).default({
+    enabled: false,
+    refineLevelAtExecution: true,
+    dynamicLevelSwitchEnabled: false,
+    confidenceThreshold: 0.6,
+  }),
 }));
 export type GoalConfig = z.infer<typeof GoalConfigSchema>;
+
+/**
+ * Phase 55 Task 9：CCR 可逆压缩配置
+ * 让 compact 从破坏性变可逆——compact 前缓存原始消息，LLM 可通过 ccr_retrieve 工具取回
+ */
+export const CCRCompressionConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 是否启用 CCR 可逆压缩 */
+  enabled: z.boolean().default(false),
+  /** LRU cache 最大条目数 */
+  maxCacheSize: z.number().int().min(1).max(500).default(50),
+}));
+export type CCRCompressionConfig = z.infer<typeof CCRCompressionConfigSchema>;
 
 /**
  * Hook 增强配置（Phase 43）
@@ -1254,7 +1287,9 @@ export type ImportConfig = z.infer<typeof ImportConfigSchema>;
 export const GoalIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   // Phase 54 修复：auditEnabled 默认 true——三层独立审计是交叉验证的核心保障
   auditEnabled: z.boolean().default(true),
-  persistenceEnabled: z.boolean().default(false),
+  // Phase 47 P1-2 修复：persistenceEnabled 默认 true——GoalPersistence 装配完整但默认关闭导致永不生效，
+  // 目标执行状态不落盘，崩溃后无法恢复。开启后写入 .routedev/goals/<id>.json，与 defaults.ts 对齐
+  persistenceEnabled: z.boolean().default(true),
   promptBuilderEnabled: z.boolean().default(false),
   requirementChangeEnabled: z.boolean().default(false),
 }));
@@ -1314,7 +1349,7 @@ export type Phase48IntegrationConfig = z.infer<typeof Phase48IntegrationConfigSc
 
 /**
  * Phase 49 模块接入确认配置（Phase 50 Task 6）
- * 聚合 SkillFlow/DualLoop/QualityGate/ContextUsagePanel/EvaluationFramework/RoutingFunnel 六模块
+ * 聚合 DualLoop/QualityGate/ContextUsagePanel/EvaluationFramework 等模块（SkillFlow/RoutingFunnel 已移除）
  * 默认全部 false——这些模块为实验性功能，需显式开启
  */
 export const Phase49IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
@@ -1524,7 +1559,7 @@ export type MCPSecurityConfig = z.infer<typeof MCPSecurityConfigSchema>;
  */
 export const BoundedRecoveryConfigSchema = z.object({
   /** 是否启用有界局部恢复 */
-  enabled: z.boolean().default(true),
+  enabled: z.boolean().default(false),
   /** 最大回溯步数（含失败步骤本身，1-10，默认 3） */
   maxBacktrack: z.number().int().min(1).max(10).default(3),
   /** 是否启用工件绑定（注册 StepArtifact 以追踪依赖） */
@@ -1736,7 +1771,7 @@ export type BudgetMonitorConfig = z.infer<typeof BudgetMonitorConfigSchema>;
  */
 export const DagEngineConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用 DAG 工作流（默认 false，向后兼容） */
-  enabled: z.boolean().default(true),
+  enabled: z.boolean().default(false),
   /** 最大并行度（1-10） */
   maxParallel: z.number().int().min(1).max(10).default(3),
   /** 重试上限（0-5） */
@@ -1752,7 +1787,7 @@ export type DagEngineConfig = z.infer<typeof DagEngineConfigSchema>;
  */
 export const CircuitBreakerConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用熔断器（默认 false，向后兼容） */
-  enabled: z.boolean().default(true),
+  enabled: z.boolean().default(false),
   /** 连续失败 N 次后熔断 */
   failureThreshold: z.number().int().min(1).default(5),
   /** 熔断后多久尝试恢复（毫秒） */
@@ -1856,6 +1891,8 @@ export const AppConfigSchema = z.object({
   subAgents: SubAgentsConfigSchema,
   // Phase 43：Goal 配置（澄清 + 确认 + 审计模式 + token 预算）
   goal: GoalConfigSchema,
+  // Phase 55 Task 9：CCR 可逆压缩
+  ccrCompression: CCRCompressionConfigSchema,
   // Phase 43：Hook 增强（函数级 Hook + 沙箱 + 试用期 + 分组）
   hookEnhancement: HookEnhancementConfigSchema,
   // Phase 44：对话消息树持久化（JSONL + 备份 + 快照 + 撤销栈）

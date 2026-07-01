@@ -3,10 +3,12 @@
 //
 // 设计目标：
 //   1. 提供内置工具使用指南（如 git_op 安全指南）
-//   2. 命中后返回 extraContext（追加到工具描述）
-//   3. getExtraContext 聚合所有命中的上下文
+//   2. 命中后通过 PolicyEngine 统一调度，返回 extraContext（追加到工具描述）
+//
+// 注：静态 evaluate / getExtraContext / matchKeywords 已作为死代码删除
+//     （PolicyEngine 内部通过 evaluateAction 遍历 policies 数组直接处理）
 
-import type { Policy, PolicyEvalResult } from './policy-engine.js';
+import type { Policy } from './policy-engine.js';
 
 // ============================================================
 // ToolGuide
@@ -34,64 +36,6 @@ export class ToolGuide {
       },
     },
   ];
-
-  /**
-   * 评估工具调用
-   *
-   * 只评估 type='tool_guide' 且 enabled=true 的策略
-   * 匹配对象是工具名（toolName）
-   */
-  static evaluate(toolName: string, policies: Policy[]): PolicyEvalResult[] {
-    if (!toolName) return [];
-
-    const lowerName = toolName.toLowerCase();
-    const results: PolicyEvalResult[] = [];
-
-    const sorted = [...policies]
-      .filter((p) => p.type === 'tool_guide' && p.enabled)
-      .sort((a, b) => b.priority - a.priority);
-
-    for (const policy of sorted) {
-      const matched = ToolGuide.matchKeywords(policy.trigger.keywords ?? [], lowerName);
-      if (matched) {
-        results.push({
-          matched: true,
-          action: policy.action,
-          policyId: policy.id,
-          policyName: policy.name,
-        });
-      }
-    }
-
-    return results;
-  }
-
-  /**
-   * 从评估结果中提取所有 extraContext
-   *
-   * 用于追加到工具描述或调用上下文
-   */
-  static getExtraContext(results: PolicyEvalResult[]): string {
-    return results
-      .filter((r) => r.matched && r.action.extraContext)
-      .map((r) => r.action.extraContext as string)
-      .join('\n');
-  }
-
-  // ============================================================
-  // 内部方法
-  // ============================================================
-
-  private static matchKeywords(keywords: string[], lowerInput: string): boolean {
-    if (keywords.length === 0) return false;
-    for (const kw of keywords) {
-      if (!kw) continue;
-      if (lowerInput.includes(kw.toLowerCase())) {
-        return true;
-      }
-    }
-    return false;
-  }
 }
 
 // ============================================================

@@ -7,7 +7,7 @@
 //
 // 实现方式：静态检查（文件存在 + 类导出）
 //   - 本目录的 PromptChain / ReflectionPattern：通过 import 后 typeof 检查
-//   - 路由 RoutingFunnel：通过 import 后 typeof 检查
+//   - 路由：RoutingFunnel 已移除，路由由 ModelRouter + ScenarioClassifier 承担
 //   - 并行/护栏已有实现：通过文件存在性检查（避免引入重型依赖）
 //
 // 用途：
@@ -20,7 +20,6 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { PromptChain } from './prompt-chain.js';
 import { ReflectionPattern } from './reflection.js';
-import { RoutingFunnel } from '../../router/routing-funnel.js';
 import { logger } from '../../utils/logger.js';
 
 // ============================================================
@@ -33,7 +32,7 @@ export interface PatternCoverageReport {
   patterns: {
     /** 提示链：PromptChain（本 Phase 实现） */
     promptChain: boolean;
-    /** 路由：RoutingFunnel 四层漏斗（本 Phase 增强） */
+    /** 路由：RoutingFunnel 已移除，路由由 ModelRouter + ScenarioClassifier 承担 */
     routing: boolean;
     /** 并行：ReActAgentLoop.parallelToolExecution + multi/orchestrator（已有） */
     parallel: boolean;
@@ -77,7 +76,7 @@ function isExported(target: unknown): boolean {
  *
  * 判定依据：
  *   1. promptChain：PromptChain 类已导出（src/agent/patterns/prompt-chain.ts）
- *   2. routing：RoutingFunnel 类已导出（src/router/routing-funnel.ts）
+ *   2. routing：RoutingFunnel 已移除，路由由 ModelRouter + ScenarioClassifier 承担
  *   3. parallel：ReActAgentLoop 所在文件 + multi/orchestrator 文件均存在
  *      —— ReActAgentLoop.parallelToolExecution 是 Phase 49 之前已有的并行工具执行能力
  *      —— multi/orchestrator 提供多 Worker 并行编排能力
@@ -103,11 +102,10 @@ export function checkPatternCoverage(): PatternCoverageReport {
   );
 
   // ===== 2. 路由 =====
-  const routingOk = isExported(RoutingFunnel);
+  // RoutingFunnel 模块已移除（路由由 ModelRouter + ScenarioClassifier 承担）
+  const routingOk = false;
   notes.push(
-    routingOk
-      ? '[routing] ✓ RoutingFunnel 类已导出（src/router/routing-funnel.ts，四层漏斗 L0→L1→L2→SafeNet）'
-      : '[routing] ✗ RoutingFunnel 类未导出——缺失路由模式',
+    '[routing] ℹ RoutingFunnel 已移除——路由由 ModelRouter + ScenarioClassifier 承担',
   );
 
   // ===== 3. 并行 =====

@@ -318,7 +318,7 @@ export class LLMError extends Error {
 /** 路由规则（单条） */
 export interface RouterRule {
   tier: ScenarioTier;
-  modelId: string;
+  modelId?: string;
   fallbackModelId?: string;
   maxTokensPerRequest?: number;
 }

@@ -53,6 +53,32 @@ export interface PolicyEvalResult {
   policyName: string;
 }
 
+/**
+ * Phase 53 Task 3：Agent 动作描述（动作级策略评估的输入）
+ * 区别于 evaluateToolCall 的工具级粒度，evaluateAction 评估更通用的动作语义
+ */
+export interface AgentAction {
+  /** 工具名（如 "file_write"） */
+  toolName: string;
+  /** 动作描述（如 "修改 .env 文件" / "执行 rm -rf 命令"） */
+  description: string;
+  /** 工具参数（可选，用于更精细的策略匹配） */
+  args?: Record<string, unknown>;
+}
+
+/**
+ * Phase 53 Task 3：策略决策（evaluateAction 的返回值）
+ * 借鉴 AGT 的 fail-closed 模式：无匹配规则时默认 deny
+ */
+export interface PolicyDecision {
+  /** 是否拒绝执行 */
+  denied: boolean;
+  /** 拒绝原因（denied=true 时非空） */
+  reason: string | null;
+  /** 匹配的策略数量 */
+  matchedPolicies: number;
+}
+
 // ============================================================
 // PolicyEngine
 // ============================================================
@@ -61,6 +87,12 @@ export class PolicyEngine {
   private policies: Policy[] = [];
   /** 标记是否需要重新排序 */
   private dirty = false;
+  /**
+   * Phase 53 Task 3：默认策略（fail-closed 控制）
+   * 无匹配规则时：'deny' → 拒绝，'allow' → 允许
+   * 默认 'deny'（借鉴 AGT 的 fail-closed 原则）
+   */
+  private defaultPolicy: 'deny' | 'allow' = 'deny';
 
   /**
    * 添加策略
@@ -161,6 +193,72 @@ export class PolicyEngine {
     }
 
     return results;
+  }
+
+  /**
+   * Phase 53 Task 3：评估 Agent 动作的策略合规性（动作级，区别于 evaluateToolCall 的工具级）
+   *
+   * 与 evaluateToolCall 的差异：
+   *   - evaluateToolCall 匹配工具名（如 "file_write"）
+   *   - evaluateAction 匹配动作描述（如 "修改 .env 文件"、"执行 rm 命令"）
+   *
+   * Fail-closed 默认策略：无匹配规则时返回 deny（受 config.policyEngine.defaultPolicy 控制）
+   *
+   * @param action 动作对象（toolName + args + 描述）
+   * @returns PolicyDecision，deny 时包含 reason
+   */
+  evaluateAction(action: AgentAction): PolicyDecision {
+    this.sortByPriority();
+
+    // 构造匹配文本：工具名 + 动作描述
+    const matchText = [action.toolName, action.description].filter(Boolean).join(' ');
+
+    let denyReason: string | null = null;
+    let anyMatched = false;
+
+    // 按 priority 顺序评估所有匹配的策略
+    // 冲突解决策略：deny-overrides（任一 deny 则整体 deny）
+    for (const policy of this.policies) {
+      if (!policy.enabled) continue;
+      // 动作级策略：评估 intent_guard / playbook / tool_guide / tool_approval 全部
+      const matched = this.matchTrigger(policy.trigger, matchText);
+      if (!matched) continue;
+
+      anyMatched = true;
+      if (policy.action.block && denyReason === null) {
+        // deny-overrides：第一个 block 即拒绝
+        denyReason = policy.action.response ?? `Policy "${policy.name}" blocked this action`;
+      }
+    }
+
+    // Fail-closed：无匹配规则时按 defaultPolicy 决定
+    // 注意：defaultPolicy 由调用方通过 setDefaultPolicy 注入，默认 'deny'
+    if (!anyMatched) {
+      if (this.defaultPolicy === 'deny') {
+        return {
+          denied: true,
+          reason: `No matching policy, fail-closed (defaultPolicy=deny)`,
+          matchedPolicies: 0,
+        };
+      }
+      // defaultPolicy === 'allow'：允许
+      return {
+        denied: false,
+        reason: null,
+        matchedPolicies: 0,
+      };
+    }
+
+    return {
+      denied: denyReason !== null,
+      reason: denyReason,
+      matchedPolicies: anyMatched ? 1 : 0,
+    };
+  }
+
+  /** Phase 53 Task 3：设置默认策略（fail-closed 控制） */
+  setDefaultPolicy(policy: 'deny' | 'allow'): void {
+    this.defaultPolicy = policy;
   }
 
   /**

@@ -113,11 +113,12 @@ describe('goal-progress: renderGoalCompletionSummary', () => {
       ],
     };
     const text = renderGoalCompletionSummary(plan);
-    expect(text).toContain('目标: 重构认证模块');
-    expect(text).toContain('步骤: 2/2 完成');
-    expect(text).toContain('耗时: 2m05s');
-    expect(text).toContain('/trace view');
-    expect(text).toContain('/cost');
+    // Phase 54：摘要格式简化为自然语言单行
+    //   旧：'目标: 重构认证模块 / 步骤: 2/2 完成 / 耗时: 2m05s / /trace view / /cost'
+    //   新：'✅ 目标已完成 · 2/2 步骤完成 · 耗时 2m05s'（不再显示目标描述和命令提示）
+    expect(text).toContain('目标已完成');
+    expect(text).toContain('2/2 步骤完成');
+    expect(text).toContain('耗时 2m05s');
   });
 
   it('包含验证结果时显示置信度', () => {
@@ -130,6 +131,7 @@ describe('goal-progress: renderGoalCompletionSummary', () => {
       suggestions: [],
     };
     const text = renderGoalCompletionSummary(plan);
-    expect(text).toContain('验证: 通过（置信度 91%）');
+    // Phase 54：验证结果格式从 '验证: 通过（置信度 91%）' 改为 '验证通过（置信度 91%）'（去冒号）
+    expect(text).toContain('验证通过（置信度 91%）');
   });
 });

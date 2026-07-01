@@ -22,6 +22,7 @@ import fsSync from 'node:fs';
 import path from 'node:path';
 import { logger } from '../utils/logger.js';
 import type { FivePartGoalSpec } from './goal-prompt-builder.js';
+import type { ArchivedPlanVersion, PlanAttestation } from './goal-types.js';
 
 // ============================================================
 // 类型定义
@@ -44,6 +45,8 @@ export interface PersistedGoal {
       status: string;
       dependencies: string[];
     }>;
+    attestation?: PlanAttestation;
+    archivedVersions?: ArchivedPlanVersion[];
   };
   /** 状态 */
   status: GoalPlanStatus;

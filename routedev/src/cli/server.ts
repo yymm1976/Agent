@@ -79,7 +79,14 @@ export async function startServer(
   );
 
   // 5. ChannelManager
-  const channelManager = new ChannelManager(serverPort);
+  // Phase 53 接线修复：透传 channels.authToken / channels.trustProxy / security.devModeAuth
+  // 原实现只传 serverPort，导致 WebhookServer 的鉴权与反代配置全部失效
+  const channelManager = new ChannelManager({
+    port: serverPort,
+    devModeAuth: config.security.devModeAuth,
+    authToken: config.channels.authToken,
+    trustProxy: config.channels.trustProxy,
+  });
   channelManager.initializeAdapters(config.channels.entries, messageRouter);
 
   // 6. 启动

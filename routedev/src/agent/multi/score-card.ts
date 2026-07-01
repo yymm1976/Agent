@@ -16,6 +16,10 @@
 //   - avgTestsPassed / acceptedRate
 //   - formatReport()：格式化为 /quality 命令的展示文本
 
+// Phase 52 Task 2/6 深度接入：过程级缺陷 + 架构感知指标
+import type { ProcessDefect } from '../../evaluation/process-defect-ontology.js';
+import type { ComponentMetrics } from '../../evaluation/architecture-aware-metrics.js';
+
 /** 用户反馈类型 */
 type UserFeedback = 'accepted' | 'rejected' | 'edited' | 'pending';
 
@@ -33,6 +37,18 @@ export interface ScoreCard {
   lintErrors: number;
   typeErrors: number;
   userFeedback: UserFeedback;
+  /**
+   * Phase 52 Task 2 深度接入：过程级缺陷列表（可选）。
+   * 由 buildCalibratedScorecard 等评估器产出，记录该步骤检测到的缺陷。
+   * 未填充时为 undefined（向后兼容）。
+   */
+  processDefects?: ProcessDefect[];
+  /**
+   * Phase 52 Task 6 深度接入：架构感知指标（可选）。
+   * 由 ArchitectureAwareMetricsCollector 产出，记录该步骤涉及的 6 个架构组件的指标。
+   * 未填充时为 undefined（向后兼容）。
+   */
+  componentMetrics?: ComponentMetrics[];
 }
 
 /** 聚合统计结果 */
@@ -136,6 +152,20 @@ export class ScoreCardCollector {
       }
       if (card.lintErrors > 0 || card.typeErrors > 0) {
         lines.push(`    Lint 错误: ${card.lintErrors} | 类型错误: ${card.typeErrors}`);
+      }
+      // Phase 52 Task 2 深度接入：显示过程级缺陷（仅在数据存在时）
+      if (card.processDefects && card.processDefects.length > 0) {
+        const criticalCount = card.processDefects.filter((d) => d.severity === 'critical' || d.severity === 'high').length;
+        lines.push(`    过程缺陷: ${card.processDefects.length} 条（高危 ${criticalCount}）`);
+      }
+      // Phase 52 Task 6 深度接入：显示架构感知异常组件（仅在数据存在时）
+      if (card.componentMetrics && card.componentMetrics.length > 0) {
+        const anomalousComponents = card.componentMetrics
+          .filter((cm) => cm.metrics.some((m) => m.isAnomaly))
+          .map((cm) => cm.component);
+        if (anomalousComponents.length > 0) {
+          lines.push(`    架构异常组件: ${anomalousComponents.join(', ')}`);
+        }
       }
     }
 

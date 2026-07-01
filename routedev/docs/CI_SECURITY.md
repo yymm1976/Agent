@@ -100,15 +100,14 @@ allowed-tools: 'file_read,file_write,file_edit,file_search,code_search'
 
 ### 3.1 --json 输出可能含代码内容
 
-RouteDev `exec --json` 输出 JSONL 事件流，其中：
-- `tool_call_result` 事件包含工具返回内容（可能含文件内容）
-- `done` 事件包含最终答案（可能含代码片段）
+RouteDev `exec --json` 输出单个 JSON 对象（`{ success, output, steps, error? }`），其中：
+- `output` 字段包含最终答案（可能含代码片段）
+- `error` 字段（失败时）包含错误信息
 
 **敏感信息脱敏建议**：
 1. 不要将完整 stdout 直接发布到 PR 评论
-2. 仅提取 `done` 事件的 `content` 字段
-3. 对 `tool_call_result` 中的文件内容做截断（如超过 4000 字符截断）
-4. 检查输出中是否包含 API Key、密码等模式（正则匹配）
+2. 对 `output` 中的内容做截断（如超过 4000 字符截断）
+3. 检查输出中是否包含 API Key、密码等模式（正则匹配）
 
 示例脱敏脚本：
 ```javascript

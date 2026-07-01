@@ -10,24 +10,61 @@ import { SlackAdapter, type SlackAdapterConfig } from './adapters/slack.js';
 import { WebhookServer } from './server.js';
 import { logger } from '../utils/logger.js';
 
+export interface ChannelManagerOptions {
+  /** Webhook 服务器监听端口 */
+  port: number;
+  /** 开发模式是否要求认证（读取 config.security.devModeAuth） */
+  devModeAuth?: boolean;
+  /** Bearer Token 认证（读取 config.channels.authToken，未配置时为开发模式） */
+  authToken?: string;
+  /** 是否信任 X-Forwarded-For 头（读取 config.channels.trustProxy，默认 false） */
+  trustProxy?: boolean;
+}
+
 export class ChannelManager {
   private adapters = new Map<string, ChannelAdapter>();
   private router: MessageRouter | null = null;
   private server: WebhookServer | null = null;
   private port: number;
   private devModeAuth: boolean;
+  private authToken?: string;
+  private trustProxy: boolean;
   private cleanupInterval: NodeJS.Timeout | null = null;
 
-  constructor(port: number, devModeAuth: boolean = false) {
-    this.port = port;
-    this.devModeAuth = devModeAuth;
+  /**
+   * @param portOrOptions 端口数字（向后兼容）或完整 options 对象
+   * @param devModeAuth 仅在第一个参数为数字时使用（向后兼容旧调用方）
+   *
+   * Phase 53 接线修复：原构造函数只接受 (port, devModeAuth)，导致 WebhookServer 的
+   * authToken/trustProxy 配置项无法从 config 透传到服务器，安全配置形同虚设。
+   * 现支持 options 对象形式，并把全部四个参数传给 WebhookServer。
+   */
+  constructor(portOrOptions: number | ChannelManagerOptions, devModeAuth: boolean = false) {
+    if (typeof portOrOptions === 'number') {
+      // 向后兼容：旧调用方 new ChannelManager(port, devModeAuth)
+      this.port = portOrOptions;
+      this.devModeAuth = devModeAuth;
+      this.authToken = undefined;
+      this.trustProxy = false;
+    } else {
+      this.port = portOrOptions.port;
+      this.devModeAuth = portOrOptions.devModeAuth ?? false;
+      this.authToken = portOrOptions.authToken;
+      this.trustProxy = portOrOptions.trustProxy ?? false;
+    }
   }
 
   /** 初始化所有已配置的渠道 */
   initializeAdapters(entries: ChannelEntryConfig[], router: MessageRouter): void {
     this.router = router;
-    // I4 修复：将 devModeAuth 传递给 WebhookServer
-    this.server = new WebhookServer({ port: this.port, devModeAuth: this.devModeAuth });
+    // Phase 53 接线修复：透传 authToken / trustProxy 给 WebhookServer
+    // 原实现只传 port + devModeAuth，导致 channels.authToken / channels.trustProxy 配置不生效
+    this.server = new WebhookServer({
+      port: this.port,
+      devModeAuth: this.devModeAuth,
+      ...(this.authToken ? { authToken: this.authToken } : {}),
+      trustProxy: this.trustProxy,
+    });
 
     for (const entry of entries) {
       if (!entry.enabled) {

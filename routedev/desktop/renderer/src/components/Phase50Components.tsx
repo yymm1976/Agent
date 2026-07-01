@@ -15,7 +15,7 @@ import { renderProgressBar } from '../../../../src/cli/components/ProgressBar.js
 import { renderTraceTimelineText, type TraceTimelineEntry } from '../../../../src/cli/components/TracePanel.js';
 import { renderDiffText, parseUnifiedDiff } from '../../../../src/cli/components/DiffView.js';
 import type { BranchInfo } from '../../../../src/agent/branch.js';
-import type { ExecutionSnapshot } from '../../../../src/agent/durable-executor.js';
+import type { PersistedGoal } from '../../../../src/agent/goal-persistence.js';
 import type { ConfigChange } from '../../../../src/cli/components/ConfigReloadUI.js';
 
 // ============================================================
@@ -51,7 +51,7 @@ export function BranchSwitcherCard({ branches, activeBranchId, enabled = true }:
 // 2. ResumePickerCard：恢复执行选择器卡片
 // ============================================================
 interface ResumePickerCardProps {
-  snapshots: ExecutionSnapshot[];
+  snapshots: PersistedGoal[];
   onResume?: (planId: string) => void;
   enabled?: boolean;
 }
@@ -75,7 +75,7 @@ export function ResumePickerCard({ snapshots, onResume, enabled = true }: Resume
             const isSelected = idx === selectedIdx;
             return (
               <button
-                key={snapshot.planId}
+                key={snapshot.id}
                 onClick={() => setSelectedIdx(idx)}
                 className={[
                   'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition',
@@ -92,7 +92,7 @@ export function ResumePickerCard({ snapshots, onResume, enabled = true }: Resume
           <Button
             size="sm"
             disabled={!snapshots[selectedIdx]}
-            onClick={() => snapshots[selectedIdx] && onResume?.(snapshots[selectedIdx].planId)}
+            onClick={() => snapshots[selectedIdx] && onResume?.(snapshots[selectedIdx].id)}
           >
             恢复执行
           </Button>

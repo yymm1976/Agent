@@ -8,7 +8,7 @@
 //   3. 依赖 currentModel 的服务用初始值创建，后续通过 update 方法同步
 
 import type { AppConfig } from '../config/schema.js';
-import type { ILLMClient } from '../router/types.js';
+import type { ClassificationResult, ILLMClient, RoutingResult, ScenarioTier } from '../router/types.js';
 import type { LLMClientManager } from '../router/llm/index.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { ToolExecutor } from '../tools/executor.js';
@@ -41,6 +41,10 @@ import { ExecutionRouter } from '../agent/execution-router.js';
 import { TokenProfiler } from '../agent/token-profiler.js';
 import { WorkModeController, GuardedToolExecutorAdapter } from '../agent/work-modes.js';
 import { CheckpointManager } from '../harness/checkpoint-manager.js';
+// E9-B 修复：ExperimentManager 提升为 App 单例（此前仅在 Phase 44 .then() 块内局部创建，
+// 导致 /experiment 命令与 engine-bridge 各自重新实例化，丢失 ExperimentRunner 注入）
+// experiment-manager.ts 无循环依赖（只依赖 Node 内置 + logger），可安全改为静态 import
+import { ExperimentManager } from '../harness/experiment-manager.js';
 import { CheckpointWriter } from '../agent/memory/checkpoint-writer.js';
 import { ContextManager } from '../agent/memory/context-manager.js';
 import { ContextCompactor } from '../agent/context-compaction.js';
@@ -60,9 +64,8 @@ import { ContextPacker } from '../agents/context-packer.js';
 import { DelegationGate } from '../agents/delegation-gate.js';
 import { SubAgentLifecycle } from '../agents/sub-agent-lifecycle.js';
 import { SubAgentScoreCardCollector } from '../agents/sub-agent-score-card.js';
-// CR-4b：接入 activity-store（子 Agent 活动面板）+ instance-harness（三层抽象）
+// CR-4b：接入 activity-store（子 Agent 活动面板）
 import { AgentActivityStore } from '../agents/activity-store.js';
-import { createDefaultInstance, createHarness, type AgentInstance, type AgentHarness } from '../agents/instance-harness.js';
 import { WorkerExecutor } from '../agent/multi/worker-executor.js';
 import { TraceCollector } from '../harness/trace-collector.js';
 import { AuditLogger } from '../harness/audit-logger.js';
@@ -71,13 +74,10 @@ import { PromptTemplateManager } from '../prompts/manager.js';
 import { ProjectMemoryManager, loadProjectDoc } from '../memory/project-memory.js';
 import { GoalParser } from '../agent/goal-parser.js';
 import { GoalVerifier } from '../agent/goal-verifier.js';
-import { DurableExecutor, type StepExecutor } from '../agent/durable-executor.js';
-import type { PlanStep } from '../agent/goal-types.js';
-import type { StepResult } from '../agent/hooks.js';
 import { HookRunner } from '../agent/hooks.js';
 import { registerBuiltinHooks } from '../hooks/built-in.js';
 import { HookEnhancementManager } from '../hooks/hook-enhancement.js';
-import { AgentLoopStepExecutor } from '../agent/step-executor.js';
+import { getHookTemplates } from '../hooks/templates.js';
 // Phase 32 Task 1：接入 Phase 31 模块（之前全部为死代码）
 import { TaskOrchestrator, createTaskOrchestrator } from '../agent/task-orchestrator.js';
 import { RequirementsGatherer, createRequirementsGatherer } from '../agent/requirements-gatherer.js';
@@ -109,7 +109,6 @@ import type { DualLoopOrchestrator } from '../agent/dual-loop-orchestrator.js';
 import type { DagEngine } from '../agent/workflow/dag-engine.js';
 import { ArchitectureAwareMetricsCollector } from '../evaluation/architecture-aware-metrics.js';
 import { SaturationMonitor } from '../evaluation/saturation-monitor.js';
-import { MCPSecurityFramework } from '../mcp/security-framework.js';
 import { SelfEvolutionFramework } from '../agent/self-evolution/framework.js';
 import { GodelProposer } from '../agent/self-evolution/godel-proposer.js';
 import { SelfHarnessLoop } from '../agent/self-evolution/self-harness-loop.js';
@@ -118,6 +117,9 @@ import { decomposeWithSkillAwareness, retrieveSkill, composeDAG, DEFAULT_ROUTING
 // Phase 53 Task 5/7：MCP 安全扫描器 + 配置保护守卫（Task 6 SkillSecurityGate 使用动态 import）
 import { McpSecurityScanner } from '../tools/mcp/security-scanner.js';
 import { ConfigGuard } from '../tools/builtin/config-guard.js';
+// Phase 55 Task 9：CCR 可逆压缩
+import { CCRCache } from '../agent/ccr-cache.js';
+import { CCRRetrieveTool } from '../tools/builtin/ccr-retrieve.js';
 
 /**
  * CR-4b：组合式路由器实例类型
@@ -181,8 +183,6 @@ export interface AppDependencies {
   // 目标解析与验证（无状态，可复用）
   goalParser: GoalParser;
   goalVerifier: GoalVerifier;
-  // 持久化执行器（Phase 27 Task 6：/resume 命令使用）
-  durableExecutor: DurableExecutor;
   /** Phase 35 Task 2：生命周期钩子运行器（生产激活） */
   hookRunner: HookRunner;
   // LLM 客户端
@@ -224,8 +224,6 @@ export interface AppDependencies {
   metricsCollector?: ArchitectureAwareMetricsCollector;
   /** Phase 52 Task 7：评估集饱和监测器（未启用时为 undefined） */
   saturationMonitor?: SaturationMonitor;
-  /** Phase 52 Task 10：MCP 安全框架（未启用时为 undefined） */
-  mcpSecurityFramework?: MCPSecurityFramework;
   /** Phase 52 Task 5：自进化统一框架（未启用时为 undefined） */
   selfEvolutionFramework?: SelfEvolutionFramework;
   /** Phase 52 Task 8：Gödel 提议器（未启用时为 undefined） */
@@ -235,8 +233,6 @@ export interface AppDependencies {
   // CR-4b：孤立模块接线点（按各自 config 开关守护，未启用时为 undefined）
   /** 子 Agent 活动面板存储（config.activityPanel.enabled） */
   activityStore?: AgentActivityStore;
-  /** 三层抽象 Instance/Harness（config.instanceHarness.threeTierAbstractionEnabled） */
-  instanceHarness?: { instance: AgentInstance; harness: AgentHarness };
   /** 组合式路由器（config.phase52Integration.compositionalRouting.enabled） */
   compositionalRouter?: CompositionalRouterInstance;
   /** Phase 55 Task 8：执行路径判定器（App.tsx 传给 createGoalRunner，/goal 走新执行路径） */
@@ -245,6 +241,12 @@ export interface AppDependencies {
   dualLoopOrchestratorRef: { current: DualLoopOrchestrator | null };
   /** Phase 55：DagEngine ref（异步创建，goal-runner 通过 ref 延迟读取，未注入时 executePlanWithDag 降级到 single） */
   dagEngineRef: { current: DagEngine | null };
+  /**
+   * E9-B 修复：实验管理器单例（基于 Git Worktree）
+   * 全 App 生命周期内复用同一实例，确保 ExperimentRunner 注入持续生效。
+   * /experiment 命令与 engine-bridge 都从此字段读取，避免重复实例化导致的 runner 丢失。
+   */
+  experimentManager: ExperimentManager;
 }
 
 /**
@@ -300,6 +302,8 @@ export function createAppDependencies(
 
   // A3：激活 ContextCompactor——消除双引擎不统一，让上下文压缩在生产路径生效
   // L5 summarize 回调使用 checkpointClient（已配置的辅助模型），失败时由 B12 的 try/catch 降级
+  // Phase 55 Task 9：CCR 可逆压缩——compact 前缓存原始消息，LLM 可通过 ccr_retrieve 工具取回
+  const ccrCache = new CCRCache(config.ccrCompression?.maxCacheSize ?? 50);
   const contextCompactor = new ContextCompactor({
     targetTokens: Math.floor((currentModelConfig?.contextWindow ?? 128000) * 0.6),
     estimateTokens,
@@ -319,6 +323,7 @@ export function createAppDependencies(
         }
       : undefined,
     contextWindow: currentModelConfig?.contextWindow ?? 128000,
+    ccrCache: config.ccrCompression?.enabled ? ccrCache : undefined,
   });
   contextManager.setCompactor(contextCompactor);
 
@@ -414,6 +419,10 @@ export function createAppDependencies(
   const sessionDir = path.join(homedir(), '.qoderwork', 'routedev', 'sessions', trace.getSessionId() ?? `app-${Date.now()}`);
   const notesManager = new NotesManager(sessionDir);
   registry.register(new NotesTool(notesManager));
+  // Phase 55 Task 9：CCR 取回工具（让 LLM 可按需取回被压缩的原始上下文）
+  if (config.ccrCompression?.enabled) {
+    registry.register(new CCRRetrieveTool(ccrCache));
+  }
 
   // Phase 53 Task 7：ConfigGuard 注入（受 config.phase53Integration.configGuard.enabled 守护）
   // 启用后 file_edit / file_write 在执行前会检查是否弱化安全/治理配置
@@ -457,7 +466,7 @@ export function createAppDependencies(
   const workModeController = new WorkModeController();
   // Phase 32 Task 1.3：先创建 ReadTracker，供 GuardedToolExecutorAdapter 使用
   // 配置开关：optimization.safety.readBeforeWrite（默认 true）
-  const readTracker = createReadTracker();
+  const readTracker = createReadTracker(cwd);
   const readBeforeWriteEnabled = config.optimization?.safety?.readBeforeWrite !== false;
   const guardedAdapter = new GuardedToolExecutorAdapter(adapter, workModeController, readTracker, readBeforeWriteEnabled);
   // 传入 autoApprovePatterns：从 config.autonomy 读取，让只读安全工具自动批准
@@ -561,21 +570,6 @@ export function createAppDependencies(
         return { success: false, result: '', error: 'LLM 客户端不可用' };
       }
       try {
-        const defaultModel = config.providers[0]?.models[0];
-        if (!defaultModel) {
-          return { success: false, result: '', error: '未配置可用模型' };
-        }
-        const routeDecision = {
-          model: defaultModel,
-          providerId: primaryProviderId,
-          fallbackUsed: false,
-          originalTier: defaultModel.tier ?? 'medium',
-          degraded: false,
-        };
-        let responseText = '';
-        let inputTokens = 0;
-        let outputTokens = 0;
-
         // Phase 48 Task 4：首次调用时加载 AgentProfileManager
         // 失败时仅记录警告，回退到硬编码白名单（fail-open，不阻塞 spawn）
         if (!profileManagerLoaded) {
@@ -593,6 +587,51 @@ export function createAppDependencies(
         // - profile 非空时，createChildRegistry 会用 profile.allowedTools 覆盖硬编码白名单
         // - 同时下方会优先使用 profile.systemPrompt 作为子 Agent 系统提示词
         const profile = resolveProfileForSubagent(profileManager, subagentType);
+
+        const defaultModel = config.providers[0]?.models[0];
+        if (!defaultModel) {
+          return { success: false, result: '', error: '未配置可用模型' };
+        }
+        let childClient = primaryClient;
+        let routeDecision: RoutingResult;
+        if (profile?.modelId && profile.modelId !== 'default') {
+          const provider = config.providers.find(p => p.models.some(m => m.id === profile.modelId));
+          const model = provider?.models.find(m => m.id === profile.modelId);
+          if (!provider || !model) {
+            return { success: false, result: '', error: `子 Agent Profile 指定的模型不存在: ${profile.modelId}` };
+          }
+          const modelClient = clientManager.get(provider.id);
+          if (!modelClient || !modelClient.isReady()) {
+            return { success: false, result: '', error: `子 Agent Profile 指定的提供商不可用: ${provider.id}` };
+          }
+          childClient = modelClient;
+          routeDecision = {
+            model,
+            providerId: provider.id,
+            fallbackUsed: false,
+            originalTier: (model.tier ?? 'medium') as ScenarioTier,
+            degraded: false,
+          };
+        } else if (classifier && modelRouter) {
+          const classifyResult: ClassificationResult = await classifier.classify({ query: normalizedParams.description });
+          routeDecision = await modelRouter.route(classifyResult);
+          const routedClient = clientManager.get(routeDecision.providerId);
+          if (!routedClient || !routedClient.isReady()) {
+            return { success: false, result: '', error: `子 Agent 路由提供商不可用: ${routeDecision.providerId}` };
+          }
+          childClient = routedClient;
+        } else {
+          routeDecision = {
+            model: defaultModel,
+            providerId: primaryProviderId,
+            fallbackUsed: false,
+            originalTier: (defaultModel.tier ?? 'medium') as ScenarioTier,
+            degraded: false,
+          };
+        }
+        let responseText = '';
+        let inputTokens = 0;
+        let outputTokens = 0;
 
         // Phase 38 Task 2：创建子 Agent 专用 registry（防递归 + 角色白名单过滤）
         // 不再在共享 registry 上 register/unregister，消除竞态条件
@@ -619,28 +658,28 @@ export function createAppDependencies(
         const profileMaxSteps = profile?.maxSteps && profile.maxSteps > 0
           ? profile.maxSteps
           : undefined;
+        const requestedMaxIterations = normalizedParams.maxIterations
+          ?? options?.maxIterations
+          ?? profileMaxSteps
+          ?? 20;
+        const effectiveMaxIterations = profileMaxSteps
+          ? Math.min(requestedMaxIterations, profileMaxSteps)
+          : requestedMaxIterations;
         const childLoop = new ReActAgentLoop(childGuardedAdapter, {
-          maxIterations: normalizedParams.maxIterations
-            ?? options?.maxIterations
-            ?? profileMaxSteps
-            ?? 20,
+          maxIterations: effectiveMaxIterations,
           toolsEnabled: true,
           parallelToolExecution: true,
           autoApprovePatterns: config.autonomy?.autoApprovePatterns ?? [],
         });
         childLoop.setMiddlewarePipeline(pluginSystem.middlewarePipeline);
 
-        // Phase 48 Task 4：systemPrompt 优先级
-        //   1. options.systemPrompt（调用方显式覆盖，最高优先级）
-        //   2. profile.systemPrompt（AgentProfileManager 解析的 profile）
-        //   3. 默认提示词（兜底）
-        const childSystemPrompt = options?.systemPrompt
-          ?? profile?.systemPrompt
+        const childSystemPrompt = profile?.systemPrompt
+          ?? options?.systemPrompt
           ?? '你是一个专注的子 Agent，负责完成分配给你的独立子任务。';
 
         for await (const event of childLoop.run({
           userMessage: normalizedParams.prompt,
-          llmClient: primaryClient,
+          llmClient: childClient,
           routeDecision,
           conversationHistory: [],
           systemPrompt: childSystemPrompt,
@@ -687,6 +726,14 @@ export function createAppDependencies(
       error: err instanceof Error ? err.message : String(err),
     });
   });
+
+  // Phase 52 Task 1：SkillLifecycleManager 提前创建（需在 delegationDeps 装配前就绪，
+  // 以便注入 wrapSpawnAgentWithDelegation，在每次 spawn 完成后记录执行）
+  let skillLifecycleManager: SkillLifecycleManager | undefined;
+  if (config.phase52Integration?.skillLifecycle?.enabled) {
+    skillLifecycleManager = new SkillLifecycleManager(config.phase52Integration.skillLifecycle);
+    logger.info('app-init: SkillLifecycleManager 已启用');
+  }
 
   if (subAgentsEnabled && MAX_CONCURRENT_SUB_AGENTS > 0) {
     let spawnAgentFn: SpawnAgentFunction = createConcurrencyLimitedSpawnFn(
@@ -747,6 +794,8 @@ export function createAppDependencies(
         // Phase 55 Task 8：修复 detachedSession 接线断层（原漏传导致 spawn-agent.ts:546 分支永不执行）
         detachedSessionEnabled: !!delegationPolicyCfg?.detachedSessionEnabled,
         profileManager: workerProfileManager,
+        // Phase 52 Task 1：SkillLifecycleManager 注入，spawn 完成后记录执行记忆
+        skillLifecycleManager,
       };
       spawnAgentFn = wrapSpawnAgentWithDelegation(spawnAgentFn, delegationDeps);
       logger.info('Phase 50: spawn_agent wrapped with delegation modules', {
@@ -1042,39 +1091,6 @@ export function createAppDependencies(
       });
   }
 
-  // ===== Phase 42：SkillMarketManager 接线（市场） =====
-  // 管理 Skill/Hook 的发布、导入、导出
-  // 注：skills/market-manager.ts 由其他子代理创建，使用变量路径动态 import 避免 typecheck 失败
-  const marketCfg = config.market;
-  if (marketCfg?.enabled !== false) {
-    const marketModulePath = '../skills/market-manager.js';
-    import(marketModulePath)
-      .then((mod: { SkillMarketManager: new (cwd: string, opts?: unknown) => { init: () => Promise<void> } }) => {
-        const manager = new mod.SkillMarketManager(cwd, {
-          autoPublish: marketCfg.autoPublish,
-        });
-        manager.init().catch((e: unknown) => {
-          logger.debug('SkillMarketManager init failed', {
-            error: e instanceof Error ? e.message : String(e),
-          });
-        });
-        // 注册到 service context（feature-detect：方法可能由其他子代理添加）
-        const loop = agentLoop as unknown as { setSkillMarketManager?: (m: unknown) => void };
-        if (typeof loop.setSkillMarketManager === 'function') {
-          loop.setSkillMarketManager(manager);
-        }
-        logger.info('SkillMarketManager registered', {
-          autoPublish: marketCfg.autoPublish,
-        });
-      })
-      .catch((err: unknown) => {
-        // fail-open：市场管理器不可用时跳过
-        logger.debug('SkillMarketManager not available yet', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-  }
-
   // ===== Skills 系统（Phase 37：按需加载 Markdown Skill） =====
   // 状态持久化到 ~/.qoderwork/routedev/skill-state.json（与 plugin-state.json 同目录）
   const skillStatePath = path.join(homedir(), '.qoderwork', 'routedev', 'skill-state.json');
@@ -1197,15 +1213,6 @@ export function createAppDependencies(
         });
         // Phase 55：立即写入 ref，让 goal-runner 在 /goal 触发时能读取到实例
         dagEngineRef.current = engine;
-        // feature-detect：方法可能由其他子代理添加
-        const gp = goalParser as unknown as { setDagEngine?: (e: unknown) => void };
-        if (typeof gp.setDagEngine === 'function') {
-          gp.setDagEngine(engine);
-          logger.debug('DagEngine injected into GoalParser', {
-            via: 'setDagEngine',
-            maxParallel: phase53DagCfg.maxParallel,
-          });
-        }
       })
       .catch(() => { /* fail-open：DAG 引擎不可用时跳过 */ });
   }
@@ -1230,7 +1237,6 @@ export function createAppDependencies(
   // Phase 35 Task 2：创建 HookRunner 实例并注册内置钩子
   //   - 传入 TraceCollector：钩子执行时记录 span（禁止创建不带 trace 的 HookRunner）
   //   - 注册内置钩子：post-tool-call 文件验证 + session 生命周期日志
-  //   - 传入 DurableExecutor：使 runStepWithHooks() 真正生效
   const hookRunner = new HookRunner();
   hookRunner.setTraceCollector(trace);
   registerBuiltinHooks(hookRunner, audit, cwd, currentModel);
@@ -1246,9 +1252,33 @@ export function createAppDependencies(
     // 使用变量路径让 TypeScript 无法静态解析（模块可能尚未创建）
     const registryModulePath = '../hooks/registry.js';
     import(registryModulePath)
-      .then(async (mod: { HookConfigRegistry: new (configPath: string) => { load: () => Promise<void>; list: () => Array<{ id: string; enabled: boolean }> } }) => {
+      .then(async (mod: { HookConfigRegistry: new (configPath: string) => { load: () => Promise<void>; list: () => Array<{ id: string; enabled: boolean; [key: string]: unknown }>; get: (id: string) => { id: string; enabled: boolean; [key: string]: unknown } | undefined; add: (config: { id: string; enabled: boolean; [key: string]: unknown }) => void } }) => {
         const hookRegistry = new mod.HookConfigRegistry(path.join(cwd, hooksCfg.configPath));
         await hookRegistry.load();
+
+        // 注册内置 Hook 模板到 HookConfigRegistry（用户可在 UI 中启用）
+        // 模板默认 enabled=false，避免覆盖用户已自定义的同名 hook
+        const templates = getHookTemplates();
+        let templatesAdded = 0;
+        for (const template of templates) {
+          if (hookRegistry.get(template.id)) continue;
+          hookRegistry.add({
+            id: template.id,
+            name: template.name,
+            event: template.event,
+            enabled: false,
+            condition: template.condition,
+            command: template.code,
+            failBehavior: template.failBehavior,
+            isTemplate: true,
+            priority: template.priority,
+          });
+          templatesAdded++;
+        }
+        if (templatesAdded > 0) {
+          logger.info('Hook 模板已注册到 Registry', { count: templatesAdded });
+        }
+
         const configs = hookRegistry.list();
         let registered = 0;
         for (const cfg of configs) {
@@ -1318,59 +1348,6 @@ export function createAppDependencies(
     hookGroups: hookEnhancementCfg?.hookGroups,
   });
 
-  // Phase 35 Task 3：用 AgentLoopStepExecutor 替换假桩
-  //   - 真实调用 agentLoop.run() 执行步骤（不再是永远返回 success 的空桩）
-  //   - 使用 classifier + modelRouter 选择模型（与 goal-runner 保持一致）
-  //   - 每个 step 从空 conversationHistory 开始（step 间隔离）
-  //   - classifier/modelRouter 在测试场景下可能未传入，此时回退到假桩（保持向后兼容）
-  let durableStepExecutor: StepExecutor;
-  if (classifier && modelRouter) {
-    durableStepExecutor = new AgentLoopStepExecutor({
-      agentLoop,
-      classifier,
-      modelRouter,
-      clientManager,
-      baseSystemPrompt: '',
-    });
-  } else {
-    // 测试场景回退：classifier/modelRouter 未传入时使用基础桩
-    // 生产路径（App.tsx）必传 classifier + modelRouter
-    logger.warn('AgentLoopStepExecutor: classifier/modelRouter not provided, falling back to stub executor');
-    durableStepExecutor = {
-      async execute(step: PlanStep, _goal: string): Promise<StepResult> {
-        return {
-          success: true,
-          output: `步骤 ${step.id} 已执行（桩模式）: ${step.description}`,
-          durationMs: 0,
-        };
-      },
-    };
-  }
-  const durableExecutor = new DurableExecutor({
-    sessionId: trace.getSessionId() ?? `app-${Date.now()}`,
-    executor: durableStepExecutor,
-    hookRunner, // Phase 35 Task 2：传入 HookRunner，激活 runStepWithHooks()
-    projectPath: cwd,
-  });
-
-  // Phase 35 Task 3：启动时检查可恢复执行，有则打印提示
-  //   - 不自动恢复——只提示，让用户通过 /resume 决定
-  //   - Phase 50 Task 8：同步版 listRecoverable() 已移除，改用异步版（fire-and-forget，不阻塞初始化）
-  void durableExecutor.listRecoverableAsync().then((recoverable) => {
-    if (recoverable.length > 0) {
-      const latest = recoverable[0];
-      logger.info('DurableExecutor: 发现未完成执行，可使用 /resume 恢复', {
-        count: recoverable.length,
-        latestGoal: latest.goal.slice(0, 60),
-        latestStatus: latest.status,
-      });
-    }
-  }).catch((err) => {
-    logger.warn('DurableExecutor: 检查可恢复执行失败', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  });
-
   // ===== Phase 32 Task 1：Phase 31 模块实例化（之前全部为死代码） =====
   // 接线顺序：先创建无依赖的工具类（ReadTracker/Sanitizer/CompletionGate），
   // 再创建依赖 classifier+router+clientManager 的 TaskOrchestrator，
@@ -1398,14 +1375,6 @@ export function createAppDependencies(
     logger.debug('McpSecurityScanner injected', { via: 'setSecurityScanner' });
   }
 
-  // C5 修复：接线 Steering Queue 消费者，让 ReActAgentLoop 能消费 taskOrchestrator 中的转向消息
-  agentLoop.setSteeringConsumer(() => {
-    if (!taskOrchestrator.hasSteering()) return null;
-    const drained = taskOrchestrator.drainSteering();
-    if (drained.length === 0) return null;
-    return drained.map((m) => ({ content: m.content, mode: m.mode }));
-  });
-
   // 3. CompletionGate——独立代码验证门（typecheck/lint/tests）
   //    配置来自 optimization.safety.completionGate / gateTimeout / gateRetry
   const safetyCfg = config.optimization?.safety;
@@ -1427,6 +1396,15 @@ export function createAppDependencies(
     clientManager,
     config,
   );
+
+  // C5 修复：接线 Steering Queue 消费者，让 ReActAgentLoop 能消费 taskOrchestrator 中的转向消息
+  // 注：必须在 taskOrchestrator 声明之后调用，否则闭包捕获的变量处于 TDZ，调用时抛 ReferenceError
+  agentLoop.setSteeringConsumer(() => {
+    if (!taskOrchestrator.hasSteering()) return null;
+    const drained = taskOrchestrator.drainSteering();
+    if (drained.length === 0) return null;
+    return drained.map((m) => ({ content: m.content, mode: m.mode }));
+  });
 
   // 6. ExecutionOrchestrator + UnifiedReviewer——依赖 agentLoop + tracker
   //    tracker 可能在测试场景下未传入，此时传一个 noop tracker 的占位（生产路径必传）
@@ -1464,42 +1442,6 @@ export function createAppDependencies(
     })
     .catch((err: unknown) => {
       logger.debug('CodeMapFallback not available', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-
-  // 2. PolicyArbitrator 接线：策略冲突仲裁（security > skill > hook）
-  //    实例化后注册到 AgentLoop（feature-detect：方法可能由其他子代理添加）
-  import('../policies/arbitration.js')
-    .then((mod) => {
-      const arbitrator = new mod.PolicyArbitrator();
-      const loop = agentLoop as unknown as { setPolicyArbitrator?: (a: unknown) => void };
-      if (typeof loop.setPolicyArbitrator === 'function') {
-        loop.setPolicyArbitrator(arbitrator);
-      }
-      logger.info('PolicyArbitrator registered');
-    })
-    .catch((err: unknown) => {
-      logger.debug('PolicyArbitrator not available', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-
-  // 3. RegistryClient 接线：远程市场 Registry 接口
-  //    未配置 registryUrl 时返回 StubRegistryClient（空列表），配置后返回 HttpRegistryClient
-  import('../skills/registry-client.js')
-    .then((mod) => {
-      const client = mod.createRegistryClient(config.market?.registryUrl, config.market?.registryToken);
-      const loop = agentLoop as unknown as { setRegistryClient?: (c: unknown) => void };
-      if (typeof loop.setRegistryClient === 'function') {
-        loop.setRegistryClient(client);
-      }
-      logger.info('RegistryClient registered', {
-        configured: !!config.market?.registryUrl,
-      });
-    })
-    .catch((err: unknown) => {
-      logger.debug('RegistryClient not available', {
         error: err instanceof Error ? err.message : String(err),
       });
     });
@@ -1571,18 +1513,56 @@ export function createAppDependencies(
       });
     });
 
-  // 3. ParallelExperimentManager 接线：多分支并行实验
-  //    config.experiment.parallelEnabled=false 时跳过注册
+  // 3. ExperimentManager 单例：在同步作用域创建，确保 /experiment 命令与 engine-bridge
+  //    都能从 AppDependencies 读取同一实例（避免重复实例化导致 ExperimentRunner 丢失）
+  //    注：ExperimentManager 构造仅做 ensureGitignore + loadRegistry，无重 IO，同步创建安全
+  const experimentManager = new ExperimentManager(cwd);
+
+  // 4. ParallelExperimentManager 接线：多分支并行实验
+  //    config.experiment.parallelEnabled=false 时跳过注册（但 experimentManager 单例仍保留供 /experiment 使用）
   const experimentCfg = config.experiment;
   if (experimentCfg?.parallelEnabled !== false) {
     const pemPath = '../agent/parallel-experiment.js';
-    const emPath = '../harness/experiment-manager.js';
+    const runnerPath = '../harness/experiment-runner.js';
     Promise.all([
       import(pemPath),
-      import(emPath),
+      import(runnerPath),
     ])
-      .then(([pemMod, emMod]) => {
-        const experimentManager = new emMod.ExperimentManager(cwd);
+      .then(([pemMod, runnerMod]) => {
+        // Phase 39 Task 3：注入 ExperimentRunner，让 runInExperiment 真正执行 Agent 任务
+        // depsFactory 在 worktree 路径下创建独立的 AppDependencies，并附加 routeDecision 和 llmClient
+        // 注：每次实验任务执行都会创建完整的依赖（MCP/工具/orchestrator 等），开销较大但隔离性强
+        const depsFactory = (newCwd: string) => {
+          const newDeps = createAppDependencies(
+            config,
+            clientManager,
+            currentModel,
+            newCwd,
+            classifier,
+            modelRouter,
+            tracker,
+          );
+          // 构造简化路由决策：用第一个 provider 的第一个模型（与 spawn-agent 默认路由一致）
+          const defaultModel = config.providers[0]?.models[0];
+          if (!defaultModel) {
+            throw new Error('未配置可用模型，无法创建实验 runner 依赖');
+          }
+          const routeDecision = {
+            model: defaultModel,
+            providerId: primaryProviderId,
+            fallbackUsed: false,
+            originalTier: defaultModel.tier ?? 'medium',
+            degraded: false,
+          };
+          return {
+            ...newDeps,
+            routeDecision,
+            llmClient: newDeps.primaryClient,
+          };
+        };
+        const runner = runnerMod.createExperimentRunner(depsFactory);
+        experimentManager.setExperimentRunner(runner);
+
         const parallelExperiment = new pemMod.ParallelExperimentManager(experimentManager, experimentCfg);
         const loop = agentLoop as unknown as { setParallelExperimentManager?: (m: unknown) => void };
         if (typeof loop.setParallelExperimentManager === 'function') {
@@ -1591,6 +1571,7 @@ export function createAppDependencies(
         logger.info('ParallelExperimentManager registered', {
           maxParallel: experimentCfg?.maxParallel,
           conflictDetection: experimentCfg?.conflictDetection,
+          runnerInjected: true,
         });
       })
       .catch((err: unknown) => {
@@ -1744,11 +1725,6 @@ export function createAppDependencies(
     });
     scheduleEngine.start();
     logger.info('ScheduleEngine started', { checkInterval: '60s' });
-
-    // Phase 53 Task 2：装配验证 — 将 ScheduleEngine 注入 AgentLoop
-    // 接入点：run() 在每次迭代前后检查待触发的定时任务（目前 setter 已就位，运行时使用待 Phase 54+ 扩展）
-    agentLoop.setCronEngine(scheduleEngine);
-    logger.debug('ScheduleEngine injected into AgentLoop', { via: 'setCronEngine' });
   }
 
   // ===== Phase 50 Task 5：Phase 48 模块接入确认 =====
@@ -1756,18 +1732,40 @@ export function createAppDependencies(
   // 全部使用动态 import + fail-open，模块不可用时跳过不影响主流程
   const phase48Cfg = config.phase48Integration;
   if (phase48Cfg?.citeEnabled && config.cite?.enabled) {
-    // CiteResolver 接入：引用解析器实例化（chat-runner 消息发送前可调用）
-    import('../cite/resolver.js')
-      .then((mod) => {
-        const resolver = new mod.CiteResolver({ config: config.cite });
-        const loop = agentLoop as unknown as { setCiteResolver?: (r: unknown) => void };
-        if (typeof loop.setCiteResolver === 'function') {
-          loop.setCiteResolver(resolver);
-        }
-        logger.info('Phase 48 cite module integrated', { enabled: true });
+    // CiteManager + CiteResolver 接入：引用管理器 + 引用解析器实例化并注入 AgentLoop
+    // CiteManager 在 callLLMStream 末尾收集 [cite:type:source] 标记
+    // CiteResolver 在 callLLMStream 开头解析收集到的引用，产出 injectedContext + skillPrompts
+    // 两者缺一不可：缺 manager 无收集，缺 resolver 收集的是死数据（E5 补全）
+    Promise.all([
+      import('../cite/manager.js'),
+      import('../cite/resolver.js'),
+    ])
+      .then(([managerMod, resolverMod]) => {
+        const maxTags = config.cite?.maxTags ?? 10;
+        const citeManager = new managerMod.CiteManager(maxTags);
+        agentLoop.setCiteManager(citeManager);
+        // CiteResolver 实例化：注入读取 Skill/Macro 的 provider（从 .routedev/skills/ 和 macros 读取）
+        const citeResolver = new resolverMod.CiteResolver({
+          config: config.cite,
+          deps: {
+            readSkillOrMacro: async (name: string, kind?: 'skill' | 'macro') => {
+              try {
+                const path = require('node:path');
+                const fs = require('node:fs');
+                const dir = kind === 'macro' ? 'macros' : 'skills';
+                const file = path.join(cwd, '.routedev', dir, `${name}.md`);
+                return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : null;
+              } catch {
+                return null;
+              }
+            },
+          },
+        });
+        agentLoop.setCiteResolver(citeResolver);
+        logger.info('Phase 48 cite manager + resolver integrated', { enabled: true, maxTags });
       })
       .catch((err: unknown) => {
-        logger.debug('CiteResolver not available', {
+        logger.debug('CiteManager/Resolver not available', {
           error: err instanceof Error ? err.message : String(err),
         });
       });
@@ -1858,23 +1856,6 @@ export function createAppDependencies(
   // ===== Phase 50 Task 6：Phase 49 模块接入确认 =====
   // 六模块按 config.phase49Integration 开关接入（默认全部 false，实验性）
   const phase49Cfg = config.phase49Integration;
-  if (phase49Cfg?.skillFlowEnabled) {
-    // SkillFlow 引擎接入：Skill 执行时可被调用
-    import('../skills/skill-flow-engine.js')
-      .then((mod) => {
-        const engine = new mod.SkillFlowEngine();
-        const loop = agentLoop as unknown as { setSkillFlowEngine?: (e: unknown) => void };
-        if (typeof loop.setSkillFlowEngine === 'function') {
-          loop.setSkillFlowEngine(engine);
-        }
-        logger.info('Phase 49 SkillFlowEngine integrated', { enabled: true });
-      })
-      .catch((err: unknown) => {
-        logger.debug('SkillFlowEngine not available', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-  }
   // Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，供 goal-runner 通过 ref 延迟读取）
   // 声明在 phase49 块之前，确保 .then() 回调内能写入、createGoalRunner deps 能引用
   const dualLoopOrchestratorRef: { current: DualLoopOrchestrator | null } = { current: null };
@@ -1946,12 +1927,10 @@ export function createAppDependencies(
     // Skill 质量门接入：Skill 生成时可被调用
     import('../skills/quality-gate.js')
       .then((mod) => {
+        // 实例化保留供未来扩展；AgentLoop.setSkillQualityGate setter 尚不存在，未接入主流程
         const gate = new mod.SkillQualityGate();
-        const loop = agentLoop as unknown as { setSkillQualityGate?: (g: unknown) => void };
-        if (typeof loop.setSkillQualityGate === 'function') {
-          loop.setSkillQualityGate(gate);
-        }
-        logger.info('Phase 49 SkillQualityGate integrated', { enabled: true });
+        void gate;
+        logger.debug('SkillQualityGate instantiated (not yet integrated into AgentLoop — setter does not exist)');
       })
       .catch((err: unknown) => {
         logger.debug('SkillQualityGate not available', {
@@ -1995,34 +1974,11 @@ export function createAppDependencies(
         });
       });
   }
-  if (phase49Cfg?.routingFunnelEnabled) {
-    // 意图路由漏斗接入：router 调用
-    // 注：RoutingFunnel 构造需要 llmClassifier/fallbackModel 等依赖，此处仅确认模块可加载
-    // 实例化由 router 按需创建（依赖注入 classifier + 模型配置）
-    import('../router/routing-funnel.js')
-      .then((mod) => {
-        const loop = agentLoop as unknown as { setRoutingFunnelFactory?: (f: unknown) => void };
-        if (typeof loop.setRoutingFunnelFactory === 'function') {
-          loop.setRoutingFunnelFactory(mod.RoutingFunnel);
-        }
-        logger.info('Phase 49 RoutingFunnel module available', { enabled: true });
-      })
-      .catch((err: unknown) => {
-        logger.debug('RoutingFunnel not available', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-  }
 
   // ===== Phase 52 模块接入（全部由 config.phase52Integration 开关守护）=====
   // 设计原则：未启用的模块不初始化，实例为 undefined；用 ?? 兜底避免 config 字段未定义时崩溃
 
-  // Task 1：Skill 生命周期管理
-  let skillLifecycleManager: SkillLifecycleManager | undefined;
-  if (config.phase52Integration?.skillLifecycle?.enabled) {
-    skillLifecycleManager = new SkillLifecycleManager(config.phase52Integration.skillLifecycle);
-    logger.info('app-init: SkillLifecycleManager 已启用');
-  }
+  // Task 1：Skill 生命周期管理——已提前至 delegationDeps 装配前创建（供 spawn_agent 注入）
 
   // Phase 53 Task 6：SkillSecurityGate 注入（受 config.phase53Integration.skillSecurityGate.enabled 守护）
   // 启用后第三方技能安装前会经过 17 类漏洞扫描；lifecycle manager 未启用时仅实例化记录日志
@@ -2071,20 +2027,17 @@ export function createAppDependencies(
     logger.info('app-init: SaturationMonitor 已启用');
   }
 
-  // Task 10：MCP 安全框架
-  let mcpSecurityFramework: MCPSecurityFramework | undefined;
-  if (config.phase52Integration?.mcpSecurity?.enabled) {
-    const mcpSecCfg = config.phase52Integration.mcpSecurity;
-    mcpSecurityFramework = new MCPSecurityFramework({
-      strictness: mcpSecCfg.strictness ?? 'standard',
-      defenseLayers: {
-        capabilityControl: mcpSecCfg.l1CapabilityCheck ?? true,
-        toolAttestation: mcpSecCfg.l2AttestationCheck ?? false,
-        informationFlowTracking: mcpSecCfg.l3InfoFlowTracking ?? true,
-        runtimePolicyEnforcement: mcpSecCfg.l4RuntimeMonitoring ?? true,
-      },
-    });
-    logger.info('app-init: MCPSecurityFramework 已启用');
+  // Phase 52 Task 7：把 SaturationMonitor 注入 CompletionGate（fail-open）
+  // verify 完成后把 checks 转为 EvaluationRunResult 累积历史并评估饱和度，非 healthy 时填 warnings
+  if (saturationMonitor) {
+    try {
+      completionGate.setSaturationMonitor(saturationMonitor);
+      logger.info('app-init: SaturationMonitor 已注入 CompletionGate');
+    } catch (err) {
+      logger.warn('app-init: SaturationMonitor 注入 CompletionGate 失败 (non-blocking)', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // Task 5：自进化框架
@@ -2169,25 +2122,6 @@ export function createAppDependencies(
         error: err instanceof Error ? err.message : String(err),
       });
     }
-  }
-
-  // CR-4b：三层抽象 Instance/Harness（config.instanceHarness.threeTierAbstractionEnabled 守护）
-  let instanceHarness: { instance: AgentInstance; harness: AgentHarness } | undefined;
-  const instanceHarnessCfg = config.instanceHarness;
-  if (instanceHarnessCfg?.threeTierAbstractionEnabled) {
-    const harnessInstance = createDefaultInstance(instanceHarnessCfg.defaultInstanceId || cwd);
-    const harnessModelId = config.providers[0]?.models[0]?.id ?? currentModel;
-    const harness = createHarness(
-      harnessInstance,
-      instanceHarnessCfg.defaultHarnessName || 'default',
-      harnessModelId,
-    );
-    instanceHarness = { instance: harnessInstance, harness };
-    logger.info('app-init: InstanceHarness 三层抽象已启用', {
-      instanceId: harnessInstance.id,
-      harnessName: harness.name,
-      scopeAbortCascade: instanceHarnessCfg.scopeAbortCascadeEnabled,
-    });
   }
 
   // CR-4b：组合式路由器（config.phase52Integration.compositionalRouting.enabled 守护）
@@ -2282,7 +2216,6 @@ export function createAppDependencies(
     projectMemory,
     goalParser,
     goalVerifier,
-    durableExecutor,
     hookRunner,
     primaryClient,
     checkpointClient,
@@ -2311,13 +2244,11 @@ export function createAppDependencies(
     skillLifecycleManager,
     metricsCollector,
     saturationMonitor,
-    mcpSecurityFramework,
     selfEvolutionFramework,
     godelProposer,
     selfHarnessLoop,
     // CR-4b：孤立模块接线点实例（按各自 config 开关守护，未启用时为 undefined）
     activityStore,
-    instanceHarness,
     compositionalRouter,
     // Phase 55 Task 8：执行路径判定器（App.tsx 传给 createGoalRunner）
     executionRouter,
@@ -2325,5 +2256,7 @@ export function createAppDependencies(
     dualLoopOrchestratorRef,
     // Phase 55：DagEngine ref（异步创建，goal-runner 通过 ref 延迟读取）
     dagEngineRef,
+    // E9-B：ExperimentManager 单例（供 /experiment 命令与 engine-bridge 复用）
+    experimentManager,
   };
 }

@@ -26,6 +26,15 @@ import { DelegationEnforcer } from '../../agents/delegation-enforcer.js';
 import { DelegationContractManager, type DelegationContract } from '../../agents/delegation-contract.js';
 import { SubAgentLifecycle, AntiAbuseDetector } from '../../agents/sub-agent-lifecycle.js';
 import { SubAgentScoreCardCollector, type SubAgentScoreCard } from '../../agents/sub-agent-score-card.js';
+// Phase 51 Task 2 / Task 4：委托四维约束 + call-scoped overlay
+import { canDelegate, decideDelegation, createDelegationGuard, type DelegationPermission } from '../../agents/delegation-policy.js';
+import { createSubAgentSession, extractFinalAnswer, type SubAgentSessionScope } from '../../agents/subagent-session.js';
+// CR-4b：接入 result-schemas（子 Agent 结构化返回校验/格式化）
+import { validateSubAgentResult, formatResultForParent, RESULT_SCHEMAS } from '../../agents/result-schemas.js';
+// CR-4b：接入 activity-store（子 Agent 活动面板追踪）
+import { AgentActivityStore, truncatePreview, buildLineage } from '../../agents/activity-store.js';
+// Phase 52 Task 1：Skill 生命周期管理（spawn 完成后记录执行，仅类型引入避免循环依赖）
+import type { SkillLifecycleManager } from '../../skills/skill-lifecycle.js';
 import { logger } from '../../utils/logger.js';
 
 /** 子 Agent 类型：决定可用工具集（白名单在 app-init.ts 中维护） */
@@ -89,33 +98,65 @@ export function resolveProfileForSubagent(
 }
 
 /**
- * 创建子 Agent 用的 ToolRegistry（防递归 + 角色白名单过滤）
- * Phase 38 Task 2
+ * 委托上下文（Phase 51 Task 2）
+ * I-3 修复：新增 currentRole 字段，原 currentRole 缺失导致 canDelegate
+ * 把 currentRole 和 targetRole 都设为 targetRole，破坏目标合法性检查
+ */
+export interface DelegationContext {
+  currentDepth: number;
+  /** 当前 Agent 角色（I-3 修复：原缺失导致 canDelegate 参数错误） */
+  currentRole: string;
+  policy: {
+    maxDepth: number;
+    delegationTargets: Record<string, string[]>;
+  };
+  targetRole: string;
+}
+
+/**
+ * 创建子 Agent 用的 ToolRegistry（防递归 + 角色白名单过滤 + 四维约束）
+ * Phase 38 Task 2 / Phase 51 Task 2
  *
- * 步骤：
- *   1. clone 父 registry（浅拷贝，工具对象共享引用）
- *   2. 移除 spawn_agent（防递归：子 Agent 物理上不能再派遣孙子 Agent）
- *   3. 若 subagentType 有非空白名单，只保留白名单中的工具
- *
- * Phase 48 Task 4：接入 AgentProfileManager
- *   - 新增可选参数 profileManager
- *   - 若 profileManager 提供了 profile 且 profile.allowedTools 非空，
- *     优先使用 profile 的工具白名单（覆盖硬编码 SUBAGENT_TOOL_WHITELIST）
- *   - 未传 profileManager 或未匹配到 profile 时行为不变（向后兼容）
+ * 改造点（Phase 51 Task 2）：
+ *   - 旧模式：物理移除 spawn_agent 实现 1 层硬限制
+ *   - 新模式：根据 delegationContext 的四维约束决定是否保留 spawn_agent
+ *   - 未传 delegationContext 时退回物理移除（向后兼容）
  *
  * @param parentRegistry 父 Agent 的 registry
  * @param subagentType 子 Agent 类型（默认 general）
  * @param profileManager AgentProfileManager 实例（可选）
- * @returns 新的 ToolRegistry，已移除 spawn_agent 并按白名单过滤
+ * @param delegationContext 委托上下文（可选，Phase 51 Task 2）
+ * @returns 新的 ToolRegistry
  */
 export function createChildRegistry(
   parentRegistry: ToolRegistry,
   subagentType: SubagentType = 'general',
   profileManager?: AgentProfileManager,
+  delegationContext?: DelegationContext,
 ): ToolRegistry {
   const child = parentRegistry.clone();
-  // 防递归：子 Agent 不能再派遣孙子 Agent
-  child.unregister('spawn_agent');
+
+  // 旧模式：无 delegationContext 时退回物理移除（向后兼容）
+  if (!delegationContext) {
+    child.unregister('spawn_agent');
+  } else {
+    // 新模式：根据四维约束决定是否保留 spawn_agent
+    // I-3 修复：原把 currentRole 和 targetRole 都设为 targetRole，破坏目标合法性检查
+    // CR-4a：currentRole 缺失时默认 custom 角色，确保 canDelegate 不收到 undefined
+    const currentRole = delegationContext.currentRole || 'custom';
+    const permission = canDelegate(
+      delegationContext.currentDepth,
+      currentRole as any,  // AgentRole — 当前角色（已确保非空）
+      delegationContext.targetRole as any,   // AgentRole — 目标角色
+      delegationContext.policy as any,
+    );
+    if (!permission.ok || (permission.nextDepth ?? 0) >= delegationContext.policy.maxDepth) {
+      // 深度用尽或不可委派，移除 spawn_agent
+      child.unregister('spawn_agent');
+    }
+    // 否则保留 spawn_agent，子 Agent 调用时会再次校验 canDelegate
+  }
+
   // general 类型：空集 = 全部工具（除 spawn_agent），直接返回
   if (subagentType === 'general') {
     return child;
@@ -128,7 +169,6 @@ export function createChildRegistry(
     return child;
   }
   // Phase 48 Task 4：优先使用 profileManager 提供的 profile 工具白名单
-  // 未传 profileManager 或未匹配到 profile 时回退到硬编码白名单（向后兼容）
   const profile = resolveProfileForSubagent(profileManager, subagentType);
   const hardcodedWhitelist = SUBAGENT_TOOL_WHITELIST[subagentType];
   const whitelist = (profile && profile.allowedTools.length > 0)
@@ -150,15 +190,19 @@ export function createChildRegistry(
 
 /**
  * 并行上限包装器：限制同时执行的子 Agent 数量
- * Phase 38 Task 2
+ * Phase 38 Task 2 / Phase 51 Task 2
+ *
+ * 改造点（Phase 51 Task 2）：
+ *   - maxConcurrent 默认值从硬编码 3 改为从 config 读取（未传时仍用 3 保持兼容）
+ *   - 消除 schema.ts:666(5) / spawn-agent.ts:159(3) / orchestrator-strategy.ts:26(3) 的 5/3/3 不一致
  *
  * @param innerFn 原始 spawn 函数
- * @param maxConcurrent 最大并行数（默认 3）
+ * @param maxConcurrent 最大并行数（默认 3，建议从 config.agent.maxConcurrentSubAgents 传入）
  * @returns 带并行限制的 spawn 函数（附带 getActiveCount() 用于测试）
  */
 export function createConcurrencyLimitedSpawnFn(
   innerFn: SpawnAgentFunction,
-  maxConcurrent: number = 3,
+  maxConcurrent: number = 3,  // 保持默认 3 向后兼容；调用方应从 config 传入
 ): SpawnAgentFunction & { getActiveCount(): number } {
   let active = 0;
   const wrapped = (async (params: SpawnAgentParams | string, options?: { systemPrompt?: string; maxIterations?: number }) => {
@@ -178,6 +222,52 @@ export function createConcurrencyLimitedSpawnFn(
   }) as SpawnAgentFunction & { getActiveCount(): number };
   wrapped.getActiveCount = () => active;
   return wrapped;
+}
+
+// ============================================================
+// Phase 51 Task 4：detached session 支持（call-scoped overlay）
+// ============================================================
+
+/**
+ * 是否启用 detached session（Phase 51 Task 4）
+ * 借鉴 Flue 的 call-scoped overlay——子 Agent 独立上下文作用域
+ *
+ * 未启用时（默认）：子 Agent 共享父上下文（旧行为）
+ * 启用时：子 Agent 拥有独立 session，仅最终答案返回父上下文
+ */
+export interface DetachedSessionOptions {
+  enabled: boolean;
+  fullContextIsolation: boolean;
+  subAgentMaxContextTokens: number;
+  propagateToolCallsToParent: boolean;
+}
+
+/**
+ * 创建 detached session 执行上下文
+ * Phase 51 Task 4
+ */
+export function createDetachedSessionContext(
+  parentSessionId: string,
+  role: string,
+  profile: AgentProfile | null,
+  depth: number,
+  options: DetachedSessionOptions,
+): SubAgentSessionScope | null {
+  if (!options.enabled || !profile) return null;
+  return createSubAgentSession(
+    parentSessionId,
+    role as any,  // AgentRole
+    profile,
+    depth,
+  );
+}
+
+/**
+ * 从 detached session 提取最终答案
+ * Phase 51 Task 4
+ */
+export function extractDetachedSessionAnswer(scope: SubAgentSessionScope): string {
+  return extractFinalAnswer(scope);
 }
 
 /** 子 Agent 执行结果 */
@@ -246,6 +336,35 @@ export interface DelegationIntegrationDeps {
   /** scoreCardEnabled：SubAgentScoreCardCollector 执行后收集评分 */
   scoreCardEnabled?: boolean;
   scoreCardCollector?: SubAgentScoreCardCollector;
+  /** Phase 51 Task 4：detached session（call-scoped overlay），未开启时 passthrough */
+  detachedSessionEnabled?: boolean;
+  /** profileManager：detached session 创建时解析子 Agent profile */
+  profileManager?: AgentProfileManager;
+  /** 父 session id（detached session 创建用，默认用 agentId） */
+  parentSessionId?: string;
+  // CR-4b：委托三态策略（decideDelegation/createDelegationGuard），未开启时 passthrough
+  delegationPolicyEnabled?: boolean;
+  /** 委托策略对象（hardDelegationTypes/refuseIfSpecialistUnavailable/specialistAvailability） */
+  delegationPolicy?: {
+    hardDelegationTypes: Array<'frontend' | 'research' | 'review'>;
+    refuseIfSpecialistUnavailable: boolean;
+    specialistAvailability: Record<string, boolean>;
+  };
+  // CR-4b：子 Agent 结构化返回校验（validateSubAgentResult/formatResultForParent）
+  resultSchemaEnabled?: boolean;
+  /** 严格校验：校验失败时把 spawn 结果置为失败 */
+  resultSchemaStrict?: boolean;
+  /** 校验失败时是否回退为纯文本（true=保留原文，false=返回校验错误） */
+  resultSchemaFallbackToText?: boolean;
+  // CR-4b：子 Agent 活动面板（AgentActivityStore.startActivity/finishActivity）
+  activityStoreEnabled?: boolean;
+  activityStore?: AgentActivityStore;
+  /** 当前委托深度（活动记录 lineage 与 depth 用） */
+  currentDepth?: number;
+  /** 父 Agent 角色（活动记录 lineage 用） */
+  parentRole?: string;
+  /** Phase 52 Task 1：SkillLifecycleManager，spawn 完成后记录执行（未注入时跳过） */
+  skillLifecycleManager?: SkillLifecycleManager;
 }
 
 /** SubagentType → PackerAgentRole 映射（用于 ContextPacker） */
@@ -288,6 +407,30 @@ export function wrapSpawnAgentWithDelegation(
     const profileId = `profile-${subagentType}`;
     let enrichedPrompt = normalizedParams.prompt;
     let contextTokens = 0;
+
+    // CR-4b Step 0：委托三态策略——decideDelegation 决策 + createDelegationGuard 守卫
+    // 未开启时 passthrough；refuse 直接拒绝 spawn，delegate 仅记录（spawn 本身即委派机制）
+    if (deps.delegationPolicyEnabled && deps.delegationPolicy) {
+      try {
+        const decision = decideDelegation(normalizedParams.description, deps.delegationPolicy);
+        if (decision.mode === 'refuse') {
+          logger.warn('CR-4b: decideDelegation 拒绝 spawn', { reason: decision.reason });
+          return { success: false, result: '', error: `委托策略拒绝: ${decision.reason}${decision.nextStep ? `；${decision.nextStep}` : ''}` };
+        }
+        if (decision.mode === 'delegate') {
+          logger.debug('CR-4b: decideDelegation 建议委派', { targetRole: decision.targetRole });
+        }
+        // 用 createDelegationGuard 创建守卫并校验 spawn_agent 调用本身
+        const guard = createDelegationGuard(deps.delegationPolicy);
+        const guardResult = guard('spawn_agent', normalizedParams.description);
+        if (guardResult.block) {
+          logger.warn('CR-4b: delegationGuard 阻止 spawn', { reason: guardResult.reason });
+          return { success: false, result: '', error: `委托守卫拦截: ${guardResult.reason}` };
+        }
+      } catch (error) {
+        logger.warn('decideDelegation/createDelegationGuard failed (non-blocking)', { error: String(error) });
+      }
+    }
 
     // 1. ContextPacker：按角色打包上下文
     if (deps.contextPackerEnabled && deps.contextPacker) {
@@ -401,6 +544,48 @@ export function wrapSpawnAgentWithDelegation(
       }
     }
 
+    // Phase 51 Task 4：detached session（call-scoped overlay）
+    // 启用时为子 Agent 创建独立 session 作用域，仅最终答案返回父上下文
+    let detachedScope: SubAgentSessionScope | null = null;
+    if (deps.detachedSessionEnabled && deps.profileManager) {
+      try {
+        const detachedProfile = resolveProfileForSubagent(deps.profileManager, subagentType);
+        detachedScope = createDetachedSessionContext(
+          deps.parentSessionId ?? agentId,
+          role,
+          detachedProfile,
+          deps.parentAgent?.activeSubAgents.length ?? 0,
+          {
+            enabled: true,
+            fullContextIsolation: true,
+            subAgentMaxContextTokens: 4000,
+            propagateToolCallsToParent: false,
+          },
+        );
+        if (detachedScope) {
+          logger.debug('Phase 51: detached session created', { agentId, role });
+        }
+      } catch (error) {
+        logger.warn('createDetachedSessionContext failed (non-blocking)', { error: String(error) });
+      }
+    }
+
+    // CR-4b：活动面板——启动活动记录（未开启时跳过）
+    let activityId: string | undefined;
+    if (deps.activityStoreEnabled && deps.activityStore) {
+      try {
+        activityId = deps.activityStore.startActivity({
+          id: agentId,
+          lineage: buildLineage(deps.parentRole as any, role),
+          depth: deps.currentDepth ?? 0,
+          role: role as any,
+          taskPreview: truncatePreview(normalizedParams.description),
+        });
+      } catch (error) {
+        logger.warn('activityStore.startActivity failed (non-blocking)', { error: String(error) });
+      }
+    }
+
     // 执行子 Agent
     let result: SpawnResult;
     try {
@@ -414,6 +599,62 @@ export function wrapSpawnAgentWithDelegation(
         result: '',
         error: error instanceof Error ? error.message : String(error),
       };
+    }
+
+    // CR-4b：活动面板——完成活动记录
+    if (activityId && deps.activityStore) {
+      try {
+        deps.activityStore.finishActivity(activityId, result.success ? 'success' : 'error', result.error);
+      } catch (error) {
+        logger.warn('activityStore.finishActivity failed (non-blocking)', { error: String(error) });
+      }
+    }
+
+    // Phase 51 Task 4：从 detached session 提取最终答案（仅 scope 存在且执行成功时）
+    if (detachedScope && result.success) {
+      try {
+        const finalAnswer = extractDetachedSessionAnswer(detachedScope);
+        if (finalAnswer) {
+          result.result = finalAnswer;
+        }
+      } catch (error) {
+        logger.warn('extractDetachedSessionAnswer failed (non-blocking)', { error: String(error) });
+      }
+    }
+
+    // CR-4b：子 Agent 结构化返回校验——validateSubAgentResult 校验 + formatResultForParent 格式化
+    // 未开启时跳过；非 JSON 返回视为纯文本跳过；strict 模式校验失败置结果失败
+    if (deps.resultSchemaEnabled && result.success && result.result) {
+      try {
+        let parsed: unknown = undefined;
+        try {
+          parsed = JSON.parse(result.result);
+        } catch {
+          parsed = undefined;
+        }
+        if (parsed !== undefined && typeof parsed === 'object') {
+          const roleStr = role as string;
+          const schemas = RESULT_SCHEMAS as Record<string, unknown>;
+          const schema = schemas[roleStr] ?? schemas.custom;
+          const validated = validateSubAgentResult(parsed, schema as any);
+          if (validated.success) {
+            // 校验通过：用 formatResultForParent 格式化为父 Agent 可读文本
+            result.result = formatResultForParent(parsed, roleStr);
+          } else {
+            // 校验失败：strict 置失败；否则按 fallbackToText 决定保留原文或返回校验错误
+            const errMsg = `[子 Agent 返回值校验失败]\n${validated.errors.join('\n')}`;
+            if (deps.resultSchemaStrict) {
+              result.success = false;
+              result.error = errMsg;
+              result.result = '';
+            } else if (!deps.resultSchemaFallbackToText) {
+              result.result = errMsg;
+            }
+          }
+        }
+      } catch (error) {
+        logger.warn('resultSchema validate/format failed (non-blocking)', { error: String(error) });
+      }
     }
 
     // 5. Lifecycle：转 completed/failed + 累计 token + 反滥用检测
@@ -468,6 +709,24 @@ export function wrapSpawnAgentWithDelegation(
         deps.scoreCardCollector.record(card);
       } catch (error) {
         logger.warn('SubAgentScoreCardCollector.record failed (non-blocking)', { error: String(error) });
+      }
+    }
+
+    // 7. Phase 52 Task 1：SkillLifecycleManager 记录本次 spawn 执行（fail-open）
+    // 把 spawn_agent 调用视为一次"技能执行"，用 spawn:{role} 作为合成 skillId，
+    // 累积记忆供未来 checkCreationTrigger/proposeRefinement 消费
+    if (deps.skillLifecycleManager) {
+      try {
+        deps.skillLifecycleManager.recordExecution(`spawn:${role}`, {
+          timestamp: Date.now(),
+          taskDescription: normalizedParams.description,
+          stepsTaken: [role],
+          outcome: result.success ? 'success' : 'failure',
+          failurePoint: result.success ? undefined : (result.error ?? 'unknown'),
+          durationMs: 0,
+        });
+      } catch (error) {
+        logger.warn('SkillLifecycleManager.recordExecution failed (non-blocking)', { error: String(error) });
       }
     }
 
@@ -539,8 +798,12 @@ export class SpawnAgentTool implements ITool {
     if (hasLegacy && (args.taskDescription as string).length < 10) {
       errors.push('taskDescription 至少需要 10 个字符，确保任务描述足够清晰');
     }
-    if (args.maxIterations !== undefined && typeof args.maxIterations !== 'number') {
-      errors.push('maxIterations 必须是数字');
+    if (args.maxIterations !== undefined) {
+      if (typeof args.maxIterations !== 'number') {
+        errors.push('maxIterations 必须是数字');
+      } else if (!Number.isInteger(args.maxIterations) || args.maxIterations <= 0 || args.maxIterations > 100) {
+        errors.push('maxIterations 必须是 1 到 100 之间的整数');
+      }
     }
     if (args.subagentType !== undefined && !['general', 'researcher', 'coder', 'reviewer', 'advisor'].includes(args.subagentType as string)) {
       errors.push('subagentType 必须是 general/researcher/coder/reviewer/advisor 之一');

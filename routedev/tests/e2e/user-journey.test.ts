@@ -12,7 +12,6 @@ import { GoalParser } from '../../src/agent/goal-parser.js';
 import { GoalVerifier } from '../../src/agent/goal-verifier.js';
 import { BranchManager } from '../../src/agent/branch.js';
 import { PermissionEngine } from '../../src/tools/permission-engine.js';
-import { DurableExecutor } from '../../src/agent/durable-executor.js';
 import { ComposePipeline } from '../../src/agent/compose-pipeline.js';
 import { WorkModeController } from '../../src/agent/work-modes.js';
 import { MCPClientManager } from '../../src/tools/mcp/client.js';
@@ -27,8 +26,7 @@ import type {
 } from '../../src/router/types.js';
 import type { ToolExecutorAdapter } from '../../src/agent/loop-config.js';
 import type { TokenBudget, RouterConfig } from '../../src/router/types.js';
-import type { GoalPlan, PlanStep } from '../../src/agent/goal-types.js';
-import type { StepResult } from '../../src/agent/hooks.js';
+import type { GoalPlan } from '../../src/agent/goal-types.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -220,9 +218,9 @@ describe('E2E 用户旅程测试', () => {
   it('E2E-3: /goal 多步任务 → 计划分解 → 逐步执行 → 验证通过', async () => {
     const planJson = JSON.stringify({
       steps: [
-        { id: 1, description: '读取文件' },
-        { id: 2, description: '分析内容' },
-        { id: 3, description: '输出报告' },
+        { id: 1, description: '读取文件', acceptanceCriteria: '文件读取成功' },
+        { id: 2, description: '分析内容', acceptanceCriteria: '内容分析完成' },
+        { id: 3, description: '输出报告', acceptanceCriteria: '报告输出成功' },
       ],
     });
     const verifyJson = JSON.stringify({
@@ -392,58 +390,6 @@ describe('E2E 用户旅程测试', () => {
     const codingConfig = pipeline.getCurrentPhaseConfig();
     expect(codingConfig).not.toBeNull();
     expect(codingConfig!.phase).toBe('coding');
-  });
-
-  // E2E-8: DurableExecutor 断点恢复
-  it('E2E-8: DurableExecutor → 执行中断 → resume 从断点继续', async () => {
-    const storageRoot = path.join(tmpDir, 'sessions');
-    const executedSteps: number[] = [];
-
-    const executor = {
-      async execute(step: PlanStep): Promise<StepResult> {
-        executedSteps.push(step.id);
-        return {
-          stepId: step.id,
-          success: true,
-          output: `步骤${step.id}完成`,
-          durationMs: 10,
-        };
-      },
-    };
-
-    const durable = new DurableExecutor({
-      sessionId: 'e2e-test',
-      executor,
-      storageRoot,
-    });
-
-    const steps: PlanStep[] = [
-      { id: 1, description: '步骤1', status: 'pending', dependencies: [] },
-      { id: 2, description: '步骤2', status: 'pending', dependencies: [1] },
-      { id: 3, description: '步骤3', status: 'pending', dependencies: [2] },
-    ];
-
-    // 启动执行（会执行所有步骤）
-    const result = await durable.start(steps, '测试目标');
-    expect(result.success).toBe(true);
-    expect(result.snapshot.lastStepCompleted).toBe(3);
-    expect(executedSteps).toEqual([1, 2, 3]);
-
-    // 获取快照
-    const snapshot = durable.getSnapshot(result.snapshot.planId);
-    expect(snapshot).not.toBeNull();
-    expect(snapshot!.status).toBe('completed');
-
-    // 模拟"恢复"——新实例从已完成快照读取（应返回已完成）
-    const durable2 = new DurableExecutor({
-      sessionId: 'e2e-test',
-      executor,
-      storageRoot,
-    });
-
-    const recovered = await durable2.resumeFrom(result.snapshot.planId);
-    expect(recovered.success).toBe(true);
-    expect(recovered.snapshot.status).toBe('completed');
   });
 
   // E2E-9: MCP 工具调用（mock 连接）

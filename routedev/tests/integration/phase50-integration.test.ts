@@ -308,7 +308,8 @@ describe('Phase 50 Task 2: 多 Agent 编排模块接入', () => {
     };
     const plan = await orch.plan(goalPlan);
     // low complexity → sequential → fallbackPlan（不调用 LLM 分析）
-    expect(plan.analysisNotes).toContain('Fallback');
+    // Phase 54：analysisNotes 文案从 'Fallback' 改为 '顺序执行（简单任务无需并行编排）'
+    expect(plan.analysisNotes).toContain('顺序执行');
   });
 
   it('2.2 strategyEnabled=true 且步骤数 > 6（high complexity）时，继续 LLM 分析', async () => {
@@ -339,86 +340,6 @@ describe('Phase 50 Task 2: 多 Agent 编排模块接入', () => {
     expect(plan.dependencies.length).toBe(7);
     // 前两个依赖应由 LLM 分析结果填充（coder 角色）
     expect(plan.dependencies[0].assignedRole).toBe('coder');
-  });
-
-  it('2.3 stateGraphEnabled=true 时，getStateGraph() 返回非 null 且步骤被加入状态图', async () => {
-    const mockJson = JSON.stringify([
-      { stepId: 1, dependsOn: [], assignedRole: 'coder', likelyFiles: [] },
-      { stepId: 2, dependsOn: [1], assignedRole: 'coder', likelyFiles: [] },
-    ]);
-    const client = makeMockClient(mockJson);
-    const orch = new Orchestrator(client, 'test-model', {
-      strategyEnabled: false,
-      stateGraphEnabled: true,
-      branchOrchestrationEnabled: false,
-    });
-    const goalPlan: GoalPlan = {
-      id: 'plan-1',
-      description: 'test',
-      steps: [
-        { id: 1, description: 's1', status: 'pending', dependencies: [] },
-        { id: 2, description: 's2', status: 'pending', dependencies: [1] },
-      ],
-      status: 'pending',
-      createdAt: Date.now(),
-    };
-    await orch.plan(goalPlan);
-    const graph = orch.getStateGraph();
-    expect(graph).not.toBeNull();
-    expect(graph!.getAllSteps().length).toBe(2);
-    // 初始状态都是 pending
-    const pending = graph!.getPendingSteps();
-    // step 1 无依赖 → pending 可执行；step 2 依赖 step 1（未 completed）→ 不可执行
-    expect(pending).toContain('1');
-    expect(pending).not.toContain('2');
-  });
-
-  it('2.4 transitionStepState：合法转换返回 true，非法转换返回 false', async () => {
-    const mockJson = JSON.stringify([
-      { stepId: 1, dependsOn: [], assignedRole: 'coder', likelyFiles: [] },
-    ]);
-    const client = makeMockClient(mockJson);
-    const orch = new Orchestrator(client, 'test-model', {
-      strategyEnabled: false,
-      stateGraphEnabled: true,
-      branchOrchestrationEnabled: false,
-    });
-    const goalPlan: GoalPlan = {
-      id: 'plan-1',
-      description: 'test',
-      steps: [{ id: 1, description: 's1', status: 'pending', dependencies: [] }],
-      status: 'pending',
-      createdAt: Date.now(),
-    };
-    await orch.plan(goalPlan);
-
-    // pending → running 合法
-    expect(orch.transitionStepState(1, 'running', 'start')).toBe(true);
-    // running → completed 合法
-    expect(orch.transitionStepState(1, 'completed', 'done')).toBe(true);
-    // completed → running 非法（终态不可转换）
-    expect(orch.transitionStepState(1, 'running', 'redo')).toBe(false);
-  });
-
-  it('2.5 branchOrchestrationEnabled=true 但未注入 branchOrchestrator 时，planBranches 安全回退', async () => {
-    const client = makeMockClient('[]');
-    const orch = new Orchestrator(client, 'test-model', {
-      strategyEnabled: false,
-      stateGraphEnabled: false,
-      branchOrchestrationEnabled: true,
-      // branchOrchestrator 未注入
-    });
-    const goalPlan: GoalPlan = {
-      id: 'plan-1',
-      description: 'test',
-      steps: [{ id: 1, description: 's1', status: 'pending', dependencies: [] }],
-      status: 'pending',
-      createdAt: Date.now(),
-    };
-    const result = await orch.planBranches(goalPlan);
-    // branchOrchestrator 缺失 → 安全回退：scheduled=false, taskCount=0
-    expect(result.scheduled).toBe(false);
-    expect(result.taskCount).toBe(0);
   });
 
   it('2.6 StrategySelector.selectStrategy 单元验证：low→sequential, medium→parallel, high→adaptive', () => {

@@ -15,6 +15,8 @@ import type { AppConfig, OutputStyle } from '../config/schema.js';
 import type { ChatMessage } from './components/ChatView.js';
 import type { TraceCollector } from '../harness/trace-collector.js';
 import type { AuditLogger } from '../harness/audit-logger.js';
+// Phase 37：SkillsRouter——按用户消息匹配已启用 Skill，注入到 system prompt
+import type { SkillsRouter } from '../plugins/filesystem-discovery.js';
 // Phase 34 Task 3：动作动词体系
 import { formatToolFeedback, getToolRunningMessageId } from './tool-verb.js';
 // Phase 34 Task 2：微摘要
@@ -118,6 +120,8 @@ export interface ChatRunnerDeps {
   audit?: AuditLogger;
   /** Phase 34：运行时获取当前 outputStyle（支持 /output-style 切换） */
   getOutputStyle?: () => OutputStyle;
+  /** Phase 37 P0-1：SkillsRouter——按用户消息匹配已启用 Skill，注入到 system prompt（可选） */
+  skillsRouter?: SkillsRouter;
   /** 生成消息 ID */
   nextId: () => string;
 }
@@ -130,7 +134,7 @@ export function createChatRunner(deps: ChatRunnerDeps) {
     conversationHistoryRef, pendingConfirmRef, abortControllerRef,
     setMessages, setIsProcessing, setCurrentModel, setCurrentTier,
     setIsDegraded, setTodayTokensUsed, profiler, trace, audit,
-    getOutputStyle, nextId,
+    getOutputStyle, nextId, skillsRouter,
   } = deps;
 
   // Phase 34：获取当前 outputStyle（未传入时回退到 config）
@@ -203,10 +207,24 @@ export function createChatRunner(deps: ChatRunnerDeps) {
       chatAbort = new AbortController();
       abortControllerRef.current = chatAbort;
       try {
+        // Phase 37 P0-1：Skill 路由——按用户消息匹配已启用 Skill，将内容追加到 systemPrompt
+        // 与 engine-bridge.ts sendChat 路径对齐，避免 CLI 端 Skill 永不生效
+        let skillPromptSuffix = '';
+        if (skillsRouter) {
+          const matchedSkills = skillsRouter.route(actualUserMessage, 3);
+          if (matchedSkills.length > 0) {
+            const skillBlocks = matchedSkills.map((s) =>
+              `## Skill: ${s.name}\n${s.content}`,
+            );
+            skillPromptSuffix = `\n\n---\n# 已激活的 Skill（根据任务自动匹配）\n${skillBlocks.join('\n\n')}`;
+          }
+        }
         for await (const event of agentLoop.run({
           userMessage: actualUserMessage, llmClient: client, routeDecision: rd,
-          conversationHistory: conversationHistoryRef.current, systemPrompt: systemPromptRef.current,
+          conversationHistory: conversationHistoryRef.current, systemPrompt: systemPromptRef.current + skillPromptSuffix,
           signal: chatAbort.signal,
+          onModelSuccess: modelId => modelRouter.recordModelSuccess(modelId),
+          onModelFailure: modelId => modelRouter.recordModelFailure(modelId),
           onConfirmTool: async (toolName, args) => new Promise<boolean>(resolve => {
             pendingConfirmRef.current = { resolve, toolName };
             const argsStr = JSON.stringify(args, null, 2).slice(0, 200);

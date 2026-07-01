@@ -141,9 +141,9 @@ describe('ContextManager.compressEnhanced（Phase 21 Task 5）', () => {
         { role: 'assistant', content: makeText(50) },
       ];
       const { compressed } = await mgr.compressEnhanced(messages, { preserveLast: 2 });
-      // 找到中间的 system 消息，内容应不变
+      // 找到中间的 system 消息（用内容匹配，跳过 Phase 55 Task 2 注入的 reboot system message）
       const midSystem = compressed.find(
-        (m, i) => i > 0 && m.role === 'system' && typeof m.content === 'string',
+        (m) => m.role === 'system' && typeof m.content === 'string' && m.content === midSystemContent,
       );
       expect(midSystem).toBeDefined();
       if (midSystem && typeof midSystem.content === 'string') {
@@ -303,6 +303,87 @@ describe('ContextManager.compressEnhanced（Phase 21 Task 5）', () => {
         const content = typeof msg.content === 'string' ? msg.content : '';
         expect(content).not.toContain('[已压缩]');
       }
+    });
+  });
+
+  describe('PreCompact Reboot Test', () => {
+    it('压缩前触发 5 问 Reboot Test', async () => {
+      const mgr = createManager(1000);
+      const callback = vi.fn();
+      mgr.onPreCompact(callback);
+
+      const messages: LLMMessage[] = [
+        { role: 'system', content: '目标：完成 Phase 55\n约束：不新增重型依赖' },
+        { role: 'user', content: makeText(200) },
+        { role: 'assistant', content: '已完成：定位压缩事件\n阻塞：无\n下一步：补 PreCompact 测试' },
+        { role: 'user', content: makeText(200) },
+        { role: 'assistant', content: makeText(200) },
+        { role: 'user', content: makeText(200) },
+        { role: 'assistant', content: makeText(200) },
+      ];
+
+      const { result } = await mgr.compressEnhanced(messages, { maxTokens: 500, preserveLast: 2 });
+
+      expect(callback).toHaveBeenCalledTimes(1);
+      const event = callback.mock.calls[0][0];
+      expect(event.rebootTest.currentGoal).toBe('完成 Phase 55');
+      expect(event.rebootTest.completedSteps).toContain('定位压缩事件');
+      expect(event.rebootTest.blockers).toContain('无');
+      expect(event.rebootTest.nextStep).toBe('补 PreCompact 测试');
+      expect(event.rebootTest.constraints).toContain('不新增重型依赖');
+      expect(result.rebootTest).toEqual(event.rebootTest);
+    });
+
+    it('未超阈值时不触发 PreCompact', async () => {
+      const mgr = createManager(1000);
+      const callback = vi.fn();
+      mgr.onPreCompact(callback);
+
+      await mgr.compressEnhanced([
+        { role: 'system', content: makeText(50) },
+        { role: 'user', content: makeText(100) },
+      ]);
+
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it('offPreCompact 移除回调', async () => {
+      const mgr = createManager(1000);
+      const callback = vi.fn();
+      mgr.onPreCompact(callback);
+      mgr.offPreCompact(callback);
+
+      await mgr.compressEnhanced([
+        { role: 'system', content: makeText(50) },
+        ...Array.from({ length: 10 }, (_, i) => ({
+          role: i % 2 === 0 ? 'user' : 'assistant' as const,
+          content: makeText(100),
+        })),
+      ], { maxTokens: 500, preserveLast: 2 });
+
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it('PreCompact 回调异常不影响压缩流程', async () => {
+      const mgr = createManager(1000);
+      const badCallback = vi.fn(() => {
+        throw new Error('precompact callback error');
+      });
+      const goodCallback = vi.fn();
+      mgr.onPreCompact(badCallback);
+      mgr.onPreCompact(goodCallback);
+
+      const { compressed } = await mgr.compressEnhanced([
+        { role: 'system', content: makeText(50) },
+        ...Array.from({ length: 10 }, (_, i) => ({
+          role: i % 2 === 0 ? 'user' : 'assistant' as const,
+          content: makeText(100),
+        })),
+      ], { maxTokens: 500, preserveLast: 2 });
+
+      expect(compressed).toBeDefined();
+      expect(badCallback).toHaveBeenCalled();
+      expect(goodCallback).toHaveBeenCalled();
     });
   });
 

@@ -39,6 +39,12 @@ describe('PermissionEngine deny 规则（Phase 29 Task 3）', () => {
       expect(result.matchedRuleId).toBe('deny-rm-rf-root');
     });
 
+    it('应阻止 rm -r -f /（分离标志变体）', () => {
+      const result = engine.check('shell_exec', { command: 'rm -r -f /' }, 'auto');
+      expect(result.decision).toBe('deny');
+      expect(result.matchedRuleId).toBe('deny-rm-rf-root');
+    });
+
     it('不应阻止 rm -rf ./tmp（非根目录）', () => {
       const result = engine.check('shell_exec', { command: 'rm -rf ./tmp' }, 'auto');
       expect(result.decision).not.toBe('deny');
@@ -59,6 +65,12 @@ describe('PermissionEngine deny 规则（Phase 29 Task 3）', () => {
 
     it('应阻止 find . -name "*.log" -delete', () => {
       const result = engine.check('shell_exec', { command: 'find . -name "*.log" -delete' }, 'auto');
+      expect(result.decision).toBe('deny');
+      expect(result.matchedRuleId).toBe('deny-find-delete');
+    });
+
+    it('应阻止 find . -exec rm', () => {
+      const result = engine.check('shell_exec', { command: 'find . -name "*.log" -exec rm {} ;' }, 'auto');
       expect(result.decision).toBe('deny');
       expect(result.matchedRuleId).toBe('deny-find-delete');
     });

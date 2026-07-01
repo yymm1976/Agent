@@ -54,7 +54,7 @@ describe('Phase 50 Task 8 - 已删除文件不再存在', () => {
     'src/utils/error-messages.ts',
     'src/config/codegraph-manager.ts',
     'src/harness/tracing-executor.ts',
-    'src/harness/experiment-runner.ts',
+    // E11 移除：experiment-runner.ts 已重写为简化活代码（不再是死代码）
     'src/hooks/market-manager.ts',
     'src/hooks/generator.ts',
     'src/plugins/sdk.ts',
@@ -144,85 +144,10 @@ describe('Phase 50 Task 8 - Bug 1: convertFromClaudeConfig 已修复', () => {
 // 3. Bug 2：ModelDriftDetector 使用 ParsedSkillWithDrift 类型
 // ============================================================
 
-describe('Phase 50 Task 8 - Bug 2: ParsedSkillWithDrift 类型已应用', () => {
-  it('skill-metadata-extension.ts 导出 ParsedSkillWithDrift 接口', async () => {
-    const source = await readSource('src/skills/skill-metadata-extension.ts');
-    expect(source).toContain('export interface ParsedSkillWithDrift');
-    expect(source).toContain('lastValidatedModel');
-  });
+// Phase 50 Task 8 - Bug 2: ParsedSkillWithDrift 类型已应用
+// E11 整体删除：skill-metadata-extension.ts、model-drift-detector.ts 已删除
+//       （ParsedSkillWithDrift 接口、ModelDriftDetector 类均已不存在，断言无意义）
 
-  it('model-drift-detector.ts 导入 ParsedSkillWithDrift 并用作 detectDrift 入参', async () => {
-    const source = await readSource('src/skills/model-drift-detector.ts');
-
-    // 应从 skill-metadata-extension.js 导入 ParsedSkillWithDrift
-    expect(source).toMatch(/import[^;]*ParsedSkillWithDrift[^;]*from[^;]*skill-metadata-extension\.js/);
-    // detectDrift 入参应为 ParsedSkillWithDrift[]
-    expect(source).toMatch(/detectDrift\([\s\S]*?ParsedSkillWithDrift\[\]/);
-    // 不应包含 as SkillMetadataWithDrift 类型断言（Bug 2 的特征：去除 as 断言）
-    expect(source).not.toMatch(/as\s+SkillMetadataWithDrift/);
-  });
-
-  it('detectDrift 能正确处理 ParsedSkillWithDrift 输入并返回漂移结果', async () => {
-    const { ModelDriftDetector } = await import('../../src/skills/model-drift-detector.js');
-    const detector = new ModelDriftDetector();
-
-    // 构造 ParsedSkillWithDrift 输入：三个 Skill
-    // - skill-a：同主版本漂移（4.0613 → 4.1106，severity=low）
-    // - skill-b：版本匹配，不漂移
-    // - skill-c：跨主版本漂移（3.5 → 4.0，severity=high）
-    const skills = [
-      {
-        metadata: {
-          name: 'skill-a',
-          version: '1.0.0',
-          description: 'test skill a',
-          author: 'tester',
-          tags: [],
-          lastValidatedModel: '4.0613', // 同主版本 → low
-        },
-        content: '',
-        format: 'skill-md' as const,
-      },
-      {
-        metadata: {
-          name: 'skill-b',
-          version: '1.0.0',
-          description: 'test skill b',
-          author: 'tester',
-          tags: [],
-          lastValidatedModel: '4.1106', // 与 currentModelVersion 一致 → 不漂移
-        },
-        content: '',
-        format: 'skill-md' as const,
-      },
-      {
-        metadata: {
-          name: 'skill-c',
-          version: '1.0.0',
-          description: 'test skill c',
-          author: 'tester',
-          tags: [],
-          lastValidatedModel: '3.5', // 跨主版本 → high
-        },
-        content: '',
-        format: 'skill-md' as const,
-      },
-    ];
-
-    const drifts = detector.detectDrift(skills, '4.1106');
-
-    // skill-b 版本匹配，不漂移；skill-a 和 skill-c 漂移
-    expect(drifts).toHaveLength(2);
-    expect(drifts[0]!.skillName).toBe('skill-a');
-    expect(drifts[0]!.lastValidatedModel).toBe('4.0613');
-    expect(drifts[0]!.currentModelVersion).toBe('4.1106');
-    // 同主版本（4）→ low 严重度
-    expect(drifts[0]!.severity).toBe('low');
-    // skill-c 跨主版本（3 → 4）→ high 严重度
-    expect(drifts[1]!.skillName).toBe('skill-c');
-    expect(drifts[1]!.severity).toBe('high');
-  });
-});
 
 // ============================================================
 // 4. 已删除的函数不再被导出
@@ -283,31 +208,24 @@ describe('Phase 50 Task 8 - 受影响模块可被正常动态导入', () => {
     // 若类型或导出存在根本性问题，import 将抛出错误
     const imports = [
       import('../../src/import/claude-plugin-importer.js'),
-      import('../../src/skills/model-drift-detector.js'),
-      import('../../src/skills/skill-metadata-extension.js'),
+      // E11 移除：model-drift-detector.ts 已删除
+      // E11 移除：skill-metadata-extension.ts 已删除
       import('../../src/router/deterministic-rules.js'),
       import('../../src/agent/preference-manager.js'),
     ];
     const mods = await Promise.all(imports);
 
     // 验证关键导出存在（非空断言：索引对应上方 imports 顺序）
+    // E11 更新：imports 数组移除 model-drift-detector / skill-metadata-extension 后索引重排
+    //   mods[0] = ClaudePluginImporter
+    //   mods[1] = deterministic-rules
+    //   mods[2] = preference-manager
     expect(mods[0]!.ClaudePluginImporter).toBeDefined();
-    expect(mods[1]!.ModelDriftDetector).toBeDefined();
-    expect(mods[3]!.matchDeterministicRule).toBeDefined();
-    expect(mods[4]!.PreferenceManager).toBeDefined();
+    expect(mods[1]!.matchDeterministicRule).toBeDefined();
+    expect(mods[2]!.PreferenceManager).toBeDefined();
   });
 
-  it('app-init.ts 已改用 listRecoverableAsync（同步版已移除）', async () => {
-    const source = await readSource('src/cli/app-init.ts');
-    // 应包含异步版调用
-    expect(source).toContain('listRecoverableAsync');
-    // 不应在非注释行中出现同步版 .listRecoverable() 调用
-    // （注释中允许提及历史，如 "同步版 listRecoverable() 已移除"）
-    const codeLines = source
-      .split('\n')
-      .filter((line) => !line.trim().startsWith('//'));
-    const codeOnly = codeLines.join('\n');
-    // listRecoverable 后不紧跟 Async 的调用模式不应出现在实际代码中
-    expect(codeOnly).not.toMatch(/listRecoverable(?!Async)\s*\(/);
-  });
+  // E11 整体删除：app-init.ts 已不再使用 listRecoverable / listRecoverableAsync
+  // （durable-executor 抽象已被 GoalPersistence.listResumable 替代）
+
 });

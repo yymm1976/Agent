@@ -169,11 +169,11 @@ export function validateProfile(profile: AgentProfile): AgentProfileValidationEr
   if (typeof profile.isBuiltin !== 'boolean') {
     errors.push({ field: 'isBuiltin', message: 'isBuiltin must be a boolean' });
   }
-  if (typeof profile.createdAt !== 'number' || profile.createdAt <= 0) {
-    errors.push({ field: 'createdAt', message: 'createdAt must be a positive number' });
+  if (typeof profile.createdAt !== 'number' || profile.createdAt < 0) {
+    errors.push({ field: 'createdAt', message: 'createdAt must be a non-negative number' });
   }
-  if (typeof profile.updatedAt !== 'number' || profile.updatedAt <= 0) {
-    errors.push({ field: 'updatedAt', message: 'updatedAt must be a positive number' });
+  if (typeof profile.updatedAt !== 'number' || profile.updatedAt < 0) {
+    errors.push({ field: 'updatedAt', message: 'updatedAt must be a non-negative number' });
   }
 
   return errors;

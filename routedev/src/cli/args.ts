@@ -136,9 +136,8 @@ RouteDev — AI 驱动的开发助手 CLI
   --log-level <level>    设置日志级别 (debug|info|warn|error)
 
 exec 子命令选项:
-  --json                 输出 JSONL 事件流到 stdout（适用于 CI 解析）
-  --output-schema <json> 指定输出 JSON Schema，最终答案必须匹配此 Schema
-  --timeout <seconds>    超时秒数（超时后退出码为 2）
+  --json                 输出最终结果为单个 JSON 对象到 stdout（适用于 CI 解析）
+  --timeout <ms>         超时毫秒数（超时后退出码为 2）
 
 exec 退出码:
   0 = 成功
@@ -151,10 +150,8 @@ exec 退出码:
   routedev -c ./my-config.yaml      使用自定义配置启动
   routedev config validate          验证默认配置文件
   routedev exec "重构 utils.ts"     非交互执行任务，输出纯文本
-  routedev exec "生成 API 文档" --json    输出 JSONL 事件流
-  echo "修复 bug" | routedev exec --json  从 stdin 读取任务
-  routedev exec "提取数据" --output-schema '{"type":"object","required":["result"]}'
-  routedev exec "分析代码" --timeout 120  120 秒超时
+  routedev exec "生成 API 文档" --json    输出最终 JSON 结果对象
+  routedev exec "分析代码" --timeout 120000  120 秒超时
 `);
 }
 
@@ -195,6 +192,12 @@ export interface ExecArgs {
   timeout: number;
   /** 工作模式（沙箱级），控制工具能做多少 */
   workMode: ExecWorkMode;
+  /**
+   * 配置文件路径（可选，覆盖全局配置路径）
+   * GitHub Action / CI 场景通过 --config <path> 注入临时配置；
+   * 未指定时 loadConfig 走默认全局配置路径
+   */
+  configPath?: string;
 }
 
 /** parseExecArgs 的默认值 */
@@ -229,6 +232,7 @@ export function parseExecArgs(argv: string[]): ExecArgs | null {
   let maxSteps = EXEC_DEFAULTS.maxSteps;
   let timeout = EXEC_DEFAULTS.timeout;
   let workMode: ExecWorkMode = EXEC_DEFAULTS.workMode;
+  let configPath: string | undefined;
 
   let i = 0;
   while (i < rest.length) {
@@ -244,6 +248,15 @@ export function parseExecArgs(argv: string[]): ExecArgs | null {
             .split(',')
             .map((s) => s.trim())
             .filter((s) => s.length > 0);
+        }
+        break;
+      }
+      case '--config': {
+        // 接线修复：原 parseExecArgs 不解析 --config，导致 GitHub Action 注入的临时配置文件被忽略
+        // 现解析后透传给 loadConfig 的 globalConfigPath 参数
+        const next = rest[++i];
+        if (next) {
+          configPath = next;
         }
         break;
       }
@@ -301,5 +314,6 @@ export function parseExecArgs(argv: string[]): ExecArgs | null {
     maxSteps,
     timeout,
     workMode,
+    configPath,
   };
 }

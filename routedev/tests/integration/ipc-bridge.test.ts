@@ -49,11 +49,8 @@ describe('IPC Bridge - RouteDevEngine 桥接方法 (Phase 39)', () => {
   // CodeGraph
   // ============================================================
 
-  it('7. getCodeGraphStatus 未安装时返回 { available: false }', () => {
-    const status = engine.getCodeGraphStatus();
-    expect(status.available).toBe(false);
-    expect(status.indexed).toBe(false);
-  });
+  // E2 删除：getCodeGraphStatus / installCodeGraph / startIndexCodeGraph 三个 IPC handler
+  // 已从 engine-bridge.ts 移除（CodeGraph 死链清理），对应测试用例同步移除
 
   // ============================================================
   // Experiment
@@ -160,9 +157,34 @@ describe('IPC Bridge - RouteDevEngine 桥接方法 (Phase 39)', () => {
     expect(listAfter.length).toBe(listBefore.length - 1);
   });
 
-  it('15. createHook 生成新 Hook（Phase 50 Task 8：生成器已移除，返回失败）', async () => {
-    // HookGenerator 已作为死代码移除，createHook 应返回失败
-    const result = await engine.createHook('保存文件后自动格式化');
+  it('15. createHook 模板模式创建 Hook（替代已移除的 HookGenerator）', async () => {
+    // HookGenerator 已移除，改为模板模式：传入 templateId 从内置模板复制
+    const result = await engine.createHook({ templateId: 'log-shell-commands' });
+    expect(result.success).toBe(true);
+    expect(result.hookId).toBeTruthy();
+    // 清理：删除测试创建的 hook
+    if (result.hookId) {
+      await engine.deleteHook(result.hookId);
+    }
+  });
+
+  it('15b. createHook 自定义模式创建 Hook（用户直接提供 shell 命令）', async () => {
+    const result = await engine.createHook({
+      name: '测试自定义 Hook',
+      event: 'post-tool-call',
+      code: 'echo "hook triggered" >> .routedev/test-hook.log',
+      description: '测试用自定义 hook',
+    });
+    expect(result.success).toBe(true);
+    expect(result.hookId).toBeTruthy();
+    // 清理
+    if (result.hookId) {
+      await engine.deleteHook(result.hookId);
+    }
+  });
+
+  it('15c. createHook 传入无效 templateId 应返回失败', async () => {
+    const result = await engine.createHook({ templateId: '不存在的模板' });
     expect(result.success).toBe(false);
     expect(result.error).toBeTruthy();
   });

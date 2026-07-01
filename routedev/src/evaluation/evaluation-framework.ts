@@ -22,6 +22,18 @@
 //   评估报告必须记录 modelVersion，模型升级后需重新校准 Rubric。
 
 import { logger } from '../utils/logger.js';
+// Phase 52 Task 2/7 深度接入：CalibratedScorecard + SaturationMonitor
+import {
+  buildCalibratedScorecard,
+  type CalibratedScorecard,
+  type DefectDetectionConfig,
+} from './process-defect-ontology.js';
+import {
+  SaturationMonitor,
+  type EvaluationRunResult,
+  type SaturationMonitorConfig,
+  type SaturationReport,
+} from './saturation-monitor.js';
 
 // ============================================================
 // 类型定义
@@ -101,6 +113,18 @@ export interface EvaluationReport {
   modelVersion: string;
   /** 评估时间戳（ISO 字符串） */
   timestamp: string;
+  /**
+   * Phase 52 Task 2 深度接入：过程级校准评分卡（可选）。
+   * 由 setProcessDefectIntegration 注入配置后，runEvaluation 完成后自动产出。
+   * 未注入时为 undefined，向后兼容。
+   */
+  calibratedScorecard?: CalibratedScorecard;
+  /**
+   * Phase 52 Task 7 深度接入：评估集饱和度报告（可选）。
+   * 由 setSaturationMonitor 注入监测器和历史数据后，runEvaluation 完成后自动产出。
+   * 未注入时为 undefined，向后兼容。
+   */
+  saturationReport?: SaturationReport;
 }
 
 /** LLM-as-Judge 对单个用例的评判结果（依赖注入返回值） */
@@ -191,6 +215,23 @@ export class EvaluationFramework {
   private readonly modelVersion: string;
   /** 通过阈值：综合加权得分 >= 此值视为通过 */
   private readonly passThreshold: number;
+  /**
+   * Phase 52 Task 2 深度接入：过程级缺陷评估配置（可选）。
+   * 由 setProcessDefectIntegration 注入；未注入时 runEvaluation 不产出 calibratedScorecard。
+   */
+  private processDefectConfig?: { enabled: boolean; config: DefectDetectionConfig };
+  /**
+   * Phase 52 Task 7 深度接入：评估集饱和监测器（可选）。
+   * 由 setSaturationMonitor 注入；未注入时 runEvaluation 不产出 saturationReport。
+   */
+  private saturationMonitor?: SaturationMonitor;
+  /**
+   * Phase 52 Task 7 深度接入：历史评估运行结果（可选）。
+   * 由调用方维护并注入；runEvaluation 完成后会向其追加本次运行结果（mutate）。
+   */
+  private historicalRunResults?: EvaluationRunResult[];
+  /** Phase 52 Task 7 深度接入：饱和监测配置 */
+  private saturationMonitorConfig?: SaturationMonitorConfig;
 
   /**
    * @param executeTarget 执行被评估目标的回调
@@ -208,6 +249,43 @@ export class EvaluationFramework {
     this.judge = judge;
     this.modelVersion = modelVersion;
     this.passThreshold = passThreshold;
+  }
+
+  /**
+   * Phase 52 Task 2 深度接入：注入过程级缺陷评估配置
+   *
+   * 注入后，runEvaluation 完成时会调用 buildCalibratedScorecard 产出过程级评分卡，
+   * 挂到 report.calibratedScorecard 字段；未注入时该字段为 undefined（向后兼容）。
+   *
+   * @param enabled       是否启用（通常由 config.phase52Integration.processEvaluation.enabled 决定）
+   * @param defectConfig  缺陷检测配置（灵敏度 + 控制保持度阈值）
+   */
+  setProcessDefectIntegration(enabled: boolean, defectConfig: DefectDetectionConfig): void {
+    this.processDefectConfig = enabled ? { enabled: true, config: defectConfig } : undefined;
+  }
+
+  /**
+   * Phase 52 Task 7 深度接入：注入饱和监测器与历史结果
+   *
+   * 注入后，runEvaluation 完成时会：
+   *   1. 把本次运行结果（含通过/失败数、用例得分、耗时）追加到 historicalRunResults
+   *   2. 调用 saturationMonitor.evaluate(historicalRunResults, config) 产出饱和度报告
+   *   3. 把报告挂到 report.saturationReport 字段
+   *
+   * 未注入时 report.saturationReport 为 undefined（向后兼容）。
+   *
+   * @param monitor           饱和监测器实例
+   * @param historicalResults 历史运行结果数组（由调用方持有，会被 mutate 追加新结果）
+   * @param config            饱和监测配置
+   */
+  setSaturationMonitor(
+    monitor: SaturationMonitor,
+    historicalResults: EvaluationRunResult[],
+    config: SaturationMonitorConfig,
+  ): void {
+    this.saturationMonitor = monitor;
+    this.historicalRunResults = historicalResults;
+    this.saturationMonitorConfig = config;
   }
 
   /**
@@ -276,6 +354,77 @@ export class EvaluationFramework {
       failed,
       totalCases: results.length,
     });
+
+    // Phase 52 Task 2 深度接入：产出过程级校准评分卡
+    // config 守护：未注入 processDefectConfig 时跳过；try/catch 降级：评分卡生成失败不崩溃主流程
+    if (this.processDefectConfig?.enabled) {
+      try {
+        // 把 CaseResult 转换为 buildCalibratedScorecard 所需的 executionLog 格式
+        // 失败用例的 reasoning 作为 error 文本（用于关键词匹配缺陷类型）；
+        // actualOutput 始终作为 output 文本（成功用例也可能含潜在缺陷线索）
+        const executionLog = results.map((r, idx) => ({
+          stepIndex: idx,
+          error: r.passed ? '' : r.reasoning,
+          output: r.actualOutput,
+        }));
+        const outcomePassed = failed === 0; // 所有用例通过才算整体 outcome passed
+        report.calibratedScorecard = buildCalibratedScorecard(
+          executionLog,
+          outcomePassed,
+          this.processDefectConfig.config,
+        );
+        logger.debug('EvaluationFramework: calibratedScorecard 已生成', {
+          processGrade: report.calibratedScorecard.processGrade,
+          overallRisk: report.calibratedScorecard.overallRisk,
+          defectCount: report.calibratedScorecard.defects.length,
+        });
+      } catch (err) {
+        logger.warn('EvaluationFramework: buildCalibratedScorecard 失败 (non-blocking)', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Phase 52 Task 7 深度接入：饱和度监测
+    // config 守护：未注入 saturationMonitor 时跳过；try/catch 降级：饱和评估失败不崩溃主流程
+    if (
+      this.saturationMonitor &&
+      this.historicalRunResults &&
+      this.saturationMonitorConfig
+    ) {
+      try {
+        // 把本次运行结果追加到历史记录（mutate historicalRunResults）
+        const currentRun: EvaluationRunResult = {
+          runId: `${targetId}-${Date.now()}`,
+          timestamp: Date.now(),
+          modelId: this.modelVersion,
+          totalCases: results.length,
+          passedCases: passed,
+          failedCases: failed,
+          caseScores: results.map((r) => r.score),
+          durationMs: Date.now() - new Date(report.timestamp).getTime(),
+        };
+        this.historicalRunResults.push(currentRun);
+        // I-8 修复：无界集合淘汰，避免历史记录无限增长
+        // 保留最近 200 条（远超 saturationMonitorConfig.checkInterval 默认 10）
+        if (this.historicalRunResults.length > 200) {
+          this.historicalRunResults.shift();
+        }
+        report.saturationReport = this.saturationMonitor.evaluate(
+          this.historicalRunResults,
+          this.saturationMonitorConfig,
+        );
+        logger.debug('EvaluationFramework: saturationReport 已生成', {
+          status: report.saturationReport.status,
+          discrimination: report.saturationReport.discrimination,
+          passRate: report.saturationReport.passRate,
+        });
+      } catch (err) {
+        logger.warn('EvaluationFramework: saturationMonitor.evaluate 失败 (non-blocking)', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
 
     return report;
   }

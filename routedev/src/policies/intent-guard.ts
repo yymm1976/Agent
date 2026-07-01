@@ -3,15 +3,16 @@
 //
 // 设计目标：
 //   1. 提供内置危险意图规则（删除生产配置、force push、rm -rf 等）
-//   2. evaluate 方法对用户输入做关键字匹配
-//   3. 命中后返回 block=true 的 PolicyEvalResult
+//   2. 命中后通过 PolicyEngine 统一调度，返回 block=true 的 PolicyEvalResult
 //
 // 与 PolicyEngine 的关系：
 //   - IntentGuard 提供规则库（BUILTIN_RULES）
-//   - PolicyEngine 负责调度（evaluateInput 内部调用 IntentGuard.evaluate）
-//   - 也可独立使用：直接调用 IntentGuard.evaluate(userInput, policies)
+//   - PolicyEngine 负责调度（evaluateInput 遍历 policies 数组直接处理）
+//
+// 注：静态 evaluate / isBlocked / getBlockReason / matchKeywords 已作为死代码删除
+//     （PolicyEngine 内部通过 evaluateAction 遍历 policies 数组直接处理，不走这些静态方法）
 
-import type { Policy, PolicyEvalResult } from './policy-engine.js';
+import type { Policy } from './policy-engine.js';
 
 // ============================================================
 // IntentGuard
@@ -70,71 +71,6 @@ export class IntentGuard {
       },
     },
   ];
-
-  /**
-   * 评估用户输入
-   *
-   * 只评估 type='intent_guard' 且 enabled=true 的策略
-   * 关键字匹配（大小写不敏感，子串匹配）
-   *
-   * @returns 所有命中的策略结果（matched=true）；未命中不返回
-   */
-  static evaluate(userInput: string, policies: Policy[]): PolicyEvalResult[] {
-    if (!userInput) return [];
-
-    const lowerInput = userInput.toLowerCase();
-    const results: PolicyEvalResult[] = [];
-
-    // 按 priority 降序评估
-    const sorted = [...policies]
-      .filter((p) => p.type === 'intent_guard' && p.enabled)
-      .sort((a, b) => b.priority - a.priority);
-
-    for (const policy of sorted) {
-      const matched = IntentGuard.matchKeywords(policy.trigger.keywords ?? [], lowerInput);
-      if (matched) {
-        results.push({
-          matched: true,
-          action: policy.action,
-          policyId: policy.id,
-          policyName: policy.name,
-        });
-      }
-    }
-
-    return results;
-  }
-
-  /**
-   * 判断是否被阻止
-   */
-  static isBlocked(results: PolicyEvalResult[]): boolean {
-    return results.some((r) => r.action.block === true);
-  }
-
-  /**
-   * 获取阻止原因（取第一个 block=true 的 response）
-   */
-  static getBlockReason(results: PolicyEvalResult[]): string | undefined {
-    const blocked = results.find((r) => r.action.block === true);
-    return blocked?.action.response;
-  }
-
-  // ============================================================
-  // 内部方法
-  // ============================================================
-
-  /** 关键字匹配（大小写不敏感，子串匹配） */
-  private static matchKeywords(keywords: string[], lowerInput: string): boolean {
-    if (keywords.length === 0) return false;
-    for (const kw of keywords) {
-      if (!kw) continue;
-      if (lowerInput.includes(kw.toLowerCase())) {
-        return true;
-      }
-    }
-    return false;
-  }
 }
 
 // ============================================================

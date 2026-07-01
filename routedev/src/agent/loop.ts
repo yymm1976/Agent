@@ -40,11 +40,12 @@ import { CONCISE_THINKING_BLOCK, trimToolResult, shouldSkipConcise } from './con
 // 任务1：evaluateAdvance 需要 ToolResult 类型
 import type { ToolResult } from '../tools/types.js';
 // Phase 53 Task 2：装配验证与 setter 注入
-// 使用 type-only import 避免运行时循环依赖（PolicyEngine/CiteManager/MacroManager/ScheduleEngine 不在 Loop 运行时路径上）
+// 使用 type-only import 避免运行时循环依赖（PolicyEngine/CiteManager/MacroManager 不在 Loop 运行时路径上）
 import type { PolicyEngine } from '../policies/policy-engine.js';
 import type { CiteManager } from '../cite/manager.js';
+import type { CiteResolver } from '../cite/resolver.js';
+import type { CiteItem, CiteType, CiteResolution } from '../cite/types.js';
 import type { MacroManager } from '../macros/manager.js';
-import type { ScheduleEngine } from '../scheduler/engine.js';
 // Phase 53 Task 9：预算监控器（type-only import，避免运行时循环依赖）
 import type { BudgetMonitor } from './budget-monitor.js';
 // Phase 55 Task 7：DualLoop 编排器（type-only import，避免运行时循环依赖）
@@ -86,6 +87,10 @@ export interface ReActRunParams {
   signal?: AbortSignal;
   /** 工具调用确认回调（Phase 9 自主模式） */
   onConfirmTool?: ConfirmToolCallback;
+  /** 模型调用成功回调 */
+  onModelSuccess?: (modelId: string) => void;
+  /** 模型调用失败回调 */
+  onModelFailure?: (modelId: string, error: unknown) => void;
 }
 
 /** LLM 流式调用的内部结果 */
@@ -144,15 +149,17 @@ export class ReActAgentLoop {
    */
   private citeManager: CiteManager | null = null;
   /**
+   * Phase 53 Task 2 E5：引用解析器（可选）
+   * 接入后，每次调用 LLM 前会把 citeManager 收集的引用交给 resolver 解析
+   * resolver 产出 injectedContext（拼到 user message 前）+ skillPrompts/macroPrompts（追加 system prompt）
+   * 缺少 resolver 时 citeManager 收集的引用是死数据
+   */
+  private citeResolver: CiteResolver | null = null;
+  /**
    * Phase 53 Task 2：宏管理器（可选）
    * 接入后，用户输入中的 `!` 触发器会被宏系统展开
    */
   private macroManager: MacroManager | null = null;
-  /**
-   * Phase 53 Task 2：调度引擎（可选，对应蓝图的 CronEngine）
-   * 接入后，run() 会在每次迭代前后检查待触发的定时任务
-   */
-  private cronEngine: ScheduleEngine | null = null;
   /**
    * Phase 53 Task 9：预算监控器（可选）
    * 接入后，每次迭代结束会记录 token 消耗与工具调用，并输出告警（fail-open）
@@ -249,10 +256,83 @@ export class ReActAgentLoop {
 
   /**
    * Phase 53 Task 2：注入引用管理器
-   * 接入后，工具返回中的引用标记会被规范化解析与渲染
+   *
+   * 接入点：callLLMStream 末尾调用 extractCitationsFromText(fullContent)
+   * 标记协议：LLM 在文本中输出 [cite:type:source] 标记（如 [cite:file:src/foo.ts]），
+   * Loop 自动解析并 add 到 CiteManager。重复/超限/解析失败均 fail-open，不阻塞主流程。
+   * 现阶段 setter 完成持有 + 自动标记提取；system prompt 引导 LLM 输出标记由调用方负责。
    */
   setCiteManager(manager: CiteManager | null): void {
     this.citeManager = manager;
+  }
+
+  /**
+   * Phase 53 Task 2 E5：注入引用解析器
+   *
+   * 接入点：callLLMStream 开头调用 resolveCitations
+   * resolver 把 citeManager 收集的引用解析为 injectedContext + skillPrompts + allowedTools
+   * 缺少 resolver 时 citeManager 收集的引用是死数据
+   */
+  setCiteResolver(resolver: CiteResolver | null): void {
+    this.citeResolver = resolver;
+  }
+
+  /**
+   * Phase 53 Task 2 E5：解析 citeManager 中的引用，返回要注入的上下文
+   *
+   * 在 callLLMStream 开头调用，把 resolver 产出的：
+   *   - injectedContext 拼到 user message 前
+   *   - skillPrompts/macroPrompts 追加到 systemPrompt
+   *   - allowedTools 暂不消费（预留）
+   * fail-open：resolver 不可用或异常时不影响主流程
+   */
+  private async resolveCitations(): Promise<CiteResolution | null> {
+    if (!this.citeResolver || !this.citeManager) return null;
+    try {
+      const items = this.citeManager.list();
+      if (items.length === 0) return null;
+      const resolution = await this.citeResolver.resolve({ items });
+      return resolution;
+    } catch (err) {
+      logger.debug('resolveCitations failed (fail-open)', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Phase 53 Task 2 P2-4：从 LLM 输出文本中提取 [cite:type:source] 标记并 add 到 citeManager
+   *
+   * 标记格式：[cite:<type>:<source>]，type ∈ file|folder|text|skill|tool|macro|url|message
+   * source 为非空字符串（不含 ] 与空白）
+   * 失败处理：重复（DuplicateCiteError）/超限（CiteLimitExceededError）/格式不符 均跳过，不抛出
+   */
+  private extractCitationsFromText(text: string): void {
+    if (!this.citeManager) return;
+    // 全局正则：[cite:type:source]，type 限定为 8 种合法类型，source 不含 ] 与空白
+    const CITE_PATTERN = /\[cite:(file|folder|text|skill|tool|macro|url|message):([^\]\s]+)\]/g;
+    let match: RegExpExecArray | null;
+    while ((match = CITE_PATTERN.exec(text)) !== null) {
+      const type = match[1] as CiteType;
+      const source = match[2];
+      try {
+        const item: CiteItem = {
+          id: `cite-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+          type,
+          source,
+          label: source,
+          createdAt: Date.now(),
+          origin: 'trigger',
+        };
+        this.citeManager.add(item);
+      } catch (err) {
+        // 重复/超限/格式问题：fail-open，记 debug 日志后继续
+        logger.debug('CiteManager.add skipped (fail-open)', {
+          type, source, error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   }
 
   /**
@@ -264,11 +344,17 @@ export class ReActAgentLoop {
   }
 
   /**
-   * Phase 53 Task 2：注入调度引擎（对应蓝图的 setCronEngine）
-   * 接入后，run() 会在每次迭代前后检查待触发的定时任务
+   * Phase 53 接线修复：展开用户输入中的 !macro 触发器
+   * 匹配 `!name` 形式的 token，若 MacroManager 中存在同名宏则替换为宏内容；
+   * 不存在的宏保持原样（避免误吞用户输入的感叹号）。
    */
-  setCronEngine(engine: ScheduleEngine | null): void {
-    this.cronEngine = engine;
+  private expandMacros(input: string): string {
+    if (!this.macroManager) return input;
+    // 拆分为 token，对 !xxx 形式的 token 尝试展开
+    return input.replace(/!(\w+)/g, (full, name: string) => {
+      const macro = this.macroManager!.getMacro(name);
+      return macro ? macro.content : full;
+    });
   }
 
   /**
@@ -502,6 +588,8 @@ export class ReActAgentLoop {
       conversationHistory,
       signal,
       onConfirmTool,
+      onModelSuccess,
+      onModelFailure,
     } = params;
     // Phase 38 Task 1：systemPrompt 改为 let，允许 onSystemPrompt 中间件修改
     let systemPrompt = params.systemPrompt;
@@ -554,7 +642,12 @@ export class ReActAgentLoop {
     this.sanitizeToolMessages(messages);
 
     // 当前用户消息
-    messages.push({ role: 'user', content: userMessage });
+    // Phase 53 接线修复：原 setMacroManager 注入但 run() 从不消费，导致 !macro 触发器失效。
+    // 现在展开用户输入中的 !macroname 触发器为对应宏内容（macroname 取首个空白前的 token）。
+    const effectiveUserMessage = this.macroManager
+      ? this.expandMacros(userMessage)
+      : userMessage;
+    messages.push({ role: 'user', content: effectiveUserMessage });
 
     // 获取可用工具定义
     const toolDefs = this.config.toolsEnabled
@@ -630,16 +723,23 @@ export class ReActAgentLoop {
         // ===== LLM 流式调用 =====
         // Phase 32 Task 2：透传 enableCache（由 ModelRouter 全局启用）
         // Phase 55：透传 effectiveSystemBlocks（若有），LLM 客户端优先使用 blocks 否则回退 systemPrompt
-        const result = yield* this.callLLMStream(
-          llmClient,
-          routeDecision.model.id,
-          messages,
-          effectiveSystemPrompt,
-          effectiveSystemBlocks,
-          toolDefs,
-          signal,
-          routeDecision.enableCache,
-        );
+        let result: LLMStreamResult;
+        try {
+          result = yield* this.callLLMStream(
+            llmClient,
+            routeDecision.model.id,
+            messages,
+            effectiveSystemPrompt,
+            effectiveSystemBlocks,
+            toolDefs,
+            signal,
+            routeDecision.enableCache,
+          );
+        } catch (error) {
+          onModelFailure?.(routeDecision.model.id, error);
+          throw error;
+        }
+        onModelSuccess?.(routeDecision.model.id);
 
         // C7 修复：流返回后立即检查取消信号
         // callLLMStream 在 signal.aborted 时会 break 并返回已累积的 toolCalls，
@@ -1375,6 +1475,33 @@ export class ReActAgentLoop {
     // 修复：最终防线——发送给 LLM 前再次确保 tool_use/tool_result 成对
     this.sanitizeToolMessages(messages);
 
+    // Phase 53 Task 2 E5：引用解析——把 citeManager 收集的引用交给 resolver 解析
+    // resolver 产出 injectedContext（拼到 user message 前）+ skillPrompts/macroPrompts（追加 system prompt）
+    // fail-open，resolver 不可用或异常时不影响主流程
+    const citeResolution = await this.resolveCitations();
+    if (citeResolution) {
+      // 拼接 injectedContext 到最后一条 user message 前
+      if (citeResolution.injectedContext) {
+        const lastUserIdx = messages.length - 1;
+        if (lastUserIdx >= 0 && messages[lastUserIdx].role === 'user') {
+          messages = [...messages];
+          messages[lastUserIdx] = {
+            ...messages[lastUserIdx],
+            content: `${citeResolution.injectedContext}\n\n${messages[lastUserIdx].content}`,
+          };
+        }
+      }
+      // 追加 skill/macro prompts 到 systemPrompt
+      const extraPrompts = [
+        ...citeResolution.skillPrompts,
+        ...citeResolution.macroPrompts,
+      ].filter(Boolean);
+      if (extraPrompts.length > 0) {
+        const extraStr = extraPrompts.join('\n\n');
+        systemPrompt = systemPrompt ? `${systemPrompt}\n\n---\n${extraStr}` : extraStr;
+      }
+    }
+
     const options: LLMRequestOptions = {
       model: modelId,
       messages,
@@ -1490,6 +1617,19 @@ export class ReActAgentLoop {
     // 修复：与 done 事件一样 flush buffers，保证已接收的参数片段不丢失
     if (signal?.aborted) {
       this.flushToolCallBuffers(toolCallBuffers, toolCalls);
+    }
+
+    // Phase 53 Task 2 P2-4：单轮 LLM 回复完成后，从 fullContent 中提取 [cite:type:source] 标记
+    // 注入 citeManager。标记协议让 LLM 主动声明引用源，UI 层可显示"本次回复引用了哪些来源"
+    if (this.citeManager) {
+      try {
+        this.extractCitationsFromText(fullContent);
+      } catch (err) {
+        // fail-open：标记提取失败不影响主流程
+        logger.debug('extractCitationsFromText failed (fail-open)', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     // 返回（AsyncGenerator return value）

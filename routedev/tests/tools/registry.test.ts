@@ -27,12 +27,24 @@ describe('ToolRegistry', () => {
     expect(registry.size).toBe(0);
   });
 
-  it('should overwrite duplicate registrations', () => {
+  it('should reject duplicate registrations by default', () => {
     const registry = new ToolRegistry();
     const tool1 = new FileReadTool();
     const tool2 = new FileReadTool();
     registry.register(tool1);
-    registry.register(tool2);
+
+    expect(() => registry.register(tool2)).toThrow('already registered');
+
+    expect(registry.get('file_read')).toBe(tool1);
+    expect(registry.size).toBe(1);
+  });
+
+  it('should overwrite duplicate registrations when explicitly requested', () => {
+    const registry = new ToolRegistry();
+    const tool1 = new FileReadTool();
+    const tool2 = new FileReadTool();
+    registry.register(tool1);
+    registry.register(tool2, true);
 
     expect(registry.get('file_read')).toBe(tool2);
     expect(registry.size).toBe(1);

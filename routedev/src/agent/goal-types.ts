@@ -2,6 +2,8 @@
 // /goal 命令的目标分解与验证相关类型
 
 /** 单个步骤的状态 */
+import type { DifficultyAssessment } from './difficulty-assessor.js';
+
 type GoalStepStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
 
 /** 步骤所属领域（小写枚举，大小写不敏感比较时统一转 lowercase） */
@@ -76,6 +78,23 @@ export interface GoalPlan {
   completedAt?: number;
   /** 验证结果 */
   verificationResult?: VerificationResult;
+  attestation?: PlanAttestation;
+  archivedVersions?: ArchivedPlanVersion[];
+  difficultyAssessment?: DifficultyAssessment;
+}
+
+export interface PlanAttestation {
+  hash: string;
+  version: number;
+  attestedAt: number;
+  attestedBy: string;
+}
+
+export interface ArchivedPlanVersion {
+  attestation: PlanAttestation;
+  planSnapshot: Pick<GoalPlan, 'id' | 'description' | 'verificationCriteria' | 'steps' | 'createdAt'>;
+  archiveReason: string;
+  archivedAt: number;
 }
 
 /** 验证结果 */

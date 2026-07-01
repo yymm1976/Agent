@@ -26,7 +26,7 @@ import type { AppConfig, AutonomyMode } from '../config/schema.js';
 import { getSystemPrompt } from '../agent/prompts.js';
 import type { GoalPlan, PlanStep } from '../agent/goal-types.js';
 import type { WorkMode } from '../agent/work-modes.js';
-import type { ExecutionSnapshot } from '../agent/durable-executor.js';
+import type { PersistedGoal } from '../agent/goal-persistence.js';
 import { logger } from '../utils/logger.js';
 import { CommandRegistry } from './command-registry.js';
 import { loadCustomCommands } from './custom-commands.js';
@@ -55,6 +55,8 @@ import {
   reviewCommand,
   // Phase 46 Task 5：注册已定义但未注册的命令
   clarifyCommand, experimentCommand, qualityCommand, scheduleCommand, trustCommand,
+  // 接线修复：/doctor 命令原仅有 handleDoctorCommand 函数，无 CommandDefinition，未注册
+  doctorCommand,
 } from './commands/index.js';
 import { initPluginSystem, registerPermissionMiddleware } from './plugin-init.js';
 import { createAppDependencies } from './app-init.js';
@@ -115,7 +117,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   // - configReloadChanges: 配置变更通知（ConfigReloadNotice 组件用）
   // - showBranchSwitcher: 是否显示分支切换器
   const [activePanel, setActivePanel] = useState<
-    | { type: 'resume'; snapshots: ExecutionSnapshot[] }
+    | { type: 'resume'; snapshots: PersistedGoal[] }
     | { type: 'trace'; entries: TraceTimelineEntry[]; sessionId?: string }
     | { type: 'diff'; diff: string; fileName?: string }
     | null
@@ -144,13 +146,19 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
 
   // ===== refs：服务依赖（Phase 0c：通过 createAppDependencies 一次性创建） =====
   // Phase 32 Task 1：传入 classifier/modelRouter/tracker 以实例化 Phase 31 模块
-  const depsRef = useRef(createAppDependencies(config, clientManager, currentModel, process.cwd(), classifier, modelRouter, tracker));
+  const depsRef = useRef<ReturnType<typeof createAppDependencies> | null>(null);
+  if (depsRef.current === null) {
+    depsRef.current = createAppDependencies(config, clientManager, currentModel, process.cwd(), classifier, modelRouter, tracker);
+  }
   const deps = depsRef.current;
 
   // Phase 32 Task 2.4：注入 CacheStatsTracker 到 TokenTracker
   // 让 tracker.record() 自动记录缓存命中数据（Layer 5：会话级累计计数器）
   // 使用 useRef 确保 CacheStatsTracker 只创建一次，与 tracker 生命周期一致
-  const cacheStatsTrackerRef = useRef(new CacheStatsTracker());
+  const cacheStatsTrackerRef = useRef<CacheStatsTracker | null>(null);
+  if (cacheStatsTrackerRef.current === null) {
+    cacheStatsTrackerRef.current = new CacheStatsTracker();
+  }
   useEffect(() => {
     tracker.setCacheStatsTracker(cacheStatsTrackerRef.current);
     // Phase 55 Task 15 修复：同一 CacheStatsTracker 注入 WorkerExecutor
@@ -162,30 +170,36 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   autonomyModeRef.current = autonomyMode;
   const commandBridgeRef = useRef<{ requestConfirm: (p: string) => Promise<boolean> } | null>(null);
   // Phase 21：注册 PermissionEngine 中间件（deny 规则不可绕过）
-  registerPermissionMiddleware(deps.middlewarePipeline, deps.permissionEngine, autonomyModeRef, commandBridgeRef);
+  useEffect(() => {
+    registerPermissionMiddleware(deps.middlewarePipeline, deps.permissionEngine, autonomyModeRef, commandBridgeRef);
+  }, [deps.middlewarePipeline, deps.permissionEngine]);
 
   // 初始化分支管理器：移入 useEffect，避免每次渲染都调用
   useEffect(() => {
     deps.branchManager.initFromHistory(conversationHistoryRef.current);
-  }, [conversationHistoryRef.current.length]);
+  }, [deps.branchManager, messages.length]);
 
   // 命令注册表（注册所有 26 个命令，含 Phase 31 Task 7.3 新增的 3 个）
-  const commandRegistryRef = useRef(new CommandRegistry());
+  const commandRegistryRef = useRef<CommandRegistry | null>(null);
+  if (commandRegistryRef.current === null) {
+    commandRegistryRef.current = new CommandRegistry();
+  }
+  const commandRegistry = commandRegistryRef.current;
   useEffect(() => {
-    [autoCommand, semiCommand, manualCommand, pauseCommand, checkpointCommand, rollbackCommand, goalCommand, branchCommand, initCommand, dreamCommand, quitCommand, clearCommand, helpCommand, statusCommand, traceCommand, promptCommand, channelsCommand, costCommand, historyCommand, pluginCommand, diffCommand, buildCommand, planCommand, composeCommand, resumeCommand, tokenCommand, memoryCommand, permissionsCommand, configCommand, outputStyleCommand, techDebtCommand, swarmCommand, btwCommand, reviewCommand, clarifyCommand, experimentCommand, qualityCommand, scheduleCommand, trustCommand].forEach(c => commandRegistryRef.current.register(c));
+    [autoCommand, semiCommand, manualCommand, pauseCommand, checkpointCommand, rollbackCommand, goalCommand, branchCommand, initCommand, dreamCommand, quitCommand, clearCommand, helpCommand, statusCommand, traceCommand, promptCommand, channelsCommand, costCommand, historyCommand, pluginCommand, diffCommand, buildCommand, planCommand, composeCommand, resumeCommand, tokenCommand, memoryCommand, permissionsCommand, configCommand, outputStyleCommand, techDebtCommand, swarmCommand, btwCommand, reviewCommand, clarifyCommand, experimentCommand, qualityCommand, scheduleCommand, trustCommand, doctorCommand].forEach(c => commandRegistry.register(c));
 
     // Phase 47 Task 7：加载自定义 Slash 命令（.routedev/commands/ 目录）
     // 命名空间隔离：自定义命令与内置命令同名时，内置命令优先，自定义命令被忽略并 logger.warn（陷阱 #139）
     const commandsDir = path.join(process.cwd(), '.routedev', 'commands');
     const customCommands = loadCustomCommands(commandsDir);
     for (const cmd of customCommands) {
-      if (commandRegistryRef.current.has(cmd.name)) {
+      if (commandRegistry.has(cmd.name)) {
         logger.warn(`Custom command /${cmd.name} conflicts with built-in command, ignored`, { name: cmd.name });
         continue;
       }
-      commandRegistryRef.current.register(cmd);
+      commandRegistry.register(cmd);
     }
-  }, []);
+  }, [commandRegistry]);
 
   // Phase 30 Task 5：systemPrompt 改为 ref 模式
   // - 初始值用 getSystemPrompt() fallback，保证首次渲染即可用
@@ -207,12 +221,12 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     },
     requestPlanEdit: (plan: GoalPlan) => { setEditingPlan(plan); return new Promise(r => { pendingPlanEditRef.current = { resolve: r }; }); },
     exit: () => { logger.info('Session ended — goodbye', { sessionId: deps.trace.getSessionId() }); deps.pluginRegistry.destroyAll().catch(err => logger.warn('Plugin destroyAll failed', { error: String(err) })).finally(() => process.exit(0)); },
-    startGoal: (text: string) => { goalRunnerRef.current.handleGoalCommand(`/goal ${text}`).catch(err => { logger.error('Goal command failed', { error: String(err) }); setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `❌ /goal 命令失败: ${err instanceof Error ? err.message : String(err)}` }]); }); },
+    startGoal: (text: string) => { goalRunner.handleGoalCommand(`/goal ${text}`).catch(err => { logger.error('Goal command failed', { error: String(err) }); setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `❌ /goal 命令失败: ${err instanceof Error ? err.message : String(err)}` }]); }); },
     getState: () => ({ currentModel, currentTier, isDegraded, autonomyMode, conversationHistoryLength: conversationHistoryRef.current.length, mcpConnectedCount: deps.mcpManager.connectedCount, mcpTotalToolCount: deps.mcpManager.totalToolCount }),
     setOutputStyle: (style) => { setOutputStyleState(style); configRef.current.ui.outputStyle = style; },
     getConversationHistory: () => conversationHistoryRef.current.slice(),
     // Phase 50 Task 7：组件接入回调——命令触发对应 React 组件渲染
-    showResumePicker: (snapshots: ExecutionSnapshot[]) => {
+    showResumePicker: (snapshots: PersistedGoal[]) => {
       if (configRef.current.ui.components?.resumePicker !== false) {
         setActivePanel({ type: 'resume', snapshots });
       }
@@ -238,60 +252,63 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
 
   // 修复：将 commandBridge 的确认回调注入工具执行器，
   // 使 requiresConfirmation 的工具（写操作、网络等）能正常弹出确认对话框。
-  deps.adapter.setRequestConfirmation(commandBridge.requestConfirm);
+  useEffect(() => {
+    deps.adapter.setRequestConfirmation(commandBridge.requestConfirm);
+  }, [deps.adapter, commandBridge.requestConfirm]);
 
   // GoalRunner（目标分解与执行）
-  const goalRunnerRef = useRef(createGoalRunner({
-    classifier, modelRouter, clientManager, tracker,
-    agentLoop: deps.agentLoop,
-    checkpointManager: deps.checkpointManager,
-    contextManager: deps.contextManager,
-    config, systemPromptRef,
-    conversationHistoryRef, pendingConfirmRef, abortControllerRef,
-    currentPlanRef, awaitingGoalConfirmRef,
-    addSystemMessage: (content: string) => setMessages(prev => [...prev, { id: nextId(), role: 'system', content }]),
-    requestPlanEdit: (plan: GoalPlan) => commandBridge.requestPlanEdit(plan),
-    setIsProcessing, nextId,
-    setTodayTokensUsed,
-    profiler: deps.profiler ?? undefined,
-    // Phase 32 Task 1.4：接入 CompletionGate（独立代码验证门）
-    completionGate: deps.completionGate,
-    // Phase 50 Task 1：接入 goalIntegration 实例（未开启时为 null，createGoalRunner 内部按 falsy 跳过）
-    goalAuditor: deps.goalAuditor ?? undefined,
-    goalPersistence: deps.goalPersistence ?? undefined,
-    goalPromptBuilder: deps.goalPromptBuilder ?? undefined,
-    // Phase 54 Task 1/4：多 Agent 编排 + 统一审查器（三者同时注入后 /goal 走多 Agent 路径）
-    orchestrator: deps.orchestrator,
-    workerExecutor: deps.workerExecutor,
-    blackboard: deps.blackboard,
-    unifiedReviewer: deps.unifiedReviewer,
-    // Phase 55 Task 8：执行路径判定器（app-init.ts 实例化，未注入时 goal-runner 降级到 legacy）
-    executionRouter: deps.executionRouter,
-    // Phase 55 Task 9：DualLoop 编排器 ref（异步创建，ref 延迟绑定，未注入时降级到 legacyIterativeLoop）
-    dualLoopOrchestratorRef: deps.dualLoopOrchestratorRef,
-    // Phase 55：DAG 引擎（app-init.ts 异步创建，ref 延迟读取，未注入时 executePlanWithDag 降级到 single）
-    dagEngine: deps.dagEngineRef?.current ?? undefined,
-    // Phase 55 Task 11：CompositionalRouter（app-init.ts 实例化，未注入时 executePlanWithCompose 降级到 DAG）
-    compositionalRouter: deps.compositionalRouter,
-  }));
+  const goalRunnerRef = useRef<ReturnType<typeof createGoalRunner> | null>(null);
+  if (goalRunnerRef.current === null) {
+    goalRunnerRef.current = createGoalRunner({
+      classifier, modelRouter, clientManager, tracker,
+      agentLoop: deps.agentLoop,
+      checkpointManager: deps.checkpointManager,
+      contextManager: deps.contextManager,
+      config, systemPromptRef,
+      conversationHistoryRef, pendingConfirmRef, abortControllerRef,
+      currentPlanRef, awaitingGoalConfirmRef,
+      addSystemMessage: (content: string) => setMessages(prev => [...prev, { id: nextId(), role: 'system', content }]),
+      requestPlanEdit: (plan: GoalPlan) => commandBridge.requestPlanEdit(plan),
+      setIsProcessing, nextId,
+      setTodayTokensUsed,
+      profiler: deps.profiler ?? undefined,
+      completionGate: deps.completionGate,
+      goalAuditor: deps.goalAuditor ?? undefined,
+      goalPersistence: deps.goalPersistence ?? undefined,
+      goalPromptBuilder: deps.goalPromptBuilder ?? undefined,
+      orchestrator: deps.orchestrator,
+      workerExecutor: deps.workerExecutor,
+      blackboard: deps.blackboard,
+      unifiedReviewer: deps.unifiedReviewer,
+      executionRouter: deps.executionRouter,
+      dualLoopOrchestratorRef: deps.dualLoopOrchestratorRef,
+      dagEngine: deps.dagEngineRef?.current ?? undefined,
+      compositionalRouter: deps.compositionalRouter,
+      hookRunner: deps.hookRunner,
+    });
+  }
+  const goalRunner = goalRunnerRef.current;
 
   // ChatRunner（非命令聊天执行）
-  const chatRunnerRef = useRef(createChatRunner({
-    classifier, modelRouter, clientManager, tracker,
-    agentLoop: deps.agentLoop,
-    contextManager: deps.contextManager,
-    visionAssistant: deps.visionAssistant,
-    config, systemPromptRef,
-    conversationHistoryRef, pendingConfirmRef, abortControllerRef,
-    setMessages, setIsProcessing, setCurrentModel, setCurrentTier,
-    setIsDegraded, setTodayTokensUsed, nextId,
-    profiler: deps.profiler ?? undefined,
-    // Phase 34：注入 Trace/Audit，用于 trajectory 过程评测汇总
-    trace: deps.trace,
-    audit: deps.audit,
-    // Phase 34：运行时 outputStyle 读取（支持 /output-style 切换）
-    getOutputStyle: () => outputStyle,
-  }));
+  const chatRunnerRef = useRef<ReturnType<typeof createChatRunner> | null>(null);
+  if (chatRunnerRef.current === null) {
+    chatRunnerRef.current = createChatRunner({
+      classifier, modelRouter, clientManager, tracker,
+      agentLoop: deps.agentLoop,
+      contextManager: deps.contextManager,
+      visionAssistant: deps.visionAssistant,
+      config, systemPromptRef,
+      conversationHistoryRef, pendingConfirmRef, abortControllerRef,
+      setMessages, setIsProcessing, setCurrentModel, setCurrentTier,
+      setIsDegraded, setTodayTokensUsed, nextId,
+      profiler: deps.profiler ?? undefined,
+      trace: deps.trace,
+      audit: deps.audit,
+      getOutputStyle: () => outputStyle,
+      skillsRouter: deps.skillsRouter,
+    });
+  }
+  const chatRunner = chatRunnerRef.current;
 
   // 构建 ServiceContext（Phase 0c：通过 createServiceContext 单一入口装配）
   const buildServiceContext = useCallback((): ServiceContext => {
@@ -321,8 +338,9 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       workModeController: deps.workModeController,
       cwd: process.cwd(),
       pluginRegistry: deps.pluginRegistry,
-      durableExecutor: deps.durableExecutor,
       profiler: deps.profiler ?? undefined,
+      // E9-B：把 AppDependencies.experimentManager 单例映射到 ServiceContext
+      experimentManager: deps.experimentManager,
     });
   }, [config, clientManager, modelRouter, tracker, commandBridge, deps]);
 
@@ -459,19 +477,23 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       const interval = setInterval(() => {
         const plan = currentPlanRef.current;
         if (!plan || configRef.current.ui.components?.progressBar === false) {
-          if (goalProgress !== null) setGoalProgress(null);
+          setGoalProgress(prev => prev === null ? prev : null);
           return;
         }
         if (plan.status === 'executing' && plan.steps.length > 0) {
           const completed = plan.steps.filter(s => s.status === 'completed').length;
-          setGoalProgress({ current: completed, total: plan.steps.length });
+          setGoalProgress(prev => (
+            prev && prev.current === completed && prev.total === plan.steps.length
+              ? prev
+              : { current: completed, total: plan.steps.length }
+          ));
         } else if (plan.status === 'completed' || plan.status === 'failed') {
           // 任务结束时清理进度条
-          if (goalProgress !== null) setGoalProgress(null);
+          setGoalProgress(prev => prev === null ? prev : null);
         }
       }, 500);
       return () => clearInterval(interval);
-    }, [goalProgress]);
+    }, []);
 
     // Phase 50 Task 7：BranchSwitcher 接入——有分支时显示分支切换器
     // 通过轮询 branchManager.listBranches() 检测分支创建/删除
@@ -658,7 +680,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       if (approved) {
         setMessages(prev => [...prev, { id: nextId(), role: 'system', content: '✅ 已确认，开始执行目标计划...' }]);
         currentPlanRef.current = pending.plan;
-        goalRunnerRef.current.executeGoalPlan(pending.plan).catch(err => logger.error('Goal plan execution failed', { error: String(err) }));
+        goalRunner.executeGoalPlan(pending.plan).catch(err => logger.error('Goal plan execution failed', { error: String(err) }));
       } else {
         setMessages(prev => [...prev, { id: nextId(), role: 'system', content: '❌ 已取消目标计划' }]);
       }
@@ -719,7 +741,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     // 4. 命令处理（通过 CommandRegistry）
     if (text.startsWith('/')) {
       const ctx = buildServiceContext();
-      const result = await commandRegistryRef.current.execute(text, ctx);
+      const result = await commandRegistry.execute(text, ctx);
       if (result.type === 'handled') {
         if (result.messages) {
           for (const content of result.messages) {
@@ -736,9 +758,9 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       // Phase 47 Task 7：passthrough 结果——已注册命令（如自定义命令）返回渲染后的 prompt
       // 将渲染后的输入发送给 Agent（通过 ChatRunner）
       const commandName = text.slice(1).split(/\s/)[0];
-      if (commandRegistryRef.current.has(commandName)) {
+      if (commandRegistry.has(commandName)) {
         setIsProcessing(true);
-        await chatRunnerRef.current.runChat(result.input);
+        await chatRunner.runChat(result.input);
         return;
       }
       // 未知命令
@@ -757,11 +779,11 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
         await dispatchOrchestratorAction(action);
       } catch (err) {
         logger.error('TaskOrchestrator handle failed, fallback to ChatRunner', { error: String(err) });
-        await chatRunnerRef.current.runChat(text);
+        await chatRunner.runChat(text);
       }
     } else {
       // 回退路径：unifiedPipeline 为 false 时保持原行为
-      await chatRunnerRef.current.runChat(text);
+      await chatRunner.runChat(text);
     }
   }, [buildServiceContext, commandBridge]);
 
@@ -779,13 +801,13 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
     switch (action.type) {
       case 'direct_chat':
         // quick_answer 短路：直达 ChatRunner，无额外 LLM 调用
-        await chatRunnerRef.current.runChat(action.input);
+        await chatRunner.runChat(action.input);
         return;
       case 'pipeline_start':
         // planning 意图：走 /plan 命令路径
         if (action.intent === 'planning') {
           const ctx = buildServiceContext();
-          const result = await commandRegistryRef.current.execute(`/plan ${action.input}`, ctx);
+          const result = await commandRegistry.execute(`/plan ${action.input}`, ctx);
           if (result.type === 'handled' && result.messages) {
             for (const content of result.messages) {
               if (content === '__CLEAR__') {
@@ -804,7 +826,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
           if (!task || !task.routing) {
             // 上下文缺失，回退到 ChatRunner
             logger.warn('Development pipeline: TaskContext or routing missing, fallback to ChatRunner');
-            await chatRunnerRef.current.runChat(action.input);
+            await chatRunner.runChat(action.input);
             return;
           }
           const llmClient = clientManager.get(task.routing.providerId);
@@ -833,7 +855,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
           return;
         }
         // 其他 intent（explicit_goal 等）：回退到 ChatRunner
-        await chatRunnerRef.current.runChat(action.input);
+        await chatRunner.runChat(action.input);
         return;
       case 'requirements_question':
       case 'plan_ready':
@@ -889,8 +911,15 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
           <ResumePicker
             snapshots={activePanel.snapshots}
             onResume={(planId) => {
+              const target = activePanel.snapshots.find(g => g.id === planId);
+              const goalText = target?.spec?.goal ?? '';
               setActivePanel(null);
-              setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `🔄 恢复执行: ${planId}（请通过 /resume ${planId} 完成恢复）` }]);
+              if (goalText) {
+                commandBridge.addSystemMessage(`🔄 从断点恢复执行: ${planId}（重新进入 /goal 流程）`);
+                commandBridge.startGoal(goalText);
+              } else {
+                setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `❌ 未找到目标 ${planId}，无法恢复。` }]);
+              }
             }}
             onCancel={() => setActivePanel(null)}
           />
@@ -925,12 +954,18 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
           todayTokensUsed={todayTokensUsed}
           autonomyMode={autonomyMode}
           workMode={workMode}
-          composeSummary={workMode === 'compose' ? { phase: deps.workModeController.getComposePhase() ?? 'requirements', progress: `${(['requirements', 'coding', 'testing', 'review'].indexOf(deps.workModeController.getComposePhase() ?? 'requirements') + 1)}/4` } : null}
+          composeSummary={(() => {
+            if (workMode !== 'compose') return null;
+            const phase = deps.workModeController.getComposePhase() ?? 'requirements';
+            const order = ['requirements', 'coding', 'testing', 'review'];
+            const index = order.indexOf(phase);
+            return { phase, progress: `${index < 0 ? 1 : index + 1}/4` };
+          })()}
           outputStyle={outputStyle}
         />
       </Box>
       <Box paddingX={1}>
-        <InputBox onSubmit={handleSubmit} disabled={isProcessing || !!confirmDialog} />
+        <InputBox onSubmit={handleSubmit} disabled={isProcessing || !!confirmDialog || !!activePanel} />
       </Box>
     </Box>
   );

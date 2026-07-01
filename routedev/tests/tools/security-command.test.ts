@@ -40,6 +40,13 @@ describe('SecurityChecker.checkCommand（Phase 29 Task 3 改造）', () => {
       expect(result.allowed).toBe(false);
     });
 
+    it('应阻止管道后的黑名单命令', () => {
+      const checker = createChecker();
+      const result = checker.checkCommand('echo ok | rm file', mockContext);
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('黑名单');
+    });
+
     it('不应误拦 python program.py（子串含 rm 但首 token 是 python）', () => {
       const checker = createChecker();
       const result = checker.checkCommand('python program.py', mockContext);
@@ -62,6 +69,7 @@ describe('SecurityChecker.checkCommand（Phase 29 Task 3 改造）', () => {
       expect(checker.checkCommand('git status', mockContext).allowed).toBe(true);
       expect(checker.checkCommand('ls -la', mockContext).allowed).toBe(true);
       expect(checker.checkCommand('rm file', mockContext).allowed).toBe(false);
+      expect(checker.checkCommand('git status | rm file', mockContext).allowed).toBe(false);
     });
   });
 

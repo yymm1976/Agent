@@ -19,7 +19,8 @@ import { parseUnifiedDiff, renderDiffText } from '../../src/cli/components/DiffV
 import { generateReloadNotices } from '../../src/cli/components/ConfigReloadUI.js';
 import { resumeCommand } from '../../src/cli/commands/resume.js';
 import { traceCommand } from '../../src/cli/commands/trace.js';
-import type { ExecutionSnapshot } from '../../src/agent/durable-executor.js';
+// E11 更新：durable-executor 已删除，/resume 改用 GoalPersistence.listResumable
+import { GoalPersistence, type PersistedGoal } from '../../src/agent/goal-persistence.js';
 import type { TraceSpan } from '../../src/harness/trace-types.js';
 import type { BranchInfo } from '../../src/agent/branch.js';
 import type { ServiceContext } from '../../src/cli/service-context.js';
@@ -28,18 +29,24 @@ import type { ServiceContext } from '../../src/cli/service-context.js';
 // 测试辅助函数
 // ============================================================
 
-/** 创建测试用执行快照 */
-function makeSnapshot(overrides: Partial<ExecutionSnapshot> = {}): ExecutionSnapshot {
+/** 创建测试用 PersistedGoal（替代旧 ExecutionSnapshot） */
+function makeGoal(overrides: Partial<PersistedGoal> = {}): PersistedGoal {
   return {
-    planId: 'plan-test-001',
-    goal: '实现用户登录功能',
-    startedAt: Date.now() - 60000,
-    lastStepCompleted: 2,
-    totalSteps: 5,
+    id: 'plan-test-001',
+    spec: { goal: '实现用户登录功能', context: '', steps: [], done: '', verification: '' },
+    plan: {
+      steps: [
+        { id: 's1', description: 'step1', status: 'completed', dependencies: [] },
+        { id: 's2', description: 'step2', status: 'completed', dependencies: [] },
+        { id: 's3', description: 'step3', status: 'pending', dependencies: [] },
+      ],
+    },
     status: 'paused',
-    completedResults: [],
-    nextStep: null,
+    checkpointIds: [],
+    createdAt: Date.now() - 60000,
     updatedAt: Date.now() - 30000,
+    tokenUsed: 1000,
+    tokenBudget: 10000,
     ...overrides,
   };
 }
@@ -67,15 +74,16 @@ function makeToolCallSpan(overrides: Partial<TraceSpan> = {}): TraceSpan {
 
 /** 创建 mock ServiceContext（仅包含 /resume 命令所需字段） */
 function makeResumeMockCtx(
-  snapshots: ExecutionSnapshot[],
+  goals: PersistedGoal[],
   opts: { resumePickerEnabled?: boolean; showResumePicker?: boolean } = {},
 ): { ctx: Partial<ServiceContext>; showResumePicker: ReturnType<typeof vi.fn> } {
   const showResumePicker = vi.fn();
+  // E11 更新：mock GoalPersistence.prototype.listResumable 而非 durableExecutor
+  // （resume.ts 内部通过 `new GoalPersistence(cwd).listResumable()` 读取目标列表）
+  vi.spyOn(GoalPersistence.prototype, 'listResumable').mockResolvedValue(goals);
   return {
     ctx: {
-      durableExecutor: {
-        listRecoverableAsync: vi.fn(async () => snapshots),
-      } as never,
+      cwd: '/tmp/test-routedev',  // 任意路径，GoalPersistence.listResumable 已 mock
       commandBridge: {
         addSystemMessage: vi.fn(),
         ...(opts.showResumePicker !== false ? { showResumePicker } : {}),
@@ -304,20 +312,20 @@ describe('Phase 50 Task 7: ConfigReloadUI 在配置变更时显示通知', () =>
 
 describe('Phase 50 Task 7: /resume 命令接入 ResumePicker', () => {
   it('多快照 + resumePicker 开关开启时触发 showResumePicker 回调', async () => {
-    const snapshots = [
-      makeSnapshot({ planId: 'plan-001', goal: '任务A' }),
-      makeSnapshot({ planId: 'plan-002', goal: '任务B', status: 'failed' }),
+    const goals = [
+      makeGoal({ id: 'plan-001', spec: { goal: '任务A', context: '', steps: [], done: '', verification: '' } }),
+      makeGoal({ id: 'plan-002', spec: { goal: '任务B', context: '', steps: [], done: '', verification: '' }, status: 'failed' }),
     ];
-    const { ctx, showResumePicker } = makeResumeMockCtx(snapshots, {
+    const { ctx, showResumePicker } = makeResumeMockCtx(goals, {
       resumePickerEnabled: true,
     });
 
     const result = await resumeCommand.handler('', ctx as ServiceContext);
 
     expect(result.type).toBe('handled');
-    // 回调被调用，传入快照列表
+    // 回调被调用，传入 goals 列表（E11：原 snapshots → goals，类型从 ExecutionSnapshot 改为 PersistedGoal）
     expect(showResumePicker).toHaveBeenCalledTimes(1);
-    expect(showResumePicker).toHaveBeenCalledWith(snapshots);
+    expect(showResumePicker).toHaveBeenCalledWith(goals);
     // 返回空消息（UI 由 React 组件接管）
     if (result.type === 'handled') {
       expect(result.messages).toEqual([]);
@@ -325,11 +333,11 @@ describe('Phase 50 Task 7: /resume 命令接入 ResumePicker', () => {
   });
 
   it('resumePicker 开关关闭时回退到纯文本列表（向后兼容）', async () => {
-    const snapshots = [
-      makeSnapshot({ planId: 'plan-001', goal: '任务A' }),
-      makeSnapshot({ planId: 'plan-002', goal: '任务B' }),
+    const goals = [
+      makeGoal({ id: 'plan-001', spec: { goal: '任务A', context: '', steps: [], done: '', verification: '' } }),
+      makeGoal({ id: 'plan-002', spec: { goal: '任务B', context: '', steps: [], done: '', verification: '' } }),
     ];
-    const { ctx, showResumePicker } = makeResumeMockCtx(snapshots, {
+    const { ctx, showResumePicker } = makeResumeMockCtx(goals, {
       resumePickerEnabled: false,
     });
 
@@ -348,15 +356,15 @@ describe('Phase 50 Task 7: /resume 命令接入 ResumePicker', () => {
   });
 
   it('单个快照时直接返回文本列表（不触发 ResumePicker）', async () => {
-    const snapshots = [makeSnapshot({ planId: 'plan-001' })];
-    const { ctx, showResumePicker } = makeResumeMockCtx(snapshots, {
+    const goals = [makeGoal({ id: 'plan-001' })];
+    const { ctx, showResumePicker } = makeResumeMockCtx(goals, {
       resumePickerEnabled: true,
     });
 
     const result = await resumeCommand.handler('', ctx as ServiceContext);
 
     expect(result.type).toBe('handled');
-    // 单个快照不触发交互式选择器
+    // 单个目标不触发交互式选择器
     expect(showResumePicker).not.toHaveBeenCalled();
     if (result.type === 'handled' && result.messages) {
       expect(result.messages[0]).toContain('plan-001');

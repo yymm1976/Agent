@@ -4,7 +4,8 @@
 // 顶部状态栏：项目名 + 打开文件夹 + 自主度切换（Badge 点击弹菜单）
 // 排队队列：引擎工作时可提前输入下一条消息，Enter 进入队列
 
-import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
+import { useRef, useState, useEffect, useMemo, useCallback, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Send, Square, Sparkles, AlertCircle, Wrench, UploadCloud,
   ArrowDown, FolderOpen, X, Edit3, Clock, Zap, BookOpen, Plug,
@@ -24,6 +25,9 @@ import { Textarea } from '../components/ui/textarea.js';
 import { NeuralNetworkBackground } from '../components/NeuralNetworkBackground.js';
 import { CheckpointTimeline } from '../components/CheckpointTimeline.js';
 import { useProjectsStore } from '../store/useProjectsStore.js';
+import { useRouteDevStore } from '../store/useRouteDevStore.js';
+import { GoalExecutionCard } from '../components/GoalExecutionCard.js';
+import { StepEditor } from '../components/StepEditor.js';
 
 interface ChatPageProps {
   messages: ChatMessage[];
@@ -43,7 +47,8 @@ interface ChatPageProps {
 }
 
 // 支持的命令列表（Phase 37：扩展为动态获取 + 静态兜底）
-const STATIC_COMMANDS = ['/clear', '/status', '/mcp', '/compact', '/help', '/skill', '/skills'];
+// Phase 54：补全 /goal 命令（之前缺失导致斜杠命令列表不显示 /goal，且 /goal 输入后无补全）
+const STATIC_COMMANDS = ['/clear', '/status', '/mcp', '/compact', '/help', '/skill', '/skills', '/goal'];
 const COMMAND_DESCRIPTIONS: Record<string, string> = {
   '/clear': '清空对话',
   '/status': '查看状态',
@@ -52,6 +57,7 @@ const COMMAND_DESCRIPTIONS: Record<string, string> = {
   '/help': '帮助',
   '/skill': 'Skill 管理',
   '/skills': 'Skill 列表',
+  '/goal': '目标分解与执行（多 Agent 协作）',
 };
 
 // 自主度模式标签
@@ -455,6 +461,17 @@ function TaskBlock({
   );
 }
 
+/** Phase 54：Goal marker 消息渲染——从 store 订阅对应 GoalExecution，用 GoalExecutionCard 展示 */
+function GoalMessageBubble({ goalId }: { goalId: string }) {
+  const execution = useRouteDevStore(state =>
+    state.goalExecutions.find(g => g.goalId === goalId),
+  );
+  if (!execution) {
+    return <div className="text-xs text-rd-textMuted px-1 py-2">目标执行中…</div>;
+  }
+  return <GoalExecutionCard execution={execution} />;
+}
+
 function MessageBubble({
   message,
   messageRef,
@@ -489,7 +506,9 @@ function MessageBubble({
 
   // 操作按钮组（hover 显示）：复制、重试、分支、删除
   // 工具调用消息（system + toolName）不显示操作按钮
-  const showActions = !disabled && (isUser || isAssistant) && !message.isStreaming;
+  // Phase 54 修复：/goal 命令的 user 消息有 goalId 时不显示 actions（goal 卡片取代 user 气泡）
+  const showActions = !disabled && (isUser || isAssistant) && !message.isStreaming
+    && !message.goalId;
   const actions = showActions ? (
     <div className={[
       'flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100',
@@ -523,7 +542,7 @@ function MessageBubble({
       {onDelete && (
         <button
           onClick={onDelete}
-          title="删除消息（下次对话不注入上下文）"
+          title="删除任务块（含提问、思考过程、工具调用与回复）"
           className="flex h-8 w-8 items-center justify-center rounded-md text-rd-textSubtle transition hover:bg-rd-danger/10 hover:text-rd-danger"
         >
           <Trash2 size={16} />
@@ -543,6 +562,29 @@ function MessageBubble({
             args={message.toolArgs}
             result={message.toolResult}
           />
+        </div>
+      </div>
+    );
+  }
+
+  // Phase 54 修复：/goal 命令的 user 消息有 goalId 时，用 GoalExecutionCard 取代 user 气泡
+  // 这样 goal 卡片就是 user 消息本身，不会被 actions 隔开
+  if (isUser && message.goalId) {
+    return (
+      <div ref={messageRef} className="flex w-full justify-end">
+        <div className="w-full">
+          <GoalMessageBubble goalId={message.goalId} />
+        </div>
+      </div>
+    );
+  }
+
+  // Phase 54 降级：独立 goal marker system 消息（找不到 user 消息时插入）
+  if (isSystem && message.goalId) {
+    return (
+      <div ref={messageRef} className="flex w-full justify-start">
+        <div className="w-full">
+          <GoalMessageBubble goalId={message.goalId} />
         </div>
       </div>
     );
@@ -733,6 +775,10 @@ export function ChatPage({
   const [dragOver, setDragOver] = useState(false);
   const [commandIndex, setCommandIndex] = useState(0);
   const [commandMenuVisible, setCommandMenuVisible] = useState(false);
+  // Phase 54 修复：命令菜单位置状态（用 Portal 渲染到 body，避免被祖先 overflow-hidden 裁剪）
+  const [commandMenuPos, setCommandMenuPos] = useState<{ top: number; left: number } | null>(null);
+  // Phase 54 修复：IME 组合状态——组合期间不触发命令菜单，避免中文输入法干扰
+  const [isComposing, setIsComposing] = useState(false);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   // 排队队列：引擎工作时用户提前输入的消息
   const [queue, setQueue] = useState<string[]>([]);
@@ -862,9 +908,21 @@ export function ChatPage({
   );
   const showCommands =
     commandMenuVisible &&
+    !isComposing && // Phase 54 修复：IME 组合期间不显示命令菜单
     input.startsWith('/') &&
     !input.includes(' ') &&
     filteredCommands.length > 0;
+  // Phase 54 修复：showCommands 为 true 时，计算 textarea 位置，用 Portal 渲染菜单到 body
+  // 根因：命令菜单原用 absolute bottom-full 定位，但祖先容器有 overflow-hidden 会裁剪掉菜单
+  // 用 Portal 渲染到 document.body 并用 fixed 定位，完全绕开祖先 overflow 限制
+  useLayoutEffect(() => {
+    if (showCommands && textareaRef.current) {
+      const rect = textareaRef.current.getBoundingClientRect();
+      setCommandMenuPos({ top: rect.top, left: rect.left });
+    } else {
+      setCommandMenuPos(null);
+    }
+  }, [showCommands]);
   const activeCommandIndex = Math.min(
     commandIndex,
     Math.max(0, filteredCommands.length - 1),
@@ -1149,7 +1207,7 @@ export function ChatPage({
                         }
                       }}
                       onDelete={(msg) => {
-                        if (confirm('确定删除该消息？删除后下次对话不会注入此消息作为上下文。')) {
+                        if (confirm('确定删除该任务块？将一并删除提问、思考过程、工具调用与回复。')) {
                           deleteMessage(msg.id);
                         }
                       }}
@@ -1254,6 +1312,9 @@ export function ChatPage({
 
       {/* 工具确认弹窗 */}
       {pendingConfirm && <ToolConfirmDialog pending={pendingConfirm} onConfirm={confirmTool} />}
+
+      {/* Phase 54：计划编辑器（semi/manual 模式触发，用户审查/修改 /goal 步骤） */}
+      <StepEditor />
 
       {/* 排队队列显示（引擎工作时） */}
       {queue.length > 0 && (
@@ -1379,8 +1440,11 @@ export function ChatPage({
               </div>
             )}
             <div className="relative min-h-0 flex-1">
-            {showCommands && (
-              <Card className="absolute bottom-full left-0 z-50 mb-2 w-72 overflow-hidden border-rd-border/80 bg-rd-background p-1 shadow-rdLg">
+            {showCommands && commandMenuPos && createPortal(
+              <Card
+                className="fixed z-[9999] mb-2 w-72 overflow-hidden border-rd-border/80 bg-rd-background p-1 shadow-rdLg"
+                style={{ top: commandMenuPos.top - 8, left: commandMenuPos.left, transform: 'translateY(-100%)' }}
+              >
                 {filteredCommands.map((cmd, idx) => (
                   <Button
                     key={cmd}
@@ -1401,7 +1465,8 @@ export function ChatPage({
                     </span>
                   </Button>
                 ))}
-              </Card>
+              </Card>,
+              document.body,
             )}
             <Textarea
               ref={textareaRef}
@@ -1417,6 +1482,16 @@ export function ChatPage({
               }}
               onChange={(e) => {
                 setInput(e.target.value);
+                setCommandMenuVisible(true);
+              }}
+              onCompositionStart={() => {
+                setIsComposing(true);
+              }}
+              onCompositionEnd={(e) => {
+                setIsComposing(false);
+                // compositionEnd 后手动同步输入框当前值（IME 最终输出）
+                const v = (e.target as HTMLTextAreaElement).value;
+                setInput(v);
                 setCommandMenuVisible(true);
               }}
               onKeyDown={(e) => {

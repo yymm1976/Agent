@@ -46,23 +46,24 @@ export class ToolExecutor implements IToolExecutor {
       };
     }
 
-    // 2. 参数验证
-    const validation = tool.validateArgs(args);
-    if (!validation.valid) {
-      return {
-        success: false,
-        output: '',
-        error: `参数验证失败: ${validation.errors.join(', ')}`,
-        durationMs: Date.now() - startTime,
-      };
-    }
+    try {
+      // 2. 参数验证
+      const validation = tool.validateArgs(args);
+      if (!validation.valid) {
+        return {
+          success: false,
+          output: '',
+          error: `参数验证失败: ${validation.errors.join(', ')}`,
+          durationMs: Date.now() - startTime,
+        };
+      }
 
-    // 3. 安全检查
-    // 注：权限检查已迁移到 PermissionEngine 中间件，本类不再处理
-    // P1-1 修复：list_directory 也需要路径校验（防止路径逃逸）
-    // P0-1 修复：web_fetch 需要网络校验（SSRF 防护）
-    // C3 修复：透传 requiresConfirmation，未配置回调时安全默认拒绝
-    if (this.securityChecker) {
+      // 3. 安全检查
+      // 注：权限检查已迁移到 PermissionEngine 中间件，本类不再处理
+      // P1-1 修复：list_directory 也需要路径校验（防止路径逃逸）
+      // P0-1 修复：web_fetch 需要网络校验（SSRF 防护）
+      // C3 修复：透传 requiresConfirmation，未配置回调时安全默认拒绝
+      if (this.securityChecker) {
       // 文件操作类工具：检查路径
       if (this.isFileOperation(toolName, args)) {
         const filePath = (args.path as string) ?? (args.filePath as string);
@@ -161,10 +162,9 @@ export class ToolExecutor implements IToolExecutor {
           }
         }
       }
-    }
+      }
 
-    // 4. 执行工具
-    try {
+      // 4. 执行工具
       logger.debug('Executing tool', { toolName, args });
       const result = await tool.execute(args, context);
       const duration = Date.now() - startTime;

@@ -13,7 +13,9 @@ export class ConfigWatcher extends EventEmitter {
   private filePath: string;
   private watcher: fs.FSWatcher | null = null;
   private debounceTimer: NodeJS.Timeout | null = null;
+  private restartTimer: NodeJS.Timeout | null = null;
   private debounceMs: number;
+  private active = false;
 
   constructor(filePath: string, options: ConfigWatcherOptions = {}) {
     super();
@@ -22,7 +24,9 @@ export class ConfigWatcher extends EventEmitter {
   }
 
   start(): void {
-    if (this.watcher) return;
+    if (this.active) return;
+
+    this.active = true;
 
     this.startWatching();
 
@@ -35,6 +39,8 @@ export class ConfigWatcher extends EventEmitter {
    * 此时原 watcher 失效，需要重新 watch 新文件。
    */
   private startWatching(): void {
+    if (!this.active) return;
+
     try {
       this.watcher = fs.watch(this.filePath, (eventType) => {
         // 同时处理 change 和 rename 事件
@@ -46,7 +52,12 @@ export class ConfigWatcher extends EventEmitter {
             this.watcher = null;
           }
           // 延迟重新 watch，避免文件还未完全创建
-          setTimeout(() => {
+          if (this.restartTimer) {
+            clearTimeout(this.restartTimer);
+          }
+          this.restartTimer = setTimeout(() => {
+            this.restartTimer = null;
+            if (!this.active) return;
             this.startWatching();
             this.scheduleReload();
           }, 100);
@@ -63,9 +74,14 @@ export class ConfigWatcher extends EventEmitter {
   }
 
   stop(): void {
+    this.active = false;
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
+    }
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
     }
     if (this.watcher) {
       this.watcher.close();
@@ -74,6 +90,7 @@ export class ConfigWatcher extends EventEmitter {
   }
 
   private scheduleReload(): void {
+    if (!this.active) return;
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }

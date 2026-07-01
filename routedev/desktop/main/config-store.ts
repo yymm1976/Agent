@@ -52,23 +52,6 @@ function backupConfig(filePath: string): void {
 }
 
 /**
- * 从 .bak 文件恢复配置
- * 当 loadConfig 因 YAML 损坏/验证失败而抛错时，由 loader 调用此函数尝试恢复
- * 返回恢复的 YAML 字符串，或 null 表示无备份可恢复
- */
-export function restoreBackup(filePath: string): string | null {
-  try {
-    const backupPath = `${filePath}.bak`;
-    if (fs.existsSync(backupPath)) {
-      return fs.readFileSync(backupPath, 'utf-8');
-    }
-  } catch {
-    // 恢复失败，返回 null
-  }
-  return null;
-}
-
-/**
  * 保存配置到全局配置文件
  * 写入策略（按优先级尝试，全部使用同步 API 避免 Electron 异步 fs 的潜在问题）：
  * 1. 同步原子写入：写临时文件 + rename 覆盖

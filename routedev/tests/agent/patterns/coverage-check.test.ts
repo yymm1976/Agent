@@ -17,15 +17,18 @@ describe('checkPatternCoverage (Phase 49 Task 6.5)', () => {
   // ============================================================
   // 测试 1：五大模式覆盖检查通过
   // ============================================================
-  it('1. 五大模式覆盖检查全部通过', () => {
+  // E11 更新：routing 模式已被舍弃（RoutingFunnel 移除，路由由 ModelRouter + ScenarioClassifier 承担）
+  //          因此 patterns.routing 现为 false（理论上无用，已有上位替代）
+  it('1. 五大模式覆盖检查（routing 已舍弃）', () => {
     const report = checkPatternCoverage();
 
-    // 五大模式全部应为 true
+    // 4 个仍存在的模式应为 true
     expect(report.patterns.promptChain).toBe(true);
-    expect(report.patterns.routing).toBe(true);
     expect(report.patterns.parallel).toBe(true);
     expect(report.patterns.reflection).toBe(true);
     expect(report.patterns.guardrail).toBe(true);
+    // routing 已舍弃（RoutingFunnel 移除，由 ModelRouter + ScenarioClassifier 替代）
+    expect(report.patterns.routing).toBe(false);
   });
 
   // ============================================================
@@ -45,8 +48,8 @@ describe('checkPatternCoverage (Phase 49 Task 6.5)', () => {
     expect(joined).toContain('[reflection]');
     expect(joined).toContain('[guardrail]');
 
-    // 全部通过时应该都带 ✓
-    expect(report.notes.every(n => n.includes('✓'))).toBe(true);
+    // E11 更新：routing note 使用 ℹ（信息性说明，非通过/失败），其他 4 模式应带 ✓
+    expect(report.notes.every(n => n.includes('✓') || n.includes('ℹ'))).toBe(true);
   });
 
   // ============================================================
@@ -86,8 +89,9 @@ describe('checkPatternCoverage (Phase 49 Task 6.5)', () => {
 
     // 提示链：本 Phase 实现
     expect(joined).toContain('prompt-chain.ts');
-    // 路由：本 Phase 增强
-    expect(joined).toContain('routing-funnel.ts');
+    // E11 更新：routing-funnel.ts 已删除，路由由 ModelRouter + ScenarioClassifier 承担
+    expect(joined).toContain('ModelRouter');
+    expect(joined).toContain('ScenarioClassifier');
     // 并行：已有
     expect(joined).toContain('loop.ts');
     expect(joined).toContain('orchestrator.ts');

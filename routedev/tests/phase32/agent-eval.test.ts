@@ -142,10 +142,8 @@ describe('Phase 32 Task 3.2: Degradation Chain Eval', () => {
     expect(result.model.id).toBe('claude-sonnet-4-20250514');
   });
 
-  it('reasoning tier → 主+fallback 不可用 → 降级到更低 tier', async () => {
+  it('reasoning tier → 主+fallback 不可用 → 仍返回一个可用模型', async () => {
     const tracker = createTracker();
-    // 所有 provider 的 apiKey 都为空 → 所有模型不可用
-    // degrade 方法会尝试降 tier，最终走"强制最低模型"分支（不检查 isModelAvailable）
     const providers = createMultiProviders([
       { id: 'openai', apiKey: '', models: [{ id: 'gpt-4o-mini', name: 'gpt-4o-mini' }] },
       { id: 'anthropic', apiKey: '', models: [{ id: 'claude-sonnet-4-20250514', name: 'claude-sonnet-4-20250514' }] },
@@ -153,24 +151,23 @@ describe('Phase 32 Task 3.2: Degradation Chain Eval', () => {
     const router = new ModelRouter(createRouterConfig(), tracker, providers);
 
     const result = await router.route(classification);
-    // 所有模型不可用时，degrade 的"强制最低模型"分支返回 degraded=true
     expect(result.degraded).toBe(true);
+    expect(result.model).toBeDefined();
   });
 
-  it('所有 provider 不可用（apiKey 为空）→ 路由不抛错（有 fallback 逻辑）', async () => {
+  it('所有 provider 不可用（apiKey 为空）→ 路由仍给出降级结果', async () => {
     const tracker = createTracker();
     const providers = createProviders('', [
       { id: 'gpt-4o-mini', name: 'gpt-4o-mini' },
     ]);
     const router = new ModelRouter(createRouterConfig(), tracker, providers);
 
-    // 不应抛错——router 有 fallback 逻辑
-    expect(() => {
-      router.route(classification);
-    }).not.toThrow();
+    const result = await router.route(classification);
+    expect(result.degraded).toBe(true);
+    expect(result.model).toBeDefined();
   });
 
-  it('apiKey 为 placeholder → 模型不可用（isModelAvailable 返回 false）', async () => {
+  it('apiKey 为 placeholder → 模型不可用并降级返回结果', async () => {
     const tracker = createTracker();
     const providers = createProviders('placeholder', [
       { id: 'gpt-4o-mini', name: 'gpt-4o-mini' },
@@ -183,8 +180,8 @@ describe('Phase 32 Task 3.2: Degradation Chain Eval', () => {
       reasoning: 'test',
       source: 'rule',
     });
-    // placeholder apiKey → 模型不可用 → 降级
     expect(result.degraded).toBe(true);
+    expect(result.model).toBeDefined();
   });
 });
 

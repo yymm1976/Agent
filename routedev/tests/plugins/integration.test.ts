@@ -27,19 +27,20 @@ describe('Plugin 集成测试', () => {
     // 发现 + 加载 + 初始化
     const manifests = await reg.discover();
     expect(manifests.length).toBeGreaterThan(0);
-    const sampleManifest = manifests.find(m => m.id === 'sample-tool');
+    const sampleManifest = manifests.find(m => m.id === 'tool-sample');
     expect(sampleManifest).toBeDefined();
 
     for (const m of manifests) {
       await reg.loadPlugin(m, (m as any)._pluginDir);
     }
     await reg.initAll();
+    reg.enable('tool-sample');
 
     // 验证工具已注册
     expect(toolRegistry.has('sample_echo')).toBe(true);
 
     // 验证状态
-    const status = reg.getPluginStatus('sample-tool');
+    const status = reg.getPluginStatus('tool-sample');
     expect(status?.loaded).toBe(true);
     expect(status?.enabled).toBe(true);
     expect(status?.registeredTools).toContain('sample_echo');

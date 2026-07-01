@@ -82,7 +82,8 @@ describe('Orchestrator', () => {
       const plan = await orch.plan(makeGoalPlan(['step 1', 'step 2']));
       expect(plan.dependencies.length).toBe(2);
       expect(plan.parallelGroups).toEqual([[1], [2]]);
-      expect(plan.analysisNotes).toContain('Fallback');
+      // Phase 54：LLM 失败路径从 fallbackPlan 改为 heuristicPlan，文案 'Fallback' → '启发式分析'
+      expect(plan.analysisNotes).toContain('启发式分析');
     });
 
     it('should fall back when LLM throws', async () => {
@@ -100,7 +101,8 @@ describe('Orchestrator', () => {
       const client = makeMockClient('[]');
       const orch = new Orchestrator(client, 'test-model');
       const plan = await orch.plan(makeGoalPlan(['x']));
-      expect(plan.analysisNotes).toContain('Fallback');
+      // Phase 54：LLM 失败路径从 fallbackPlan 改为 heuristicPlan，文案 'Fallback' → '启发式分析'
+      expect(plan.analysisNotes).toContain('启发式分析');
     });
   });
 

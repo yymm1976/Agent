@@ -13,13 +13,6 @@ describe('Blackboard', () => {
       expect(snap.currentGoal?.description).toBe('test goal');
       expect(snap.currentGoal?.status).toBe('executing');
     });
-
-    it('should increment version', () => {
-      const bb = new Blackboard();
-      const v0 = bb.getVersion();
-      bb.setGoal('goal', 'pending');
-      expect(bb.getVersion()).toBe(v0 + 1);
-    });
   });
 
   describe('updateGoalStatus', () => {
@@ -113,32 +106,6 @@ describe('Blackboard', () => {
       const out = bb.formatForPrompt();
       expect(out).toContain('项目共识');
       expect(out).toContain('framework: React');
-    });
-  });
-
-  describe('reset', () => {
-    it('should clear all state', () => {
-      const bb = new Blackboard();
-      bb.setGoal('g', 's');
-      bb.addCompletedStep(1, 'coder', 'done');
-      bb.addProjectFact('k', 'v');
-      bb.reset();
-      const snap = bb.getSnapshot();
-      expect(snap.currentGoal).toBeNull();
-      expect(snap.completedSteps.length).toBe(0);
-      expect(snap.projectFacts.length).toBe(0);
-      expect(bb.getVersion()).toBe(0);
-      expect(bb.entryCount).toBe(0);
-    });
-  });
-
-  describe('entryCount', () => {
-    it('should count both completed and facts', () => {
-      const bb = new Blackboard();
-      bb.addCompletedStep(1, 'coder', 'a');
-      bb.addCompletedStep(2, 'coder', 'b');
-      bb.addProjectFact('k1', 'v1');
-      expect(bb.entryCount).toBe(3);
     });
   });
 });

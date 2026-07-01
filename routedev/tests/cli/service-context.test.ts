@@ -44,6 +44,8 @@ function createMockDeps(overrides?: Partial<ServiceContextDeps>): ServiceContext
     commandBridge: {} as ServiceContextDeps['commandBridge'],
     workModeController: {} as ServiceContextDeps['workModeController'],
     cwd: '/test/cwd',
+    // E9-B：新增 experimentManager 必填字段（mock 为空对象即可，单测不依赖真实行为）
+    experimentManager: {} as ServiceContextDeps['experimentManager'],
   };
   return { ...base, ...overrides };
 }

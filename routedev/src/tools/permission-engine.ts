@@ -463,7 +463,7 @@ export const DEFAULT_DENY_RULES: PermissionRule[] = [
     argsPredicate: a => {
       const rawCommand = String(a.command ?? '');
       // 先检查原始字符串是否包含危险模式（防止 bash -c "rm -rf /" 等子 shell 绕过）
-      if (/\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?['"]?\/['"]?(\s|$|--)/i.test(rawCommand)) {
+      if (/\brm\b(?=[\s\S]*\s-[a-zA-Z]*r)(?=[\s\S]*\s-[a-zA-Z]*f)[\s\S]*\s['"]?\/['"]?(\s|$|--)/i.test(rawCommand)) {
         return true;
       }
       // I1 修复：对命令链中的每个子命令独立检查
@@ -471,12 +471,13 @@ export const DEFAULT_DENY_RULES: PermissionRule[] = [
         // 命令名是 rm（不区分大小写）
         if (parsed.command.toLowerCase() !== 'rm') return false;
         // 参数含 -f 类标志（如 -rf、-fr、-f）
+        const hasRecursiveFlag = parsed.args.some(arg => /^-[a-zA-Z]*r[a-zA-Z]*$/.test(arg));
         const hasForceFlag = parsed.args.some(arg => /^-[a-zA-Z]*f[a-zA-Z]*$/.test(arg));
         // 目标是根目录（支持引号包裹的变体）
         const targetsRoot = parsed.args.some(arg =>
           arg === '/' || arg === '"/"' || arg === "'/'"
         );
-        return hasForceFlag && targetsRoot;
+        return hasRecursiveFlag && hasForceFlag && targetsRoot;
       });
     },
     description: '禁止: rm -rf /（删除根目录）',
@@ -491,9 +492,12 @@ export const DEFAULT_DENY_RULES: PermissionRule[] = [
     // I1 修复：对命令链中的每个子命令独立检查
     argsPredicate: a => {
       const rawCommand = String(a.command ?? '');
-      if (/\bfind\b.*-delete/i.test(rawCommand)) return true;
+      if (/\bfind\b.*(?:-delete|-exec\s+rm\b)/i.test(rawCommand)) return true;
       return checkAllSubCommands(rawCommand, parsed => {
-        return parsed.command.toLowerCase() === 'find' && parsed.args.includes('-delete');
+        if (parsed.command.toLowerCase() !== 'find') return false;
+        if (parsed.args.includes('-delete')) return true;
+        const execIndex = parsed.args.findIndex(arg => arg === '-exec');
+        return execIndex >= 0 && parsed.args.slice(execIndex + 1).some(arg => arg.toLowerCase() === 'rm');
       });
     },
     description: '禁止: find ... -delete（递归删除）',

@@ -110,15 +110,16 @@ describe('Phase 48 E2E - Task 2: app-init.ts 调用 loadProjectDoc', () => {
 
 // ============================================================
 // 3. app-init.ts 中创建 ScheduleEngine 实例（Task 3）
+// M3 修复：测试名标注为"静态源码检查"，反映实际覆盖强度（非运行时行为测试）
 // ============================================================
-describe('Phase 48 E2E - Task 3: app-init.ts 创建 ScheduleEngine 实例', () => {
+describe('Phase 48 Task 3: app-init.ts 静态源码检查（ScheduleEngine 接线）', () => {
   it('app-init.ts 导入 ScheduleEngine 和 ScheduleStore', async () => {
     const content = await readFile(APP_INIT_PATH);
     expect(content).toMatch(/import.*ScheduleEngine.*from.*'\.\.\/scheduler\/engine\.js'/);
     expect(content).toMatch(/import.*ScheduleStore.*from.*'\.\.\/scheduler\/store\.js'/);
   });
 
-  it('app-init.ts 创建 ScheduleEngine 实例并启动', async () => {
+  it('app-init.ts 源码包含 ScheduleEngine 实例化与启动', async () => {
     const content = await readFile(APP_INIT_PATH);
     expect(content).toContain('new ScheduleEngine');
     expect(content).toContain('scheduleEngine.start()');
@@ -126,7 +127,7 @@ describe('Phase 48 E2E - Task 3: app-init.ts 创建 ScheduleEngine 实例', () =
     expect(content).toContain('scheduleEngine?');
   });
 
-  it('app-init.ts 配置 onTaskTrigger 回调', async () => {
+  it('app-init.ts 源码包含 onTaskTrigger 回调', async () => {
     const content = await readFile(APP_INIT_PATH);
     expect(content).toContain('onTaskTrigger');
     // fire-and-forget 异步回调

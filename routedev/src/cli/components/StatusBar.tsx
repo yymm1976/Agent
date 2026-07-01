@@ -24,7 +24,7 @@ interface StatusBarProps {
   workMode: string;
   /** Compose 管线摘要（可选，非 Compose 模式不传） */
   composeSummary?: { phase: string; progress: string } | null;
-  /** DurableExecutor 快照（可选，无运行计划不传） */
+  /** 执行快照（可选，无运行计划不传；DurableExecutor 已移除，保留供未来扩展） */
   durableSnapshot?: { lastStepCompleted: number; totalSteps: number; status: string } | null;
   /** 插件注册表（Phase 27 Task 3：可选，用于读取 ThemePlugin 配色） */
   pluginRegistry?: PluginRegistry;

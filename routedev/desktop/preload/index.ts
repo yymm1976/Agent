@@ -58,6 +58,7 @@ const api: RouteDevAPI = {
     preview: (name: string) => ipcRenderer.invoke('skill:preview', name),
     toggle: (name: string, enabled: boolean) => ipcRenderer.invoke('skill:toggle', { name, enabled }),
     create: (payload) => ipcRenderer.invoke('skill:create', payload),
+    install: (payload) => ipcRenderer.invoke('skill:install', payload),
     delete: (name: string) => ipcRenderer.invoke('skill:delete', name),
     reload: () => ipcRenderer.invoke('skill:reload'),
     route: (taskDescription: string) => ipcRenderer.invoke('skill:route', taskDescription),
@@ -83,23 +84,30 @@ const api: RouteDevAPI = {
     discard: (experimentId: string) => ipcRenderer.invoke('experiment:discard', experimentId),
     getDiff: (experimentId: string) => ipcRenderer.invoke('experiment:get-diff', experimentId),
   },
-  // Phase 39：代码地图
-  codemap: {
-    checkStatus: () => ipcRenderer.invoke('codemap:check-status'),
-    install: () => ipcRenderer.invoke('codemap:install'),
-    startIndex: () => ipcRenderer.invoke('codemap:start-index'),
-  },
   // Phase 39：Hook 管理
   hook: {
     list: () => ipcRenderer.invoke('hook:list'),
     toggle: (hookId: string, enabled: boolean) => ipcRenderer.invoke('hook:toggle', { hookId, enabled }),
-    create: (description: string) => ipcRenderer.invoke('hook:create', description),
+    create: (payload) => ipcRenderer.invoke('hook:create', payload),
     delete: (hookId: string) => ipcRenderer.invoke('hook:delete', hookId),
+    templates: () => ipcRenderer.invoke('hook:templates'),
   },
   // Phase 47 Task 6：Checkpoint 时间轴
   checkpoint: {
     list: (projectId?: string) => ipcRenderer.invoke('checkpoint:list', projectId),
     rollback: (checkpointId: string) => ipcRenderer.invoke('checkpoint:rollback', checkpointId),
+  },
+  // Phase 54：计划编辑响应（StepEditor 确认/取消后回传主进程）
+  plan: {
+    respondEdit: (payload) => ipcRenderer.send('plan:edit-response', payload),
+  },
+  // Phase 48 Task 4 接线修复：Agent Profile 管理
+  profile: {
+    list: () => ipcRenderer.invoke('profile:list'),
+    get: (id: string) => ipcRenderer.invoke('profile:get', id),
+    save: (payload) => ipcRenderer.invoke('profile:save', payload),
+    delete: (id: string) => ipcRenderer.invoke('profile:delete', id),
+    duplicate: (id: string, newName: string) => ipcRenderer.invoke('profile:duplicate', { id, newName }),
   },
   on: (channel, callback) => {
     const channelMap = getChannelMap(channel);

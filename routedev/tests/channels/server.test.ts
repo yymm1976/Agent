@@ -64,6 +64,26 @@ async function request(server: WebhookServer, port: number, path: string, body?:
   });
 }
 
+// I3 修复：带 Bearer Token 认证的请求辅助函数
+async function requestWithAuth(server: WebhookServer, port: number, path: string, body: string, token: string): Promise<{ status: number; data: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: 'localhost',
+      port,
+      path,
+      method: 'POST',
+      headers: { 'Content-Type': 'text/xml', 'Authorization': `Bearer ${token}` },
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, data }));
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
 describe('WebhookServer', () => {
   let server: WebhookServer;
   let port: number;
@@ -87,28 +107,31 @@ describe('WebhookServer', () => {
     await server.start();
     const res = await request(server, 19901, '/status');
     expect(res.status).toBe(200);
-    expect(res.data).toContain('"running":true');
+    // I4 修复：/status 现在只返回最小健康状态
+    expect(res.data).toContain('"ok":true');
   });
 
   it('should return 404 for unknown webhook path', async () => {
-    server = new WebhookServer({ port: 19902 });
+    // I3 修复：需配置 authToken，否则未认证请求返回 401 而非 404
+    server = new WebhookServer({ port: 19902, authToken: 'test-token' });
     await server.start();
-    const res = await request(server, 19902, '/unknown');
+    const res = await requestWithAuth(server, 19902, '/unknown', '<xml></xml>', 'test-token');
     expect(res.status).toBe(404);
   });
 
   it('should return 404 for unknown channel type', async () => {
     const adapter = makeMockAdapter('wechat-work');
-    server = new WebhookServer({ port: 19903 });
+    // I3 修复：测试需配置 authToken 才能通过认证
+    server = new WebhookServer({ port: 19903, authToken: 'test-token' });
     server.registerAdapter(adapter);
     await server.start();
-    const res = await request(server, 19903, '/webhook/unknown-channel', '<xml></xml>');
+    const res = await requestWithAuth(server, 19903, '/webhook/unknown-channel', '<xml></xml>', 'test-token');
     expect(res.status).toBe(404);
   });
 
   it('should route wechat-work webhook to adapter handler', async () => {
     const adapter = makeMockAdapter('wechat-work', 'hello reply');
-    server = new WebhookServer({ port: 19904 });
+    server = new WebhookServer({ port: 19904, authToken: 'test-token' });
     server.registerAdapter(adapter);
     await server.start();
 
@@ -121,11 +144,11 @@ describe('WebhookServer', () => {
 <MsgId>123456</MsgId>
 </xml>`;
 
-    const res = await request(server, 19904, '/webhook/wechat-work', xmlBody);
+    const res = await requestWithAuth(server, 19904, '/webhook/wechat-work', xmlBody, 'test-token');
     expect(res.status).toBe(200);
   });
 
-  it('should return adapter status in /status', async () => {
+  it('should return minimal status in /status', async () => {
     const adapter = makeMockAdapter('wechat-work');
     server = new WebhookServer({ port: 19905 });
     server.registerAdapter(adapter);
@@ -133,7 +156,9 @@ describe('WebhookServer', () => {
 
     const res = await request(server, 19905, '/status');
     expect(res.status).toBe(200);
-    expect(res.data).toContain('wechat-work');
+    // I4 修复：/status 不再泄露适配器列表
+    expect(res.data).toContain('"ok":true');
+    expect(res.data).not.toContain('wechat-work');
   });
 
   it('should track running adapters count', async () => {

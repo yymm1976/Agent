@@ -80,6 +80,12 @@ describe('SSRF 防护 (checkSSRF)', () => {
     expect(result.allowed).toBe(false);
   });
 
+  it('DNS 解析失败时应拒绝而不是放行', async () => {
+    const result = await checkSSRF('http://nonexistent.invalid');
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('DNS 解析失败');
+  });
+
   it('getMaxRedirectDepth 应返回 5', () => {
     expect(getMaxRedirectDepth()).toBe(5);
   });
@@ -186,6 +192,13 @@ describe('checkBashSecurity (7 层 Bash 安全)', () => {
   // Layer 4: 危险命令
   it('Layer 4: 应拦截 rm -rf /', () => {
     const result = checkBashSecurity('rm -rf /');
+    expect(result.allowed).toBe(false);
+    expect(result.layer).toBe('dangerous-command');
+    expect(result.reason).toContain('删除根目录');
+  });
+
+  it('Layer 4: 应拦截 rm -r -f /', () => {
+    const result = checkBashSecurity('rm -r -f /');
     expect(result.allowed).toBe(false);
     expect(result.layer).toBe('dangerous-command');
     expect(result.reason).toContain('删除根目录');

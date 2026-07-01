@@ -11,7 +11,8 @@
 //   /experiment discard <id> — 丢弃
 
 import type { CommandDefinition } from '../command-registry.js';
-import { ExperimentManager } from '../../harness/experiment-manager.js';
+// E9-B：移除 ExperimentManager 直接 import，改为从 ctx.experimentManager 复用单例
+// 这样 ExperimentRunner 注入（app-init.ts 中 setExperimentRunner）才能在 /experiment run 路径生效
 
 export const experimentCommand: CommandDefinition = {
   name: 'experiment',
@@ -23,8 +24,9 @@ export const experimentCommand: CommandDefinition = {
     const parts = args.split(/\s+/);
     const sub = parts[0] || '';
 
-    // 通过 ctx.cwd 创建 ExperimentManager 实例
-    const manager = new ExperimentManager(ctx.cwd);
+    // E9-B 修复：从 ServiceContext 读取单例，复用 app-init.ts 注入的 ExperimentRunner
+    // 旧实现每次 new 一个新实例导致 runner 注入丢失，/experiment run 退化为仅记录任务描述
+    const manager = ctx.experimentManager;
 
     switch (sub) {
       case 'create': {

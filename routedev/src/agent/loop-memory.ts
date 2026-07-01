@@ -172,6 +172,19 @@ export class LoopMemory {
     this.goalId = goalId;
   }
 
+  async save(): Promise<void> {
+    if (!this.goalId) {
+      logger.debug('LoopMemory: skip save (no goalId)');
+      return;
+    }
+    this.trimFailures();
+    const filePath = this.getFilePath(this.goalId);
+    const content = this.toMarkdown();
+    await fs.mkdir(dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, content, 'utf-8');
+    logger.debug('LoopMemory: saved', { filePath, failureCount: this.failures.length });
+  }
+
   // ============================================================
   // 私有方法
   // ============================================================
@@ -189,15 +202,7 @@ export class LoopMemory {
       return;
     }
 
-    // 陷阱 #147：截断保留最近 N 条
-    if (this.failures.length > MAX_KEPT_FAILURES) {
-      const archived = this.failures.slice(0, this.failures.length - MAX_KEPT_FAILURES);
-      this.failures = this.failures.slice(-MAX_KEPT_FAILURES);
-      logger.info('LoopMemory: trimmed old failures (陷阱 #147)', {
-        archivedCount: archived.length,
-        keptCount: this.failures.length,
-      });
-    }
+    this.trimFailures();
 
     const filePath = this.getFilePath(this.goalId);
     const content = this.toMarkdown();
@@ -213,6 +218,18 @@ export class LoopMemory {
           error: error instanceof Error ? error.message : String(error),
         });
       });
+  }
+
+  private trimFailures(): void {
+    if (this.failures.length <= MAX_KEPT_FAILURES) {
+      return;
+    }
+    const archived = this.failures.slice(0, this.failures.length - MAX_KEPT_FAILURES);
+    this.failures = this.failures.slice(-MAX_KEPT_FAILURES);
+    logger.info('LoopMemory: trimmed old failures (陷阱 #147)', {
+      archivedCount: archived.length,
+      keptCount: this.failures.length,
+    });
   }
 
   /** 获取 goal 的记忆文件路径 */

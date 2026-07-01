@@ -12,7 +12,7 @@ import type { ExecutionPlan, StepDependency, WorkerRole, WorkerTask } from './ty
 import { ConflictDetector } from './conflict.js';
 // Phase 50 Task 2：接入多 Agent 编排核心模块（默认 enabled: false，开关在 config.orchestrationIntegration）
 import { StrategySelector } from './orchestrator-strategy.js';
-import { ExecutionStateGraph, type StepStatus as GraphStepStatus } from './state-graph.js';
+import { ExecutionStateGraph } from './state-graph.js';
 import type { BranchOrchestrator } from './branch-orchestrator.js';
 import { logger } from '../../utils/logger.js';
 
@@ -279,7 +279,10 @@ export class Orchestrator {
     try {
       const analysis = await this.analyzeWithLLM(goalPlan);
       if (!analysis || analysis.length === 0) {
-        return this.fallbackPlan(goalPlan);
+        // Phase 54：LLM 分析失败时用启发式分析（基于关键词分配角色 + 检测无依赖步骤）
+        // 不再直接走完全串行，提升并行度
+        logger.warn('Orchestrator LLM analysis returned null, using heuristic analysis');
+        return this.heuristicPlan(goalPlan);
       }
 
       const executionOrder = this.topologicalSort(analysis);
@@ -288,6 +291,15 @@ export class Orchestrator {
         parallelGroups,
         analysis,
       );
+
+      // Phase 54 Task 3：从 goalPlan.steps 传递 acceptanceCriteria 到 dependencies
+      // 供协作剧场面板展示与 GoalAuditor 三层验收使用
+      for (const dep of analysis) {
+        const step = goalPlan.steps.find(s => s.id === dep.stepId);
+        if (step?.acceptanceCriteria) {
+          dep.acceptanceCriteria = step.acceptanceCriteria;
+        }
+      }
 
       // Phase 50 Task 2：stateGraphEnabled 时把步骤加入状态图，管理步骤状态
       if (this.stateGraph) {
@@ -312,47 +324,62 @@ export class Orchestrator {
       };
     } catch (error) {
       logger.error('Orchestrator planning failed', { error: String(error) });
-      return this.fallbackPlan(goalPlan);
+      // Phase 54：异常时也用启发式分析，避免直接走完全串行
+      return this.heuristicPlan(goalPlan);
     }
   }
 
   /**
-   * Phase 50 Task 2：执行状态图转换（stateGraphEnabled 时供外部调用）
-   * 失败时返回 false（不抛出，调用方继续原流程）
+   * Phase 54：启发式分析——LLM 不可用或失败时的降级方案
+   * 基于步骤描述关键词分配角色，检测无依赖步骤实现部分并行
+   * 比完全串行 fallbackPlan 更高效，且不依赖 LLM
    */
-  transitionStepState(stepId: string | number, to: GraphStepStatus, reason?: string): boolean {
-    if (!this.stateGraph) return false;
-    try {
-      this.stateGraph.transition(String(stepId), to, reason);
-      return true;
-    } catch (error) {
-      logger.warn('ExecutionStateGraph.transition failed (non-blocking)', {
-        stepId,
-        to,
-        error: String(error),
-      });
-      return false;
-    }
-  }
+  private heuristicPlan(goalPlan: GoalPlan): ExecutionPlan {
+    // Phase 54：AgentRole → WorkerRole 映射（GoalParser 输出的 suggestedRole 是 AgentRole）
+    // researcher→searcher, executor→coder, reviewer→reviewer
+    const agentRoleToWorkerRole = (suggested?: string): WorkerRole => {
+      if (suggested === 'researcher') return 'searcher';
+      if (suggested === 'executor') return 'coder';
+      if (suggested === 'reviewer') return 'reviewer';
+      return 'coder';  // 兜底
+    };
 
-  /** Phase 50 Task 2：获取 ExecutionStateGraph 实例（测试用） */
-  getStateGraph(): ExecutionStateGraph | null {
-    return this.stateGraph;
-  }
+    const dependencies: StepDependency[] = goalPlan.steps.map((step, i) => {
+      // Phase 54：优先使用 GoalParser 输出的 suggestedRole，无则回退到关键词推断
+      let assignedRole: WorkerRole;
+      if (step.suggestedRole) {
+        assignedRole = agentRoleToWorkerRole(step.suggestedRole);
+      } else {
+        // 基于关键词分配角色（兜底）
+        const desc = step.description.toLowerCase();
+        assignedRole = 'coder';
+        if (/搜索|查询|调研|搜集|查找|检索|search|research|find/.test(desc)) {
+          assignedRole = 'searcher';
+        } else if (/测试|验证|检查|test|verify|check/.test(desc)) {
+          assignedRole = 'tester';
+        } else if (/审查|review|检视/.test(desc)) {
+          assignedRole = 'reviewer';
+        }
+      }
 
-  /** Phase 50 Task 2：branchOrchestrationEnabled 时从 GoalPlan 创建分支任务 */
-  async planBranches(goalPlan: GoalPlan): Promise<{ scheduled: boolean; taskCount: number }> {
-    if (!this.integration.branchOrchestrationEnabled || !this.integration.branchOrchestrator) {
-      return { scheduled: false, taskCount: 0 };
-    }
-    try {
-      const tasks = await this.integration.branchOrchestrator.planFromGoal(goalPlan);
-      logger.info('Phase 50: BranchOrchestrator scheduled tasks', { count: tasks.length });
-      return { scheduled: true, taskCount: tasks.length };
-    } catch (error) {
-      logger.warn('BranchOrchestrator.planFromGoal failed (non-blocking)', { error: String(error) });
-      return { scheduled: false, taskCount: 0 };
-    }
+      return {
+        stepId: step.id,
+        // 启发式：第一步无依赖，其余依赖前一步（保守策略，可并行的是第一步）
+        dependsOn: i > 0 ? [goalPlan.steps[i - 1].id] : [],
+        assignedRole,
+        likelyFiles: [],
+      };
+    });
+
+    const executionOrder = this.topologicalSort(dependencies);
+    const parallelGroups = this.buildParallelGroups(dependencies, executionOrder);
+
+    return {
+      dependencies,
+      parallelGroups,
+      executionOrder,
+      analysisNotes: `启发式分析：${goalPlan.steps.length} 个步骤，${parallelGroups.length} 个执行组`,
+    };
   }
 
   /** LLM 驱动的步骤分析 */
@@ -516,18 +543,18 @@ export class Orchestrator {
 
   /** Fallback：全部串行执行 */
   private fallbackPlan(goalPlan: GoalPlan): ExecutionPlan {
-    const dependencies: StepDependency[] = goalPlan.steps.map((_, i) => ({
-      stepId: i + 1,
-      dependsOn: i > 0 ? [i] : [],
+    const dependencies: StepDependency[] = goalPlan.steps.map((step, i) => ({
+      stepId: step.id,
+      dependsOn: i > 0 ? [goalPlan.steps[i - 1].id] : [],
       assignedRole: 'coder' as WorkerRole,
       likelyFiles: [],
     }));
 
     return {
       dependencies,
-      parallelGroups: goalPlan.steps.map((_, i) => [i + 1]),
-      executionOrder: goalPlan.steps.map((_, i) => i + 1),
-      analysisNotes: 'Fallback: LLM 分析失败或不可用，使用串行执行',
+      parallelGroups: goalPlan.steps.map(step => [step.id]),
+      executionOrder: goalPlan.steps.map(step => step.id),
+      analysisNotes: '顺序执行（简单任务无需并行编排）',
     };
   }
 

@@ -154,6 +154,7 @@ export class ScheduleEngine {
   private readonly heap = new TaskMinHeap();
   /** M5 修复：堆是否需要重建（任务增删改时置 true） */
   private heapDirty = true;
+  private checking = false;
 
   constructor(options: ScheduleEngineOptions) {
     this.store = options.store;
@@ -164,8 +165,11 @@ export class ScheduleEngine {
   /** 启动调度引擎 */
   start(): void {
     if (this.timer) return; // 已启动，避免重复
-    // 启动时立即检查一次，然后按间隔定时检查
-    this.check();
+    queueMicrotask(() => {
+      if (this.timer) {
+        this.check();
+      }
+    });
     this.timer = setInterval(() => this.check(), this.checkIntervalMs);
   }
 
@@ -269,6 +273,10 @@ export class ScheduleEngine {
    * fire and forget：不 await onTaskTrigger，不阻塞定时器
    */
   private check(): void {
+    if (this.checking) return;
+    this.checking = true;
+
+    try {
     const now = Date.now();
 
     // M5 修复：堆脏时从 store 重建优先队列
@@ -292,10 +300,31 @@ export class ScheduleEngine {
       const task = this.heap.pop()!;
 
       try {
-        // 触发任务（fire and forget，不阻塞）
-        this.onTaskTrigger(task).catch(() => {
-          // 触发失败不影响调度循环，错误由调用方处理
+        this.store.appendExecutionRecord({
+          taskId: task.id,
+          startedAt: now,
+          status: 'running',
         });
+
+        // 触发任务（fire and forget，不阻塞）
+        this.onTaskTrigger(task)
+          .then(() => {
+            this.store.appendExecutionRecord({
+              taskId: task.id,
+              startedAt: now,
+              finishedAt: Date.now(),
+              status: 'completed',
+            });
+          })
+          .catch((error) => {
+            this.store.appendExecutionRecord({
+              taskId: task.id,
+              startedAt: now,
+              finishedAt: Date.now(),
+              status: 'failed',
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
 
         // 更新 lastRun、runCount
         const newRunCount = task.runCount + 1;
@@ -332,15 +361,22 @@ export class ScheduleEngine {
           }
         }
 
-        this.store.update(task.id, updates);
+        const updated = this.store.update(task.id, updates);
+        if (!updated) {
+          this.heapDirty = true;
+          continue;
+        }
 
         // M5 修复：如果任务仍启用且有新的 nextRun，用更新后的数据重新入堆
         if (updates.enabled !== false && updates.nextRun !== undefined) {
           this.heap.push({ ...task, ...updates });
         }
       } catch {
-        // 单个任务处理出错，跳过继续处理下一个
+        this.heapDirty = true;
       }
+    }
+    } finally {
+      this.checking = false;
     }
   }
 }

@@ -214,12 +214,8 @@ export class WebhookServer {
   }
 
   private handleStatus(res: http.ServerResponse): void {
-    const adapters = [...this.adapters.values()].map(a => a.getStatus());
-    this.sendJson(res, 200, {
-      running: this.server !== null,
-      adapters,
-      port: this.config.port,
-    });
+    // I4 修复：/status 免认证，仅返回最小健康状态，不泄露适配器列表和端口
+    this.sendJson(res, 200, { ok: true });
   }
 
   /** 读取请求体，限制最大字节数（默认 1MB）防止内存耗尽攻击 */
@@ -244,18 +240,20 @@ export class WebhookServer {
 
   /** 验证 Bearer Token 认证 */
   private verifyAuth(req: http.IncomingMessage): boolean {
-    // 未配置 authToken 时：开发模式放行，生产环境拒绝
+    // I3 修复：未配置 authToken 时，默认拒绝（安全优先）。
+    // 仅当显式开启 devModeAuth=false（即 config.security.devModeAuth=false）时才放行，
+    // 避免 routedev serve 暴露端口后未认证请求驱动 Agent。
     if (!this.config.authToken) {
       if (process.env.NODE_ENV === 'production') {
         logger.error('Webhook authToken 未配置，生产环境拒绝请求');
         return false;
       }
-      // I4 修复：devModeAuth 为 true 时，开发模式也要求认证
-      if (this.config.devModeAuth) {
-        logger.error('Webhook devModeAuth 启用，开发模式也要求认证（authToken 未配置）');
+      // devModeAuth 默认 true（要求认证）；仅显式 false 时放行
+      if (this.config.devModeAuth !== false) {
+        logger.error('Webhook authToken 未配置且 devModeAuth 未显式关闭，拒绝请求');
         return false;
       }
-      return true; // 开发模式放行
+      return true; // 显式开发模式放行
     }
 
     const authHeader = req.headers['authorization'];

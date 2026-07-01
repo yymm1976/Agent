@@ -240,10 +240,14 @@ export class ModelRouter {
    */
   private initializeModels(): void {
     for (const rule of this.config.rules) {
+      const modelId = rule.modelId;
+      if (!modelId) {
+        continue;
+      }
       // 主模型
-      this.models.set(rule.modelId, {
-        id: rule.modelId,
-        providerId: this.inferProviderId(rule.modelId),
+      this.models.set(modelId, {
+        id: modelId,
+        providerId: this.inferProviderId(modelId),
         tier: rule.tier,
       });
 
@@ -374,7 +378,7 @@ export class ModelRouter {
       // 使用最低成本模型（simple tier）作为占位
       // 调用方根据 deterministic 标记跳过 LLM 调用，model 字段仅用于审计/日志
       const simpleRule = this.findRule('simple');
-      const placeholderModel = simpleRule ? this.models.get(simpleRule.modelId) : null;
+      const placeholderModel = simpleRule?.modelId ? this.models.get(simpleRule.modelId) : null;
       if (placeholderModel) {
         logger.debug('Deterministic route hit, skipping LLM', {
           matchedRuleId: detClassification.matchedRuleId,
@@ -472,7 +476,7 @@ export class ModelRouter {
     }
 
     // 尝试主模型
-    const mainModel = this.models.get(rule.modelId);
+    const mainModel = rule.modelId ? this.models.get(rule.modelId) : null;
     if (mainModel && this.isModelAvailable(mainModel)) {
       return {
         model: this.toModelConfig(mainModel),
@@ -558,6 +562,24 @@ export class ModelRouter {
 
       // 插件指定的 providerId 优先，否则用模型推断的 providerId
       const providerId = decision.providerId ?? model.providerId;
+      const provider = this.providers.find(p => p.id === providerId);
+      if (this.providers.length > 0 && !provider) {
+        logger.warn('RouterPlugin selected unknown provider, fallback to default', {
+          modelId: decision.modelId,
+          providerId,
+          reason: decision.reason,
+        });
+        return null;
+      }
+      if (provider && !provider.models.some(m => m.id === decision.modelId)) {
+        logger.warn('RouterPlugin selected provider/model mismatch, fallback to default', {
+          modelId: decision.modelId,
+          providerId,
+          expectedProviderId: model.providerId,
+          reason: decision.reason,
+        });
+        return null;
+      }
       logger.debug('RouterPlugin decision applied', {
         modelId: decision.modelId,
         providerId,
@@ -582,7 +604,6 @@ export class ModelRouter {
 
   /**
    * 降级策略
-   * 修复：最低 tier 模型不可用时仍返回该模型（带警告），由 LLM 调用层处理失败
    *
    * I6 修复：降级到更低 tier 时，同时尝试该 tier 规则的 fallbackModelId（存在性检查后使用）
    */
@@ -595,7 +616,7 @@ export class ModelRouter {
       const lowerTier = tierOrder[i];
       const rule = this.findRule(lowerTier);
       if (rule) {
-        const model = this.models.get(rule.modelId);
+        const model = rule.modelId ? this.models.get(rule.modelId) : null;
         if (model && this.isModelAvailable(model)) {
           logger.warn('Degraded to lower tier', {
             originalTier,
@@ -634,34 +655,24 @@ export class ModelRouter {
       }
     }
 
-    // 强制使用最低可用模型
-    const simpleRule = this.findRule('simple');
-    if (simpleRule) {
-      const model = this.models.get(simpleRule.modelId);
-      if (model) {
-        // 修复：记录警告但仍返回模型，避免路由阶段抛错导致整个流程崩溃
-        // placeholder API Key 等不可用情况由 LLM 调用层自然失败处理
-        if (!this.isModelAvailable(model)) {
-          logger.warn('Forced to use unavailable lowest tier model', {
-            modelId: model.id,
-            originalTier,
-            reason,
-          });
-        } else {
-          logger.error('Forced to use lowest tier model', { originalTier, reason });
-        }
-        return {
-          model: this.toModelConfig(model),
-          providerId: model.providerId,
-          fallbackUsed: false,
-          originalTier,
-          degraded: true,
-          degradationReason: 'Forced to lowest available model',
-        };
-      }
+    const availableModel = this.getAvailableModels()[0];
+    if (availableModel) {
+      logger.warn('Forced to use lowest available model', {
+        modelId: availableModel.id,
+        originalTier,
+        reason,
+      });
+      return {
+        model: this.toModelConfig(availableModel),
+        providerId: availableModel.providerId,
+        fallbackUsed: false,
+        originalTier,
+        degraded: true,
+        degradationReason: 'Forced to lowest available model',
+      };
     }
 
-    // 完全没有可用模型（不应该发生）
+    logger.error('No available models for routing after degradation', { originalTier, reason });
     throw new Error('No available models for routing');
   }
 

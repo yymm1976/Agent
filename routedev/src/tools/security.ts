@@ -342,11 +342,12 @@ export class SecurityChecker implements ISecurityChecker {
     // 子串匹配的问题：includes('rm') 会误拦 "python program.py"（含 "rm"），
     // 同时无法拦截 "rm" 在引号内或大写变体
     const parsed = parseCommand(command);
+    const commandsToCheck = parsed.subCommands && parsed.subCommands.length > 0 ? parsed.subCommands : [parsed];
     const commandName = parsed.command.toLowerCase();
 
     // 白名单检查：匹配命令名（首 token），不再子串匹配
     if (this.commandWhitelist.length > 0) {
-      const allowed = this.commandWhitelist.some(wl => commandName === wl);
+      const allowed = commandsToCheck.every(cmd => this.commandWhitelist.some(wl => cmd.command.toLowerCase() === wl));
       if (!allowed) {
         return {
           allowed: false,
@@ -359,16 +360,16 @@ export class SecurityChecker implements ISecurityChecker {
     // 黑名单检查：支持单 token（如 "rm"）和多 token（如 "rm -rf"）条目
     // 单 token：匹配命令名（首 token）
     // 多 token：匹配命令名 + 条目 args 是命令 args 的前缀
-    const blocked = this.commandBlacklist.some(bl => {
+    const blocked = commandsToCheck.some(cmd => this.commandBlacklist.some(bl => {
       const blParsed = parseCommand(bl);
       // 命令名不匹配，直接跳过
-      if (commandName !== blParsed.command.toLowerCase()) return false;
+      if (cmd.command.toLowerCase() !== blParsed.command.toLowerCase()) return false;
       // 单 token 条目（仅命令名），匹配
       if (blParsed.args.length === 0) return true;
       // 多 token 条目：检查条目 args 是命令 args 的前缀
-      if (blParsed.args.length > parsed.args.length) return false;
-      return blParsed.args.every((arg, i) => parsed.args[i] === arg);
-    });
+      if (blParsed.args.length > cmd.args.length) return false;
+      return blParsed.args.every((arg, i) => cmd.args[i] === arg);
+    }));
     if (blocked) {
       return {
         allowed: false,

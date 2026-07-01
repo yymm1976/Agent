@@ -6,7 +6,7 @@
 // 与 AgentMiddlewarePipeline 的区别：
 //   - Middleware 关注 Agent Loop 内部（LLM 调用、工具执行）
 //   - Hook 关注步骤层（任务步骤的开始/结束/出错）+ 工具层（工具调用前后）
-//   - 调用者不同：Middleware 由 ReActAgentLoop 调用，Hook 由 Orchestrator/DurableExecutor/Loop 调用
+//   - 调用者不同：Middleware 由 ReActAgentLoop 调用，Hook 由 Orchestrator/Loop 调用
 
 import { logger } from '../utils/logger.js';
 import type { TraceCollector } from '../harness/trace-collector.js';
@@ -65,7 +65,7 @@ export interface HookContext {
   toolDuration?: number;
 }
 
-/** 步骤结果（简化版，与 DurableExecutor 共享） */
+/** 步骤结果（简化版） */
 export interface StepResult {
   success: boolean;
   output: string;

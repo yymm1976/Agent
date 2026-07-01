@@ -27,15 +27,16 @@ import type { PromptTemplateManager } from '../prompts/manager.js';
 import type { ProjectMemoryManager } from '../memory/project-memory.js';
 import type { ToolExecutorAdapter } from '../agent/loop-config.js';
 import type { CheckpointManager } from '../harness/checkpoint-manager.js';
+// E9-B：ExperimentManager 单例字段类型（由 AppDependencies 注入到 ServiceContext）
+import type { ExperimentManager } from '../harness/experiment-manager.js';
 import type { MCPClientManager } from '../tools/mcp/client.js';
 import type { ScenarioTier } from '../router/types.js';
 import type { WorkMode, WorkModeController } from '../agent/work-modes.js';
 import type { GoalPlan, PlanStep } from '../agent/goal-types.js';
 import type { PluginRegistry } from '../plugins/registry.js';
 import type { CommandRegistry } from './command-registry.js';
-import type { DurableExecutor } from '../agent/durable-executor.js';
 // Phase 50 Task 7：接入 7 个 React 组件所需类型
-import type { ExecutionSnapshot } from '../agent/durable-executor.js';
+import type { PersistedGoal } from '../agent/goal-persistence.js';
 import type { TraceTimelineEntry } from './components/TracePanel.js';
 import type { ConfigChange } from './components/ConfigReloadUI.js';
 
@@ -75,7 +76,7 @@ export interface CommandBridge {
   getConversationHistory?: () => LLMMessage[];
   // ===== Phase 50 Task 7：7 个 React 组件接入回调（可选） =====
   /** 渲染 ResumePicker 组件（/resume 命令无 planId 且有多个快照时触发） */
-  showResumePicker?: (snapshots: ExecutionSnapshot[]) => void;
+  showResumePicker?: (snapshots: PersistedGoal[]) => void;
   /** 渲染 TracePanel 组件（/trace view 命令触发） */
   showTracePanel?: (entries: TraceTimelineEntry[], sessionId?: string) => void;
   /** 渲染 DiffView 组件（/diff 命令触发） */
@@ -122,12 +123,15 @@ export interface ServiceContext {
   commandRegistry?: CommandRegistry;
   /** 权限引擎（Phase 26 Task 4：/permissions 读取运行时实例） */
   permissionEngine?: import('../tools/permission-engine.js').PermissionEngine;
-  /** 持久化执行器（Phase 27 Task 6：/resume 命令使用） */
-  durableExecutor?: DurableExecutor;
   /** Phase 30：Token Profiler（可观测性，可选） */
   profiler?: TokenProfiler;
   /** Phase 48 Task 3：调度引擎实例（定时任务执行） */
   scheduleEngine?: import('../scheduler/engine.js').ScheduleEngine;
+  /**
+   * E9-B 修复：实验管理器单例（基于 Git Worktree）
+   * 由 AppDependencies.experimentManager 注入；/experiment 命令读取此字段而非自建
+   */
+  experimentManager: ExperimentManager;
 }
 
 /**
@@ -174,9 +178,10 @@ export function createServiceContext(deps: ServiceContextDeps): ServiceContext {
     ...(deps.pluginRegistry ? { pluginRegistry: deps.pluginRegistry } : {}),
     ...(deps.commandRegistry ? { commandRegistry: deps.commandRegistry } : {}),
     ...(deps.permissionEngine ? { permissionEngine: deps.permissionEngine } : {}),
-    ...(deps.durableExecutor ? { durableExecutor: deps.durableExecutor } : {}),
     ...(deps.profiler ? { profiler: deps.profiler } : {}),
     ...(deps.scheduleEngine ? { scheduleEngine: deps.scheduleEngine } : {}),
+    // E9-B：ExperimentManager 单例映射
+    experimentManager: deps.experimentManager,
   };
   return ctx;
 }
@@ -214,12 +219,12 @@ export interface ServiceContextDeps {
   commandRegistry?: CommandRegistry;
   /** 权限引擎（Phase 26 Task 4） */
   permissionEngine?: import('../tools/permission-engine.js').PermissionEngine;
-  /** 持久化执行器（Phase 27 Task 6：/resume 命令使用） */
-  durableExecutor?: DurableExecutor;
   /** Phase 30：Token Profiler（可观测性，可选） */
   profiler?: TokenProfiler;
   /** Phase 48 Task 3：调度引擎实例 */
   scheduleEngine?: import('../scheduler/engine.js').ScheduleEngine;
   /** 可选的工具执行器更新回调（用于运行时替换） */
   setToolExecutor?: (executor: ToolExecutorAdapter) => void;
+  /** E9-B：ExperimentManager 单例（必传，AppDependencies.experimentManager 直接注入） */
+  experimentManager: ExperimentManager;
 }

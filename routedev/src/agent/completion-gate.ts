@@ -7,6 +7,8 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { logger } from '../utils/logger.js';
+// Phase 52 Task 7：饱和监测器类型（实例由 app-init.ts 注入，仅类型引入避免运行时耦合）
+import type { SaturationMonitor, EvaluationRunResult, SaturationMonitorConfig } from '../evaluation/saturation-monitor.js';
 
 // --- 类型 ---
 
@@ -34,6 +36,8 @@ export interface GateResult {
   passed: boolean;
   /** 各项检查结果 */
   checks: GateCheck[];
+  /** Phase 52 Task 7：饱和监测告警（saturationMonitor 注入且非 healthy 时填充） */
+  warnings?: string[];
 }
 
 /**
@@ -60,6 +64,13 @@ const TEST_TIMEOUT = 120000; // 2 分钟
 // 输出截取长度
 const OUTPUT_MAX_CHARS = 500;
 
+// Phase 52 Task 7：饱和监测默认配置（与 SaturationMonitor 文档默认值一致）
+const DEFAULT_SATURATION_CONFIG: SaturationMonitorConfig = {
+  passRateThreshold: 0.95,
+  varianceThreshold: 0.05,
+  checkInterval: 10,
+};
+
 /**
  * CompletionGate——独立代码验证门
  *
@@ -70,6 +81,21 @@ const OUTPUT_MAX_CHARS = 500;
  */
 export class CompletionGate {
   constructor(private readonly config: CompletionGateConfig = DEFAULT_CONFIG) {}
+
+  // Phase 52 Task 7：饱和监测器（可选，由 app-init.ts 通过 setSaturationMonitor 注入）
+  private saturationMonitor?: SaturationMonitor;
+  private saturationHistory: EvaluationRunResult[] = [];
+  private saturationConfig: SaturationMonitorConfig = DEFAULT_SATURATION_CONFIG;
+
+  /**
+   * Phase 52 Task 7：注入饱和监测器
+   * 注入后 verify 完成会把本次检查结果转换为 EvaluationRunResult 累积到历史，
+   * 并调用 saturationMonitor.evaluate 检查饱和度；非 healthy 时在 GateResult.warnings 填充告警。
+   */
+  setSaturationMonitor(monitor: SaturationMonitor, config?: SaturationMonitorConfig): void {
+    this.saturationMonitor = monitor;
+    if (config) this.saturationConfig = config;
+  }
 
   /**
    * 验证项目代码状态
@@ -116,7 +142,41 @@ export class CompletionGate {
     const passed = checks.every((c) => c.ok || c.skipped);
     logger.info('CompletionGate: verification done', { passed, checkCount: checks.length });
 
-    return { passed, checks };
+    const result: GateResult = { passed, checks };
+
+    // Phase 52 Task 7：饱和监测（fail-open，不阻塞完成判定）
+    // 把本次 checks 转换为 EvaluationRunResult 累积到历史，再调用 saturationMonitor.evaluate
+    if (this.saturationMonitor) {
+      try {
+        const runResult: EvaluationRunResult = {
+          runId: `gate-${Date.now()}`,
+          timestamp: Date.now(),
+          modelId: 'completion-gate',
+          totalCases: checks.length,
+          passedCases: checks.filter((c) => c.ok).length,
+          failedCases: checks.filter((c) => !c.ok && !c.skipped).length,
+          caseScores: checks.map((c) => (c.ok ? 1 : c.skipped ? 0.5 : 0)),
+          durationMs: checks.reduce((s, c) => s + c.duration, 0),
+        };
+        this.saturationHistory.push(runResult);
+        const report = this.saturationMonitor.evaluate(this.saturationHistory, this.saturationConfig);
+        if (report.status !== 'healthy') {
+          result.warnings = [
+            `SaturationMonitor: 评估集状态=${report.status}（区分度=${report.discrimination.toFixed(2)}, 通过率=${(report.passRate * 100).toFixed(1)}%），建议=${report.recommendation}`,
+          ];
+          logger.warn('CompletionGate: 评估集饱和', {
+            status: report.status,
+            recommendation: report.recommendation,
+          });
+        }
+      } catch (error) {
+        logger.warn('SaturationMonitor.evaluate failed (non-blocking)', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return result;
   }
 
   /**

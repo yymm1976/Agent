@@ -54,3 +54,8 @@ export interface TaskExecutionRecord {
   /** 错误信息（失败时） */
   error?: string;
 }
+
+export interface ScheduleStoreSnapshot {
+  tasks: ScheduledTask[];
+  executionRecords?: TaskExecutionRecord[];
+}

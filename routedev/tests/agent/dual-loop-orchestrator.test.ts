@@ -201,7 +201,7 @@ describe('DualLoopOrchestrator (Phase 49 Task 2.6)', () => {
       maxReruns: 0,
     });
 
-    const events = await collectEvents(new DualLoopOrchestrator().run(params));
+    const events = await collectEvents(new DualLoopOrchestrator().runDualLoop(params));
     const types = events.map(e => e.type);
 
     // 应该按顺序出现：inner-loop-start → inner-loop-event → inner-loop-complete → outer-loop-start → dual-loop-complete
@@ -228,7 +228,7 @@ describe('DualLoopOrchestrator (Phase 49 Task 2.6)', () => {
       maxReruns: 2,
     });
 
-    const events = await collectEvents(new DualLoopOrchestrator().run(params));
+    const events = await collectEvents(new DualLoopOrchestrator().runDualLoop(params));
     const complete = events.find(e => e.type === 'dual-loop-complete');
 
     expect(complete).toBeDefined();
@@ -267,7 +267,7 @@ describe('DualLoopOrchestrator (Phase 49 Task 2.6)', () => {
       maxReruns: 2,
     });
 
-    const events = await collectEvents(new DualLoopOrchestrator().run(params));
+    const events = await collectEvents(new DualLoopOrchestrator().runDualLoop(params));
 
     // 内循环应该被调用 2 次（首次 + 1 次重跑）
     expect(reactCallCount).toBe(2);
@@ -304,7 +304,7 @@ describe('DualLoopOrchestrator (Phase 49 Task 2.6)', () => {
       maxReruns: 2,
     });
 
-    await collectEvents(new DualLoopOrchestrator().run(params));
+    await collectEvents(new DualLoopOrchestrator().runDualLoop(params));
 
     // 首次 system prompt 不含失败记录
     expect(capturedPrompts[0]).not.toContain('历史失败记录');
@@ -326,7 +326,7 @@ describe('DualLoopOrchestrator (Phase 49 Task 2.6)', () => {
       maxReruns: 1, // 首次 + 1 次重跑 = 2 次迭代
     });
 
-    const events = await collectEvents(new DualLoopOrchestrator().run(params));
+    const events = await collectEvents(new DualLoopOrchestrator().runDualLoop(params));
     const exhausted = events.find(e => e.type === 'dual-loop-exhausted');
 
     expect(exhausted).toBeDefined();
@@ -355,7 +355,7 @@ describe('DualLoopOrchestrator (Phase 49 Task 2.6)', () => {
       maxReruns: 0,
     });
 
-    const events = await collectEvents(new DualLoopOrchestrator().run(params));
+    const events = await collectEvents(new DualLoopOrchestrator().runDualLoop(params));
     const failed = events.find(e => e.type === 'outer-loop-failed');
     const exhausted = events.find(e => e.type === 'dual-loop-exhausted');
 
@@ -383,7 +383,7 @@ describe('DualLoopOrchestrator (Phase 49 Task 2.6)', () => {
       maxReruns: 0,
     });
 
-    const events = await collectEvents(new DualLoopOrchestrator().run(params));
+    const events = await collectEvents(new DualLoopOrchestrator().runDualLoop(params));
     const failed = events.find(e => e.type === 'outer-loop-failed');
     const exhausted = events.find(e => e.type === 'dual-loop-exhausted');
 
@@ -417,7 +417,7 @@ describe('DualLoopOrchestrator (Phase 49 Task 2.6)', () => {
       maxReruns: 0,
     });
 
-    const events = await collectEvents(new DualLoopOrchestrator().run(params));
+    const events = await collectEvents(new DualLoopOrchestrator().runDualLoop(params));
     const failed = events.find(e => e.type === 'outer-loop-failed');
     const exhausted = events.find(e => e.type === 'dual-loop-exhausted');
 
@@ -471,7 +471,7 @@ describe('DualLoopOrchestrator (Phase 49 Task 2.6)', () => {
     });
     params.goal.plan.id = goalId;
 
-    await collectEvents(new DualLoopOrchestrator().run(params));
+    await collectEvents(new DualLoopOrchestrator().runDualLoop(params));
 
     // LoopMemory.persist() 是异步写入（fire-and-forget），需要等待完成
     await new Promise(r => setTimeout(r, 150));
@@ -524,7 +524,7 @@ describe('DualLoopOrchestrator (Phase 49 Task 2.6)', () => {
       humanInterventionDetector,
     });
 
-    const events = await collectEvents(new DualLoopOrchestrator().run(params));
+    const events = await collectEvents(new DualLoopOrchestrator().runDualLoop(params));
     const intervention = events.find(e => e.type === 'human-intervention-detected');
 
     expect(intervention).toBeDefined();
@@ -557,7 +557,7 @@ describe('DualLoopOrchestrator (Phase 49 Task 2.6)', () => {
       maxReruns: 2,
     });
 
-    const events = await collectEvents(new DualLoopOrchestrator().run(params));
+    const events = await collectEvents(new DualLoopOrchestrator().runDualLoop(params));
     const pilot = events.find(e => e.type === 'pilot-mode-triggered');
     const exhausted = events.find(e => e.type === 'dual-loop-exhausted');
 

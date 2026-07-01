@@ -82,32 +82,11 @@ interface GoalParserOptions {
 }
 
 export class GoalParser {
-  /**
-   * Phase 53 Task 10：DAG 引擎（可选）
-   * 接入后，parse 时会记录日志（fail-open，不改变 parse 行为）
-   * 后续可将分解的 steps 转换为 DagWorkflow 交由 DagEngine 并行执行
-   */
-  private dagEngine?: DagEngine;
-
-  /**
-   * Phase 53 Task 10：注入 DAG 引擎
-   * 接入后，parse 时会记录可用性日志（最小接入，不强制改变 parse 行为）
-   */
-  setDagEngine(engine: DagEngine | null): void {
-    this.dagEngine = engine ?? undefined;
-  }
-
   async parse(
     description: string,
     options: GoalParserOptions,
   ): Promise<GoalPlan> {
     const { verificationCriteria, routeDecision, llmClient, timeoutMs = 30000, requirements } = options;
-
-    // Phase 53 Task 10：DAG 引擎可用性记录（受存在性守护，fail-open）
-    // 当前实现仅记录日志，不改变 parse 行为
-    if (this.dagEngine) {
-      logger.debug('DagEngine available for goal parsing', { hasDagEngine: true });
-    }
 
     // Phase 31 Task 3：若有需求摘要，追加到 system prompt
     const systemPrompt = requirements

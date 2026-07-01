@@ -93,9 +93,10 @@ describe('/plugin 命令', () => {
       await reg.loadPlugin(m, (m as any)._pluginDir);
     }
     await reg.initAll();
+    reg.enable('tool-sample');
 
     const ctx = buildMockCtx(reg);
-    const result = await pluginCommand.handler('info sample-tool', ctx);
+    const result = await pluginCommand.handler('info tool-sample', ctx);
 
     expect(result.type).toBe('handled');
     expect(result.messages).toBeDefined();

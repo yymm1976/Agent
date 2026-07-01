@@ -172,8 +172,8 @@ describe('Phase 38 Task 2: SpawnAgentTool 增强', () => {
       const originalSize = original.size;
 
       const copy = original.clone();
-      copy.register(new FileReadTool());  // 重复注册会覆盖，size 不变
-      copy.register(new FileSearchTool()); // 重复注册
+      copy.register(new FileReadTool(), true);  // 显式覆盖，size 不变
+      copy.register(new FileSearchTool(), true); // 显式覆盖
 
       expect(original.size).toBe(originalSize);
     });

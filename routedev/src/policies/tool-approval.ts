@@ -4,10 +4,12 @@
 // 设计目标：
 //   1. 提供内置审批策略（写文件、网络请求、Shell 命令）
 //   2. 默认禁用，由用户在配置中启用
-//   3. 命中后返回 requireApproval=true
-//   4. requiresApproval 判断是否需要审批，getApprovalMessage 获取审批提示
+//   3. 命中后通过 PolicyEngine 统一调度，返回 requireApproval=true
+//
+// 注：静态 evaluate / requiresApproval / getApprovalMessage / matchKeywords 已作为死代码删除
+//     （PolicyEngine 内部通过 evaluateAction 遍历 policies 数组直接处理）
 
-import type { Policy, PolicyEvalResult } from './policy-engine.js';
+import type { Policy } from './policy-engine.js';
 
 // ============================================================
 // ToolApproval
@@ -67,69 +69,6 @@ export class ToolApproval {
       },
     },
   ];
-
-  /**
-   * 评估工具调用
-   *
-   * 只评估 type='tool_approval' 且 enabled=true 的策略
-   * 匹配对象是工具名（toolName）
-   */
-  static evaluate(toolName: string, policies: Policy[]): PolicyEvalResult[] {
-    if (!toolName) return [];
-
-    const lowerName = toolName.toLowerCase();
-    const results: PolicyEvalResult[] = [];
-
-    const sorted = [...policies]
-      .filter((p) => p.type === 'tool_approval' && p.enabled)
-      .sort((a, b) => b.priority - a.priority);
-
-    for (const policy of sorted) {
-      const matched = ToolApproval.matchKeywords(policy.trigger.keywords ?? [], lowerName);
-      if (matched) {
-        results.push({
-          matched: true,
-          action: policy.action,
-          policyId: policy.id,
-          policyName: policy.name,
-        });
-      }
-    }
-
-    return results;
-  }
-
-  /**
-   * 判断是否需要审批
-   */
-  static requiresApproval(results: PolicyEvalResult[]): boolean {
-    return results.some((r) => r.matched && r.action.requireApproval === true);
-  }
-
-  /**
-   * 获取审批提示信息
-   *
-   * 取第一个 requireApproval=true 的 approvalMessage
-   */
-  static getApprovalMessage(results: PolicyEvalResult[]): string {
-    const hit = results.find((r) => r.matched && r.action.requireApproval === true);
-    return hit?.action.approvalMessage ?? '';
-  }
-
-  // ============================================================
-  // 内部方法
-  // ============================================================
-
-  private static matchKeywords(keywords: string[], lowerInput: string): boolean {
-    if (keywords.length === 0) return false;
-    for (const kw of keywords) {
-      if (!kw) continue;
-      if (lowerInput.includes(kw.toLowerCase())) {
-        return true;
-      }
-    }
-    return false;
-  }
 }
 
 // ============================================================

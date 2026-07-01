@@ -105,6 +105,8 @@ export interface WorkerResult {
     /** Phase 55：缓存创建 token 数（未命中,新写入） */
     cacheCreationTokens?: number;
   };
+  /** 失败时建议的上层动作 */
+  suggestedAction?: 'retry' | 'skip' | 'abort';
 }
 
 /** 冲突检测结果 */

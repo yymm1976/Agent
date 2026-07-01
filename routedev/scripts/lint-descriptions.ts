@@ -150,7 +150,8 @@ export function collectBuiltinToolFiles(): string[] {
   return walkFiles(builtinDir)
     .filter((f) => f.endsWith('.ts'))
     // 排除辅助文件（非工具实现）
-    .filter((f) => !f.endsWith('search-utils.ts') && !f.endsWith('todo-store.ts'));
+    // Phase 53 Task 7：config-guard.ts 是守卫类（被 file-edit/file-write 调用），非独立工具
+    .filter((f) => !f.endsWith('search-utils.ts') && !f.endsWith('todo-store.ts') && !f.endsWith('config-guard.ts'));
 }
 
 /** 收集所有 SKILL.md 文件路径 */

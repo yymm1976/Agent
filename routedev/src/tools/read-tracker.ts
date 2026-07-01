@@ -5,6 +5,7 @@
 
 import { access } from 'node:fs/promises';
 import { resolve, normalize } from 'node:path';
+import * as path from 'node:path';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -21,6 +22,21 @@ export class ReadTracker {
   private readFiles = new Set<string>();
   /** 已检查过存在性的文件缓存（避免重复 fs.access） */
   private existenceCache = new Map<string, boolean>();
+  /**
+   * I1 修复：工具实际使用的工作目录。
+   * normalize 时用此目录 resolve 相对路径，而非 process.cwd()，
+   * 保证 markRead / checkWriteAllowed 在 exec / Electron / 子 Agent 场景下路径一致。
+   */
+  private workingDirectory: string;
+
+  constructor(workingDirectory?: string) {
+    this.workingDirectory = workingDirectory ?? process.cwd();
+  }
+
+  /** I1 修复：更新工作目录（切换项目时调用） */
+  setWorkingDirectory(dir: string): void {
+    this.workingDirectory = dir;
+  }
 
   /**
    * 标记文件为已读
@@ -105,10 +121,14 @@ export class ReadTracker {
 
   /**
    * 规范化路径——绝对路径 + normalize
+   * I1 修复：使用 workingDirectory 解析相对路径，而非 process.cwd()
    * file_read 和 file_write 传入的路径必须 normalize 后比对
    */
   private normalize(filePath: string): string {
-    return normalize(resolve(filePath));
+    const absolute = path.isAbsolute(filePath)
+      ? filePath
+      : resolve(this.workingDirectory, filePath);
+    return normalize(absolute);
   }
 
   /**
@@ -133,7 +153,8 @@ export class ReadTracker {
 
 /**
  * 创建 ReadTracker 的工厂函数
+ * @param workingDirectory 工具实际使用的工作目录（I1 修复）
  */
-export function createReadTracker(): ReadTracker {
-  return new ReadTracker();
+export function createReadTracker(workingDirectory?: string): ReadTracker {
+  return new ReadTracker(workingDirectory);
 }

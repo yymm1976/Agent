@@ -15,6 +15,8 @@ import { MCPTool } from './mcp-tool.js';
 import { logger } from '../../utils/logger.js';
 // Phase 32 Task 4.2：接入 ToolResultSanitizer 的注入检测能力
 import { ToolResultSanitizer } from '../result-sanitizer.js';
+// Phase 53 Task 5：MCP 工具安全扫描器（投毒/仿冒/隐藏指令/地毯式替换 4 类威胁检测）
+import { McpSecurityScanner } from './security-scanner.js';
 
 // Phase 38 修复：版本号通过构建时注入的 __ROUTEDEV_VERSION__ 获取，
 // 避免运行时 createRequire('../../../package.json') 在 Electron asar 中失效。
@@ -73,6 +75,8 @@ export class MCPClientManager {
   private sanitizer?: ToolResultSanitizer;
   // MCP 全局配置（C6/I9 使用）
   private mcpConfig?: MCPConfig;
+  // Phase 53 Task 5：MCP 安全扫描器（可选，未注入时跳过扫描）
+  private securityScanner?: McpSecurityScanner;
   // I9：重连定时器（serverId → timer）
   private reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // I9：重连尝试次数（serverId → attempts）
@@ -96,6 +100,11 @@ export class MCPClientManager {
   /** C6/I9：注入 MCP 全局配置（connectTimeout / autoReconnect） */
   setMcpConfig(config: MCPConfig): void {
     this.mcpConfig = config;
+  }
+
+  /** Phase 53 Task 5：注入 MCP 安全扫描器，注册前扫描工具定义 */
+  setSecurityScanner(scanner: McpSecurityScanner): void {
+    this.securityScanner = scanner;
   }
 
   async connect(entry: MCPServerEntry): Promise<MCPConnectionInfo> {
@@ -293,6 +302,22 @@ export class MCPClientManager {
         }
       }
 
+      // Phase 53 Task 5：MCP 安全扫描（受 scanner 注入控制，未注入时跳过）
+      if (this.securityScanner) {
+        const findings = this.securityScanner.scan({
+          name: mcpToolDef.name,
+          description: mcpToolDef.description ?? '',
+          inputSchema: mcpToolDef.inputSchema as Record<string, unknown> | undefined,
+        });
+        if (this.securityScanner.shouldBlock(findings)) {
+          logger.warn(`MCP tool "${mcpToolDef.name}" blocked by security scanner`, {
+            server: state.entry.name,
+            findings: findings.map(f => ({ type: f.threatType, severity: f.severity })),
+          });
+          continue; // 跳过此工具的注册
+        }
+      }
+
       const namespacedName = `mcp__${serverId}__${mcpToolDef.name}`;
 
       const mcpTool = new MCPTool(
@@ -302,7 +327,8 @@ export class MCPClientManager {
         state.entry,
       );
 
-      this.registry.register(mcpTool);
+      // M1 修复：MCP 工具注册使用 forceOverwrite=false，防止外部工具覆盖已有工具
+      this.registry.register(mcpTool, false);
       state.tools.push(mcpTool);
 
       logger.debug('MCP tool registered', {

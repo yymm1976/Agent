@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ensureDir } from '../utils/paths.js';
-import type { ScheduledTask } from './types.js';
+import type { ScheduleStoreSnapshot, ScheduledTask, TaskExecutionRecord } from './types.js';
 
 /**
  * 定时任务存储
@@ -26,6 +26,7 @@ export class ScheduleStore {
   private readonly filePath: string;
   /** I4 修复：内存缓存（写穿模式） */
   private cache: ScheduledTask[] | null = null;
+  private executionRecords: TaskExecutionRecord[] | null = null;
 
   constructor(filePath: string) {
     this.filePath = filePath;
@@ -47,10 +48,18 @@ export class ScheduleStore {
       const data = JSON.parse(content);
       // 兼容两种格式：纯数组 或 { tasks: [...] }
       let tasks: ScheduledTask[];
-      if (Array.isArray(data)) tasks = data as ScheduledTask[];
-      else if (data && Array.isArray(data.tasks)) tasks = data.tasks as ScheduledTask[];
-      else tasks = [];
+      let records: TaskExecutionRecord[] = [];
+      if (Array.isArray(data)) {
+        tasks = data as ScheduledTask[];
+      } else if (data && Array.isArray(data.tasks)) {
+        const snapshot = data as ScheduleStoreSnapshot;
+        tasks = snapshot.tasks;
+        records = Array.isArray(snapshot.executionRecords) ? snapshot.executionRecords : [];
+      } else {
+        tasks = [];
+      }
       this.cache = tasks;
+      this.executionRecords = records;
       return [...tasks];
     } catch (e) {
       // 区分"文件不存在"（合理首次启动）与"文件存在但损坏"（需保护）
@@ -58,6 +67,7 @@ export class ScheduleStore {
       if (isNotFound) {
         // 首次启动：文件不存在，初始化空缓存是安全的
         this.cache = [];
+        this.executionRecords = [];
         return [];
       }
       // I28 修复：文件存在但解析失败时记录错误，避免静默跳过导致用户不知道数据未加载
@@ -79,7 +89,7 @@ export class ScheduleStore {
    * 保护：若 cache 为 null（说明 load 失败且未初始化），先尝试加载；
    *       加载仍失败则拒绝保存，避免用空数据覆盖磁盘上可能可恢复的文件
    */
-  save(tasks: ScheduledTask[]): void {
+  save(tasks: ScheduledTask[], executionRecords: TaskExecutionRecord[] = this.executionRecords ?? []): void {
     if (this.cache === null) {
       // cache 未初始化，说明 load 从未成功过；尝试加载一次
       this.load();
@@ -94,11 +104,12 @@ export class ScheduleStore {
     const dir = path.dirname(this.filePath);
     ensureDir(dir);
     const tmpPath = this.filePath + '.tmp';
-    fs.writeFileSync(tmpPath, JSON.stringify({ tasks }, null, 2), 'utf-8');
+    fs.writeFileSync(tmpPath, JSON.stringify({ tasks, executionRecords }, null, 2), 'utf-8');
     // rename 在同分区下是原子操作，覆盖目标文件
     fs.renameSync(tmpPath, this.filePath);
     // I4 修复：更新内存缓存
     this.cache = [...tasks];
+    this.executionRecords = [...executionRecords];
   }
 
   /**
@@ -151,57 +162,32 @@ export class ScheduleStore {
    * @throws 重试耗尽后抛出包含最后一次错误信息的 Error
    */
   update(id: string, updates: Partial<ScheduledTask>): ScheduledTask | null {
-    const MAX_RETRIES = 3;
-    let lastError: unknown = null;
-
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        return this.serialize(() => {
-          const tasks = this.load();
-          const task = tasks.find((t) => t.id === id);
-          if (!task) return null;
-          Object.assign(task, updates);
-          this.save(tasks);
-          return task;
-        });
-      } catch (e) {
-        lastError = e;
-        // I28 修复：记录每次重试的错误，避免静默跳过
-        console.error(
-          `[ScheduleStore] update 失败 (尝试 ${attempt + 1}/${MAX_RETRIES + 1})，id=${id}`,
-          e instanceof Error ? e.message : String(e),
-        );
-        if (attempt < MAX_RETRIES) {
-          // 指数退避：100ms, 200ms, 400ms（同步等待，store 接口为同步）
-          this.syncSleep(100 * Math.pow(2, attempt));
-        }
-      }
-    }
-
-    // 超过最大重试次数，抛出错误而非继续重试
-    throw new Error(
-      `ScheduleStore.update 失败：超过最大重试次数 ${MAX_RETRIES}。` +
-        `filePath=${this.filePath}, id=${id}, ` +
-        `lastError=${lastError instanceof Error ? lastError.message : String(lastError)}`,
-    );
+    return this.serialize(() => {
+      const tasks = this.load();
+      const task = tasks.find((t) => t.id === id);
+      if (!task) return null;
+      Object.assign(task, updates);
+      this.save(tasks);
+      return task;
+    });
   }
 
-  /**
-   * C9 修复：同步等待（用于指数退避）
-   * 使用 Atomics.wait 实现真正的同步阻塞；不可用时回退到 busy-wait
-   */
-  private syncSleep(ms: number): void {
-    if (ms <= 0) return;
-    try {
-      const buf = new Int32Array(new SharedArrayBuffer(4));
-      Atomics.wait(buf, 0, 0, ms);
-    } catch {
-      // SharedArrayBuffer 不可用时回退到 busy-wait
-      const start = Date.now();
-      while (Date.now() - start < ms) {
-        // busy-wait
-      }
+  listExecutionRecords(taskId?: string): TaskExecutionRecord[] {
+    if (this.executionRecords === null) {
+      this.load();
     }
+    const records = this.executionRecords ?? [];
+    if (!taskId) return [...records];
+    return records.filter((record) => record.taskId === taskId);
+  }
+
+  appendExecutionRecord(record: TaskExecutionRecord): void {
+    this.serialize(() => {
+      const tasks = this.load();
+      const records = this.executionRecords ?? [];
+      records.push(record);
+      this.save(tasks, records);
+    });
   }
 
   /**
@@ -223,5 +209,6 @@ export class ScheduleStore {
    */
   invalidateCache(): void {
     this.cache = null;
+    this.executionRecords = null;
   }
 }

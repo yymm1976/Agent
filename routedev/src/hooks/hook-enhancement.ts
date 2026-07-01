@@ -1,11 +1,15 @@
 // src/hooks/hook-enhancement.ts
-// Phase 40 Task 9：Hook 增强
+// Phase 40 Task 9：Hook 增强（安全审查子集）
 //
-// 四项增强：
-//   1. 函数型 Hook：注册 JS 函数而非 shell 命令，沙箱化受限 API
-//   2. Hook 试用模式：trial 期间不执行 block，只记录 "would block"
-//   3. Hook Group：多个 Hook 按顺序/并行执行，失败时 abort
-//   4. 安全审查增强：检测危险命令、base64 编码、管道链
+// 当前保留：
+//   - 安全审查增强：检测危险命令、base64 编码、管道链（analyzeCommand 等静态方法）
+//   - 函数型 Hook 静态校验：validateFunctionHook（静态分析 Hook 源码，不持有运行时状态）
+//
+// 已删除的死代码：
+//   - 试用模式（startTrial/checkTrialStatus/promoteToEnabled/disableForAnomaly/recordTrigger/shouldExecuteBlock）
+//   - Hook Group（createGroup/executeGroup/detectCircularDependency）
+//   - 函数型 Hook 注册（registerFunctionHook/executeFunctionHook）
+//   原因：上述 API 在全代码库零外部调用，仅安全审查方法被 app-init.ts 消费。
 //
 // /goal 生命周期新事件：
 //   post-plan / pre-step-execution / post-step-execution
@@ -27,7 +31,7 @@ export type GoalHookEvent =
   | 'on-goal-paused';
 
 // ============================================================
-// 函数型 Hook 接口
+// 函数型 Hook 接口（仅供 validateFunctionHook 静态校验使用）
 // ============================================================
 
 /** Hook 执行上下文（受限 API） */
@@ -57,38 +61,6 @@ export interface HookResult {
 export type FunctionHook = (ctx: HookContext) => Promise<HookResult>;
 
 // ============================================================
-// Hook 试用模式
-// ============================================================
-
-/** 试用状态 */
-export interface HookTrial {
-  hookId: string;
-  status: 'trial' | 'enabled' | 'disabled';
-  triggeredCount: number;
-  lastTriggeredAt?: number;
-  anomalies: string[];
-  startedAt: number;
-  /** 试用天数，默认 7 */
-  trialDays: number;
-}
-
-// ============================================================
-// Hook Group
-// ============================================================
-
-/** Hook 组 */
-export interface HookGroup {
-  id: string;
-  name: string;
-  /** hookId 列表 */
-  hooks: string[];
-  /** 执行顺序 */
-  sequence: 'sequential' | 'parallel';
-  /** 失败行为 */
-  onFailure: 'abort' | 'warn';
-}
-
-// ============================================================
 // 安全审查：危险命令关键词
 // ============================================================
 
@@ -109,169 +81,10 @@ const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; risk: string }> = [
 ];
 
 // ============================================================
-// HookEnhancementManager
+// HookEnhancementManager（仅保留静态安全审查方法）
 // ============================================================
 
 export class HookEnhancementManager {
-  private trials: Map<string, HookTrial> = new Map();
-  private functionHooks: Map<string, FunctionHook> = new Map();
-  private groups: Map<string, HookGroup> = new Map();
-
-  // ============================================================
-  // 试用模式
-  // ============================================================
-
-  /**
-   * 启动试用
-   *
-   * @param hookId Hook ID
-   * @param trialDays 试用天数，默认 7
-   */
-  startTrial(hookId: string, trialDays: number = 7): void {
-    const trial: HookTrial = {
-      hookId,
-      status: 'trial',
-      triggeredCount: 0,
-      anomalies: [],
-      startedAt: Date.now(),
-      trialDays,
-    };
-    this.trials.set(hookId, trial);
-    logger.debug('HookEnhancementManager.startTrial', { hookId, trialDays });
-  }
-
-  /**
-   * 记录一次触发
-   */
-  recordTrigger(hookId: string, result: HookResult): void {
-    const trial = this.trials.get(hookId);
-    if (!trial) return;
-    trial.triggeredCount++;
-    trial.lastTriggeredAt = Date.now();
-    // 试用期间 block 被降级为 warn，记录为异常候选
-    if (result.action === 'block') {
-      trial.anomalies.push(`would block: ${result.message ?? '(no message)'}`);
-    }
-    if (result.action === 'abort') {
-      trial.anomalies.push(`would abort: ${result.message ?? '(no message)'}`);
-    }
-  }
-
-  /**
-   * 查询试用状态
-   *
-   * 若试用已过期（超过 trialDays），自动转为 enabled
-   */
-  checkTrialStatus(hookId: string): HookTrial {
-    const trial = this.trials.get(hookId);
-    if (!trial) {
-      // 未启动试用的视为已启用
-      return {
-        hookId,
-        status: 'enabled',
-        triggeredCount: 0,
-        anomalies: [],
-        startedAt: Date.now(),
-        trialDays: 0,
-      };
-    }
-    // 试用过期自动转 enabled
-    if (trial.status === 'trial') {
-      const elapsed = Date.now() - trial.startedAt;
-      if (elapsed > trial.trialDays * 24 * 60 * 60 * 1000) {
-        trial.status = 'enabled';
-      }
-    }
-    return trial;
-  }
-
-  /**
-   * 提升为启用（结束试用）
-   */
-  promoteToEnabled(hookId: string): void {
-    const trial = this.trials.get(hookId);
-    if (!trial) return;
-    trial.status = 'enabled';
-    logger.debug('HookEnhancementManager.promoteToEnabled', { hookId });
-  }
-
-  /**
-   * 因异常禁用
-   */
-  disableForAnomaly(hookId: string, anomaly: string): void {
-    const trial = this.trials.get(hookId);
-    if (!trial) return;
-    trial.status = 'disabled';
-    trial.anomalies.push(anomaly);
-    logger.warn('HookEnhancementManager.disableForAnomaly', { hookId, anomaly });
-  }
-
-  /**
-   * 试用期间不执行 block，只记录 "would block"
-   *
-   * 只有 status === 'enabled' 时才真正执行 block
-   */
-  static shouldExecuteBlock(trial: HookTrial): boolean {
-    return trial.status === 'enabled';
-  }
-
-  // ============================================================
-  // 函数型 Hook
-  // ============================================================
-
-  /**
-   * 注册函数型 Hook
-   */
-  registerFunctionHook(hookId: string, fn: FunctionHook): void {
-    this.functionHooks.set(hookId, fn);
-    logger.debug('HookEnhancementManager.registerFunctionHook', { hookId });
-  }
-
-  /**
-   * 执行函数型 Hook
-   *
-   * 若 Hook 未注册，返回 continue
-   * 若 Hook 处于试用/禁用状态，block 会被降级为 warn
-   */
-  async executeFunctionHook(hookId: string, ctx: HookContext): Promise<HookResult> {
-    const fn = this.functionHooks.get(hookId);
-    if (!fn) {
-      return { action: 'continue', message: `Hook ${hookId} not registered` };
-    }
-
-    let result: HookResult;
-    try {
-      result = await fn(ctx);
-    } catch (err) {
-      return {
-        action: 'warn',
-        message: `Hook ${hookId} threw: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-
-    // 试用模式：记录触发，必要时降级 block
-    const trial = this.trials.get(hookId);
-    if (trial) {
-      this.recordTrigger(hookId, result);
-      if (result.action === 'block' && !HookEnhancementManager.shouldExecuteBlock(trial)) {
-        return {
-          action: 'warn',
-          message: `[trial] would block: ${result.message ?? ''}`,
-          data: result.data,
-        };
-      }
-      if (result.action === 'abort' && trial.status === 'disabled') {
-        return {
-          action: 'warn',
-          message: `[disabled] would abort: ${result.message ?? ''}`,
-          data: result.data,
-        };
-      }
-    }
-
-    return result;
-  }
-
   /**
    * 静态分析函数型 Hook：检查是否包含文件系统写操作
    *
@@ -305,133 +118,6 @@ export class HookEnhancementManager {
     }
 
     return warnings;
-  }
-
-  // ============================================================
-  // Hook Group
-  // ============================================================
-
-  /**
-   * 创建 Hook 组
-   */
-  createGroup(group: HookGroup): void {
-    this.groups.set(group.id, group);
-    logger.debug('HookEnhancementManager.createGroup', { id: group.id, hooks: group.hooks.length });
-  }
-
-  /**
-   * 执行 Hook 组
-   *
-   * sequential：按顺序执行，任一返回 abort 则停止后续
-   * parallel：并行执行所有 Hook
-   *
-   * @returns 每个 Hook 的结果 + 是否中止
-   */
-  async executeGroup(
-    groupId: string,
-    ctx: HookContext,
-  ): Promise<{ results: Array<{ hookId: string; result: HookResult }>; aborted: boolean }> {
-    const group = this.groups.get(groupId);
-    if (!group) {
-      return { results: [], aborted: false };
-    }
-
-    const results: Array<{ hookId: string; result: HookResult }> = [];
-    let aborted = false;
-
-    if (group.sequence === 'sequential') {
-      for (const hookId of group.hooks) {
-        const result = await this.executeFunctionHook(hookId, ctx);
-        results.push({ hookId, result });
-        if (result.action === 'abort') {
-          aborted = true;
-          break;
-        }
-        // onFailure=abort 时，block 也中止
-        if (group.onFailure === 'abort' && result.action === 'block') {
-          aborted = true;
-          break;
-        }
-      }
-    } else {
-      // parallel
-      const settled = await Promise.all(
-        group.hooks.map(async (hookId) => ({
-          hookId,
-          result: await this.executeFunctionHook(hookId, ctx),
-        })),
-      );
-      results.push(...settled);
-      if (group.onFailure === 'abort') {
-        aborted = settled.some((r) => r.result.action === 'abort' || r.result.action === 'block');
-      } else {
-        aborted = settled.some((r) => r.result.action === 'abort');
-      }
-    }
-
-    return { results, aborted };
-  }
-
-  /**
-   * 检测循环依赖
-   *
-   * 通过 Hook 之间的依赖关系（此处用 hooks 数组的引用关系简化）
-   * 构建 图，用 DFS 检测环
-   *
-   * @returns 循环路径（如 ['g1', 'g2', 'g1']）或 null
-   *
-   * 注意：当前 HookGroup 不直接引用其他 group，此处用 group.id 与
-   * hooks 列表中可能存在的 group id 引用做检测（约定 hookId === groupId
-   * 时视为引用另一个 group）。
-   */
-  static detectCircularDependency(groups: HookGroup[]): string[] | null {
-    // 构建邻接表：group.id -> 它引用的其他 group.id
-    const adj = new Map<string, string[]>();
-    const groupIds = new Set(groups.map((g) => g.id));
-    for (const g of groups) {
-      const refs = g.hooks.filter((h) => groupIds.has(h));
-      adj.set(g.id, refs);
-    }
-
-    // DFS 三色标记法检测环
-    const WHITE = 0; // 未访问
-    const GRAY = 1; // 正在访问（在递归栈中）
-    const BLACK = 2; // 已完成
-    const color = new Map<string, number>();
-    for (const id of groupIds) color.set(id, WHITE);
-
-    const path: string[] = [];
-
-    const dfs = (u: string): boolean => {
-      color.set(u, GRAY);
-      path.push(u);
-      const neighbors = adj.get(u) ?? [];
-      for (const v of neighbors) {
-        if (color.get(v) === GRAY) {
-          // 找到环：从 path 中 v 第一次出现到当前
-          path.push(v);
-          return true;
-        }
-        if (color.get(v) === WHITE) {
-          if (dfs(v)) return true;
-        }
-      }
-      color.set(u, BLACK);
-      path.pop();
-      return false;
-    };
-
-    for (const id of groupIds) {
-      if (color.get(id) === WHITE) {
-        if (dfs(id)) {
-          // 从 path 中截取环
-          const last = path[path.length - 1];
-          const firstIdx = path.indexOf(last);
-          return path.slice(firstIdx);
-        }
-      }
-    }
-    return null;
   }
 
   // ============================================================

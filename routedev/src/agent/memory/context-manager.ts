@@ -35,6 +35,8 @@ import { writeFile, readFile, mkdir } from 'node:fs/promises';
 import { getAppDataDir, ensureDir } from '../../utils/paths.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+// Phase 53 Task 8：前缀感知缓存（type-only import，避免运行时循环依赖）
+import type { PrefixAwareCache } from './prefix-cache.js';
 
 // ============================================================
 // Phase 21 Task 5：压缩事件类型
@@ -52,10 +54,30 @@ export interface CompressionEvent {
   offloadedOutputs: number;
   /** 事件时间戳 */
   timestamp: number;
+  rebootTest?: RebootTest;
+}
+
+export interface RebootTest {
+  currentGoal: string;
+  completedSteps: string[];
+  blockers: string[];
+  nextStep: string;
+  constraints: string[];
+}
+
+export interface PreCompactEvent {
+  tokensBefore: number;
+  maxTokens: number;
+  messageCount: number;
+  preserveLast: number;
+  offloadThreshold: number;
+  timestamp: number;
+  rebootTest: RebootTest;
 }
 
 /** 压缩回调函数类型 */
 type CompressionCallback = (event: CompressionEvent) => void;
+type PreCompactCallback = (event: PreCompactEvent) => void;
 
 /** compressEnhanced 方法的选项 */
 interface CompressEnhancedOptions {
@@ -81,6 +103,7 @@ export class ContextManager {
   private compactor: ContextCompactor | null = null;
   /** Phase 21 Task 5：压缩回调列表 */
   private compressionCallbacks: CompressionCallback[] = [];
+  private preCompactCallbacks: PreCompactCallback[] = [];
   /** Phase 38 Task 4.2：图谱持久化 throttle 定时器 */
   private graphSaveTimer: ReturnType<typeof setTimeout> | null = null;
   /** C5 修复：trailing flush 标记——throttle 窗口内有新更新时为 true */
@@ -89,6 +112,11 @@ export class ContextManager {
   private static readonly GRAPH_SAVE_DEBOUNCE_MS = 500;
   /** Phase 45：记忆配置（推理/自动学习/注入阈值） */
   private memoryConfig: MemoryConfig;
+  /**
+   * Phase 53 Task 8：前缀感知缓存（可选）
+   * 接入后，compress 前会记录缓存命中统计（fail-open，不改变压缩行为）
+   */
+  private prefixCache?: PrefixAwareCache;
 
   constructor(config: ContextManagerConfig, writer: CheckpointWriter) {
     this.config = config;
@@ -103,6 +131,15 @@ export class ContextManager {
     this.compactor = compactor;
   }
 
+  /**
+   * Phase 53 Task 8：注入前缀感知缓存
+   * 接入后，compress 时会记录缓存统计信息（fail-open，不改变压缩行为）
+   * 传入 undefined 可显式卸载（用于配置热重载场景）
+   */
+  setPrefixCache(cache: PrefixAwareCache | null): void {
+    this.prefixCache = cache ?? undefined;
+  }
+
   /** Phase 21 Task 5：注册压缩回调 */
   onCompression(callback: CompressionCallback): void {
     this.compressionCallbacks.push(callback);
@@ -111,6 +148,14 @@ export class ContextManager {
   /** Phase 21 Task 5：移除压缩回调 */
   offCompression(callback: CompressionCallback): void {
     this.compressionCallbacks = this.compressionCallbacks.filter(cb => cb !== callback);
+  }
+
+  onPreCompact(callback: PreCompactCallback): void {
+    this.preCompactCallbacks.push(callback);
+  }
+
+  offPreCompact(callback: PreCompactCallback): void {
+    this.preCompactCallbacks = this.preCompactCallbacks.filter(cb => cb !== callback);
   }
 
   /**
@@ -181,6 +226,23 @@ export class ContextManager {
    */
   compress(messages: LLMMessage[]): { compressed: LLMMessage[]; result: CompressionResult } {
     const originalCount = messages.length;
+
+    // Phase 53 Task 8：前缀感知缓存统计（受存在性守护，fail-open）
+    // 当前实现仅记录缓存命中统计，不改变 compress 行为
+    // 后续可将 messages 转 token 序列后调用 chunkAndHash + skipExistingWrite + put 利用公共前缀
+    if (this.prefixCache) {
+      try {
+        const stats = this.prefixCache.getStats();
+        logger.debug('PrefixAwareCache stats on compress', {
+          hits: stats.hits,
+          misses: stats.misses,
+          hitRate: stats.hitRate,
+          l1Size: stats.l1Size,
+        });
+      } catch {
+        // fail-open：缓存统计异常不影响压缩主流程
+      }
+    }
 
     if (messages.length <= this.config.keepRecentMessages + 2) {
       return {
@@ -296,6 +358,26 @@ export class ContextManager {
       return { compressed: messages, result: noOpEvent };
     }
 
+    const rebootTest = this.buildRebootTest(messages);
+    const preCompactEvent: PreCompactEvent = {
+      tokensBefore,
+      maxTokens,
+      messageCount: messages.length,
+      preserveLast,
+      offloadThreshold,
+      timestamp: Date.now(),
+      rebootTest,
+    };
+    for (const cb of this.preCompactCallbacks) {
+      try {
+        cb(preCompactEvent);
+      } catch (error) {
+        logger.warn('PreCompact callback failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     let messagesCompressed = 0;
     let offloadedOutputs = 0;
     const result = [...messages];
@@ -359,6 +441,7 @@ export class ContextManager {
       messagesCompressed,
       offloadedOutputs,
       timestamp: Date.now(),
+      rebootTest,
     };
 
     // 触发回调
@@ -379,7 +462,51 @@ export class ContextManager {
       offloadedOutputs,
     });
 
+    // Phase 55 Task 2：压缩后注入 5 问 Reboot Test system message，重建 situational awareness
+    const rebootMessage: LLMMessage = {
+      role: 'system',
+      content: `📋 上下文已压缩，请基于以下 5 问快速重建 situational awareness：\n` +
+        `1. 当前目标：${rebootTest.currentGoal}\n` +
+        `2. 已完成步骤：${rebootTest.completedSteps.join('、') || '无'}\n` +
+        `3. 阻塞项：${rebootTest.blockers.join('、') || '无'}\n` +
+        `4. 下一步：${rebootTest.nextStep}\n` +
+        `5. 约束：${rebootTest.constraints.join('、') || '无'}`,
+    };
+    // 注入到 system prompt（index 0）之后
+    result.splice(1, 0, rebootMessage);
+
     return { compressed: result, result: event };
+  }
+
+  private buildRebootTest(messages: LLMMessage[]): RebootTest {
+    const text = messages.map((msg) => this.extractTextContent(msg)).filter(Boolean).join('\n');
+    return {
+      currentGoal: this.extractFirstMatch(text, [/目标[:：]\s*([^\n]+)/, /goal[:：]\s*([^\n]+)/i]) ?? '未识别',
+      completedSteps: this.extractListMatches(text, [/已完成[:：]\s*([^\n]+)/g, /completed[:：]\s*([^\n]+)/gi]),
+      blockers: this.extractListMatches(text, [/阻塞[:：]\s*([^\n]+)/g, /blocker[s]?[:：]\s*([^\n]+)/gi]),
+      nextStep: this.extractFirstMatch(text, [/下一步[:：]\s*([^\n]+)/, /next step[:：]\s*([^\n]+)/i]) ?? '继续执行当前计划',
+      constraints: this.extractListMatches(text, [/约束[:：]\s*([^\n]+)/g, /constraint[s]?[:：]\s*([^\n]+)/gi]),
+    };
+  }
+
+  private extractFirstMatch(text: string, patterns: RegExp[]): string | undefined {
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      const value = match?.[1]?.trim();
+      if (value) return value;
+    }
+    return undefined;
+  }
+
+  private extractListMatches(text: string, patterns: RegExp[]): string[] {
+    const values: string[] = [];
+    for (const pattern of patterns) {
+      for (const match of text.matchAll(pattern)) {
+        const value = match[1]?.trim();
+        if (value) values.push(value);
+      }
+    }
+    return [...new Set(values)];
   }
 
   /** 估算消息列表的总 token 数 */

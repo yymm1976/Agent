@@ -56,7 +56,7 @@ function buildRouterRules(appConfig: AppConfig): RouterRule[] {
       return appConfig.router.rules;
     }
     const fixedRules = appConfig.router.rules.map((rule) => {
-      let modelId = rule.modelId;
+      let modelId = rule.modelId ?? tierToModelId.get(rule.tier) ?? allModelIds[0];
       let fallbackModelId = rule.fallbackModelId;
 
       // 修复主模型：unconfigured 或在 providers 中找不到时替换

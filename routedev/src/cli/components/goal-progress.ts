@@ -101,7 +101,7 @@ export function renderGoalProgressText(plan: GoalPlan, now = Date.now()): string
   return lines.join('\n');
 }
 
-/** 渲染任务完成摘要 */
+/** 渲染任务完成摘要（Phase 54：简化为自然语言，不再用边框盒子） */
 export function renderGoalCompletionSummary(plan: GoalPlan): string {
   const totalSteps = plan.steps.length;
   const completedSteps = countCompleted(plan);
@@ -109,23 +109,25 @@ export function renderGoalCompletionSummary(plan: GoalPlan): string {
   const durationMs =
     plan.completedAt !== undefined && plan.createdAt !== undefined ? plan.completedAt - plan.createdAt : 0;
 
-  const lines = [
-    '┌─ ✅ 目标完成 ────────────────────────────────────┐',
-    '',
-    `  目标: ${plan.description}`,
-    `  步骤: ${completedSteps}/${totalSteps} 完成${failedSteps > 0 ? `（${failedSteps} 个失败）` : ''}`,
-    `  耗时: ${formatDuration(durationMs)}`,
-  ];
+  // Phase 54：简化为 2-3 行自然语言完成报告（不再用 ┌─└─ 边框盒子，避免与 GoalExecutionCard 折叠态重复）
+  const statusIcon = plan.status === 'completed' ? '✅' : '❌';
+  const statusText = plan.status === 'completed' ? '目标已完成' : '目标未完成';
+  const stepText = `${completedSteps}/${totalSteps} 步骤完成${failedSteps > 0 ? `（${failedSteps} 个失败）` : ''}`;
+  const durationText = formatDuration(durationMs);
+
+  let summary = `${statusIcon} ${statusText} · ${stepText} · 耗时 ${durationText}`;
 
   if (plan.verificationResult) {
     const v = plan.verificationResult;
-    lines.push(`  验证: ${v.passed ? '通过' : '未通过'}（置信度 ${(v.confidence * 100).toFixed(0)}%）`);
+    summary += `\n验证${v.passed ? '通过' : '未通过'}（置信度 ${(v.confidence * 100).toFixed(0)}%）`;
+    if (v.reasoning && v.reasoning.length > 0) {
+      // 截取验证理由前 200 字，避免过长
+      const reasoning = v.reasoning.length > 200
+        ? v.reasoning.slice(0, 200) + '…'
+        : v.reasoning;
+      summary += `：${reasoning}`;
+    }
   }
 
-  lines.push('');
-  lines.push('  📋 运行 /trace view 查看完整执行链路');
-  lines.push('  📊 运行 /cost 查看本次会话费用详情');
-  lines.push('└────────────────────────────────────────────────────┘');
-
-  return lines.join('\n');
+  return summary;
 }

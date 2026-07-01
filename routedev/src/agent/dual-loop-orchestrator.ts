@@ -65,9 +65,16 @@ import type {
   BoundedRecoveryConfig,
 } from '../config/schema.js';
 // Phase 52 消费方接入（I-2）：仅引入类型，避免运行时循环依赖
-// 实际实例由 app-init.ts 创建并通过 setter 注入；run() 中的消费逻辑待 Phase 53 完整接入
-import type { ArchitectureAwareMetricsCollector } from '../evaluation/architecture-aware-metrics.js';
-import type { GodelProposer } from './self-evolution/godel-proposer.js';
+// 实际实例由 app-init.ts 创建并通过 setter 注入；run() 中的消费逻辑由本文件实现
+import type {
+  ArchitectureAwareMetricsCollector,
+  TrajectoryInput,
+} from '../evaluation/architecture-aware-metrics.js';
+import type {
+  GodelProposer,
+  ExecutionHistoryEntry,
+  CurrentRuleEntry,
+} from './self-evolution/godel-proposer.js';
 import type { SelfHarnessLoop } from './self-evolution/self-harness-loop.js';
 // Phase 55 Task 13：SelfEvolutionFramework（消费执行信号产出优化提案）
 import { SelfEvolutionFramework } from './self-evolution/framework.js';
@@ -136,7 +143,7 @@ export class DualLoopOrchestrator {
   // Phase 52 Task 3：有界恢复管理器（仅在 boundedRecoveryConfig.enabled=true 时使用）
   private recoveryManager?: BoundedRecoveryManager;
   // Phase 52 消费方接入（I-2）：以下三个实例由 app-init.ts 创建并通过 setter 注入
-  // 未注入时 run() 中的相关分支自动跳过（向后兼容）；完整消费逻辑待 Phase 53 接入
+  // 未注入时 run() 中的相关分支自动跳过（向后兼容）；调用失败时降级为 warn 日志，不中断主流程
   private metricsCollector?: ArchitectureAwareMetricsCollector;
   private godelProposer?: GodelProposer;
   private selfHarnessLoop?: SelfHarnessLoop;
@@ -195,8 +202,10 @@ export class DualLoopOrchestrator {
    * 由 app-init.ts 在创建 ArchitectureAwareMetricsCollector 后调用。
    * 未注入时 run() 中的指标采集分支自动跳过（向后兼容）。
    *
-   * 注：当前 run() 仅记录采集意图，完整的 extractFromTrajectory 调用待 Phase 53 接入
-   *     （需要先构建 TrajectoryInput，涉及多组件事件聚合）。
+   * 注入后,runDualLoop 会在每次内循环完成后调用 extractFromTrajectory 采集指标,
+   * 输入 TrajectoryInput 从本轮 toolCallNames / goal.plan.steps.length / 重跑标记构造;
+   * router/memory/skill_flow 三个组件事件当前未在内循环中采集,置空数组(对应指标走默认值)。
+   * 调用失败时降级为 warn 日志,不中断主流程。
    */
   setMetricsCollector(collector: ArchitectureAwareMetricsCollector): void {
     this.metricsCollector = collector;
@@ -211,8 +220,10 @@ export class DualLoopOrchestrator {
    * 由 app-init.ts 在创建 GodelProposer 后调用。
    * 未注入时 run() 中的优化提案生成分支自动跳过（向后兼容）。
    *
-   * 注：当前 run() 仅记录提案意图，完整的 proposeModifications 调用待 Phase 53 接入
-   *     （需要先构建 ExecutionHistoryEntry[] / CurrentRuleEntry[]）。
+   * 注入后,runDualLoop 在外循环失败后会调用 proposeModifications 产出修改提案,
+   * 输入 executionHistory 从 loopMemory 失败历史构造(failurePoint=LoopFailure.reason),
+   * currentRules 从当前 systemPrompt 构造(仅 prompt 类型);tokensUsed/durationMs 置 0。
+   * 调用失败时降级为 warn 日志,不中断主流程。
    */
   setGodelProposer(proposer: GodelProposer): void {
     this.godelProposer = proposer;
@@ -225,8 +236,12 @@ export class DualLoopOrchestrator {
    * 由 app-init.ts 在创建 SelfHarnessLoop 后调用。
    * 未注入时 run() 中的自安全套件分支自动跳过（向后兼容）。
    *
-   * 注：当前 run() 仅记录弱点发现意图，完整的 discoverWeaknesses/proposeModifications
-   *     调用待 Phase 53 接入（需要先构建 failureLogs / currentHarness 输入）。
+   * 注入后,runDualLoop 在外循环失败后会调用 discoverWeaknesses + proposeModifications
+   * 产出 Harness 提案。failureLogs 从 loopMemory 失败历史构造
+   * (errorType=首个 gateFailure.name,failurePoint=LoopFailure.reason),
+   * currentHarness 从当前 systemPrompt 构造(prompts/rules/checkpoints 中仅 prompts 有值)。
+   * 注:validateProposal 需要 testRunner,当前未注入,故仅产出提案不自动应用。
+   * 调用失败时降级为 warn 日志,不中断主流程。
    */
   setSelfHarnessLoop(loop: SelfHarnessLoop): void {
     this.selfHarnessLoop = loop;
@@ -349,16 +364,13 @@ export class DualLoopOrchestrator {
    * Phase 55 Task 7：DualLoop 主入口（与 ReActAgentLoop.run 签名一致）
    *
    * 供 ReActAgentLoop.run 在 dualLoopOrchestrator 注入时转交控制权。
-   * 当前为最小占位（直接转交 innerAgent），完整 inner/outer 循环逻辑在 Task 9 实现。
+   * 当前实现直接转交 innerAgent，并在缺失时抛错，避免静默退化为不完整路径。
    */
   async *run(params: ReActRunParams): AsyncGenerator<ReActEvent> {
-    // Phase 55 Task 7：最小占位——直接转交 innerAgent（ReActAgentLoop 实例）
-    if (this.innerAgent) {
-      yield* this.innerAgent.run(params);
-      return;
+    if (!this.innerAgent) {
+      throw new Error('DualLoopOrchestrator.innerAgent 未注入');
     }
-    // 无 innerAgent 时抛错（不应发生，Task 9 完整接入后通过 setter 注入）
-    throw new Error('DualLoopOrchestrator.innerAgent 未注入');
+    yield* this.innerAgent.run(params);
   }
 
   /**
@@ -453,19 +465,100 @@ export class DualLoopOrchestrator {
 
       yield { type: 'inner-loop-complete', iteration, result: innerResult };
 
+      // ===== Phase 52 Task 3 补全：内循环完成后注册步骤工件（StepArtifact） =====
+      // 修复"半残"：registerRecoveryArtifact 此前无任何调用者，导致：
+      //   - recoveryManager.artifacts Map 永远为空
+      //   - 失败路径 computeRecoveryScope 的依赖闭包扩展恒跳过
+      //   - invalidateDownstreamArtifacts 恒返回空数组
+      //   - 整个有界恢复机制退化为纯线性回溯
+      // 在内循环成功产出 innerResult 后立即注册（无论外循环是否通过），
+      // 这样失败路径的 computeRecoveryScope 能读到所有已完成步骤的工件。
+      // 守卫：仅当 boundedRecoveryConfig.enabled && artifactBinding 同时为 true 时执行
+      if (
+        this.boundedRecoveryConfig?.enabled &&
+        this.boundedRecoveryConfig.artifactBinding &&
+        this.recoveryManager
+      ) {
+        try {
+          const artifact: StepArtifact = {
+            stepId,
+            // 修改了文件视为 code_change，否则视为分析类工件
+            type: innerResult.modifiedFiles.length > 0 ? 'code_change' : 'analysis',
+            // 摘要取内循环最终输出前 200 字符（与 LoopMemory 摘要习惯一致）
+            summary: innerResult.content.slice(0, 200),
+            // 工件位置取首个修改文件（无修改时置空串，BoundedRecoveryManager 不强校验此字段）
+            location: innerResult.modifiedFiles[0] ?? '',
+            // 依赖所有前序步骤（最简策略；stepIds 末尾已是当前 stepId，slice(0, -1) 取前序）
+            // 注：陷阱 #173 提到 dependsOn 链是恢复一致性核心依据
+            //   - 当前简化策略适用于线性步骤序列；若未来引入 DAG 步骤依赖需从工具调用推断实际文件依赖
+            dependsOn: stepIds.slice(0, -1),
+            producedAt: Date.now(),
+          };
+          this.registerRecoveryArtifact(artifact);
+          logger.debug('DualLoopOrchestrator: recovery artifact registered', {
+            stepId,
+            type: artifact.type,
+            modifiedFiles: innerResult.modifiedFiles.length,
+            dependsOn: artifact.dependsOn.length,
+          });
+        } catch (err) {
+          // fail-open：工件注册失败不应影响主流程，降级为 warn 日志
+          logger.warn('DualLoopOrchestrator: registerRecoveryArtifact failed (fail-open)', {
+            stepId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
       // ===== Phase 52 Task 6（I-2 消费方接入）：内循环完成后采集架构感知指标 =====
-      // 向后兼容：未注入 metricsCollector 时跳过；完整 extractFromTrajectory 调用待 Phase 53
-      // （需先聚合本轮 routerDecisions / toolCalls / dualLoopEvents 等为 TrajectoryInput）
+      // 向后兼容：未注入 metricsCollector 时跳过
+      // 失败不中断主流程：try/catch 降级为 warn 日志
       if (this.metricsCollector) {
         try {
-          logger.info('DualLoopOrchestrator: 指标采集占位（待 Phase 53 接入 extractFromTrajectory）', {
+          logger.info('DualLoopOrchestrator: 采集架构感知指标', {
             iteration,
             sensitivity: this.metricsCollector.getAnomalySensitivity(),
             toolCalls: toolCallNames.length,
             modifiedFiles: innerResult.modifiedFiles.length,
           });
+          // 真实调用：从本轮内循环事件构造 TrajectoryInput
+          //   - toolCalls：从本轮 toolCallNames 推断（success/latencyMs/isError 在内循环未采集，置默认值）
+          //   - plannerSteps：本轮的 plan 步骤数
+          //   - dualLoopEvents：当前是否为重跑（rerun=true 时表示发生过打回）
+          //   - routerDecisions / memoryAccesses / skillFlowEvents：内循环未采集，置空数组
+          const trajectory: TrajectoryInput = {
+            routerDecisions: [],
+            plannerSteps: [
+              {
+                stepId,
+                planningMs: 0,
+                stepCount: goal.plan.steps.length,
+              },
+            ],
+            memoryAccesses: [],
+            toolCalls: toolCallNames.map(name => ({
+              toolName: name,
+              success: true,
+              latencyMs: 0,
+              isError: false,
+            })),
+            skillFlowEvents: [],
+            dualLoopEvents: [
+              {
+                rerun: rerunCount > 0,
+                appealed: false,
+                blocked: false,
+              },
+            ],
+          };
+          const metrics = this.metricsCollector.extractFromTrajectory(trajectory);
+          const anomalousComponents = this.metricsCollector.identifyAnomalies(metrics);
+          logger.debug('Architecture metrics collected', {
+            components: metrics.length,
+            anomalousComponents: anomalousComponents.length,
+          });
         } catch (err) {
-          logger.warn('DualLoopOrchestrator: 指标采集占位记录失败', {
+          logger.warn('DualLoopOrchestrator: 指标采集失败', {
             error: err instanceof Error ? err.message : String(err),
           });
         }
@@ -577,6 +670,9 @@ export class DualLoopOrchestrator {
         reviewIssues: crossModelReview?.issues ?? [],
       };
       loopMemory.recordFailure(failure);
+      if (iteration >= 2) {
+        await loopMemory.save();
+      }
 
       yield {
         type: 'outer-loop-failed',
@@ -589,28 +685,102 @@ export class DualLoopOrchestrator {
       };
 
       // ===== Phase 52 Task 8/9（I-2 消费方接入）：外循环失败后生成优化提案 =====
-      // 向后兼容：未注入实例时跳过；完整 proposeModifications / discoverWeaknesses 调用待 Phase 53
-      // （需先构建 ExecutionHistoryEntry[] / CurrentRuleEntry[] / failureLogs / currentHarness 输入）
+      // 向后兼容：未注入实例时跳过
+      // 失败不中断主流程：try/catch 降级为 warn 日志
       if (this.godelProposer) {
         try {
-          logger.info('DualLoopOrchestrator: Gödel 提案占位（待 Phase 53 接入 proposeModifications）', {
+          logger.info('DualLoopOrchestrator: 生成 Gödel 提案', {
             iteration,
             reason: evaluation.reason,
           });
+          // 真实调用：从 loopMemory 失败历史构造 executionHistory
+          //   - task：goal.description（loopMemory 未保存 task 文本，用目标描述近似）
+          //   - outcome：恒为 failure（loopMemory 只存失败记录）
+          //   - failurePoint：失败原因（LoopFailure.reason）
+          //   - tokensUsed / durationMs：loopMemory 未保存，置 0（不影响风险判定逻辑）
+          const failures = loopMemory.getHistory();
+          const executionHistory: ExecutionHistoryEntry[] = failures.map(f => ({
+            task: goal.description,
+            outcome: 'failure' as const,
+            failurePoint: f.reason,
+            tokensUsed: 0,
+            durationMs: 0,
+          }));
+          // 真实调用：从当前 system prompt 构造 currentRules（最小输入，仅 prompt 类型）
+          //   - 实际场景下可注入更多规则，此处用 systemPrompt 作为最常被优化的 prompt
+          const currentRules: CurrentRuleEntry[] = [
+            {
+              file: 'system-prompt',
+              content: reactParams.systemPrompt ?? '',
+              type: 'prompt' as const,
+            },
+          ];
+          const proposals = await this.godelProposer.proposeModifications(
+            executionHistory,
+            currentRules,
+          );
+          logger.info('Gödel proposal generated', {
+            count: proposals.length,
+            proposals: proposals.map(p => ({
+              id: p.id,
+              targetFile: p.targetFile,
+              targetType: p.targetType,
+              risk: p.riskAssessment,
+              reversible: p.reversible,
+            })),
+          });
         } catch (err) {
-          logger.warn('DualLoopOrchestrator: Gödel 提案占位记录失败', {
+          logger.warn('DualLoopOrchestrator: Gödel 提案生成失败', {
             error: err instanceof Error ? err.message : String(err),
           });
         }
       }
       if (this.selfHarnessLoop) {
         try {
-          logger.info('DualLoopOrchestrator: Self-Harness 占位（待 Phase 53 接入 discoverWeaknesses）', {
+          logger.info('DualLoopOrchestrator: Self-Harness 弱点挖掘', {
             iteration,
             reason: evaluation.reason,
           });
+          // 真实调用：从 loopMemory 失败历史构造 failureLogs（discoverWeaknesses 的输入）
+          //   - failurePoint：失败原因（LoopFailure.reason）
+          //   - errorType：取首个 gateFailure 的 name 作为错误类型；无则用 'unknown'
+          //   - component：loopMemory 未保存组件信息，置 undefined（可选字段）
+          //   - timestamp：用当前时间近似（loopMemory 未保存精确时间戳）
+          const failures = loopMemory.getHistory();
+          const failureLogs = failures.map(f => ({
+            timestamp: Date.now(),
+            task: goal.description,
+            failurePoint: f.reason,
+            errorType: f.gateFailures[0]?.name ?? 'unknown',
+            component: undefined,
+          }));
+          const weaknesses = await this.selfHarnessLoop.discoverWeaknesses(failureLogs);
+          if (weaknesses.length === 0) {
+            logger.debug('Self-Harness: 无重复弱点，跳过提案生成');
+          } else {
+            // 真实调用：用当前 system prompt 构造 currentHarness（最小输入）
+            //   - prompts：当前 system prompt（最常被优化的对象）
+            //   - rules / checkpoints：当前未在内循环中追踪，置空数组
+            const currentHarness = {
+              rules: [] as string[],
+              prompts: [reactParams.systemPrompt ?? ''],
+              checkpoints: [] as string[],
+            };
+            const harnessProposals =
+              await this.selfHarnessLoop.proposeModifications(weaknesses, currentHarness);
+            logger.info('Self-Harness validation completed', {
+              weaknessCount: weaknesses.length,
+              proposalCount: harnessProposals.length,
+              proposals: harnessProposals.map(p => ({
+                id: p.id,
+                modificationType: p.modificationType,
+                riskLevel: p.riskLevel,
+                target: p.target,
+              })),
+            });
+          }
         } catch (err) {
-          logger.warn('DualLoopOrchestrator: Self-Harness 占位记录失败', {
+          logger.warn('DualLoopOrchestrator: Self-Harness 弱点挖掘失败', {
             error: err instanceof Error ? err.message : String(err),
           });
         }

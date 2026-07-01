@@ -183,8 +183,8 @@ describe('集成测试：/goal 流程', () => {
   it('完整 /goal 流程：parse → execute → verify', async () => {
     const planJson = JSON.stringify({
       steps: [
-        { id: 1, description: '检查文件' },
-        { id: 2, description: '执行验证' },
+        { id: 1, description: '检查文件', acceptanceCriteria: '文件能被读取' },
+        { id: 2, description: '执行验证', acceptanceCriteria: '验证命令执行成功' },
       ],
     });
     const verifyJson = JSON.stringify({

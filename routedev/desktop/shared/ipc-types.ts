@@ -4,8 +4,10 @@
 import type { AppConfig } from '../../src/config/schema.js';
 import type { TokenProfileSnapshot } from '../../src/agent/token-profiler.js';
 import type { TraceSpan } from '../../src/harness/trace-types.js';
+// Phase 54：GoalEvent 类型从 src/agent/goal-types.ts re-import（避免 src/ 反向引用 desktop/ 触发 rootDir 错误）
+import type { GoalEvent } from '../../src/agent/goal-types.js';
 
-export type { AppConfig, TokenProfileSnapshot };
+export type { AppConfig, TokenProfileSnapshot, GoalEvent };
 
 export interface ChatSendPayload {
   text: string;
@@ -78,6 +80,14 @@ export interface SkillCreatePayload {
   content: string;
 }
 
+/** 安装 Skill 的参数（对应 SkillMarketManager.install 入参） */
+export interface SkillInstallPayload {
+  /** Skill 名称（market 目录下的子目录名） */
+  name: string;
+  /** 可选版本号，省略时安装 currentVersion */
+  version?: string;
+}
+
 /** Skill 操作结果 */
 export interface SkillOpResult {
   success: boolean;
@@ -88,6 +98,61 @@ export interface SkillOpResult {
 /** Skill 路由测试结果 */
 export interface SkillRouteResult {
   skills: SkillInfo[];
+}
+
+// ============================================================
+// Phase 48 Task 4 接线修复：Agent Profile 管理 IPC 类型
+// ============================================================
+
+/** Agent Profile 角色 */
+export type AgentProfileRole = 'researcher' | 'executor' | 'reviewer' | 'custom';
+
+/** Agent Profile 输出格式 */
+export type AgentProfileOutputFormat = 'research_report' | 'code_change' | 'review_report' | 'custom';
+
+/** Agent Profile 质疑严重级别 */
+export type AgentProfileChallengeSeverity = 'blocking' | 'warning';
+
+/**
+ * Agent Profile 列表项（不含 systemPrompt，避免列表传输大对象）
+ * 与 AgentProfile 的差异：缺少 systemPrompt 字段
+ */
+export interface AgentProfileInfo {
+  id: string;
+  name: string;
+  type: 'agent-profile';
+  version: string;
+  role: AgentProfileRole;
+  modelId: string;
+  description: string;
+  allowedTools: string[];
+  forbiddenTools: string[];
+  canChallenge: boolean;
+  challengeSeverity: AgentProfileChallengeSeverity;
+  outputFormat: AgentProfileOutputFormat;
+  boundSkills: string[];
+  maxTokens: number;
+  maxSteps: number;
+  isBuiltin: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Agent Profile 详情（含完整 systemPrompt） */
+export interface AgentProfileDetail extends AgentProfileInfo {
+  /** 系统提示词（详情才传输） */
+  systemPrompt: string;
+}
+
+/** 保存 Profile 的载荷（与 AgentProfileDetail 同构，调用方负责填齐字段） */
+export interface ProfileSavePayload extends AgentProfileDetail {}
+
+/** Profile 操作结果（save/delete/duplicate 通用） */
+export interface ProfileOpResult {
+  success: boolean;
+  error?: string;
+  /** duplicate 时返回新 Profile 的 id */
+  id?: string;
 }
 
 /** MCP 工具信息 */
@@ -195,18 +260,6 @@ export interface ExperimentInfo {
   error?: string;
 }
 
-/** CodeGraph 引擎状态 */
-export interface CodeGraphStatus {
-  /** CodeGraph 是否可用（已安装） */
-  available: boolean;
-  /** 是否已建立索引 */
-  indexed: boolean;
-  /** 已索引文件数 */
-  fileCount?: number;
-  /** 最后更新时间（ISO 字符串） */
-  lastUpdated?: string;
-}
-
 /** Hook 信息（列表用） */
 export interface HookInfo {
   /** Hook 唯一标识 */
@@ -222,6 +275,46 @@ export interface HookInfo {
   /** 描述 */
   description: string;
 }
+
+/**
+ * Phase 39：Hook 模板（UI 展示用，替代已移除的 HookGenerator）
+ *
+ * 模板字段对应 src/hooks/templates.ts 的 HookTemplate 类型，
+ * 通过 IPC 从主进程传到渲染进程时剥离 code 字段可减少传输体积（但当前保留以便 UI 预览）
+ */
+export interface HookTemplate {
+  /** 模板唯一 ID */
+  id: string;
+  /** 模板显示名称 */
+  name: string;
+  /** 模板描述 */
+  description: string;
+  /** 触发事件 */
+  event: string;
+  /** 优先级 */
+  priority: number;
+  /** 模板代码（shell 命令字符串） */
+  code: string;
+  /** 默认是否启用 */
+  enabled: boolean;
+  /** 触发条件 */
+  condition?: { toolName?: string; filePattern?: string };
+  /** 失败行为 */
+  failBehavior: 'warn' | 'block' | 'silent';
+}
+
+/** Hook 创建参数（模板模式或自定义模式） */
+export type HookCreatePayload =
+  | { templateId: string }
+  | {
+      name: string;
+      event: string;
+      code: string;
+      description?: string;
+      priority?: number;
+      condition?: { toolName?: string; filePattern?: string };
+      failBehavior?: 'warn' | 'block' | 'silent';
+    };
 
 // ============================================================
 // Phase 47 Task 6：Checkpoint 时间轴 IPC 类型
@@ -243,6 +336,38 @@ export interface CheckpointInfo {
   isAutoCreated: boolean;
 }
 
+// ============================================================
+// Phase 54：Goal 执行结构化事件类型已移至 src/agent/goal-types.ts（rootDir 内）
+// 此处通过顶部 import type { GoalEvent } + export type re-export，避免 src/ 反向引用 desktop/
+// GoalStepStatus / GoalExecutionStatus 也一并移至 src/agent/goal-types.ts（更名为 GoalEventStepStatus 避免与 GoalStepStatus 混淆）
+// ============================================================
+
+// ============================================================
+// Phase 54：计划编辑（StepEditor）IPC 类型
+// 数据流：goal-runner.requestPlanEdit → engine-bridge → IPC plan:edit-request → store → StepEditor
+//         StepEditor 确认/取消 → IPC plan:edit-response → engine-bridge.resolvePlanEdit → goal-runner Promise resolve
+// ============================================================
+
+/** 计划编辑请求载荷（main → renderer） */
+export interface PlanEditRequestPayload {
+  /** 请求唯一标识，用于关联响应 */
+  requestId: string;
+  /** 计划快照（步骤列表 + 验证条件） */
+  plan: {
+    description: string;
+    verificationCriteria?: string;
+    steps: { id: number; description: string; acceptanceCriteria?: string; dependencies: number[]; suggestedRole?: 'researcher' | 'executor' | 'reviewer' }[];
+  };
+}
+
+/** 计划编辑响应载荷（renderer → main） */
+export interface PlanEditResponsePayload {
+  /** 关联的 requestId */
+  requestId: string;
+  /** 编辑后的步骤列表；null 表示用户取消 */
+  steps: { id: number; description: string; acceptanceCriteria?: string; dependencies: number[]; suggestedRole?: 'researcher' | 'executor' | 'reviewer' }[] | null;
+}
+
 export type MainToRendererEvent =
   | { channel: 'chat:stream'; payload: ChatStreamPayload }
   | { channel: 'chat:tool-confirm-request'; payload: { toolName: string; params: Record<string, unknown> } }
@@ -253,10 +378,12 @@ export type MainToRendererEvent =
   | { channel: 'experiment:progress'; payload: { taskId: string; phase: string; message?: string; modifiedFiles?: string[]; tokenUsage?: number } }
   // Phase 39：实验分支状态变更事件
   | { channel: 'experiment:status'; payload: { taskId: string; status: string } }
-  // Phase 39：代码地图索引进度事件
-  | { channel: 'codemap:indexing'; payload: { progress: number; fileCount?: number } }
   // Phase 39：Hook 触发事件
-  | { channel: 'hook:fired'; payload: { hookName: string; event: string; result?: string } };
+  | { channel: 'hook:fired'; payload: { hookName: string; event: string; result?: string } }
+  // Phase 54：Goal 执行结构化事件（驱动 GoalExecutionCard 就地刷新）
+  | { channel: 'goal:event'; payload: GoalEvent }
+  // Phase 54：计划编辑请求（驱动 StepEditor 显示）
+  | { channel: 'plan:edit-request'; payload: PlanEditRequestPayload };
 
 export interface RouteDevAPI {
   chat: {
@@ -305,6 +432,8 @@ export interface RouteDevAPI {
     toggle: (name: string, enabled: boolean) => Promise<boolean>;
     /** 创建新 Skill */
     create: (payload: SkillCreatePayload) => Promise<SkillOpResult>;
+    /** 从市场安装 Skill（拷贝到 .routedev/skills/ 并重新注册） */
+    install: (payload: SkillInstallPayload) => Promise<SkillOpResult>;
     /** 删除 Skill */
     delete: (name: string) => Promise<SkillOpResult>;
     /** 重新发现 Skill（从文件系统重新加载） */
@@ -339,25 +468,22 @@ export interface RouteDevAPI {
     /** 获取实验分支的 diff */
     getDiff: (experimentId: string) => Promise<{ diff: string; filesChanged: number; error?: string }>;
   };
-  // Phase 39：代码地图 API
-  codemap: {
-    /** 检查 CodeGraph 引擎状态 */
-    checkStatus: () => Promise<CodeGraphStatus>;
-    /** 安装 CodeGraph 引擎 */
-    install: () => Promise<{ success: boolean; error?: string }>;
-    /** 启动索引 */
-    startIndex: () => Promise<{ success: boolean; error?: string }>;
-  };
   // Phase 39：Hook 管理 API
   hook: {
     /** 列出所有 Hook（模板 + 自定义） */
     list: () => Promise<HookInfo[]>;
     /** 启用/禁用 Hook */
     toggle: (hookId: string, enabled: boolean) => Promise<{ success: boolean; error?: string }>;
-    /** 创建自定义 Hook（通过自然语言描述生成） */
-    create: (description: string) => Promise<{ success: boolean; hookId?: string; error?: string }>;
+    /**
+     * 创建自定义 Hook
+     * - 模板模式：传入 { templateId }
+     * - 自定义模式：传入 { name, event, code, ... }（用户自担代码风险）
+     */
+    create: (payload: HookCreatePayload) => Promise<{ success: boolean; hookId?: string; error?: string }>;
     /** 删除自定义 Hook */
     delete: (hookId: string) => Promise<{ success: boolean; error?: string }>;
+    /** 列出内置 Hook 模板（供 UI 选择创建） */
+    templates: () => Promise<HookTemplate[]>;
   };
   // Phase 47 Task 6：Checkpoint 时间轴 API
   checkpoint: {
@@ -365,6 +491,24 @@ export interface RouteDevAPI {
     list: (projectId?: string) => Promise<CheckpointInfo[]>;
     /** 回滚到指定检查点（破坏性操作，UI 需在调用前确认） */
     rollback: (checkpointId: string) => Promise<{ success: boolean; error?: string }>;
+  };
+  // Phase 54：计划编辑（StepEditor）响应 API——渲染层确认/取消后回传主进程
+  plan: {
+    /** 用户完成计划编辑后调用（steps=null 表示取消） */
+    respondEdit: (payload: PlanEditResponsePayload) => void;
+  };
+  // Phase 48 Task 4 接线修复：Agent Profile 管理 API
+  profile: {
+    /** 列出所有 Profile（不含 systemPrompt，仅列表元信息） */
+    list: () => Promise<AgentProfileInfo[]>;
+    /** 获取指定 Profile 详情（含完整 systemPrompt） */
+    get: (id: string) => Promise<AgentProfileDetail | null>;
+    /** 保存 Profile（新增或更新；内置 Profile 仅更新缓存） */
+    save: (payload: ProfileSavePayload) => Promise<ProfileOpResult>;
+    /** 删除 Profile（内置 Profile 不可删除，会返回 error） */
+    delete: (id: string) => Promise<ProfileOpResult>;
+    /** 复制 Profile 生成自定义副本（需要传入新名称） */
+    duplicate: (id: string, newName: string) => Promise<ProfileOpResult>;
   };
   on: (channel: MainToRendererEvent['channel'], callback: (payload: unknown) => void) => void;
   off: (channel: MainToRendererEvent['channel'], callback: (payload: unknown) => void) => void;

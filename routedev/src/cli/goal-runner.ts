@@ -15,6 +15,9 @@ import type { AppConfig } from '../config/schema.js';
 import type { GoalPlan, GoalPlanStatus, GoalStep, PlanStep, GoalEvent } from '../agent/goal-types.js';
 // Phase 55 Task 6：执行路径判定器（/goal 路径分发）
 import type { ExecutionRouter } from '../agent/execution-router.js';
+import { DifficultyAssessor } from '../agent/difficulty-assessor.js';
+import { LevelPathRouter } from '../agent/level-path-router.js';
+import { StateMigration } from '../agent/state-migration.js';
 // Phase 55 Task 9：DualLoop + BoundedRecovery 替代迭代闭环
 import type { DualLoopOrchestrator } from '../agent/dual-loop-orchestrator.js';
 import type { DualLoopParams } from '../agent/dual-loop-types.js';
@@ -27,6 +30,7 @@ import type { CompletionGate } from '../agent/completion-gate.js';
 import { GoalParser } from '../agent/goal-parser.js';
 import { GoalVerifier } from '../agent/goal-verifier.js';
 import { GoalGateManager, gatesFromSteps } from '../agent/goal-gates.js';
+import { archiveCurrentPlan, attestPlan, verifyPlanAttestation } from '../agent/plan-attestation.js';
 // Phase 50 Task 1：接入核心模块（默认 enabled: false，开关在 config.goalIntegration）
 import { GoalAuditor } from '../agent/goal-audit.js';
 import { GoalPersistence } from '../agent/goal-persistence.js';
@@ -34,6 +38,8 @@ import { GoalPromptBuilder } from '../agent/goal-prompt-builder.js';
 import { analyzeChangeImpact, isRequirementChange, type RequirementChange } from '../agent/requirement-change.js';
 import { logger } from '../utils/logger.js';
 import { estimateTokens } from '../utils/token-estimate.js';
+// Phase 30 P1-1：goal 路径补 profiler.persistSession，需 path 解析输出目录
+import * as path from 'node:path';
 import { renderGoalProgressText, renderGoalCompletionSummary, formatDuration } from './components/goal-progress.js';
 import { notifyRoutingFallback } from './notification.js';
 // Phase 54 Task 1/4：多 Agent 编排 + 统一审查器接入
@@ -47,6 +53,8 @@ import type { StepExecutionResult } from '../agent/task-orchestrator-types.js';
 import type { CompositionalRouterInstance } from './app-init.js';
 // Phase 55 Task 11：CompositionalRouter 底层类型（AtomicSubTask 用于 decomposeFn 签名）
 import type { AtomicSubTask } from '../skills/compositional-router.js';
+// Phase 53 P5：步骤级钩子运行器（pre-step/post-step/on-complete）
+import type { HookRunner, HookContext, StepResult } from '../agent/hooks.js';
 
 /** GoalRunner 依赖的外部对象（由 App.tsx 注入） */
 export interface GoalRunnerDeps {
@@ -103,6 +111,9 @@ export interface GoalRunnerDeps {
   unifiedReviewer?: UnifiedReviewer;
   /** Phase 55：执行路径判定器（由 app-init.ts 注入，Task 8 完成） */
   executionRouter?: ExecutionRouter;
+  difficultyAssessor?: DifficultyAssessor;
+  levelPathRouter?: LevelPathRouter;
+  stateMigration?: StateMigration;
   /**
    * Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，通过 ref 延迟绑定）
    * app-init.ts 中 DualLoopOrchestrator 在动态 import 的 .then() 回调内创建，
@@ -137,6 +148,18 @@ export interface GoalRunnerDeps {
    * CLI 端不传——澄清环节跳过，直接用原描述
    */
   onToolConfirmRequest?: (toolName: string, params: Record<string, unknown>) => void;
+  /**
+   * Phase 53 P5：步骤级钩子运行器（可选，未注入时 /goal 不触发步骤级 hook）
+   *
+   * 接入点：
+   *   - executeSingleStep 开头触发 pre-step（abort→抛 PlanAbortError，skip→返回占位内容）
+   *   - executeSingleStep 结尾触发 post-step（可修改结果，retry 硬上限 1 次）
+   *   - executeGoalPlan 末尾触发 on-complete（覆盖 single/dag/compose/legacy 全部路径）
+   *
+   * 注：pre-tool-call/post-tool-call/on-session-start/on-session-end 已通过 agentLoop.run
+   * 间接复用 AgentLoop.fireHookSafe，此处仅补充步骤级 hook，不重复触发工具级 hook
+   */
+  hookRunner?: HookRunner;
 }
 
 /**
@@ -178,7 +201,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     // Phase 54 Task 1/4：多 Agent 编排 + 统一审查器
     orchestrator, workerExecutor, blackboard, unifiedReviewer,
     // Phase 55 Task 6：执行路径判定器 + DAG 引擎（可选注入，未注入时降级到 legacy）
-    executionRouter, dagEngine, compositionalRouter,
+    executionRouter, difficultyAssessor, levelPathRouter, stateMigration, dagEngine, compositionalRouter,
     // Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，通过 ref 延迟绑定）
     dualLoopOrchestratorRef,
     nextId,
@@ -186,6 +209,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     onGoalEvent,
     goalId: depsGoalId,
     onToolConfirmRequest,
+    // Phase 53 P5：步骤级钩子运行器（可选，未注入时短路）
+    hookRunner,
   } = deps;
 
   // Phase 54：emit 辅助函数——安全调用 onGoalEvent（CLI 端未注入时为 no-op）
@@ -295,13 +320,15 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     const goalMatch = text.match(/^\/goal\s+"([^"]+)"/);
     let description: string;
     if (!goalMatch) {
-      const noQuoteMatch = text.match(/^\/goal\s+(\S+)/);
+      // M2 修复：无引号时取 /goal 后的剩余整段（去掉 --verify 等选项），
+      // 而非只取第一个非空白 token，避免多词目标被截断
+      const noQuoteMatch = text.match(/^\/goal\s+(.+?)(?:\s+--verify\s+"[^"]*")?\s*$/);
       if (!noQuoteMatch) {
         addSystemMessage('❌ 用法: /goal "目标描述" [--verify "验证条件"]');
         setIsProcessing(false);
         return;
       }
-      description = noQuoteMatch[1];
+      description = noQuoteMatch[1].trim();
     } else {
       description = goalMatch[1];
     }
@@ -356,6 +383,15 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       }
     }
 
+    const difficultyRoutingConfig = config.goal?.difficultyRouting;
+    const difficultyAssessment = difficultyRoutingConfig?.enabled
+      ? await (difficultyAssessor ?? new DifficultyAssessor({
+          llmClient: client,
+          modelId: routeDecision.model.id,
+          confidenceThreshold: difficultyRoutingConfig.confidenceThreshold,
+        })).assess(enrichedDescription)
+      : undefined;
+
     const plan = await parser.parse(enrichedDescription, {
       verificationCriteria,
       routeDecision,
@@ -364,6 +400,11 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       // 修复前：默认 30s，复杂目标分解易超时（OpenAI SDK "Request timed out."）
       timeoutMs: 120000,
     });
+    if (difficultyAssessment) {
+      plan.difficultyAssessment = difficultyRoutingConfig?.refineLevelAtExecution === false
+        ? difficultyAssessment
+        : (difficultyAssessor ?? new DifficultyAssessor()).refineAssessment(difficultyAssessment, plan);
+    }
 
     // Phase 20：通过 StepEditor 让用户编辑计划步骤
     // Phase 54 Task 5：用自主度模式（auto/semi/manual）统一判定是否需要确认计划
@@ -383,13 +424,16 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
         return;
       }
 
-      // 用编辑后的步骤更新计划
+      if (plan.attestation) {
+        archiveCurrentPlan(plan, 'user_edit');
+      }
       plan.steps = editedSteps;
     } else {
       // Phase 54 Task 5：auto 模式跳过确认时给出提示
       addSystemMessage(`⚙️ 自主度模式: ${autonomyMode}，跳过计划确认直接执行`);
     }
 
+    attestPlan(plan, skipPlanConfirmation ? 'auto_confirm' : 'user_confirm');
     addSystemMessage('✅ 计划已确认，开始执行...');
     addSystemMessage(renderGoalProgressText(plan));
     currentPlanRef.current = plan;
@@ -534,9 +578,10 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       }
     } catch (error) {
       logger.error('Goal verification failed', { error: String(error) });
-      plan.status = 'completed';
+      plan.status = 'failed';
+      return false;
     }
-    return true; // 验证异常时保持向后兼容
+    return true;
   }
 
   /**
@@ -631,6 +676,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
         conversationHistory: conversationHistoryRef.current,
         systemPrompt: systemPromptRef.current,
         signal: stepAbort.signal,
+        onModelSuccess: modelId => modelRouter.recordModelSuccess(modelId),
+        onModelFailure: modelId => modelRouter.recordModelFailure(modelId),
         onConfirmTool: async (toolName, args) => {
           // Phase 54 修复：自主度模式判定——auto/semi 直接批准
           const mode = (config.autonomy?.defaultMode ?? 'semi') as AutonomyMode;
@@ -911,6 +958,14 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
   /** 执行目标计划：逐步骤运行 Agent Loop，支持中断 + 检查点 + 压缩 */
   async function executeGoalPlan(plan: GoalPlan): Promise<void> {
     setIsProcessing(true);
+    if (!plan.attestation) {
+      attestPlan(plan, 'execution_auto_repair');
+    }
+    if (!verifyPlanAttestation(plan)) {
+      plan.status = 'failed';
+      addSystemMessage('❌ 计划签名校验失败，已中止执行');
+      return;
+    }
     plan.status = 'executing';
     currentPlanRef.current = plan;
 
@@ -951,6 +1006,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
               status: s.status,
               dependencies: s.dependencies.map(d => String(d)),
             })),
+            attestation: plan.attestation,
+            archivedVersions: plan.archivedVersions,
           },
           status: 'executing',
           checkpointIds: [],
@@ -967,7 +1024,10 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
 
     // Phase 55 Task 6：用 ExecutionRouter 替代 orchestrationEnabled 判定
     // executionRouter 未注入时降级到 legacy（保持向后兼容，走原多 Agent 编排路径）
-    const route = executionRouter
+    const difficultyRoute = config.goal?.difficultyRouting?.enabled && plan.difficultyAssessment
+      ? (levelPathRouter ?? new LevelPathRouter()).selectPath(plan.difficultyAssessment.level)
+      : null;
+    const route = difficultyRoute ? difficultyRoute.route : executionRouter
       ? executionRouter.route(plan, {
           mode: config.goal?.executionRouter?.mode ?? 'auto',
           explicitRoute: config.goal?.executionRouter?.explicitRoute,
@@ -975,29 +1035,68 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
           dagMaxDomains: config.goal?.executionRouter?.dagMaxDomains ?? 1,
         })
       : 'legacy';
+    if (difficultyRoute) {
+      addSystemMessage(`🧭 难度路由: ${plan.difficultyAssessment!.level} → ${route}（${difficultyRoute.reason}）`);
+    }
 
-    switch (route) {
-      case 'single':
-        // 走单 Agent 串行路径（复用现有 for 循环逻辑，提取为独立函数）
-        await executePlanWithSingleAgent(plan);
-        break;
-      case 'dag':
-        await executePlanWithDag(plan);
-        break;
-      case 'compose':
-        await executePlanWithCompose(plan);
-        break;
-      case 'legacy':
-        // 旧路径 fallback（原多 Agent 编排逻辑，验证通过后删除见设计文档第 9 节）
-        await executePlanWithMultiAgent(plan);
-        break;
+    // Phase 55 Task 5：动态升降级——执行后检测信号，升级则迁移状态并用新路径重跑剩余步骤
+    // 限制最多 1 次升级重跑，避免无限循环
+    let levelSwitchCount = 0;
+    let currentRoute = route;
+    while (true) {
+      switch (currentRoute) {
+        case 'single':
+          await executePlanWithSingleAgent(plan);
+          break;
+        case 'dag':
+          await executePlanWithDag(plan);
+          break;
+        case 'compose':
+          await executePlanWithCompose(plan);
+          break;
+        case 'legacy':
+          await executePlanWithMultiAgent(plan);
+          break;
+      }
+
+      // 检测升降级信号
+      if (config.goal?.difficultyRouting?.dynamicLevelSwitchEnabled && plan.difficultyAssessment && levelSwitchCount < 1) {
+        const levelRouter = levelPathRouter ?? new LevelPathRouter();
+        const suggestion = levelRouter.detectLevelSwitch(plan.difficultyAssessment.level, {
+          failureCount: plan.steps.filter(step => step.status === 'failed').length,
+          contextUsagePercent: tracker.getTaskUsagePercent(),
+          crossDomain: (plan.uniqueDomains?.length ?? 0) > 1,
+          unresolvedBlockers: plan.steps.filter(step => step.status === 'failed' && step.error).length,
+        });
+        if (suggestion) {
+          const migration = (stateMigration ?? new StateMigration()).migrate({ plan, suggestion });
+          plan.steps = migration.plan.steps;
+          plan.difficultyAssessment = migration.plan.difficultyAssessment;
+          // 还有 pending 步骤才需要重跑
+          const hasPending = plan.steps.some(step => step.status === 'pending' || step.status === 'failed');
+          if (hasPending) {
+            currentRoute = (levelPathRouter ?? new LevelPathRouter()).selectPath(suggestion.to).route;
+            levelSwitchCount++;
+            addSystemMessage(`🔁 动态升降级: ${migration.migrationSummary}，切换到 ${currentRoute} 路径重跑剩余步骤`);
+            continue;
+          }
+        }
+      }
+      break;
     }
 
     // 验证目标完成度
     // Phase 43：根据 config.goal.auditMode 控制验证与代码验证门的顺序/开关
     plan.completedAt = Date.now();
+    const hasFailedSteps = plan.steps.some(step => step.status === 'failed');
+    if (hasFailedSteps) {
+      plan.status = 'failed';
+      addSystemMessage('❌ 存在失败步骤，目标标记为失败');
+    }
     const auditMode = goalCfg?.auditMode ?? 'completion_gate_first';
-    if (auditMode === 'none') {
+    if ((plan.status as GoalPlanStatus) === 'failed') {
+      addSystemMessage('⏭ 已跳过目标验证（存在失败步骤）');
+    } else if (auditMode === 'none') {
       plan.status = 'completed';
       addSystemMessage('⏭ 已跳过目标验证（auditMode=none）');
     } else if (auditMode === 'completion_gate_first') {
@@ -1062,6 +1161,42 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
 
     currentPlanRef.current = null;
     setIsProcessing(false);
+
+    // Phase 30 P1-1：goal 路径补 profiler.persistSession——与 chat-runner 路径对齐
+    // 原缺陷：executeGoalPlan 末尾未调用 persistSession，长任务（数十分钟）的 token profile 仅在内存中，
+    // 应用崩溃或用户关闭后丢失。此处 fail-open，不阻塞主流程
+    if (profiler && config.optimization?.tokenTracking?.persistSession) {
+      try {
+        const outputDir = config.optimization.tokenTracking.outputDir;
+        const fullDir = path.isAbsolute(outputDir) ? outputDir : path.join(process.cwd(), outputDir);
+        await profiler.persistSession(fullDir, `goal-${plan.id}-${Date.now()}`);
+      } catch (err) {
+        logger.warn('GoalRunner: profiler.persistSession failed (non-blocking)', { error: String(err) });
+      }
+    }
+
+    // Phase 53 P5：on-complete 钩子——覆盖 single/dag/compose/legacy 全部执行路径
+    // 触发一次，传入最终 plan.status 与步骤统计。返回值仅 message 字段有效，fail-open
+    if (hookRunner) {
+      try {
+        const completedSteps = plan.steps.filter(s => s.status === 'completed').length;
+        const completeCtx: HookContext = {
+          stepId: 'plan-complete',
+          agentId: 'goal',
+          projectPath: process.cwd(),
+          stepResult: {
+            success: plan.status === 'completed',
+            output: `${completedSteps}/${plan.steps.length} 步骤完成`,
+            durationMs: plan.completedAt !== undefined && plan.createdAt !== undefined
+              ? plan.completedAt - plan.createdAt
+              : 0,
+          },
+        };
+        await hookRunner.fire('on-complete', completeCtx);
+      } catch (err) {
+        logger.warn('GoalRunner: on-complete hook failed (fail-open)', { error: String(err) });
+      }
+    }
   }
 
   /**
@@ -1069,10 +1204,32 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
    * 从 executePlanWithSingleAgent 提取，供 single 和 dag 路径复用，避免代码重复。
    * 不管理 step.status/gate/emit/checkpoint——这些由调用方负责。
    * 预算耗尽或用户中断时抛 PlanAbortError，调用方据此中止整个 plan。
+   * Phase 53 P5：注入 hookRunner 后，pre-step（abort/skip）+ post-step（abort/modifiedResult）触发
    * @param step 待执行的步骤
    * @returns 步骤执行内容（assistant 回复全文）
    */
   async function executeSingleStep(step: GoalStep): Promise<string> {
+    // ===== Phase 53 P5：pre-step 钩子 =====
+    if (hookRunner) {
+      try {
+        const preCtx: HookContext = {
+          stepId: String(step.id),
+          agentId: 'goal',
+          projectPath: process.cwd(),
+        };
+        const preResult = await hookRunner.fire('pre-step', preCtx);
+        if (preResult.action === 'abort') {
+          throw new PlanAbortError(preResult.message ?? 'pre-step 钩子中止');
+        }
+        if (preResult.action === 'skip') {
+          return '[skipped by pre-step hook]';
+        }
+      } catch (err) {
+        if (err instanceof PlanAbortError) throw err;
+        logger.warn('GoalRunner: pre-step hook failed (fail-open)', { error: String(err) });
+      }
+    }
+
     const softStopRatio = goalCfg?.softStopRatio ?? 0.9;
     const classifyResult = await classifier.classify({ query: step.description });
     const routeDecision = await modelRouter.route(classifyResult);
@@ -1093,6 +1250,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       conversationHistory: conversationHistoryRef.current,
       systemPrompt: systemPromptRef.current,
       signal: stepAbort.signal,
+      onModelSuccess: modelId => modelRouter.recordModelSuccess(modelId),
+      onModelFailure: modelId => modelRouter.recordModelFailure(modelId),
       onConfirmTool: async (toolName, args) => {
         // Phase 54 修复：自主度模式判定——auto/semi 直接批准
         const mode = (config.autonomy?.defaultMode ?? 'semi') as AutonomyMode;
@@ -1146,6 +1305,36 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     if (stepAbort.signal.aborted) {
       throw new PlanAbortError('用户中断');
     }
+
+    // ===== Phase 53 P5：post-step 钩子 =====
+    // 支持 abort（中止整个 plan）和 modifiedResult（替换步骤输出）
+    // retry 不支持（需重写主体为独立函数，留作未来扩展）；fail-open 不阻塞主流程
+    if (hookRunner) {
+      try {
+        const stepResult: StepResult = {
+          success: true,
+          output: stepContent,
+          durationMs: 0, // 精确耗时由 trace 记录，此处仅满足类型
+        };
+        const postCtx: HookContext = {
+          stepId: String(step.id),
+          agentId: 'goal',
+          projectPath: process.cwd(),
+          stepResult,
+        };
+        const postResult = await hookRunner.fire('post-step', postCtx);
+        if (postResult.action === 'abort') {
+          throw new PlanAbortError(postResult.message ?? 'post-step 钩子中止');
+        }
+        if (postResult.modifiedResult?.output) {
+          stepContent = postResult.modifiedResult.output;
+        }
+      } catch (err) {
+        if (err instanceof PlanAbortError) throw err;
+        logger.warn('GoalRunner: post-step hook failed (fail-open)', { error: String(err) });
+      }
+    }
+
     return stepContent;
   }
 
@@ -1553,6 +1742,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     addSystemMessage('🎭 Phase 54：启用多 Agent 协作编排');
 
     // 1. 初始化 Blackboard：写入当前目标（所有 Worker 可读）
+    blackboard.reset();
     blackboard.setGoal(plan.description, 'executing');
 
     // 2. 调用 Orchestrator.plan() 生成执行计划
@@ -1598,7 +1788,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       addSystemMessage(`▶ 并行组 [${group.join(',')}]：${groupSteps.length} 个步骤并行执行`);
 
       // 组内并行执行（Promise.all），任一失败不中断其他 Worker（异常隔离）
-      await Promise.all(
+      const workerResults = await Promise.all(
         groupSteps.map(step => {
           // 从 dependencies 中找到该步骤的依赖信息（含角色分配）
           // StepDependency.assignedRole → executeWorkerStep.dep.role（字段名映射）
@@ -1620,6 +1810,15 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
               });
         }),
       );
+      const abortResult = workerResults.find(result => !result.success && result.suggestedAction === 'abort');
+      if (abortResult) {
+        plan.status = 'failed';
+        addSystemMessage(`⏹ Worker 请求中止：${abortResult.conclusion}`);
+        return;
+      }
+      if ((plan.status as GoalPlanStatus) === 'failed') {
+        return;
+      }
     }
   }
 
@@ -1814,6 +2013,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
         step.status = 'failed';
         step.completedAt = Date.now();
         step.error = workerResult.conclusion;
+        plan.status = 'failed';
         gateManager.updateGate(`step-${step.id}`, 'failed', step.error);
         addSystemMessage(`❌ [${dep.role}] 步骤 ${step.id} 失败: ${workerResult.conclusion}`);
         // Phase 54：step_update failed

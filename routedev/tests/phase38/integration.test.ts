@@ -405,7 +405,7 @@ describe('集成测试 2：子 Agent 防递归', () => {
     const childSizeAtCreation = child.size;
 
     // 父 registry 在子创建后注册新工具（用 FileReadTool 覆盖注册，不报错）
-    parent.register(new FileReadTool());
+    parent.register(new FileReadTool(), true);
     expect(parent.has('file_read')).toBe(true);
 
     // 子 registry 在创建时已确定工具集，不受父后续注册影响

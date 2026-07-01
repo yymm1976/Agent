@@ -45,6 +45,10 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
   const updateReviewerPolicy = (patch: Partial<typeof draft.reviewerPolicy>) => {
     updateDraft({ reviewerPolicy: { ...draft.reviewerPolicy, ...patch } });
   };
+  // Phase 50 Task 1：Goal 流程模块接入开关
+  const updateGoalIntegration = (patch: Partial<NonNullable<typeof draft.goalIntegration>>) => {
+    updateDraft({ goalIntegration: { ...draft.goalIntegration, ...patch } });
+  };
 
   return (
     <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
@@ -287,6 +291,79 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
               id="tiered-review"
               checked={draft.reviewerPolicy?.tieredReviewEnabled ?? true}
               onCheckedChange={(checked) => updateReviewerPolicy({ tieredReviewEnabled: checked })}
+            />
+          </div>
+
+        </CardContent>
+      </Card>
+
+      {/* Phase 50 Task 1：Goal 流程模块接入 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Goal 流程模块接入</CardTitle>
+          <CardDescription>
+            /goal 流程四个核心模块的渐进式接入开关。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+
+          {/* 1. 三层独立审计 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="goal-integration-audit">三层独立审计</Label>
+              <p className="text-xs text-rd-textMuted">
+                GoalAuditor 三层独立审计（completion_gate + verifier_llm + reviewer_agent）。
+              </p>
+            </div>
+            <Switch
+              id="goal-integration-audit"
+              checked={draft.goalIntegration?.auditEnabled ?? true}
+              onCheckedChange={(checked) => updateGoalIntegration({ auditEnabled: checked })}
+            />
+          </div>
+
+          {/* 2. 持久化与崩溃恢复 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="goal-integration-persistence">持久化与崩溃恢复</Label>
+              <p className="text-xs text-rd-textMuted">
+                写入 .routedev/goals/&lt;id&gt;.json，崩溃后可恢复继续执行。
+              </p>
+            </div>
+            <Switch
+              id="goal-integration-persistence"
+              checked={draft.goalIntegration?.persistenceEnabled ?? true}
+              onCheckedChange={(checked) => updateGoalIntegration({ persistenceEnabled: checked })}
+            />
+          </div>
+
+          {/* 3. GoalPromptBuilder 五段式规范构造 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="goal-integration-prompt-builder">GoalPromptBuilder 五段式规范</Label>
+              <p className="text-xs text-rd-textMuted">
+                开启后用五段式规范构造 /goal 提示词，提升结构化程度。
+              </p>
+            </div>
+            <Switch
+              id="goal-integration-prompt-builder"
+              checked={draft.goalIntegration?.promptBuilderEnabled ?? false}
+              onCheckedChange={(checked) => updateGoalIntegration({ promptBuilderEnabled: checked })}
+            />
+          </div>
+
+          {/* 4. RequirementChangeAnalyzer 需求变更分析 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="goal-integration-requirement-change">需求变更分析</Label>
+              <p className="text-xs text-rd-textMuted">
+                RequirementChangeAnalyzer：检测需求中途变更并触发重规划。
+              </p>
+            </div>
+            <Switch
+              id="goal-integration-requirement-change"
+              checked={draft.goalIntegration?.requirementChangeEnabled ?? false}
+              onCheckedChange={(checked) => updateGoalIntegration({ requirementChangeEnabled: checked })}
             />
           </div>
 

@@ -11,11 +11,11 @@ export class ToolRegistry implements IToolRegistry {
 
   /**
    * 注册工具
-   * M1 修复：默认重复注册时记录警告但仍覆盖（保持向后兼容）
+   * 默认拒绝重复注册，调用方必须显式传入 forceOverwrite=true 才能覆盖
    * @param tool 要注册的工具
-   * @param forceOverwrite 是否强制覆盖（默认 true，保持向后兼容；设为 false 时重复注册抛异常）
+   * @param forceOverwrite 是否强制覆盖（默认 false，避免插件或重复初始化静默覆盖工具）
    */
-  register(tool: ITool, forceOverwrite = true): void {
+  register(tool: ITool, forceOverwrite = false): void {
     const name = tool.definition.name;
     if (this.tools.has(name)) {
       if (!forceOverwrite) {

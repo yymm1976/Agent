@@ -3,10 +3,12 @@
 //
 // 设计目标：
 //   1. 提供内置 SOP（API 设计、数据库迁移等）
-//   2. 命中后返回 injectPrompt（步骤说明）
-//   3. getPrompts 聚合所有命中的 prompt 供调用方注入
+//   2. 命中后通过 PolicyEngine 统一调度，返回 injectPrompt（步骤说明）
+//
+// 注：静态 evaluate / getPrompts / matchKeywords 已作为死代码删除
+//     （PolicyEngine 内部通过 evaluateAction 遍历 policies 数组直接处理）
 
-import type { Policy, PolicyEvalResult } from './policy-engine.js';
+import type { Policy } from './policy-engine.js';
 
 // ============================================================
 // Playbook
@@ -50,62 +52,6 @@ export class Playbook {
       },
     },
   ];
-
-  /**
-   * 评估用户输入
-   *
-   * 只评估 type='playbook' 且 enabled=true 的策略
-   */
-  static evaluate(userInput: string, policies: Policy[]): PolicyEvalResult[] {
-    if (!userInput) return [];
-
-    const lowerInput = userInput.toLowerCase();
-    const results: PolicyEvalResult[] = [];
-
-    const sorted = [...policies]
-      .filter((p) => p.type === 'playbook' && p.enabled)
-      .sort((a, b) => b.priority - a.priority);
-
-    for (const policy of sorted) {
-      const matched = Playbook.matchKeywords(policy.trigger.keywords ?? [], lowerInput);
-      if (matched) {
-        results.push({
-          matched: true,
-          action: policy.action,
-          policyId: policy.id,
-          policyName: policy.name,
-        });
-      }
-    }
-
-    return results;
-  }
-
-  /**
-   * 从评估结果中提取所有 injectPrompt
-   *
-   * 用于将命中的 SOP 注入到 LLM 上下文
-   */
-  static getPrompts(results: PolicyEvalResult[]): string[] {
-    return results
-      .filter((r) => r.matched && r.action.injectPrompt)
-      .map((r) => r.action.injectPrompt as string);
-  }
-
-  // ============================================================
-  // 内部方法
-  // ============================================================
-
-  private static matchKeywords(keywords: string[], lowerInput: string): boolean {
-    if (keywords.length === 0) return false;
-    for (const kw of keywords) {
-      if (!kw) continue;
-      if (lowerInput.includes(kw.toLowerCase())) {
-        return true;
-      }
-    }
-    return false;
-  }
 }
 
 // ============================================================

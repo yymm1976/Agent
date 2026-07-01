@@ -8,6 +8,7 @@ import {
   CheckCircle2, AlertCircle, Archive, RotateCcw, Folder, BookOpen, Sparkles, RefreshCw,
   ChevronDown, ChevronRight, Map as MapIcon, Webhook, Code, Wand2, GraduationCap,
   ShoppingBag, Gauge, Brain, Lightbulb, Users,
+  ShieldCheck, Split, Activity,
 } from 'lucide-react';
 import type {
   AppConfig, ProviderConfig, ModelConfig, RouterRule, SecurityConfig,
@@ -38,6 +39,14 @@ import { SettingsConversationTab } from '../components/settings/SettingsConversa
 import { SettingsExperimentTab } from '../components/settings/SettingsExperimentTab.js';
 import { SettingsGoalTab } from '../components/settings/SettingsGoalTab.js';
 import { SettingsHookEnhancementTab } from '../components/settings/SettingsHookEnhancementTab.js';
+import { SettingsReviewerTab } from '../components/settings/SettingsReviewerTab.js';
+import { SettingsDelegationTab } from '../components/settings/SettingsDelegationTab.js';
+import { SettingsPhase52IntegrationTab } from '../components/settings/SettingsPhase52IntegrationTab.js';
+import { SettingsPhase53IntegrationTab } from '../components/settings/SettingsPhase53IntegrationTab.js';
+import { SettingsErrorDisplayTab } from '../components/settings/SettingsErrorDisplayTab.js';
+import { SettingsResultSchemaTab } from '../components/settings/SettingsResultSchemaTab.js';
+import { SettingsModelDisplayTab } from '../components/settings/SettingsModelDisplayTab.js';
+import { SettingsConfigLayeringTab } from '../components/settings/SettingsConfigLayeringTab.js';
 
 interface SettingsPageProps {
   config: AppConfig | null;
@@ -56,7 +65,14 @@ type TabId =
   | 'policies' | 'market' | 'subagents'
   | 'persona' | 'voice' | 'discovery'
   | 'conversation' | 'experiment'
-  | 'goal' | 'hookEnhancement';
+  | 'goal' | 'hookEnhancement'
+  // Phase 51 新增 tab
+  | 'reviewer' | 'delegation' | 'activity'
+  // Phase 52 配置补 UI 入口（I-1）
+  | 'phase52Integration' | 'errorDisplay'
+  | 'resultSchema' | 'modelDisplay' | 'configLayering'
+  // Phase 53 集成 tab
+  | 'phase53Integration';
 
 // 子 Agent Profile UI 类型（与 src/agents/profiles/types.ts 中的 AgentProfile 对应，
 // 此处仅用于 SettingsPage 展示与本地编辑，不直接依赖 src/ 类型避免跨工程导入）
@@ -269,6 +285,8 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
   const [channelCreds, setChannelCreds] = useState<Record<string, string>>({});
   // 渠道凭据显示/隐藏状态（按 字段key 存储）
   const [showChannelCreds, setShowChannelCreds] = useState<Record<string, boolean>>({});
+  // Webhook authToken 显示/隐藏切换
+  const [showChannelAuthToken, setShowChannelAuthToken] = useState(false);
   // 渠道编辑：null=无编辑，number=编辑指定 index 的 options
   const [editingChannelIdx, setEditingChannelIdx] = useState<number | null>(null);
   // 导入文件引用
@@ -478,20 +496,31 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
     });
   };
 
-  /** AI 生成 Hook（通过自然语言描述） */
+  /** 创建 Hook（自定义模式：把描述作为 shell 命令直接保存）
+   *  注：原 HookGenerator（LLM 生成）已移除，UI 改为模板选择 + 自定义命令两种模式
+   *  当前 UI 仍保留描述输入框，但将其作为自定义 shell 命令保存（用户自担风险）
+   */
   const handleHookAiGenerate = async () => {
     if (!hookCreateForm || !hookCreateForm.description.trim()) return;
     setHookCreateForm({ ...hookCreateForm, generating: true });
     try {
-      const result = await window.routedev.hook.create(hookCreateForm.description);
+      const desc = hookCreateForm.description.trim();
+      // 把描述前 30 字符作为 name，整个描述作为 code（shell 命令）
+      // 注：自然语言描述作为 shell 命令通常会失败，建议用户在描述中直接输入 shell 命令
+      const result = await window.routedev.hook.create({
+        name: desc.slice(0, 30),
+        event: 'post-tool-call',
+        code: desc,
+        description: desc,
+      });
       if (result.success && result.hookId) {
         setHookCreateForm(null);
         await refreshHooks();
       } else {
-        setAlertMsg(`生成失败: ${result.error}`);
+        setAlertMsg(`创建失败: ${result.error}`);
       }
     } catch (err) {
-      setAlertMsg(`生成失败: ${err instanceof Error ? err.message : String(err)}`);
+      setAlertMsg(`创建失败: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       if (hookCreateForm) {
         setHookCreateForm({ ...hookCreateForm, generating: false });
@@ -747,6 +776,19 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
   // --- Phase 33 Task 3：updates 配置 ---
   const updateUpdates = (patch: Partial<typeof draft.updates>) => {
     updateDraft({ updates: { ...draft.updates, ...patch } });
+  };
+
+  // --- Phase 50 Task 5/6：Phase 48/49 模块接入开关 ---
+  const updatePhase48Integration = (patch: Partial<typeof draft.phase48Integration>) => {
+    updateDraft({ phase48Integration: { ...draft.phase48Integration, ...patch } });
+  };
+  const updatePhase49Integration = (patch: Partial<typeof draft.phase49Integration>) => {
+    updateDraft({ phase49Integration: { ...draft.phase49Integration, ...patch } });
+  };
+
+  // --- 调度器配置（Phase 37 Task 2） ---
+  const updateScheduler = (patch: Partial<typeof draft.scheduler>) => {
+    updateDraft({ scheduler: { ...draft.scheduler, ...patch } });
   };
 
   // --- Phase 33 Task 3：prompts 配置 ---
@@ -1129,6 +1171,15 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
     { id: 'experiment', label: '并行实验', icon: Gauge },
     { id: 'discovery', label: '功能发现', icon: Lightbulb },
     { id: 'hookEnhancement', label: 'Hook 增强', icon: Wand2 },
+    { id: 'reviewer', label: '审查分级', icon: ShieldCheck },
+    { id: 'delegation', label: '委托策略', icon: Split },
+    { id: 'activity', label: '活动面板', icon: Activity },
+    { id: 'phase52Integration', label: 'Phase 52 集成', icon: RefreshCw },
+    { id: 'phase53Integration', label: 'Phase 53 集成', icon: ShieldCheck },
+    { id: 'errorDisplay', label: '错误显示', icon: AlertCircle },
+    { id: 'resultSchema', label: '结果 Schema', icon: CheckCircle2 },
+    { id: 'modelDisplay', label: '模型显示', icon: Eye },
+    { id: 'configLayering', label: '配置分层', icon: Folder },
     { id: 'security', label: '安全设置', icon: Shield },
     { id: 'channels', label: '渠道集成', icon: Radio },
     { id: 'archived', label: '归档对话', icon: Archive },
@@ -2229,6 +2280,168 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
                   onChange={(e) => updateAutonomy({ confirmTimeout: Number(e.target.value) })}
                 />
                 <p className="text-xs text-rd-textMuted">弹出确认请求后等待用户响应的最长时间。超时后：全自动/半自动模式自动批准，手动模式自动拒绝。</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Phase 50 Task 5：Phase 48 模块接入确认开关 */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Phase 48 模块接入</CardTitle>
+              <CardDescription>控制 Phase 48 四个模块在生产路径的接入开关（默认全部开启）</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="p48-cite">引用系统</Label>
+                  <p className="text-xs text-rd-textMuted">CiteManager + CiteResolver：在 chat-runner 中注入引用解析能力。</p>
+                </div>
+                <Switch
+                  id="p48-cite"
+                  checked={draft.phase48Integration?.citeEnabled ?? true}
+                  onCheckedChange={(checked) => updatePhase48Integration({ citeEnabled: checked })}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="p48-import">外部生态导入</Label>
+                  <p className="text-xs text-rd-textMuted">ClaudePluginImporter / CodexInstructionImporter：导入第三方 Skill 与指令。</p>
+                </div>
+                <Switch
+                  id="p48-import"
+                  checked={draft.phase48Integration?.importEnabled ?? true}
+                  onCheckedChange={(checked) => updatePhase48Integration({ importEnabled: checked })}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="p48-macros">宏触发器</Label>
+                  <p className="text-xs text-rd-textMuted">MacroManager：通过 `!` 触发器引用轻量工作流宏。</p>
+                </div>
+                <Switch
+                  id="p48-macros"
+                  checked={draft.phase48Integration?.macrosEnabled ?? true}
+                  onCheckedChange={(checked) => updatePhase48Integration({ macrosEnabled: checked })}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="p48-mcp">MCP Bridge 接入</Label>
+                  <p className="text-xs text-rd-textMuted">ClaudeMCPBridge：桥接 MCP 工具到 Agent 工具调用路径。</p>
+                </div>
+                <Switch
+                  id="p48-mcp"
+                  checked={draft.phase48Integration?.mcpBridgeEnabled ?? true}
+                  onCheckedChange={(checked) => updatePhase48Integration({ mcpBridgeEnabled: checked })}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Phase 50 Task 6：Phase 49 模块接入确认开关 */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Phase 49 模块接入</CardTitle>
+              <CardDescription>控制 Phase 49 五个实验性模块的接入开关（默认关闭，需显式开启）</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="p49-skillflow">Skill 流引擎</Label>
+                  <p className="text-xs text-rd-textMuted">SkillFlow：Skill 执行时可选调用的流式引擎。</p>
+                </div>
+                <Switch
+                  id="p49-skillflow"
+                  checked={draft.phase49Integration?.skillFlowEnabled ?? false}
+                  onCheckedChange={(checked) => updatePhase49Integration({ skillFlowEnabled: checked })}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="p49-quality">Skill 质量门</Label>
+                  <p className="text-xs text-rd-textMuted">QualityGate：Skill 生成时可选调用的质量校验门。</p>
+                </div>
+                <Switch
+                  id="p49-quality"
+                  checked={draft.phase49Integration?.qualityGateEnabled ?? true}
+                  onCheckedChange={(checked) => updatePhase49Integration({ qualityGateEnabled: checked })}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="p49-context">上下文占用率面板</Label>
+                  <p className="text-xs text-rd-textMuted">ContextUsagePanel：在 context-compaction 时调用，可视化上下文占用。</p>
+                </div>
+                <Switch
+                  id="p49-context"
+                  checked={draft.phase49Integration?.contextUsagePanelEnabled ?? false}
+                  onCheckedChange={(checked) => updatePhase49Integration({ contextUsagePanelEnabled: checked })}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="p49-eval">评估集框架</Label>
+                  <p className="text-xs text-rd-textMuted">EvaluationFramework：Skill 生成或 /goal 完成时可选调用的评估框架。</p>
+                </div>
+                <Switch
+                  id="p49-eval"
+                  checked={draft.phase49Integration?.evaluationFrameworkEnabled ?? false}
+                  onCheckedChange={(checked) => updatePhase49Integration({ evaluationFrameworkEnabled: checked })}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="p49-funnel">意图路由漏斗</Label>
+                  <p className="text-xs text-rd-textMuted">RoutingFunnel 已移除——路由由 ModelRouter + ScenarioClassifier 承担。</p>
+                </div>
+                <Switch
+                  id="p49-funnel"
+                  checked={draft.phase49Integration?.routingFunnelEnabled ?? false}
+                  onCheckedChange={(checked) => updatePhase49Integration({ routingFunnelEnabled: checked })}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 调度器配置（Phase 37 Task 2） */}
+          <Card>
+            <CardHeader>
+              <CardTitle>调度器</CardTitle>
+              <CardDescription>定时任务引擎的启用状态、容量上限与默认时区</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="sched-enabled">启用定时任务引擎</Label>
+                  <p className="text-xs text-rd-textMuted">开启后调度器接管 cron 周期任务的调度与执行。</p>
+                </div>
+                <Switch
+                  id="sched-enabled"
+                  checked={draft.scheduler?.enabled ?? true}
+                  onCheckedChange={(checked) => updateScheduler({ enabled: checked })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="sched-max-tasks">最大任务数</Label>
+                <Input
+                  id="sched-max-tasks"
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={draft.scheduler?.maxTasks ?? 20}
+                  onChange={(e) => updateScheduler({ maxTasks: Number(e.target.value) })}
+                />
+                <p className="text-xs text-rd-textMuted">调度器同时承载的任务上限，范围 1~100，默认 20。</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="sched-tz">默认时区</Label>
+                <Input
+                  id="sched-tz"
+                  value={draft.scheduler?.defaultTimezone ?? 'Asia/Shanghai'}
+                  onChange={(e) => updateScheduler({ defaultTimezone: e.target.value })}
+                  placeholder="例如 Asia/Shanghai"
+                />
+                <p className="text-xs text-rd-textMuted">未显式指定时区的定时任务使用的回退时区，IANA 时区名称。</p>
               </div>
             </CardContent>
           </Card>
@@ -3577,6 +3790,57 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
       {/* ===== 渠道集成 ===== */}
       {activeTab === 'channels' && (
         <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+          {/* Webhook 安全 */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Webhook 安全</CardTitle>
+              <CardDescription>
+                控制 Webhook 入口的认证与 IP 信任策略，防止未授权调用与速率限制绕过。
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Bearer Token 认证 */}
+              <div className="space-y-2">
+                <Label htmlFor="channel-auth-token">Bearer Token 认证</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="channel-auth-token"
+                    type={showChannelAuthToken ? 'text' : 'password'}
+                    value={draft.channels.authToken ?? ''}
+                    onChange={(e) => updateChannels({ authToken: e.target.value || undefined })}
+                    placeholder="留空则进入开发模式，跳过认证"
+                  />
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => setShowChannelAuthToken((v) => !v)}
+                    title={showChannelAuthToken ? '隐藏' : '显示'}
+                  >
+                    {showChannelAuthToken ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </Button>
+                </div>
+                <p className="text-xs text-rd-textMuted">
+                  配置后所有 Webhook 请求需带 <code>Authorization: Bearer &lt;token&gt;</code>；未配置时为开发模式，跳过认证。
+                </p>
+              </div>
+
+              {/* 信任 X-Forwarded-For */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="channel-trust-proxy">信任 X-Forwarded-For</Label>
+                  <p className="text-xs text-rd-textMuted">
+                    反向代理场景才应启用；直连时禁用以防客户端伪造 IP 绕过速率限制。
+                  </p>
+                </div>
+                <Switch
+                  id="channel-trust-proxy"
+                  checked={draft.channels.trustProxy ?? false}
+                  onCheckedChange={(checked) => updateChannels({ trustProxy: checked })}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>渠道服务</CardTitle>
@@ -4330,34 +4594,6 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
             </CardContent>
           </Card>
 
-          {/* 内置代码地图卡片 */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Code size={16} className="text-rd-primary" />
-                内置代码地图
-              </CardTitle>
-              <CardDescription>零依赖轻量引擎，秒级扫描项目结构</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex-1">
-                  <p className="text-sm text-rd-text">启用内置代码地图</p>
-                  <p className="text-xs text-rd-textMuted mt-1">
-                    适合小项目，零依赖，秒级扫描。自动注入项目结构到 system prompt。
-                  </p>
-                </div>
-                <Switch
-                  checked={draft.codegraph?.enabled !== true}
-                  onCheckedChange={(checked) => {
-                    // 内置引擎 = codegraph.enabled 为 false 时启用（双轨制：关 CodeGraph 即用内置）
-                    updateDraft({ codegraph: { ...draft.codegraph, enabled: !checked } });
-                  }}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
           {/* 代码地图引擎（升级版，Phase 41） */}
           <Card>
             <CardHeader>
@@ -4628,7 +4864,7 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
                   onChange={(e) => updateDraft({ market: { ...draft.market, registryUrl: e.target.value || undefined } })}
                   placeholder="https://registry.example.com"
                 />
-                <p className="text-xs text-rd-textMuted">留空使用本地 StubRegistryClient。</p>
+                <p className="text-xs text-rd-textMuted">远程 Skill 注册表地址（留空则不连接远程注册表）。</p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="market-registry-token">Registry Token</Label>
@@ -4687,6 +4923,144 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
       {/* ===== Hook 增强（Phase 43） ===== */}
       {activeTab === 'hookEnhancement' && (
         <SettingsHookEnhancementTab draft={draft} updateDraft={updateDraft} />
+      )}
+
+      {/* ===== 审查分级（Phase 51 Task 1/7） ===== */}
+      {activeTab === 'reviewer' && (
+        <SettingsReviewerTab draft={draft} updateDraft={updateDraft} />
+      )}
+
+      {/* ===== 委托策略（Phase 51 Task 2/3/4） ===== */}
+      {activeTab === 'delegation' && (
+        <SettingsDelegationTab draft={draft} updateDraft={updateDraft} />
+      )}
+
+      {/* ===== 活动面板（Phase 51 Task 5，内联） ===== */}
+      {activeTab === 'activity' && (
+        <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>活动面板</CardTitle>
+              <CardDescription>控制 Agent 活动面板的显示项与预览长度</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {(() => {
+                const activityPanel = draft.activityPanel ?? {};
+                const updateActivityPanel = (patch: Partial<typeof activityPanel>) => {
+                  updateDraft({ activityPanel: { ...activityPanel, ...patch } });
+                };
+                return (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label htmlFor="activity-enabled">启用活动面板</Label>
+                        <p className="text-xs text-rd-textMuted">在主界面显示 Agent 实时活动卡片。</p>
+                      </div>
+                      <Switch
+                        id="activity-enabled"
+                        checked={activityPanel.enabled ?? false}
+                        onCheckedChange={(checked) => updateActivityPanel({ enabled: checked })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="activity-max-active">最大活跃显示数（1-10）</Label>
+                      <Input
+                        id="activity-max-active"
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={activityPanel.maxActiveDisplay ?? 4}
+                        onChange={(e) => updateActivityPanel({ maxActiveDisplay: Number(e.target.value) })}
+                      />
+                      <p className="text-xs text-rd-textMuted">同时显示的活跃 Agent 卡片数量上限。</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="activity-max-recent">最近完成显示数（0-20）</Label>
+                      <Input
+                        id="activity-max-recent"
+                        type="number"
+                        min={0}
+                        max={20}
+                        value={activityPanel.maxRecentDisplay ?? 3}
+                        onChange={(e) => updateActivityPanel({ maxRecentDisplay: Number(e.target.value) })}
+                      />
+                      <p className="text-xs text-rd-textMuted">最近完成的 Agent 卡片保留数量。</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="activity-preview-length">任务预览长度（20-200）</Label>
+                      <Input
+                        id="activity-preview-length"
+                        type="number"
+                        min={20}
+                        max={200}
+                        value={activityPanel.taskPreviewLength ?? 72}
+                        onChange={(e) => updateActivityPanel({ taskPreviewLength: Number(e.target.value) })}
+                      />
+                      <p className="text-xs text-rd-textMuted">活动卡片中任务描述的截断字符数。</p>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label htmlFor="activity-tool-stats">显示工具调用统计</Label>
+                        <p className="text-xs text-rd-textMuted">在卡片上展示工具调用次数等统计。</p>
+                      </div>
+                      <Switch
+                        id="activity-tool-stats"
+                        checked={activityPanel.showToolCallStats ?? true}
+                        onCheckedChange={(checked) => updateActivityPanel({ showToolCallStats: checked })}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label htmlFor="activity-thinking-level">显示思考级别</Label>
+                        <p className="text-xs text-rd-textMuted">在卡片上展示当前思考深度级别。</p>
+                      </div>
+                      <Switch
+                        id="activity-thinking-level"
+                        checked={activityPanel.showThinkingLevel ?? true}
+                        onCheckedChange={(checked) => updateActivityPanel({ showThinkingLevel: checked })}
+                      />
+                    </div>
+                  </>
+                );
+              })()}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ===== Phase 52 集成总开关（I-1） ===== */}
+      {activeTab === 'phase52Integration' && (
+        <SettingsPhase52IntegrationTab draft={draft} updateDraft={updateDraft} />
+      )}
+
+      {/* ===== Phase 53 集成总开关（代码卫生与安全治理） ===== */}
+      {activeTab === 'phase53Integration' && (
+        <SettingsPhase53IntegrationTab draft={draft} updateDraft={updateDraft} />
+      )}
+
+      {/* ===== 错误显示（Phase 51 Task 9，I-1） ===== */}
+      {activeTab === 'errorDisplay' && (
+        <SettingsErrorDisplayTab draft={draft} updateDraft={updateDraft} />
+      )}
+
+      {/* ===== 子 Agent 结果 Schema（Phase 51 Task 10，I-1） ===== */}
+      {activeTab === 'resultSchema' && (
+        <SettingsResultSchemaTab draft={draft} updateDraft={updateDraft} />
+      )}
+
+      {/* ===== 模型显示（Phase 51 Task 11，I-1） ===== */}
+      {activeTab === 'modelDisplay' && (
+        <SettingsModelDisplayTab draft={draft} updateDraft={updateDraft} />
+      )}
+
+      {/* ===== 配置分层（Phase 51 Task 8，I-1） ===== */}
+      {activeTab === 'configLayering' && (
+        <SettingsConfigLayeringTab draft={draft} updateDraft={updateDraft} />
       )}
 
       {/* ===== Hooks（Phase 39） ===== */}

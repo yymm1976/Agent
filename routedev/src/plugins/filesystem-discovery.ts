@@ -12,6 +12,21 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { logger } from '../utils/logger.js';
 
+const SAFE_SKILL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+function resolveSkillDir(basePath: string, name: string): string {
+  if (!SAFE_SKILL_NAME_PATTERN.test(name)) {
+    throw new Error(`无效的 Skill 名称: ${name}`);
+  }
+  const skillsRoot = path.resolve(basePath, '.routedev', 'skills');
+  const skillDir = path.resolve(skillsRoot, name);
+  const rel = path.relative(skillsRoot, skillDir);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(`Skill 路径越界: ${name}`);
+  }
+  return skillDir;
+}
+
 // ============================================================
 // 四级扩展成本梯度（Eve/Claude Code）
 // ============================================================
@@ -396,7 +411,7 @@ export class FilesystemDiscovery {
     if (!/^[a-zA-Z0-9-]+$/.test(name)) {
       throw new Error(`Skill 名称只能包含字母、数字和连字符: ${name}`);
     }
-    const skillDir = path.join(this.basePath, '.routedev', 'skills', name);
+    const skillDir = resolveSkillDir(this.basePath, name);
     const skillFile = path.join(skillDir, 'SKILL.md');
 
     // 检查是否已存在
@@ -436,8 +451,8 @@ export class FilesystemDiscovery {
    * @returns 是否删除成功
    */
   async deleteSkill(name: string): Promise<boolean> {
-    const skillDir = path.join(this.basePath, '.routedev', 'skills', name);
     try {
+      const skillDir = resolveSkillDir(this.basePath, name);
       await fs.rm(skillDir, { recursive: true, force: true });
       logger.info('Skill deleted', { name, path: skillDir });
       return true;

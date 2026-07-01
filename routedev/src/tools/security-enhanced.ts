@@ -112,7 +112,7 @@ export async function checkSSRF(url: string): Promise<SSRFCheckResult> {
     if (!result.allowed) {
       return { allowed: false, reason: `hostname 被禁止: ${result.reason}`, resolvedIp: hostname };
     }
-    return { allowed: true, reason: '' };
+    return { allowed: false, reason: `DNS 解析失败: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
@@ -301,9 +301,9 @@ export function checkBashSecurity(command: string): BashSecurityResult {
   const dangerousPatterns = [
     // rm -rf / 或 rm -rf /* 或 rm -rf / --no-preserve-root
     // 匹配 rm 后跟 -f 标志和 / 开头的参数（含 /* 和 /path）
-    { pattern: /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?\/(\s|$|\*|--)/i, reason: 'rm -rf /（删除根目录）' },
+    { pattern: /\brm\b(?=[\s\S]*\s-[a-zA-Z]*r)(?=[\s\S]*\s-[a-zA-Z]*f)[\s\S]*\s\/(\s|$|\*|--)/i, reason: 'rm -rf /（删除根目录）' },
     // rm -rf . 或 rm -rf ..（删除当前/上级目录）
-    { pattern: /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?\.\.?(\/|\s|$)/i, reason: 'rm -rf . 或 ..（删除当前/上级目录）' },
+    { pattern: /\brm\b(?=[\s\S]*\s-[a-zA-Z]*r)(?=[\s\S]*\s-[a-zA-Z]*f)[\s\S]*\s\.\.?(\/|\s|$)/i, reason: 'rm -rf . 或 ..（删除当前/上级目录）' },
     // dd 写入设备文件（of= 可出现在任意位置）
     { pattern: /\bdd\b.*\bof=\/dev\//i, reason: 'dd 写入设备文件' },
     // mkfs 系列（格式化文件系统）

@@ -17,8 +17,10 @@ import { ScenarioClassifier } from '../router/classifier.js';
 import { ModelRouter } from '../router/router.js';
 import { buildRouterConfig } from '../router/config.js';
 import { createAppDependencies } from './app-init.js';
+import { registerPermissionMiddleware } from './plugin-init.js';
 import { validateProviders, formatValidationMessages } from '../utils/provider-validator.js';
 import { PermissionEngine, type SandboxLevel } from '../tools/permission-engine.js';
+import type { AutonomyMode } from '../config/schema.js';
 import type { ExecArgs, ExecWorkMode } from './args.js';
 import * as fs from 'node:fs';
 
@@ -45,6 +47,7 @@ export interface ExecResult {
 export type ExecuteFn = (
   args: ExecArgs,
   progress: (msg: string) => void,
+  signal?: AbortSignal,
 ) => Promise<ExecResult>;
 
 /**
@@ -113,24 +116,26 @@ export async function runExec(
   progress(`开始执行任务，工作模式: ${args.workMode}，超时: ${args.timeout}ms，最大步数: ${args.maxSteps}`);
 
   // 总超时控制（陷阱 #135）：使用 Promise.race 实现超时
-  // 超时 Promise 通过 reject 让 Promise.race 走 catch 分支
+  // I2 修复：超时时通过 AbortController 取消正在运行的 Agent/LLM/工具调用
   let timeoutHandle: NodeJS.Timeout | null = null;
   let timedOut = false;
+  const abortController = new AbortController();
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     timeoutHandle = setTimeout(() => {
       timedOut = true;
+      abortController.abort();
       reject(new Error('EXEC_TIMEOUT'));
     }, args.timeout);
   });
 
   try {
     const exitCode = await Promise.race([
-      executeAndFormat(args, executeFn, progress),
+      executeAndFormat(args, executeFn, progress, abortController.signal),
       timeoutPromise,
     ]);
     if (timeoutHandle) clearTimeout(timeoutHandle);
     return exitCode;
-  } catch {
+  } catch (error) {
     if (timeoutHandle) clearTimeout(timeoutHandle);
     if (timedOut) {
       progress(`任务执行超时（${args.timeout} 毫秒）`);
@@ -142,7 +147,14 @@ export async function runExec(
       });
       return EXEC_EXIT_CODE.TIMEOUT;
     }
-    progress('任务执行失败（未知错误）');
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    progress(`任务执行失败（${errorMessage}）`);
+    outputResult(args, {
+      success: false,
+      output: '',
+      error: errorMessage,
+      steps: 0,
+    });
     return EXEC_EXIT_CODE.FAILURE;
   }
 }
@@ -154,9 +166,10 @@ async function executeAndFormat(
   args: ExecArgs,
   executeFn: ExecuteFn,
   progress: (msg: string) => void,
+  signal?: AbortSignal,
 ): Promise<number> {
   try {
-    const result = await executeFn(args, progress);
+    const result = await executeFn(args, progress, signal);
     outputResult(args, result);
     return result.success ? EXEC_EXIT_CODE.SUCCESS : EXEC_EXIT_CODE.FAILURE;
   } catch (err) {
@@ -220,9 +233,15 @@ function outputResult(args: ExecArgs, result: ExecResult): void {
 async function defaultExecuteFn(
   args: ExecArgs,
   progress: (msg: string) => void,
+  signal?: AbortSignal,
 ): Promise<ExecResult> {
   progress('加载配置...');
-  const config = loadConfig({});
+  // 接线修复：原实现固定传 {} 走默认全局配置，忽略 args.configPath
+  // 导致 GitHub Action 通过 --config 注入的临时配置无法生效
+  // 现透传给 loadConfig.globalConfigPath，未指定时仍走默认路径
+  const config = args.configPath
+    ? loadConfig({ globalConfigPath: args.configPath })
+    : loadConfig({});
 
   progress('初始化 LLM 客户端...');
   const clientManager = new LLMClientManager();
@@ -294,6 +313,27 @@ async function defaultExecuteFn(
     applyToolWhitelist(deps.permissionEngine, allToolNames, args.allowedTools);
   }
 
+  // C1 修复：注册权限中间件到 middleware pipeline，否则 PermissionEngine 的
+  // sandbox/headless/whitelist 规则不会被 Agent Loop 调用，权限模型静默失效。
+  // 交互模式在 App.tsx 中注册，exec/headless 路径此前遗漏了这一步。
+  progress('注册权限中间件');
+  const autonomyModeRef: { current: AutonomyMode } = {
+    current: config.autonomy?.defaultMode ?? 'semi',
+  };
+  // headless 模式：confirm 决策直接 deny（onConfirmTool 已返回 true，
+  // 但 PermissionEngine 内部 headless 模式会让 always-ask 工具走 deny）
+  const commandBridgeRef = {
+    current: {
+      requestConfirm: async (_p: string): Promise<boolean> => false,
+    },
+  };
+  registerPermissionMiddleware(
+    deps.middlewarePipeline,
+    deps.permissionEngine,
+    autonomyModeRef,
+    commandBridgeRef,
+  );
+
   // 场景分类 + 路由
   progress('场景分类与路由...');
   const classification = await classifier.classify({ query: args.prompt });
@@ -316,6 +356,10 @@ async function defaultExecuteFn(
       routeDecision,
       conversationHistory: [],
       systemPrompt,
+      // I2 修复：传入取消信号，超时后 Agent Loop 会中断 LLM 流和工具执行
+      signal,
+      onModelSuccess: modelId => modelRouter.recordModelSuccess(modelId),
+      onModelFailure: modelId => modelRouter.recordModelFailure(modelId),
       // headless 模式：always-ask 工具已被 PermissionEngine deny，不会触发确认
       // 非 always-ask 的 confirm 工具在 headless 下自动批准（CI 场景）
       onConfirmTool: async () => true,

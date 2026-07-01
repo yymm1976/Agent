@@ -16,6 +16,14 @@ export class Blackboard {
   /** 乐观锁版本号 */
   private version = 0;
 
+  /** 清空当前目标相关状态 */
+  reset(): void {
+    this.currentGoal = null;
+    this.completedSteps = [];
+    this.projectFacts = [];
+    this.version++;
+  }
+
   /** 设置当前目标 */
   setGoal(description: string, status: string): void {
     this.currentGoal = { description, status };
@@ -99,23 +107,5 @@ export class Blackboard {
     }
 
     return parts.length > 0 ? parts.join('\n') : '（黑板为空）';
-  }
-
-  /** 获取版本号 */
-  getVersion(): number {
-    return this.version;
-  }
-
-  /** 重置 */
-  reset(): void {
-    this.currentGoal = null;
-    this.completedSteps = [];
-    this.projectFacts = [];
-    this.version = 0;
-  }
-
-  /** 条目总数 */
-  get entryCount(): number {
-    return this.completedSteps.length + this.projectFacts.length;
   }
 }
