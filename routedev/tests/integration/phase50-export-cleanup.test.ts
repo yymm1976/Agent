@@ -54,10 +54,11 @@ const CLEANED_SAMPLES: Array<{ file: string; symbols: string[] }> = [
   { file: 'src/agent/hooks.ts', symbols: ['StepError', 'HookHandler'] },
   { file: 'src/agent/preference-manager.ts', symbols: ['PreferenceCategory', 'UserPreference', 'AuditLogEntry'] },
   { file: 'src/agent/requirements-clarifier.ts', symbols: ['ClarificationQuestion', 'ClarificationResult', 'RequirementsClarifierOptions'] },
-  { file: 'src/agent/voice-manager.ts', symbols: ['VoiceProvider', 'TTSProvider', 'TranscriptionResult'] },
+  // Phase 57：voice-manager.ts 已移至 src/optional/voice/
+  { file: 'src/optional/voice/voice-manager.ts', symbols: ['VoiceProvider', 'TTSProvider', 'TranscriptionResult'] },
   // E11 移除：durable-executor.ts 已整体删除（E1：GoalPersistence + CheckpointManager + HookRunner.fire 替代）
   { file: 'src/agent/goal-types.ts', symbols: ['GoalStepStatus'] },
-  { file: 'src/agent/persona-templates.ts', symbols: ['EmojiUsage', 'ConfirmationStyle'] },
+  // Phase 57 移除：persona-templates.ts 已整体删除（人格片段改由 config.persona.systemPromptAppend 提供）
 ];
 
 describe('Phase 50 Task 9 - export 清理验证', () => {

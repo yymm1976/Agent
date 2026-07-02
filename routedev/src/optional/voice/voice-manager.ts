@@ -1,5 +1,5 @@
-// src/agent/voice-manager.ts
-// Phase 45 Task 3：语音交互管理
+// src/optional/voice/voice-manager.ts
+// Phase 45 Task 3：语音交互管理（Phase 57：从 src/agent/ 移至 src/optional/voice/，编程 CLI 非核心能力）
 //
 // 核心能力：
 //   1. 语音输入（STT）：web-speech（浏览器原生）/ whisper-local（本地 whisper）/ openai-whisper（云端）/ off

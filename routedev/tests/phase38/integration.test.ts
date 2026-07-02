@@ -3,7 +3,8 @@
 // 跨模块验证三个核心场景：
 //   1. 中间件链顺序执行 + fail-open + LoopDetectionMiddleware
 //   2. 子 Agent 防递归（createChildRegistry 工具集隔离）
-//   3. 知识图谱完整生命周期（create → recallV2 → improve → forget → /dream 桥接）
+//   3. 知识图谱完整生命周期（create → recallV2 → improve → forget → /consolidate-memory 桥接）
+// Phase 57：原 /dream 改名 /consolidate-memory，去拟人化措辞
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ReActAgentLoop } from '../../src/agent/loop.js';
@@ -41,8 +42,9 @@ import { KnowledgeGraph } from '../../src/agent/memory/graph.js';
 import type { GraphNode, GraphEdge } from '../../src/agent/memory/graph.js';
 import { ContextManager } from '../../src/agent/memory/context-manager.js';
 import { CheckpointWriter } from '../../src/agent/memory/checkpoint-writer.js';
-import { ingestToGraph } from '../../src/agent/memory/dream-to-graph.js';
-import type { DreamResult } from '../../src/agent/memory/dream-to-graph.js';
+// Phase 57：原 dream-to-graph 改名 consolidation，去拟人化措辞
+import { consolidateToGraph } from '../../src/agent/memory/consolidation.js';
+import type { ConsolidationResult } from '../../src/agent/memory/consolidation.js';
 import type { CheckpointData } from '../../src/agent/memory/types.js';
 
 import * as fs from 'node:fs';
@@ -499,7 +501,7 @@ describe('集成测试 3：知识图谱完整生命周期', () => {
     expect(activeNodes[0].content).toBe('React 组件设计模式已更新');
   });
 
-  it('3.3 ingestToGraph 直接调用验证完整归纳流程', () => {
+  it('3.3 consolidateToGraph 直接调用验证完整归纳流程', () => {
     const graph = new KnowledgeGraph();
     // 预置一个已有节点，测试合并逻辑
     graph.addNode(makeNode('existing', '决策: 采用 TypeScript 严格模式\n理由: 提升类型安全', {
@@ -525,15 +527,12 @@ describe('集成测试 3：知识图谱完整生命周期', () => {
       miscNotes: [],
     };
 
-    const dreamResult: DreamResult = {
-      beforeSize: 100,
-      afterSize: 80,
-      mergedCount: 0,
+    // Phase 57：ConsolidationResult 仅含 consolidated 字段（原 DreamResult 已简化）
+    const consolidationResult: ConsolidationResult = {
       consolidated: checkpoint,
-      summary: '整理完成',
     };
 
-    const result = ingestToGraph(dreamResult, graph);
+    const result = consolidateToGraph(consolidationResult, graph);
 
     // 应创建新节点（crossTaskDiscoveries + errorsAndFixes）
     expect(result.created).toBeGreaterThan(0);

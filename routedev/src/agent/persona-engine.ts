@@ -1,5 +1,5 @@
 // src/agent/persona-engine.ts
-// 人格化系统提示词引擎
+// 人格化系统提示词引擎（Phase 57 简化版）
 //
 // 核心能力：
 //   1. buildPersonaFragment：根据 intensity + 用户信号构建人格片段（注入 system prompt）
@@ -8,21 +8,19 @@
 //   4. estimateTokenOverhead：估算人格片段的 token 开销
 //   5. validateSafety：验证人格片段不覆盖安全约束（静态方法）
 //
-// 设计要点：
-//   1. 纯内存对象，无副作用，不依赖外部服务
-//   2. intensity=none 时不注入任何人格片段（零开销降级）
-//   3. 高风险操作总是需要确认，EQ 信号可增强确认（回退多时）
-//   4. 安全验证采用关键词匹配，检测"忽略指令/绕过/扮演"等注入模式
-
-import {
-  COLLABORATOR_PERSONA,
-  type PersonaConfig,
-  type PersonaTone,
-} from './persona-templates.js';
+// Phase 57 简化要点：
+//   - 删除 persona-templates.ts，不再有内置人格对象（COLLABORATOR/MENTOR/HACKER）
+//   - systemPromptAppend 直接从 config.persona.systemPromptAppend 读取（用户可自定义）
+//   - 保留动态语气切换逻辑（基于用户交互信号）
+//   - 纯内存对象，无副作用，不依赖外部服务
+//   - intensity=none 时不注入任何人格片段（零开销降级）
 
 // ============================================================
 // 类型定义
 // ============================================================
+
+/** 语气：支持型 / 简洁型 / 俏皮型 / 导师型 */
+export type PersonaTone = 'supportive' | 'concise' | 'playful' | 'mentor';
 
 /** 用户交互信号（由上层观察并传入） */
 export interface UserInteractionSignals {
@@ -46,6 +44,9 @@ type PersonaIntensity = 'none' | 'low' | 'medium' | 'high';
 // ============================================================
 // 常量
 // ============================================================
+
+/** 默认语气（替代原 COLLABORATOR_PERSONA.tone） */
+const DEFAULT_TONE: PersonaTone = 'supportive';
 
 /** 高风险操作关键词（命中即强制确认） */
 const HIGH_RISK_ACTIONS: readonly string[] = [
@@ -96,30 +97,30 @@ const SAFETY_BYPASS_PATTERNS: readonly string[] = [
 // ============================================================
 
 /**
- * 人格化系统提示词引擎
+ * 人格化系统提示词引擎（Phase 57 简化版）
  *
  * 用法：
- *   const engine = new PersonaEngine();
+ *   const engine = new PersonaEngine(config.persona.systemPromptAppend);
  *   engine.setIntensity('medium');
  *   const fragment = engine.buildPersonaFragment(signals);
  *   // 将 fragment 拼接到 system prompt 末尾
  */
 export class PersonaEngine {
-  private currentPersona: PersonaConfig;
+  private systemPromptAppend: string;
   private intensity: PersonaIntensity = 'medium';
 
-  constructor(persona?: PersonaConfig) {
-    this.currentPersona = persona ?? COLLABORATOR_PERSONA;
+  constructor(systemPromptAppend: string = '') {
+    this.systemPromptAppend = systemPromptAppend;
   }
 
-  /** 切换人格 */
-  setPersona(persona: PersonaConfig): void {
-    this.currentPersona = persona;
+  /** 设置 system prompt 附加片段（替代原 setPersona） */
+  setSystemPromptAppend(text: string): void {
+    this.systemPromptAppend = text;
   }
 
-  /** 获取当前人格 */
-  getPersona(): PersonaConfig {
-    return this.currentPersona;
+  /** 获取当前 system prompt 附加片段（替代原 getPersona） */
+  getSystemPromptAppend(): string {
+    return this.systemPromptAppend;
   }
 
   /** 设置注入强度 */
@@ -136,8 +137,9 @@ export class PersonaEngine {
    * 构建人格片段（注入 system prompt）
    *
    * 1. intensity=none → 返回空字符串（零开销）
-   * 2. intensity=low/medium/high → 返回包含 addendum 的片段
-   * 3. 根据 signals 动态调整语气提示
+   * 2. systemPromptAppend 为空 → 返回空字符串（未配置人格片段）
+   * 3. intensity=low/medium/high → 返回包含 systemPromptAppend 的片段
+   * 4. 根据 signals 动态调整语气提示
    *
    * @param signals 用户交互信号（可选）
    * @returns 人格片段文本（空字符串表示不注入）
@@ -148,20 +150,21 @@ export class PersonaEngine {
       return '';
     }
 
-    const persona = this.currentPersona;
+    const append = this.systemPromptAppend;
+    // 未配置人格片段时不注入
+    if (!append) {
+      return '';
+    }
+
     const lines: string[] = [];
+    // 核心附加片段
+    lines.push(append);
 
-    // 人格头部：标识当前人格
-    lines.push(`## 人格设定（${persona.name}）`);
-
-    // 核心 addendum
-    lines.push(persona.systemPromptAddendum);
-
-    // 根据信号动态调整
+    // 根据信号动态调整语气
     if (signals) {
       const dynamicTone = this.resolveDynamicTone(signals);
-      if (dynamicTone !== persona.tone) {
-        // 临时切换语气提示
+      // 仅当切换到非默认语气时注入语气提示
+      if (dynamicTone !== DEFAULT_TONE) {
         lines.push('');
         lines.push(this.getToneHint(dynamicTone));
       }
@@ -173,9 +176,9 @@ export class PersonaEngine {
       }
     }
 
-    // intensity=low 时只注入 addendum，不附加语气提示
+    // intensity=low 时只注入附加片段，不附加语气提示
     if (this.intensity === 'low') {
-      return persona.systemPromptAddendum;
+      return append;
     }
 
     return lines.join('\n');
@@ -187,7 +190,7 @@ export class PersonaEngine {
    * - consecutiveRollbacks >= 2 → supportive（安抚）
    * - interruptionCount >= 2 → concise（加速）
    * - repeatedPrompts >= 2 → mentor（澄清）
-   * - 默认返回当前 persona 的 tone
+   * - 默认返回 DEFAULT_TONE（supportive）
    *
    * @param signals 用户交互信号
    * @returns 临时语气
@@ -205,17 +208,15 @@ export class PersonaEngine {
     if (signals.repeatedPrompts >= 2) {
       return 'mentor';
     }
-    return this.currentPersona.tone;
+    return DEFAULT_TONE;
   }
 
   /**
    * 判断当前轮次是否需要确认
    *
    * - 高风险操作总是需要确认
-   * - confirmationStyle='ask' → 总是确认
-   * - confirmationStyle='suggest' → 建议但不强制（返回 false，由上层决定）
-   * - confirmationStyle='inform' → 仅告知（返回 false）
-   * - EQ 信号增强：回退多时即使 inform 也建议确认
+   * - EQ 信号增强：回退多时建议确认
+   * - 其余低风险操作默认不强制确认（替代原 confirmationStyle 逻辑）
    *
    * @param action 操作描述（命令或工具名）
    * @param signals 用户交互信号（可选）
@@ -231,17 +232,12 @@ export class PersonaEngine {
       return true;
     }
 
-    // ask 风格总是确认
-    if (this.currentPersona.confirmationStyle === 'ask') {
-      return true;
-    }
-
-    // EQ 信号增强：回退多时建议确认（即使 inform/suggest）
+    // EQ 信号增强：回退多时建议确认
     if (signals && signals.consecutiveRollbacks >= 2) {
       return true;
     }
 
-    // suggest / inform 默认不强制确认
+    // 默认不强制确认
     return false;
   }
 

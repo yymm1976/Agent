@@ -1,13 +1,13 @@
-// src/agent/memory/dream-to-graph.ts
-// Phase 36 Task 4c：Dream → KnowledgeGraph 信息流（含归纳层）
+// src/agent/memory/consolidation.ts
+// 记忆整理 → KnowledgeGraph 信息流（含归纳层）
 //
 // 来自《7 步设计 Agent 记忆系统》——没有归纳层的记忆系统是"垃圾山"而非"知识库"。
 // 真实案例：Agent 用语义搜索找到 5 条高度相关的"渲染崩溃修复"记录，
 // 但它们来自不同 bug 的不同修复方案，Agent 混合输出了错误的合成答案。
 // 如果归纳层把已修复的 4 条标记为 superseded，只保留最新一条，这个错误不会发生。
 //
-// ingestToGraph() 函数的完整流程：
-//   1. 提取：从 DreamResult.consolidated 中提取关键 facts/decisions（规则提取）
+// consolidateToGraph() 函数的完整流程：
+//   1. 提取：从 ConsolidationResult.consolidated 中提取关键 facts/decisions（规则提取）
 //   2. 归纳三步：
 //      a. 合并同类：检查 KnowledgeGraph 中是否已有相似节点 → 合并 + validatedCount++
 //      b. 冲突检测：新旧知识矛盾 → 保留新的、标记旧的为 superseded
@@ -15,23 +15,22 @@
 //   3. 注入：经过归纳后的知识写入 KnowledgeGraph
 //
 // 设计决策（陷阱 #52）：
-//   DreamConsolidator 与 KnowledgeGraph 是两个独立的记忆系统，
-//   通过显式调用 ingestToGraph() 桥接。禁止在 DreamConsolidator 内部硬编码 KG 依赖。
+//   记忆整理与 KnowledgeGraph 是两个独立的记忆系统，
+//   通过显式调用 consolidateToGraph() 桥接。禁止在整理逻辑内部硬编码 KG 依赖。
 
 import type { KnowledgeGraph, GraphNode, NodeType } from './graph.js';
 import type { CheckpointData, DesignDecision, ErrorAndFix } from './types.js';
 import { logger } from '../../utils/logger.js';
 
 /**
- * Dream 整理结果（Phase 56：从 dream-consolidator.ts 内联最小类型）
- * Phase 57 将把本文件改名为 consolidation.ts，届时统一命名。
+ * 记忆整理结果（Phase 57：从 dream-consolidator.ts 内联最小类型，改名去拟人化）
  */
-export interface DreamResult {
+export interface ConsolidationResult {
   /** 整理后的 checkpoint（已合并重复项） */
   consolidated: CheckpointData;
 }
 
-/** ingestToGraph 结果统计 */
+/** consolidateToGraph 结果统计 */
 interface IngestResult {
   /** 新创建的节点数 */
   created: number;
@@ -47,29 +46,29 @@ interface IngestResult {
 const MERGE_SIMILARITY_THRESHOLD = 0.6;
 
 /**
- * 将 Dream 结果注入 KnowledgeGraph（含归纳三步）
+ * 将记忆整理结果注入 KnowledgeGraph（含归纳三步）
  *
- * @param dreamResult Dream 整理结果
+ * @param result 记忆整理结果
  * @param graph 目标知识图谱
  * @returns 注入统计
  */
-export function ingestToGraph(dreamResult: DreamResult, graph: KnowledgeGraph): IngestResult {
-  const result: IngestResult = {
+export function consolidateToGraph(consolidationResult: ConsolidationResult, graph: KnowledgeGraph): IngestResult {
+  const stats: IngestResult = {
     created: 0,
     merged: 0,
     superseded: 0,
     archived: 0,
   };
 
-  const checkpoint = dreamResult.consolidated;
+  const checkpoint = consolidationResult.consolidated;
   if (!checkpoint) {
-    logger.debug('ingestToGraph: no consolidated checkpoint, skipping');
-    return result;
+    logger.debug('consolidateToGraph: no consolidated checkpoint, skipping');
+    return stats;
   }
 
   // ===== 步骤 1：提取 =====
   const extracted = extractKnowledge(checkpoint);
-  logger.debug('ingestToGraph: extracted knowledge', { count: extracted.length });
+  logger.debug('consolidateToGraph: extracted knowledge', { count: extracted.length });
 
   // ===== 步骤 2：归纳三步 =====
   // 2a. 合并同类 + 2b. 冲突检测
@@ -83,9 +82,9 @@ export function ingestToGraph(dreamResult: DreamResult, graph: KnowledgeGraph): 
         const newNode = createNode(item);
         graph.addNode(newNode);
         graph.supersedeNode(existing.id, newNode.id);
-        result.superseded++;
-        result.created++;
-        logger.debug('ingestToGraph: conflict detected, superseded old node', {
+        stats.superseded++;
+        stats.created++;
+        logger.debug('consolidateToGraph: conflict detected, superseded old node', {
           oldId: existing.id,
           newId: newNode.id,
         });
@@ -95,21 +94,21 @@ export function ingestToGraph(dreamResult: DreamResult, graph: KnowledgeGraph): 
         existing.validatedCount++;
         existing.updatedAt = Date.now();
         existing.distinctSources = (existing.distinctSources ?? 1) + 1;
-        result.merged++;
+        stats.merged++;
       }
     } else {
       // 无相似节点 → 创建新节点
       const newNode = createNode(item);
       graph.addNode(newNode);
-      result.created++;
+      stats.created++;
     }
   }
 
   // 2c. 时效淘汰：超过 30 天未引用的节点降级为归档
-  result.archived = graph.archiveStaleNodes();
+  stats.archived = graph.archiveStaleNodes();
 
-  logger.info('ingestToGraph: completed', result);
-  return result;
+  logger.info('consolidateToGraph: completed', stats);
+  return stats;
 }
 
 // ===== 内部辅助函数 =====

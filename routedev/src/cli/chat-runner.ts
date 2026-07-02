@@ -11,6 +11,7 @@ import type { ReActAgentLoop } from '../agent/loop.js';
 import type { TokenProfiler } from '../agent/token-profiler.js';
 import type { ContextManager } from '../agent/memory/context-manager.js';
 import { VisionAssistant, type ImageInput } from '../agent/vision.js';
+// Phase 57：vision 默认关闭，visionAssistant 可为 undefined
 import type { AppConfig, OutputStyle } from '../config/schema.js';
 import type { ChatMessage } from './components/ChatView.js';
 import type { TraceCollector } from '../harness/trace-collector.js';
@@ -90,7 +91,7 @@ export interface ChatRunnerDeps {
   tracker: TokenTracker;
   agentLoop: ReActAgentLoop;
   contextManager: ContextManager;
-  visionAssistant: VisionAssistant;
+  visionAssistant?: VisionAssistant;
   config: AppConfig;
   /** Phase 30：系统提示词改为 ref（支持 PromptTemplateManager 异步渲染后更新） */
   systemPromptRef: { current: string };
@@ -182,24 +183,26 @@ export function createChatRunner(deps: ChatRunnerDeps) {
       accumulatedContent = '';
       let finalUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
-      // 处理 @图片引用
+      // 处理 @图片引用（Phase 57：vision 默认关闭，visionAssistant 可为 undefined）
       actualUserMessage = text;
-      const imageRefs = VisionAssistant.extractImageReferences(text);
-      if (imageRefs.length > 0) {
-        const loadedImages: ImageInput[] = [];
-        for (const ref of imageRefs) {
-          const img = await VisionAssistant.loadImage(ref, process.cwd());
-          if (img) loadedImages.push(img);
-        }
-        if (loadedImages.length > 0) {
-          setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `📷 正在分析 ${loadedImages.length} 张图片...` }]);
-          const visionResult = await visionAssistant.analyze(loadedImages, `用户问题: ${text}`);
-          if (visionResult) {
-            for (const img of loadedImages) {
-              if (img.fileName) actualUserMessage = actualUserMessage.replace(`@${img.fileName}`, `[图片:${img.fileName}]`);
+      if (visionAssistant) {
+        const imageRefs = VisionAssistant.extractImageReferences(text);
+        if (imageRefs.length > 0) {
+          const loadedImages: ImageInput[] = [];
+          for (const ref of imageRefs) {
+            const img = await VisionAssistant.loadImage(ref, process.cwd());
+            if (img) loadedImages.push(img);
+          }
+          if (loadedImages.length > 0) {
+            setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `📷 正在分析 ${loadedImages.length} 张图片...` }]);
+            const visionResult = await visionAssistant.analyze(loadedImages, `用户问题: ${text}`);
+            if (visionResult) {
+              for (const img of loadedImages) {
+                if (img.fileName) actualUserMessage = actualUserMessage.replace(`@${img.fileName}`, `[图片:${img.fileName}]`);
+              }
+              actualUserMessage = `[图片分析结果]\n${visionResult.description}\n\n[用户原问题]\n${actualUserMessage}`;
+              setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `✓ 图片分析完成（${visionResult.modelId}，${visionResult.inputTokens + visionResult.outputTokens} tokens）` }]);
             }
-            actualUserMessage = `[图片分析结果]\n${visionResult.description}\n\n[用户原问题]\n${actualUserMessage}`;
-            setMessages(prev => [...prev, { id: nextId(), role: 'system', content: `✓ 图片分析完成（${visionResult.modelId}，${visionResult.inputTokens + visionResult.outputTokens} tokens）` }]);
           }
         }
       }

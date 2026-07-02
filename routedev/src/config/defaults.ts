@@ -395,8 +395,15 @@ export const DEFAULT_CONFIG: AppConfig = {
     enabled: true,
     intensity: 'medium',
     currentId: 'collaborator',
+    // Phase 57：替代硬编码 persona-templates，用户可自定义 system prompt 片段
+    systemPromptAppend: '',
   },
-  // Phase 45：语音配置（STT/TTS 提供商/语言/自动朗读）
+  // Phase 57：vision 默认关闭，启用时才装配 VisionAssistant
+  vision: {
+    enabled: false,
+  },
+  // Phase 57：voice-manager 移到 optional/voice/，编程 CLI 非核心能力，默认 off
+  // 桌面应用未来若启用语音，需在设置页显式开启
   voice: {
     inputProvider: 'off',
     outputProvider: 'off',

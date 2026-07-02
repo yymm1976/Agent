@@ -9,6 +9,8 @@ export * from './checkpoint.js';
 export * from './clarify.js';
 export * from './clear.js';
 export * from './config.js';
+// Phase 57：/consolidate-memory（原 /dream 改名，去拟人化）+ dream deprecated alias
+export * from './consolidate-memory.js';
 export * from './cost.js';
 export * from './diff.js';
 export * from './doctor.js';

@@ -17,7 +17,7 @@ import { WorkModeController, GuardedToolExecutorAdapter } from '../../src/agent/
 import { CheckpointManager } from '../../src/harness/checkpoint-manager.js';
 import { CheckpointWriter } from '../../src/agent/memory/checkpoint-writer.js';
 import { ContextManager } from '../../src/agent/memory/context-manager.js';
-import { VisionAssistant } from '../../src/agent/vision.js';
+// Phase 57：VisionAssistant import 已移除（visionAssistant 改为可选，测试不再断言其类型）
 import { BranchManager } from '../../src/agent/branch.js';
 import { InitAnalyzer } from '../../src/agent/init-analyzer.js';
 import { Blackboard } from '../../src/agent/multi/blackboard.js';
@@ -256,7 +256,8 @@ describe('createAppDependencies', () => {
       expect(deps.checkpointWriter).toBeInstanceOf(CheckpointWriter);
       expect(deps.contextManager).toBeInstanceOf(ContextManager);
       // 辅助 Agent
-      expect(deps.visionAssistant).toBeInstanceOf(VisionAssistant);
+      // Phase 57：visionAssistant 改为可选（config.vision.enabled=false 时为 undefined）
+      expect(deps.visionAssistant).toBeUndefined();
       expect(deps.branchManager).toBeInstanceOf(BranchManager);
       // 基础设施
       expect(deps.prompts).toBeInstanceOf(PromptTemplateManager);
@@ -523,7 +524,8 @@ describe('createAppDependencies', () => {
         'middlewarePipeline', 'pluginRegistry', 'skillsRouter', 'filesystemDiscovery',
         'permissionEngine', 'orchestrator', 'workerExecutor',
         'checkpointManager', 'checkpointWriter', 'contextManager',
-        'visionAssistant', 'branchManager', 'initAnalyzer',
+        // Phase 57：visionAssistant 改为可选（config.vision.enabled=false 时为 undefined），不再断言
+        'branchManager', 'initAnalyzer',
         'prompts', 'blackboard', 'trace', 'audit', 'projectMemory',
         'goalParser', 'goalVerifier', 'hookRunner',
         'primaryClient', 'checkpointClient', 'profiler',

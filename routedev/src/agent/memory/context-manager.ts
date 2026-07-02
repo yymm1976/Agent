@@ -681,7 +681,7 @@ export class ContextManager {
    * 保存时机：
    *   - improve() 后
    *   - forget() 后
-   *   - ingestToGraph() 后（在 /dream handler 中触发）
+   *   - consolidateToGraph() 后（在 /consolidate-memory handler 中触发）
    *   - 会话结束 hook 中
    */
   saveGraphToDisk(): void {

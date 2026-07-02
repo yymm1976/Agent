@@ -1123,8 +1123,20 @@ export const PersonaConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   intensity: z.enum(['none', 'low', 'medium', 'high']).default('medium'),
   /** 当前人格 ID（默认 'collaborator'） */
   currentId: z.string().default('collaborator'),
+  /** Phase 57：替代硬编码 persona-templates，用户可自定义 system prompt 片段 */
+  systemPromptAppend: z.string().default(''),
 }));
 export type PersonaConfig = z.infer<typeof PersonaConfigSchema>;
+
+/**
+ * 视觉配置（Phase 57）
+ * 控制是否启用 VisionAssistant（截图分析），默认关闭
+ */
+export const VisionConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 是否启用视觉助手（默认 false，启用时才装配 VisionAssistant） */
+  enabled: z.boolean().default(false),
+}));
+export type VisionConfig = z.infer<typeof VisionConfigSchema>;
 
 /**
  * 语音配置（Phase 45）
@@ -1853,6 +1865,8 @@ export const AppConfigSchema = z.object({
   experiment: ExperimentConfigSchema,
   // Phase 45：人格配置（PersonaEngine 启用/强度/当前人格 ID）
   persona: PersonaConfigSchema,
+  // Phase 57：视觉配置（默认关闭，启用时才装配 VisionAssistant）
+  vision: VisionConfigSchema,
   // Phase 45：语音配置（STT/TTS 提供商/语言/自动朗读）
   voice: VoiceConfigSchema,
   // Phase 45：记忆配置（推理/自动学习/注入阈值）

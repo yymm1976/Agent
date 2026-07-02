@@ -638,7 +638,7 @@ export class KnowledgeGraph {
    * Phase 36 Task 4c：归纳层——时效淘汰
    *
    * 超过指定天数未被引用（validatedCount 未增长）的节点降级为归档。
-   * 在 ingestToGraph 的归纳三步中调用。
+   * 在 consolidateToGraph 的归纳三步中调用。
    *
    * @param staleDays 超过此天数未更新则归档（默认 30 天）
    * @returns 归档的节点数

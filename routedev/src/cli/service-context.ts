@@ -96,7 +96,7 @@ export interface ServiceContext {
   checkpointManager: CheckpointManager;
   contextManager: ContextManager;
   branchManager: BranchManager;
-  vision: VisionAssistant;
+  vision?: VisionAssistant;
   initAnalyzer: InitAnalyzer;
   goalParser: GoalParser;
   goalVerifier: GoalVerifier;
@@ -193,7 +193,7 @@ export interface ServiceContextDeps {
   checkpointWriter: CheckpointWriter;
   contextManager: ContextManager;
   branchManager: BranchManager;
-  vision: VisionAssistant;
+  vision?: VisionAssistant;
   initAnalyzer: InitAnalyzer;
   goalParser: GoalParser;
   goalVerifier: GoalVerifier;

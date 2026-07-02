@@ -1,12 +1,13 @@
 // tests/phase36/knowledge-clustering.test.ts
 // Phase 36 Task 4 + Task 5：KnowledgeGraph 模式聚类与置信度测试
-// 验证：聚类正确性、置信度计算、recall 排序、supersedeNode 排除、Dream 注入
+// 验证：聚类正确性、置信度计算、recall 排序、supersedeNode 排除、记忆整理注入
+// Phase 57：原 dream-to-graph 改名 consolidation，去拟人化措辞
 
 import { describe, it, expect } from 'vitest';
 import { KnowledgeGraph } from '../../src/agent/memory/graph.js';
 import type { GraphNode, GraphEdge } from '../../src/agent/memory/graph.js';
-import { ingestToGraph } from '../../src/agent/memory/dream-to-graph.js';
-import type { DreamResult } from '../../src/agent/memory/dream-to-graph.js';
+import { consolidateToGraph } from '../../src/agent/memory/consolidation.js';
+import type { ConsolidationResult } from '../../src/agent/memory/consolidation.js';
 import type { CheckpointData } from '../../src/agent/memory/types.js';
 
 // ============================================================
@@ -60,14 +61,10 @@ function makeCheckpoint(overrides: Partial<CheckpointData> = {}): CheckpointData
   };
 }
 
-/** 构造一个最小的 DreamResult */
-function makeDreamResult(checkpoint: CheckpointData): DreamResult {
+/** 构造一个最小的 ConsolidationResult（Phase 57：原 DreamResult 改名） */
+function makeConsolidationResult(checkpoint: CheckpointData): ConsolidationResult {
   return {
-    beforeSize: 100,
-    afterSize: 80,
-    mergedCount: 1,
     consolidated: checkpoint,
-    summary: '测试摘要',
   };
 }
 
@@ -287,17 +284,17 @@ describe('Phase 36 Task 4：KnowledgeGraph 模式聚类与置信度', () => {
     });
   });
 
-  describe('ingestToGraph Dream 注入', () => {
-    it('应从 DreamResult 提取设计决策并创建 decision 节点', () => {
+  describe('consolidateToGraph 记忆整理注入', () => {
+    it('应从 ConsolidationResult 提取设计决策并创建 decision 节点', () => {
       const g = new KnowledgeGraph();
       const checkpoint = makeCheckpoint({
         designDecisions: [
           { decision: '使用 JWT 做认证', reason: '无状态、易扩展' },
         ],
       });
-      const dream = makeDreamResult(checkpoint);
+      const result_ = makeConsolidationResult(checkpoint);
 
-      const result = ingestToGraph(dream, g);
+      const result = consolidateToGraph(result_, g);
       expect(result.created).toBeGreaterThanOrEqual(1);
 
       const decisions = g.listNodes({ type: 'decision' });
@@ -306,14 +303,14 @@ describe('Phase 36 Task 4：KnowledgeGraph 模式聚类与置信度', () => {
       expect(decisions[0].content).toContain('无状态');
     });
 
-    it('应从 DreamResult 提取跨任务发现并创建 fact 节点', () => {
+    it('应从 ConsolidationResult 提取跨任务发现并创建 fact 节点', () => {
       const g = new KnowledgeGraph();
       const checkpoint = makeCheckpoint({
         crossTaskDiscoveries: ['filterContext 和 declareFocus 共享关键词提取逻辑'],
       });
-      const dream = makeDreamResult(checkpoint);
+      const result_ = makeConsolidationResult(checkpoint);
 
-      const result = ingestToGraph(dream, g);
+      const result = consolidateToGraph(result_, g);
       expect(result.created).toBeGreaterThanOrEqual(1);
 
       const facts = g.listNodes({ type: 'fact' });
@@ -321,16 +318,16 @@ describe('Phase 36 Task 4：KnowledgeGraph 模式聚类与置信度', () => {
       expect(facts[0].content).toContain('filterContext');
     });
 
-    it('应从 DreamResult 提取已修复的错误并创建 fact 节点', () => {
+    it('应从 ConsolidationResult 提取已修复的错误并创建 fact 节点', () => {
       const g = new KnowledgeGraph();
       const checkpoint = makeCheckpoint({
         errorsAndFixes: [
           { error: '类型推断失败', fix: '显式标注返回类型', resolved: true },
         ],
       });
-      const dream = makeDreamResult(checkpoint);
+      const result_ = makeConsolidationResult(checkpoint);
 
-      ingestToGraph(dream, g);
+      consolidateToGraph(result_, g);
       const facts = g.listNodes({ type: 'fact' });
       const errorFact = facts.find(f => f.content.includes('类型推断'));
       expect(errorFact).toBeDefined();
@@ -344,9 +341,9 @@ describe('Phase 36 Task 4：KnowledgeGraph 模式聚类与置信度', () => {
           { error: '未修复的 bug', fix: '待定', resolved: false },
         ],
       });
-      const dream = makeDreamResult(checkpoint);
+      const result_ = makeConsolidationResult(checkpoint);
 
-      ingestToGraph(dream, g);
+      consolidateToGraph(result_, g);
       const facts = g.listNodes({ type: 'fact' });
       const unresolved = facts.find(f => f.content.includes('未修复'));
       expect(unresolved).toBeUndefined();
@@ -354,14 +351,10 @@ describe('Phase 36 Task 4：KnowledgeGraph 模式聚类与置信度', () => {
 
     it('无 consolidated checkpoint 时应返回空统计', () => {
       const g = new KnowledgeGraph();
-      const dream: DreamResult = {
-        beforeSize: 0,
-        afterSize: 0,
-        mergedCount: 0,
+      const empty: ConsolidationResult = {
         consolidated: undefined as unknown as CheckpointData,
-        summary: '空',
       };
-      const result = ingestToGraph(dream, g);
+      const result = consolidateToGraph(empty, g);
       expect(result.created).toBe(0);
       expect(result.merged).toBe(0);
       expect(result.superseded).toBe(0);

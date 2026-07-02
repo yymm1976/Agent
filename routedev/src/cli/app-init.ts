@@ -166,7 +166,7 @@ export interface AppDependencies {
   checkpointWriter: CheckpointWriter;
   contextManager: ContextManager;
   // 辅助 Agent
-  visionAssistant: VisionAssistant;
+  visionAssistant: VisionAssistant | undefined;
   branchManager: BranchManager;
   initAnalyzer: InitAnalyzer | null;
   // 基础设施
@@ -338,7 +338,10 @@ export function createAppDependencies(
   }
 
   // ===== 辅助 Agent =====
-  const visionAssistant = new VisionAssistant(config.providers, (id: string) => clientManager.get(id));
+  // Phase 57：vision 默认关闭，仅在 config.vision.enabled 时装配
+  const visionAssistant = config.vision?.enabled
+    ? new VisionAssistant(config.providers, (id: string) => clientManager.get(id))
+    : undefined;
   const branchManager = new BranchManager();
   const initAnalyzer = primaryClient
     ? new InitAnalyzer({ llmClient: primaryClient, modelId: config.router.classifierModel, rootPath: cwd })
@@ -1569,12 +1572,13 @@ export function createAppDependencies(
   //     voice-manager.ts 已由本 Phase 创建，使用变量路径动态 import 保持一致性
 
   // 1. PersonaEngine 接线：人格引擎（intensity=none 时不注入 system prompt）
+  // Phase 57：改为读取 config.persona.systemPromptAppend，不再依赖 persona-templates
   const personaCfg = config.persona;
   if (personaCfg?.enabled !== false && personaCfg?.intensity !== 'none') {
     const personaModulePath = '../agent/persona-engine.js';
     import(personaModulePath)
-      .then((mod: { PersonaEngine: new (persona?: unknown) => { setIntensity: (i: string) => void; buildPersonaFragment: (signals?: unknown) => string } }) => {
-        const engine = new mod.PersonaEngine();
+      .then((mod: { PersonaEngine: new (systemPromptAppend?: string) => { setIntensity: (i: string) => void; buildPersonaFragment: (signals?: unknown) => string } }) => {
+        const engine = new mod.PersonaEngine(personaCfg.systemPromptAppend ?? '');
         engine.setIntensity(personaCfg.intensity);
         // 注册到 service context（feature-detect：方法可能由其他子代理添加）
         const loop = agentLoop as unknown as { setPersonaEngine?: (e: unknown) => void };
@@ -1584,7 +1588,7 @@ export function createAppDependencies(
         logger.info('PersonaEngine registered', {
           enabled: personaCfg.enabled,
           intensity: personaCfg.intensity,
-          currentId: personaCfg.currentId,
+          hasCustomPrompt: !!(personaCfg.systemPromptAppend),
         });
       })
       .catch((err: unknown) => {
@@ -1624,7 +1628,7 @@ export function createAppDependencies(
   //    voice-manager.ts 已由本 Phase 创建，使用变量路径动态 import 保持一致性
   const voiceCfg = config.voice;
   if (voiceCfg && (voiceCfg.inputProvider !== 'off' || voiceCfg.outputProvider !== 'off')) {
-    const voiceModulePath = '../agent/voice-manager.js';
+    const voiceModulePath = '../optional/voice/voice-manager.js';
     import(voiceModulePath)
       .then((mod: { VoiceManager: new (config?: unknown) => { getConfig: () => unknown; isAvailable: () => boolean } }) => {
         const voice = new mod.VoiceManager(voiceCfg);

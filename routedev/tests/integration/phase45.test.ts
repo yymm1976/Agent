@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { AppConfigSchema, type AppConfig } from '../../src/config/schema.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
-import { VoiceManager } from '../../src/agent/voice-manager.js';
+import { VoiceManager } from '../../src/optional/voice/voice-manager.js';
 
 // ============================================================
 // 1. Schema 配置验证 - persona
@@ -231,7 +231,7 @@ describe('Phase 45 Integration - VoiceManager', () => {
 // ============================================================
 describe('Phase 45 Integration - PersonaEngine', () => {
   it('buildPersonaFragment：intensity=none 返回空字符串（skip if not available）', async () => {
-    let mod: { PersonaEngine: new (persona?: unknown) => { setIntensity: (i: string) => void; buildPersonaFragment: (signals?: unknown) => string } };
+    let mod: { PersonaEngine: new (systemPromptAppend?: string) => { setIntensity: (i: string) => void; buildPersonaFragment: (signals?: unknown) => string } };
     try {
       mod = await import('../../src/agent/persona-engine.js');
     } catch {
@@ -242,7 +242,8 @@ describe('Phase 45 Integration - PersonaEngine', () => {
     expect(mod).toBeDefined();
     expect(mod.PersonaEngine).toBeDefined();
 
-    const engine = new mod.PersonaEngine();
+    // Phase 57：构造函数接收 systemPromptAppend 字符串（替代原 PersonaConfig）
+    const engine = new mod.PersonaEngine('你是一个友好的编程搭档。');
     // intensity=none 时不注入任何人格片段
     engine.setIntensity('none');
     const fragment = engine.buildPersonaFragment();
@@ -250,7 +251,7 @@ describe('Phase 45 Integration - PersonaEngine', () => {
   });
 
   it('buildPersonaFragment：intensity=medium 返回非空片段（skip if not available）', async () => {
-    let mod: { PersonaEngine: new (persona?: unknown) => { setIntensity: (i: string) => void; buildPersonaFragment: (signals?: unknown) => string } };
+    let mod: { PersonaEngine: new (systemPromptAppend?: string) => { setIntensity: (i: string) => void; buildPersonaFragment: (signals?: unknown) => string } };
     try {
       mod = await import('../../src/agent/persona-engine.js');
     } catch {
@@ -258,10 +259,11 @@ describe('Phase 45 Integration - PersonaEngine', () => {
       expect(true).toBe(true);
       return;
     }
-    const engine = new mod.PersonaEngine();
+    // Phase 57：必须传入非空 systemPromptAppend，否则 buildPersonaFragment 返回空
+    const engine = new mod.PersonaEngine('你是一个友好的编程搭档。');
     engine.setIntensity('medium');
     const fragment = engine.buildPersonaFragment();
-    // medium 强度应返回非空的人格片段
+    // medium 强度 + 非空片段 应返回非空的人格片段
     expect(fragment.length).toBeGreaterThan(0);
   });
 });
