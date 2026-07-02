@@ -598,46 +598,46 @@ export const DEFAULT_CONFIG: AppConfig = {
       semanticRetrieval: true,
       maxParallelSkills: 2,
     },
-    // Task 10：MCP 安全形式化框架
-    mcpSecurity: {
-      enabled: false,
-      strictness: 'standard',
-      l1CapabilityCheck: true,
-      l2AttestationCheck: false,
-      l3InfoFlowTracking: true,
-      l4RuntimeMonitoring: true,
-    },
+    // Phase 59 Task 4：mcpSecurity 已删除（与 phase53Integration.mcpSecurityScan 重复，保留 53 的）
   },
-  // Phase 53：代码卫生与安全治理加固（聚合 10 个子配置，默认全部关闭）
+  // Phase 53：代码卫生与安全治理加固
+  // Phase 59 Task 2：安全相关 5 个字段默认启用（policyEngine/auditChain/mcpSecurityScan/skillSecurityGate/configGuard）
+  // 依据：Phase 53 写了安全治理却默认关，等于没写。安全能力应默认启用。
+  //       装配失败时 app-init.ts 中 try-catch fail-open 守卫保证不阻塞主流程
   phase53Integration: {
     // Task 3：策略引擎接入（动作级 fail-closed）
+    // Phase 59：默认 true——Intent Guard + Playbook 是安全核心
     policyEngine: {
-      enabled: false,
+      enabled: true,
       defaultPolicy: 'deny',
       conflictResolution: 'deny-overrides',
       rulesFile: '.routedev/policies.yaml',
     },
     // Task 4：哈希链审计日志
+    // Phase 59：默认 true——审计链路是合规核心，默认关导致操作无记录
     auditChain: {
-      enabled: false,
+      enabled: true,
       logFile: '.routedev/audit-chain.jsonl',
       overflowSealCount: 1,
     },
     // Task 5：MCP 安全扫描器
+    // Phase 59：默认 true——MCP 工具安全扫描，默认关等于不扫描
     mcpSecurityScan: {
-      enabled: false,
+      enabled: true,
       blockThreshold: 'high',
       knownToolNames: [],
     },
     // Task 6：技能安全门控
+    // Phase 59：默认 true——Skill 安全校验，默认关等于不校验
     skillSecurityGate: {
-      enabled: false,
+      enabled: true,
       autoInstallThreshold: 50,
       baselineFile: '.routedev/skill-baseline.json',
     },
     // Task 7：配置保护守卫
+    // Phase 59：默认 true——配置守卫，默认关等于不守护
     configGuard: {
-      enabled: false,
+      enabled: true,
       warnOnFirst: true,
       protectedPatterns: [],
     },

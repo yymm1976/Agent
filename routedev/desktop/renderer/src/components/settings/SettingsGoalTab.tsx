@@ -134,16 +134,15 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
         </CardHeader>
         <CardContent className="space-y-4">
 
-          {/* 1. 路径判定模式（单选 auto/legacy/explicit） */}
+          {/* 1. 路径判定模式（单选 auto/explicit） */}
           <div className="space-y-2">
             <Label htmlFor="execution-router-mode">路径判定模式</Label>
             <Select
               id="execution-router-mode"
               value={goal.executionRouter?.mode ?? 'auto'}
-              onChange={(e) => updateExecutionRouter({ mode: e.target.value as 'auto' | 'legacy' | 'explicit' })}
+              onChange={(e) => updateExecutionRouter({ mode: e.target.value as 'auto' | 'explicit' })}
             >
               <SelectItem value="auto">auto（自动判定）</SelectItem>
-              <SelectItem value="legacy">legacy（强制旧路径）</SelectItem>
               <SelectItem value="explicit">explicit（显式指定）</SelectItem>
             </Select>
             <p className="text-xs text-rd-textMuted">控制 /goal 执行路径的判定策略。</p>
@@ -334,36 +333,6 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
               id="goal-integration-persistence"
               checked={draft.goalIntegration?.persistenceEnabled ?? true}
               onCheckedChange={(checked) => updateGoalIntegration({ persistenceEnabled: checked })}
-            />
-          </div>
-
-          {/* 3. GoalPromptBuilder 五段式规范构造 */}
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="goal-integration-prompt-builder">GoalPromptBuilder 五段式规范</Label>
-              <p className="text-xs text-rd-textMuted">
-                开启后用五段式规范构造 /goal 提示词，提升结构化程度。
-              </p>
-            </div>
-            <Switch
-              id="goal-integration-prompt-builder"
-              checked={draft.goalIntegration?.promptBuilderEnabled ?? false}
-              onCheckedChange={(checked) => updateGoalIntegration({ promptBuilderEnabled: checked })}
-            />
-          </div>
-
-          {/* 4. RequirementChangeAnalyzer 需求变更分析 */}
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="goal-integration-requirement-change">需求变更分析</Label>
-              <p className="text-xs text-rd-textMuted">
-                RequirementChangeAnalyzer：检测需求中途变更并触发重规划。
-              </p>
-            </div>
-            <Switch
-              id="goal-integration-requirement-change"
-              checked={draft.goalIntegration?.requirementChangeEnabled ?? false}
-              onCheckedChange={(checked) => updateGoalIntegration({ requirementChangeEnabled: checked })}
             />
           </div>
 

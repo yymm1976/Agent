@@ -2,7 +2,7 @@
 // Phase 50 Task 10：最终集成测试（端到端完整性验证）
 //
 // 测试目标（对应蓝图 10.1 节）：
-//   1. /goal 流程端到端：GoalPromptBuilder → GoalPersistence → GoalAuditor → RequirementChangeAnalyzer 四模块串联
+//   1. /goal 流程端到端：GoalPersistence → GoalAuditor 模块串联
 //   2. 子 Agent 委托端到端：wrapSpawnAgentWithDelegation 一次启用 5 开关，验证全链路调用
 //   3. UI 组件端到端：/resume /trace /diff 命令触发 CommandBridge 回调
 //   4. 死代码清理后构建通过：已删除文件不存在 + 关键模块可动态 import（运行时代理 typecheck）
@@ -19,10 +19,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-import { GoalPromptBuilder } from '../../src/agent/goal-prompt-builder.js';
 import { GoalPersistence } from '../../src/agent/goal-persistence.js';
 import { GoalAuditor } from '../../src/agent/goal-audit.js';
-import { analyzeChangeImpact, isRequirementChange } from '../../src/agent/requirement-change.js';
 import {
   wrapSpawnAgentWithDelegation,
   type SpawnAgentFunction,
@@ -131,88 +129,10 @@ describe('Phase 50 Task 10 - /goal 流程端到端', () => {
     vi.clearAllMocks();
   });
 
-  it('1.1 GoalPromptBuilder → GoalPersistence → GoalAuditor → RequirementChangeAnalyzer 四模块串联', async () => {
-    const tmpDir = await makeTempDir();
-
-    // 步骤 1：GoalPromptBuilder 构造五段式 spec
-    const builder = new GoalPromptBuilder();
-    const spec = await builder.build('实现用户登录功能，新增 OAuth 支持');
-    expect(spec.goal).toContain('用户登录');
-    expect(spec.doneWhen).toBeInstanceOf(Array);
-    expect(spec.tokenBudget).toBeGreaterThan(0);
-
-    // 步骤 2：GoalPersistence 保存 spec 到 .routedev/goals/
-    const persistence = new GoalPersistence(tmpDir);
-    const goalId = `goal-final-${Date.now()}`;
-    await persistence.save({
-      id: goalId,
-      spec,
-      plan: {
-        steps: [
-          { id: '1', description: '步骤1', status: 'pending', dependencies: [] },
-          { id: '2', description: '步骤2', status: 'pending', dependencies: ['1'] },
-        ],
-      },
-      status: 'pending',
-      checkpointIds: [],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      tokenUsed: 0,
-      tokenBudget: spec.tokenBudget,
-    });
-
-    // 验证文件已持久化
-    const loaded = await persistence.load(goalId);
-    expect(loaded).not.toBeNull();
-    expect(loaded!.id).toBe(goalId);
-    expect(loaded!.spec.goal).toContain('用户登录');
-
-    // 步骤 3：GoalAuditor 审计（CompletionGate 全通过 + VerifierLLM 通过）
-    const auditor = new GoalAuditor({
-      completionGate: { enabled: true, runTypecheck: true, runLint: true, runTests: true },
-      verifierLlm: { enabled: true },
-      reviewerAgent: { enabled: false },
-      arbitration: 'completion_gate_first',
-    });
-    const auditOutcome = await auditor.audit({
-      spec: { doneWhen: spec.doneWhen.length > 0 ? spec.doneWhen : ['功能可用'] },
-      typecheckPassed: true,
-      lintPassed: true,
-      testsPassed: true,
-      verifierResult: { passed: true, evidence: ['所有完成标准已满足'] },
-    });
-    expect(auditOutcome.overallPassed).toBe(true);
-    expect(auditOutcome.results.length).toBeGreaterThanOrEqual(2);
-
-    // 步骤 4：RequirementChangeAnalyzer 分析需求变更
-    const before = '实现用户登录功能';
-    const after = '实现用户登录功能，新增 OAuth 第三方登录';
-    // isRequirementChange 接收 { role, content } 对象（仅 user 角色消息变更才算）
-    expect(isRequirementChange({ role: 'user', content: before }, { role: 'user', content: after })).toBe(true);
-    const change = {
-      type: 'edit' as const,
-      targetNodeId: 'node-1',
-      before,
-      after,
-      impactedBranches: [],
-      timestamp: Date.now(),
-    };
-    const impact = analyzeChangeImpact(change, {
-      description: before,
-      steps: [{ id: 1, description: '步骤1', status: 'pending' }],
-    });
-    expect(impact.severity).toBe('major');
-    expect(impact.needsReplan).toBe(true);
-
-    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-  });
-
   it('1.2 全部开关关闭时，/goal 流程降级到原行为不崩溃', async () => {
     const tmpDir = await makeTempDir();
     // 即使所有 Phase 50 模块都未启用，原 /goal 流程应正常工作
-    const builder = new GoalPromptBuilder();
-    const spec = await builder.build('简单任务');
-    expect(spec.goal).toBe('简单任务');
+    const spec = { goal: '简单任务', context: '', steps: [], done: '', verification: '' };
 
     // GoalPersistence 在空目录下 save/load 正常
     const persistence = new GoalPersistence(tmpDir);
@@ -501,8 +421,6 @@ describe('Phase 50 Task 10 - 死代码清理后构建通过', () => {
     const modules = [
       '../../src/agent/goal-audit.js',
       '../../src/agent/goal-persistence.js',
-      '../../src/agent/goal-prompt-builder.js',
-      '../../src/agent/requirement-change.js',
       '../../src/agent/multi/orchestrator.js',
       '../../src/agent/multi/orchestrator-strategy.js',
       '../../src/agent/multi/state-graph.js',
@@ -548,8 +466,6 @@ describe('Phase 50 Task 10 - export 清理后构建通过', () => {
     // 验证 Task 9 export 清理后，被外部使用的 export 仍可正常导入
     const { GoalAuditor } = await import('../../src/agent/goal-audit.js');
     const { GoalPersistence } = await import('../../src/agent/goal-persistence.js');
-    const { GoalPromptBuilder } = await import('../../src/agent/goal-prompt-builder.js');
-    const { analyzeChangeImpact } = await import('../../src/agent/requirement-change.js');
     const { wrapSpawnAgentWithDelegation } = await import('../../src/tools/builtin/spawn-agent.js');
     const { ContextPacker } = await import('../../src/agents/context-packer.js');
     const { DelegationGate } = await import('../../src/agents/delegation-gate.js');
@@ -564,8 +480,6 @@ describe('Phase 50 Task 10 - export 清理后构建通过', () => {
     // 验证所有 import 都是定义的（非 undefined）
     expect(GoalAuditor).toBeDefined();
     expect(GoalPersistence).toBeDefined();
-    expect(GoalPromptBuilder).toBeDefined();
-    expect(analyzeChangeImpact).toBeDefined();
     expect(wrapSpawnAgentWithDelegation).toBeDefined();
     expect(ContextPacker).toBeDefined();
     expect(DelegationGate).toBeDefined();
@@ -587,8 +501,6 @@ describe('Phase 50 Task 10 - export 清理后构建通过', () => {
     // E11 更新：audit/persistence 默认值 Phase 47/54 修复为 true（功能必需）
     expect(parsed.goalIntegration.auditEnabled).toBe(true);
     expect(parsed.goalIntegration.persistenceEnabled).toBe(true);
-    expect(parsed.goalIntegration.promptBuilderEnabled).toBe(false);
-    expect(parsed.goalIntegration.requirementChangeEnabled).toBe(false);
 
     // orchestrationIntegration（Task 2）
     expect(parsed.orchestrationIntegration).toBeDefined();

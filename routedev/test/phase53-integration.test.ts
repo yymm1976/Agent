@@ -92,18 +92,18 @@ describe('Phase 53 Schema 一致性', () => {
     }
   });
 
-  it('默认所有 10 个子配置的 enabled 为 false（向后兼容）', () => {
+  it('默认子配置的 enabled 值（Phase 59 Task 2 安全相关 true，其余 false）', () => {
     const result = AppConfigSchema.safeParse(MINIMAL_VALID_CONFIG);
     expect(result.success).toBe(true);
     if (result.success) {
       const p53 = result.data.phase53Integration;
-      // 10 个子配置中，凡是有 enabled 字段的，默认都应为 false
-      // policyEngine / auditChain / mcpSecurityScan / skillSecurityGate / configGuard / prefixCache / budgetMonitor / dagEngine / circuitBreaker
-      expect(p53.policyEngine.enabled).toBe(false);
-      expect(p53.auditChain.enabled).toBe(false);
-      expect(p53.mcpSecurityScan.enabled).toBe(false);
-      expect(p53.skillSecurityGate.enabled).toBe(false);
-      expect(p53.configGuard.enabled).toBe(false);
+      // Phase 59 Task 2：5 个安全字段默认 true（policyEngine/auditChain/mcpSecurityScan/skillSecurityGate/configGuard）
+      expect(p53.policyEngine.enabled).toBe(true);
+      expect(p53.auditChain.enabled).toBe(true);
+      expect(p53.mcpSecurityScan.enabled).toBe(true);
+      expect(p53.skillSecurityGate.enabled).toBe(true);
+      expect(p53.configGuard.enabled).toBe(true);
+      // 其余字段仍为 false
       expect(p53.prefixCache.enabled).toBe(false);
       expect(p53.budgetMonitor.enabled).toBe(false);
       expect(p53.dagEngine.enabled).toBe(false);
@@ -155,12 +155,12 @@ describe('Phase 53 Defaults 一致性', () => {
     expect(typeof DEFAULT_CONFIG.phase53Integration).toBe('object');
   });
 
-  it('DEFAULT_CONFIG.phase53Integration.policyEngine.enabled === false', () => {
-    expect(DEFAULT_CONFIG.phase53Integration.policyEngine.enabled).toBe(false);
+  it('DEFAULT_CONFIG.phase53Integration.policyEngine.enabled === true（Phase 59 Task 2 安全默认启用）', () => {
+    expect(DEFAULT_CONFIG.phase53Integration.policyEngine.enabled).toBe(true);
   });
 
-  it('DEFAULT_CONFIG.phase53Integration.auditChain.enabled === false', () => {
-    expect(DEFAULT_CONFIG.phase53Integration.auditChain.enabled).toBe(false);
+  it('DEFAULT_CONFIG.phase53Integration.auditChain.enabled === true（Phase 59 Task 2 安全默认启用）', () => {
+    expect(DEFAULT_CONFIG.phase53Integration.auditChain.enabled).toBe(true);
   });
 
   it('DEFAULT_CONFIG.phase53Integration.doctor.runOnStartup === false', () => {

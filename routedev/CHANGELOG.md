@@ -2,6 +2,62 @@
 
 所有版本变更记录。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## v4.5.3 (2026-07-02) — Phase 59: 花架子去除工程四（B 档闭环补齐）
+
+> **核心目标：** 清算 `defaults.ts` 中所有 `*Integration.enabled: false` 字段，每个字段给出明确处置——删除 / 默认启用 / 补设置页入口。消灭"幽灵功能"（写了但不接入也不删的第三种状态）。
+
+### Removed — 批次 1：6 个无价值 Integration 字段及对应源文件
+
+- **删除字段：**
+  - `phase49Integration.routingFunnelEnabled`（routing-funnel.ts 已在 Phase 50 删除，僵尸配置）
+  - `phase52Integration.processEvaluation.enabled`（学术评估指标，无用户可见产物）
+  - `phase52Integration.archAwareMetrics.enabled`（学术指标，无用户可见产物）
+  - `phase52Integration.saturationMonitor.enabled`（饱和度监控无消费方）
+  - `goalIntegration.promptBuilderEnabled`（与 prompts/manager.ts 职责重叠）
+  - `goalIntegration.requirementChangeEnabled`（需求变更流程未产品化）
+- **删除源文件：** `src/agent/goal-prompt-builder.ts` / `src/agent/requirement-change.ts`
+- **保留 evaluation 三个文件：** `src/evaluation/process-defect-ontology.ts` / `architecture-aware-metrics.ts` / `saturation-monitor.ts` 被 score-card / dual-loop / completion-gate 通过 `import type` 引用，仅删配置与实例化，不删源文件
+- **清理装配：** `src/cli/app-init.ts` 中相关装配块已移除
+- **清理 UI 残留：** `desktop/renderer/src/pages/SettingsPage.tsx` 删除 routingFunnelEnabled Switch；`desktop/renderer/src/components/settings/SettingsPhase52IntegrationTab.tsx` 删除 processEvaluation/archAwareMetrics/saturationMonitor 三个 Card 块
+- **清理 GoalTab：** `desktop/renderer/src/components/settings/SettingsGoalTab.tsx` 删除 GoalPromptBuilder 和 RequirementChangeAnalyzer 的 Switch 块；路径判定 Select 移除 'legacy' 选项（Phase 58 已从 schema 移除）
+- **清理 engine-bridge：** `desktop/main/engine-bridge.ts` 删除 `goalPromptBuilder` 依赖注入，并修复 `visionAssistant` 可选链
+- **清理测试：** `tests/integration/phase50-integration.test.ts` 与 `tests/integration/phase50-final-integration.test.ts` 删除 GoalPromptBuilder / RequirementChange 相关导入与测试用例
+
+### Changed — 批次 2：5 个安全相关字段默认启用
+
+- **改默认值 `false → true`：**
+  - `phase53Integration.policyEngine.enabled`（Intent Guard + Playbook 是安全核心）
+  - `phase53Integration.auditChain.enabled`（审计链路是合规核心）
+  - `phase53Integration.mcpSecurityScan.enabled`（MCP 工具安全扫描）
+  - `phase53Integration.skillSecurityGate.enabled`（Skill 安全校验）
+  - `phase53Integration.configGuard.enabled`（配置守卫）
+- **fail-open 守卫：** `src/cli/app-init.ts` 中 5 个安全模块装配块全部用 try-catch 包裹，装配失败仅 `logger.warn` 不阻塞主流程；异步装配用动态 `import().catch()` 降级
+- **测试更新：** `test/phase53-integration.test.ts` 默认值断言从全 false 改为 5 个安全字段 true，DEFAULT_CONFIG 一致性测试同步更新
+
+### Changed — 批次 3：补设置页入口与重复字段清理
+
+- **6 个开关已有 UI 入口：** 经调研，`skillFlowEnabled` / `contextUsagePanelEnabled` / `evaluationFrameworkEnabled` / `skillLifecycle.enabled` / `prefixCache.enabled` / `budgetMonitor.enabled` 在 `SettingsPhase52IntegrationTab.tsx` / `SettingsPhase53IntegrationTab.tsx` 已有控件，无需新建 Tab
+- **删除重复字段：** `phase52Integration.mcpSecurity`（与 `phase53Integration.mcpSecurityScan` 重复，保留 53 的）
+  - `src/config/defaults.ts` 删除 `mcpSecurity` 配置块
+  - `src/config/schema.ts` 删除 `MCPSecurityConfigSchema` 定义 + `Phase52IntegrationConfigSchema` 字段引用
+  - `desktop/renderer/src/components/settings/SettingsPhase52IntegrationTab.tsx` 删除 mcpSecurity Card 块
+
+### Changed — 孤儿 schema 清理
+
+- **删除 `SaturationMonitorConfigSchema`：** Task 1 删除 phase52Integration.saturationMonitor 字段时 schema 定义残留，Task 4 残留扫描中发现并清理。`src/evaluation/saturation-monitor.ts` 中独立定义的 `interface SaturationMonitorConfig` 不受影响（evaluation-framework.ts / completion-gate.ts 实际引用此 interface）
+
+### Migration Notes
+
+- **配置兼容：** 旧 config 中含已删除字段时，Zod safe-parse 默认忽略未知字段，不会报错
+- **安全默认启用：** 升级后 policyEngine / auditChain / mcpSecurityScan / skillSecurityGate / configGuard 自动开启；若装配失败则 fail-open 跳过并记录警告，不阻塞主流程
+- **行为变化：** `phase52Integration.mcpSecurity` 字段已移除，相关配置请在 `phase53Integration.mcpSecurityScan` 中设置
+
+### Test Stats
+
+- 全量测试：259 个测试文件 / 3552 个用例全部通过（0 失败，2 跳过）
+- `pnpm typecheck` + `pnpm typecheck:desktop` 通过
+- 残留扫描：`routingFunnel|processEvaluation|archAwareMetrics|saturationMonitor|promptBuilderEnabled|requirementChangeEnabled|phase52Integration.mcpSecurity` 在 `src/` 无匹配
+
 ## v4.0.2 (2026-07-02) — Phase 58: 花架子去除工程三（路由合并与 legacy 路径删除）
 
 ### Changed

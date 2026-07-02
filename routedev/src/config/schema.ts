@@ -1519,51 +1519,8 @@ export const SkillLifecycleConfigSchema = z.object({
 });
 export type SkillLifecycleConfig = z.infer<typeof SkillLifecycleConfigSchema>;
 
-// --- Phase 52 Task 7：评估集饱和监测配置 ---
-
-/**
- * 评估集饱和监测配置（Phase 52 Task 7）
- *
- * 来自 Benchmark Saturation 论文——评估集区分度会随模型升级而下降，
- * 当模型在评估集上的得分接近天花板时，评估集就不再具备区分能力。
- *
- * SaturationMonitor 持续监测 passRate / scoreVariance / discrimination，
- * 在饱和时给出 add_difficult_cases / retire_easy_cases / replace_evaluation 建议。
- *
- * 默认关闭——开启后由 EvaluationFramework 在每次 runEvaluation 后调用 SaturationMonitor。
- */
-export const SaturationMonitorConfigSchema = z.object({
-  /** 是否启用饱和监测 */
-  enabled: z.boolean().default(false),
-  /** 通过率阈值（高于此值且方差低于阈值时判定为 saturated，默认 0.95） */
-  passRateThreshold: z.number().min(0.5).max(1).default(0.95),
-  /** 方差阈值（低于此值且通过率高于阈值时判定为 saturated，默认 0.05） */
-  varianceThreshold: z.number().min(0).max(0.5).default(0.05),
-  /** 检查间隔：至少积累多少次运行结果才开始评估（5-100，默认 10） */
-  checkInterval: z.number().int().min(5).max(100).default(10),
-});
-export type SaturationMonitorConfig = z.infer<typeof SaturationMonitorConfigSchema>;
-
-/**
- * MCP 安全形式化框架配置（Phase 52 Task 10）
- * 来自 MCPSHIELD 论文——4 层深度防御 + 7 类威胁检测
- */
-export const MCPSecurityConfigSchema = z.preprocess((v) => v ?? {}, z.object({
-  /** 是否启用 MCP 安全框架 */
-  enabled: z.boolean().default(false),
-  /** 严格度级别：permissive(宽松) / standard(标准) / strict(严格) */
-  strictness: z.enum(['permissive', 'standard', 'strict']).default('standard'),
-  /** L1 能力层防御：工具能力校验 */
-  l1CapabilityCheck: z.boolean().default(true),
-  /** L2 证明层防御：工具来源验证 */
-  l2AttestationCheck: z.boolean().default(false),
-  /** L3 信息流层防御：数据流追踪 */
-  l3InfoFlowTracking: z.boolean().default(true),
-  /** L4 运行时层防御：运行时行为监控 */
-  l4RuntimeMonitoring: z.boolean().default(true),
-}));
-export type MCPSecurityConfig = z.infer<typeof MCPSecurityConfigSchema>;
-
+// Phase 59：SaturationMonitorConfigSchema 已删除（批次1，孤儿 schema——字段已从 Phase52Integration 删除，evaluation 文件用 saturation-monitor.ts 中的 interface）
+// Phase 59：MCPSecurityConfigSchema 已删除（批次3，与 phase53 McpSecurityScanConfigSchema 重复）
 // --- Phase 52 Task 3：长程工作流有界局部恢复配置 ---
 
 /**
@@ -1611,8 +1568,7 @@ export const Phase52IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.obj
     semanticRetrieval: z.boolean().default(true),
     maxParallelSkills: z.number().int().min(1).max(4).default(2),
   })),
-  /** Task 10：MCP 安全形式化框架（4 层深度防御 + 7 类威胁检测） */
-  mcpSecurity: z.preprocess((v) => v ?? {}, MCPSecurityConfigSchema),
+  // Phase 59 Task 4：mcpSecurity 字段已删除（与 phase53Integration.mcpSecurityScan 重复）
 }));
 export type Phase52IntegrationConfig = z.infer<typeof Phase52IntegrationConfigSchema>;
 
@@ -1621,11 +1577,12 @@ export type Phase52IntegrationConfig = z.infer<typeof Phase52IntegrationConfigSc
 /**
  * Phase 53 Task 3：策略引擎配置（动作级 fail-closed）
  * 借鉴 microsoft/agent-governance-toolkit 的 PolicyEngine
- * enabled=false 时退回原行为（向后兼容）
+ *
+ * Phase 59 Task 2：默认 true——Intent Guard + Playbook 是安全核心
  */
 export const PolicyEngineConfigSchema = z.preprocess((v) => v ?? {}, z.object({
-  /** 是否启用策略引擎（默认 false，向后兼容） */
-  enabled: z.boolean().default(false),
+  /** 是否启用策略引擎（Phase 59 默认 true） */
+  enabled: z.boolean().default(true),
   /** 默认策略：无匹配规则时 deny（fail-closed）或 allow */
   defaultPolicy: z.enum(['deny', 'allow']).default('deny'),
   /** 冲突解决策略（当前仅实现 deny-overrides，其他枚举值供未来扩展） */
@@ -1643,10 +1600,12 @@ export type PolicyEngineConfig = z.infer<typeof PolicyEngineConfigSchema>;
 /**
  * Phase 53 Task 4：哈希链审计配置
  * enabled=true 时 AuditLogger 写入 SHA-256 链式哈希
+ *
+ * Phase 59 Task 2：默认 true——审计链路是合规核心
  */
 export const AuditChainConfigSchema = z.preprocess((v) => v ?? {}, z.object({
-  /** 是否启用哈希链（默认 false，向后兼容） */
-  enabled: z.boolean().default(false),
+  /** 是否启用哈希链（Phase 59 默认 true） */
+  enabled: z.boolean().default(true),
   /** 审计日志文件路径（可选，默认沿用 AuditLogger 的 storageDir） */
   logFile: z.string().default('.routedev/audit-chain.jsonl'),
   /** 溢出时保留的接缝哈希数 */
@@ -1657,10 +1616,12 @@ export type AuditChainConfigType = z.infer<typeof AuditChainConfigSchema>;
 /**
  * Phase 53 Task 5：MCP 安全扫描配置
  * 在 MCP 工具注册到 ToolRegistry 之前扫描 4 类威胁
+ *
+ * Phase 59 Task 2：默认 true——默认关等于不扫描
  */
 export const McpSecurityScanConfigSchema = z.preprocess((v) => v ?? {}, z.object({
-  /** 是否启用 MCP 安全扫描（默认 false，向后兼容） */
-  enabled: z.boolean().default(false),
+  /** 是否启用 MCP 安全扫描（Phase 59 默认 true） */
+  enabled: z.boolean().default(true),
   /** 阻断阈值：severity >= 此级别的发现阻止注册 */
   blockThreshold: z.enum(['low', 'medium', 'high', 'critical']).default('high'),
   /** 已知工具名列表（用于仿冒检测） */
@@ -1671,10 +1632,12 @@ export type McpSecurityScanConfig = z.infer<typeof McpSecurityScanConfigSchema>;
 /**
  * Phase 53 Task 6：技能安全门控配置
  * 第三方技能安装前通过 17 类漏洞扫描
+ *
+ * Phase 59 Task 2：默认 true——默认关等于不校验
  */
 export const SkillSecurityGateConfigSchema = z.preprocess((v) => v ?? {}, z.object({
-  /** 是否启用技能安全扫描（默认 false，向后兼容） */
-  enabled: z.boolean().default(false),
+  /** 是否启用技能安全扫描（Phase 59 默认 true） */
+  enabled: z.boolean().default(true),
   /** 自动安装的分数阈值（>此值需用户确认） */
   autoInstallThreshold: z.number().int().min(0).max(100).default(50),
   /** 基线抑制文件（Glob + SHA-256 指纹，预留字段） */
@@ -1685,10 +1648,12 @@ export type SkillSecurityGateConfig = z.infer<typeof SkillSecurityGateConfigSche
 /**
  * Phase 53 Task 7：配置保护守卫配置
  * 阻止 Agent 弱化自身的安全约束
+ *
+ * Phase 59 Task 2：默认 true——默认关等于不守护
  */
 export const ConfigGuardConfigSchema = z.preprocess((v) => v ?? {}, z.object({
-  /** 是否启用配置保护（默认 false，向后兼容） */
-  enabled: z.boolean().default(false),
+  /** 是否启用配置保护（Phase 59 默认 true） */
+  enabled: z.boolean().default(true),
   /** 首次触发时是否降级为 info（避免首次误报阻塞） */
   warnOnFirst: z.boolean().default(true),
   /** 受保护文件 pattern（用户可扩展，追加到默认 pattern） */

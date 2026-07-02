@@ -2389,17 +2389,6 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
                   onCheckedChange={(checked) => updatePhase49Integration({ evaluationFrameworkEnabled: checked })}
                 />
               </div>
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label htmlFor="p49-funnel">意图路由漏斗</Label>
-                  <p className="text-xs text-rd-textMuted">RoutingFunnel 已移除——路由由 ModelRouter + ScenarioClassifier 承担。</p>
-                </div>
-                <Switch
-                  id="p49-funnel"
-                  checked={draft.phase49Integration?.routingFunnelEnabled ?? false}
-                  onCheckedChange={(checked) => updatePhase49Integration({ routingFunnelEnabled: checked })}
-                />
-              </div>
             </CardContent>
           </Card>
 

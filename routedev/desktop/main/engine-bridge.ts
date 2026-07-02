@@ -296,7 +296,7 @@ export class RouteDevEngine {
             type: 'progress',
             progress: { label: `正在分析 ${loadedImages.length} 张图片`, current: 2, total: 3 },
           });
-          const visionResult = await this.deps.visionAssistant.analyze(loadedImages, `用户问题: ${text}`);
+          const visionResult = await this.deps.visionAssistant?.analyze(loadedImages, `用户问题: ${text}`);
           if (visionResult) {
             for (const img of loadedImages) {
               if (img.fileName) {
@@ -683,7 +683,6 @@ export class RouteDevEngine {
         // Phase 50/32：Goal 流程核心模块
         goalAuditor: this.deps.goalAuditor ?? undefined,
         goalPersistence: this.deps.goalPersistence ?? undefined,
-        goalPromptBuilder: this.deps.goalPromptBuilder ?? undefined,
         completionGate: this.deps.completionGate,
         profiler: this.deps.profiler ?? undefined,
         // Phase 54：结构化事件回调 + goalId（驱动渲染层 GoalExecutionCard）

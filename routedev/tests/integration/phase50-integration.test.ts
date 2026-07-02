@@ -2,7 +2,7 @@
 // Phase 50 集成测试：核心模块接入生产代码验证
 //
 // 测试策略：
-//   1. Task 1（≥5）：/goal 流程接入 GoalAuditor / GoalPersistence / GoalPromptBuilder / RequirementChangeAnalyzer
+//   1. Task 1：/goal 流程接入 GoalAuditor / GoalPersistence
 //   2. Task 2（≥4）：多 Agent 编排接入 StrategySelector / ExecutionStateGraph / BranchOrchestrator
 //   3. Task 3（≥6）：子 Agent 委托体系接入 ContextPacker / DelegationGate / DelegationEnforcer / SubAgentLifecycle / SubAgentScoreCardCollector
 //
@@ -13,7 +13,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createGoalRunner } from '../../src/cli/goal-runner.js';
 import { GoalAuditor } from '../../src/agent/goal-audit.js';
 import { GoalPersistence } from '../../src/agent/goal-persistence.js';
-import { GoalPromptBuilder } from '../../src/agent/goal-prompt-builder.js';
 import { Orchestrator } from '../../src/agent/multi/orchestrator.js';
 import { StrategySelector } from '../../src/agent/multi/orchestrator-strategy.js';
 import {
@@ -155,103 +154,6 @@ describe('Phase 50 Task 1: /goal 流程模块接入', () => {
     vi.clearAllMocks();
   });
 
-  it('1.1 promptBuilderEnabled=true 且注入 goalPromptBuilder 时，handleGoalCommand 调用 build() 并显示提示', async () => {
-    const tmpDir = await makeTempDir();
-    const promptBuilder = new GoalPromptBuilder();
-    const buildSpy = vi.spyOn(promptBuilder, 'build');
-    const { deps, addSystemMessage } = createGoalRunnerMockDeps({
-      config: {
-        checkpoint: { enabled: false },
-        router: { budget: { mode: 'track_only' as const, dailyLimit: 500000 } },
-        goalIntegration: { promptBuilderEnabled: true, auditEnabled: false, persistenceEnabled: false, requirementChangeEnabled: false },
-      },
-      goalPromptBuilder: promptBuilder,
-    });
-    const runner = createGoalRunner(deps);
-
-    await runner.handleGoalCommand('/goal "实现用户登录功能"');
-
-    expect(buildSpy).toHaveBeenCalledTimes(1);
-    expect(buildSpy).toHaveBeenCalledWith('实现用户登录功能');
-    // 应该显示 GoalPromptBuilder 已构造的提示
-    expect(addSystemMessage).toHaveBeenCalledWith(expect.stringContaining('GoalPromptBuilder'));
-    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-  });
-
-  it('1.2 promptBuilderEnabled=true 但 build() 抛异常时，降级不崩溃且继续原流程', async () => {
-    const promptBuilder = new GoalPromptBuilder();
-    vi.spyOn(promptBuilder, 'build').mockRejectedValueOnce(new Error('mock build failure'));
-    const { deps, addSystemMessage } = createGoalRunnerMockDeps({
-      config: {
-        checkpoint: { enabled: false },
-        router: { budget: { mode: 'track_only' as const, dailyLimit: 500000 } },
-        goalIntegration: { promptBuilderEnabled: true, auditEnabled: false, persistenceEnabled: false, requirementChangeEnabled: false },
-      },
-      goalPromptBuilder: promptBuilder,
-    });
-    const runner = createGoalRunner(deps);
-
-    // 不应抛出异常
-    await expect(runner.handleGoalCommand('/goal "测试目标"')).resolves.toBeUndefined();
-    // 不应显示 GoalPromptBuilder 已构造的提示（因降级）
-    const promptBuilderCalls = addSystemMessage.mock.calls.filter(c => String(c[0]).includes('GoalPromptBuilder'));
-    expect(promptBuilderCalls.length).toBe(0);
-  });
-
-  it('1.3 promptBuilderEnabled=false 时，不调用 goalPromptBuilder.build()', async () => {
-    const promptBuilder = new GoalPromptBuilder();
-    const buildSpy = vi.spyOn(promptBuilder, 'build');
-    const { deps } = createGoalRunnerMockDeps({
-      config: {
-        checkpoint: { enabled: false },
-        router: { budget: { mode: 'track_only' as const, dailyLimit: 500000 } },
-        goalIntegration: { promptBuilderEnabled: false, auditEnabled: false, persistenceEnabled: false, requirementChangeEnabled: false },
-      },
-      goalPromptBuilder: promptBuilder,
-    });
-    const runner = createGoalRunner(deps);
-
-    await runner.handleGoalCommand('/goal "测试目标"');
-
-    expect(buildSpy).not.toHaveBeenCalled();
-  });
-
-  it('1.4 analyzeRequirementChange：requirementChangeEnabled=true 时返回影响分析结果', async () => {
-    const { deps } = createGoalRunnerMockDeps({
-      config: {
-        checkpoint: { enabled: false },
-        router: { budget: { mode: 'track_only' as const, dailyLimit: 500000 } },
-        goalIntegration: { promptBuilderEnabled: false, auditEnabled: false, persistenceEnabled: false, requirementChangeEnabled: true },
-      },
-    });
-    const runner = createGoalRunner(deps);
-
-    // before 不含功能词，after 含"新增"功能词 → 应判定为 major + needsReplan
-    const result = await runner.analyzeRequirementChange(
-      '实现用户登录',
-      '实现用户登录，新增支持 OAuth 第三方登录',
-    );
-
-    expect(result).not.toBeNull();
-    expect(result!.needsReplan).toBe(true);
-    expect(result!.severity).toBe('major');
-    expect(result!.reason).toContain('新功能');
-  });
-
-  it('1.5 analyzeRequirementChange：requirementChangeEnabled=false 时返回 null', async () => {
-    const { deps } = createGoalRunnerMockDeps({
-      config: {
-        checkpoint: { enabled: false },
-        router: { budget: { mode: 'track_only' as const, dailyLimit: 500000 } },
-        goalIntegration: { promptBuilderEnabled: false, auditEnabled: false, persistenceEnabled: false, requirementChangeEnabled: false },
-      },
-    });
-    const runner = createGoalRunner(deps);
-
-    const result = await runner.analyzeRequirementChange('before', 'after');
-    expect(result).toBeNull();
-  });
-
   it('1.6 persistenceEnabled=true 时，executeGoalPlan 调用 goalPersistence.save()', async () => {
     const tmpDir = await makeTempDir();
     const persistence = new GoalPersistence(tmpDir);
@@ -264,7 +166,7 @@ describe('Phase 50 Task 1: /goal 流程模块接入', () => {
       config: {
         checkpoint: { enabled: false },
         router: { budget: { mode: 'track_only' as const, dailyLimit: 500000 } },
-        goalIntegration: { promptBuilderEnabled: false, auditEnabled: false, persistenceEnabled: true, requirementChangeEnabled: false },
+        goalIntegration: { auditEnabled: false, persistenceEnabled: true },
       },
       goalPersistence: persistence,
       requestPlanEdit: vi.fn(async () => editedSteps),

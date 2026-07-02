@@ -352,14 +352,21 @@ export function createAppDependencies(
 
   // Phase 53 Task 4：哈希链审计接入（受 config.phase53Integration.auditChain.enabled 守护）
   // 启用后所有 audit.log() 写入的记录会附加 previousHash + hash 字段，形成防篡改链
+  // Phase 59 Task 2：auditChain 默认 true，加 fail-open 守卫——装配失败不阻塞主流程
   const phase53AuditChainCfg = config.phase53Integration?.auditChain;
   if (phase53AuditChainCfg?.enabled) {
-    audit.setChainConfig({
-      enabled: true,
-      logFile: phase53AuditChainCfg.logFile,
-      overflowSealCount: phase53AuditChainCfg.overflowSealCount,
-    });
-    logger.debug('AuditLogger hash-chain enabled', { via: 'setChainConfig' });
+    try {
+      audit.setChainConfig({
+        enabled: true,
+        logFile: phase53AuditChainCfg.logFile,
+        overflowSealCount: phase53AuditChainCfg.overflowSealCount,
+      });
+      logger.debug('AuditLogger hash-chain enabled', { via: 'setChainConfig' });
+    } catch (err) {
+      logger.warn('Phase 59: auditChain 装配失败，fail-open 跳过', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // Phase 48 Task 2：接线 loadProjectDoc，激活多文件名 fallback（AGENTS.md / CLAUDE.md）
@@ -408,15 +415,22 @@ export function createAppDependencies(
 
   // Phase 53 Task 7：ConfigGuard 注入（受 config.phase53Integration.configGuard.enabled 守护）
   // 启用后 file_edit / file_write 在执行前会检查是否弱化安全/治理配置
+  // Phase 59 Task 2：configGuard 默认 true，加 fail-open 守卫——装配失败不阻塞主流程
   const phase53GuardCfg = config.phase53Integration?.configGuard;
   if (phase53GuardCfg?.enabled) {
-    const configGuard = new ConfigGuard({
-      warnOnFirst: phase53GuardCfg.warnOnFirst,
-      protectedPatterns: phase53GuardCfg.protectedPatterns,
-    });
-    fileEditTool.setConfigGuard(configGuard);
-    fileWriteTool.setConfigGuard(configGuard);
-    logger.debug('ConfigGuard injected', { via: 'setConfigGuard' });
+    try {
+      const configGuard = new ConfigGuard({
+        warnOnFirst: phase53GuardCfg.warnOnFirst,
+        protectedPatterns: phase53GuardCfg.protectedPatterns,
+      });
+      fileEditTool.setConfigGuard(configGuard);
+      fileWriteTool.setConfigGuard(configGuard);
+      logger.debug('ConfigGuard injected', { via: 'setConfigGuard' });
+    } catch (err) {
+      logger.warn('Phase 59: configGuard 装配失败，fail-open 跳过', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   const mcpManager = new MCPClientManager(registry);
@@ -1345,14 +1359,21 @@ export function createAppDependencies(
   mcpManager.setSanitizer(resultSanitizer);
   // Phase 53 Task 5：McpSecurityScanner 注入（受 config.phase53Integration.mcpSecurityScan.enabled 守护）
   // 启用后 MCP 工具注册前会扫描 4 类威胁（投毒/仿冒/隐藏指令/地毯式替换）
+  // Phase 59 Task 2：mcpSecurityScan 默认 true，加 fail-open 守卫——装配失败不阻塞主流程
   const phase53McpScanCfg = config.phase53Integration?.mcpSecurityScan;
   if (phase53McpScanCfg?.enabled) {
-    const scanner = new McpSecurityScanner({
-      knownToolNames: phase53McpScanCfg.knownToolNames,
-      blockThreshold: phase53McpScanCfg.blockThreshold,
-    });
-    mcpManager.setSecurityScanner(scanner);
-    logger.debug('McpSecurityScanner injected', { via: 'setSecurityScanner' });
+    try {
+      const scanner = new McpSecurityScanner({
+        knownToolNames: phase53McpScanCfg.knownToolNames,
+        blockThreshold: phase53McpScanCfg.blockThreshold,
+      });
+      mcpManager.setSecurityScanner(scanner);
+      logger.debug('McpSecurityScanner injected', { via: 'setSecurityScanner' });
+    } catch (err) {
+      logger.warn('Phase 59: mcpSecurityScan 装配失败，fail-open 跳过', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // 3. CompletionGate——独立代码验证门（typecheck/lint/tests）
