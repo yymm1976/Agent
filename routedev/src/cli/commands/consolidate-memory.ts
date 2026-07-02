@@ -1,6 +1,7 @@
 // src/cli/commands/consolidate-memory.ts
 // 记忆整理命令：/consolidate-memory
 // Phase 57：从 /dream 改名，去拟人化措辞
+// Phase 60：删除 /dream deprecated alias，/consolidate-memory 是唯一入口
 
 import type { CommandDefinition } from '../command-registry.js';
 import { consolidateToGraph } from '../../agent/memory/consolidation.js';
@@ -33,15 +34,5 @@ export const consolidateMemoryCommand: CommandDefinition = {
     }
 
     return { type: 'handled', messages };
-  },
-};
-
-// 保留 dream 作为 deprecated alias，Phase 60 删除
-export const dreamAlias: CommandDefinition = {
-  name: 'dream',
-  description: '[已废弃] 请使用 /consolidate-memory',
-  handler: async (args, ctx) => {
-    ctx.commandBridge.addSystemMessage('[Deprecated] /dream 已改名，请使用 /consolidate-memory');
-    return consolidateMemoryCommand.handler(args, ctx);
   },
 };

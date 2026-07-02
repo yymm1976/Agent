@@ -42,6 +42,7 @@ RouteDev 采用五层架构，自下而上依次为：
 - **BranchManager**：分支对话管理
 - **ContextCompactor**：五阶段渐进压缩
 - **WorkModeController**：三模式权限（build / plan / compose）
+- **PathRouter**（Phase 58 统一）：路径路由器，合并原 execution-router + level-path-router，提供 `selectPath(level)` / `route(plan, options)` / `detectLevelSwitch(level, signals)` 三类方法
 
 ### 2.3 工具层 (`src/tools/`)
 - **ToolRegistry**：工具注册中心
@@ -125,12 +126,12 @@ Phase 50 将 41 项"已开发待集成"的资产接入生产代码执行链路�
 
 | 模块 | 接入点 | 配置开关 |
 |------|--------|----------|
-| GoalPromptBuilder | `goal-runner.ts` handleGoalCommand 入口 | `goalIntegration.promptBuilderEnabled` |
 | GoalPersistence | `goal-runner.ts` executeGoalPlan 持久化 | `goalIntegration.persistenceEnabled` |
 | GoalAuditor | `goal-runner.ts` verify 阶段 | `goalIntegration.auditEnabled` |
-| RequirementChangeAnalyzer | `goal-runner.ts` analyzeRequirementChange | `goalIntegration.requirementChangeEnabled` |
 
-数据流：`/goal 输入 → GoalPromptBuilder.build → GoalParser → GoalPersistence.save → 执行 → GoalAuditor.audit → 完成`
+注：GoalPromptBuilder / RequirementChangeAnalyzer 已在 Phase 59 删除（无用户可见产物或职责重叠）。
+
+数据流：`/goal 输入 → GoalParser → GoalPersistence.save → 执行 → GoalAuditor.audit → 完成`
 
 ### 6.2 多 Agent 编排接入（Task 2）
 
@@ -168,7 +169,8 @@ Phase 50 将 41 项"已开发待集成"的资产接入生产代码执行链路�
 | SkillQualityGate | `app-init.ts` 创建实例（未接入主流程，setter 不存在） | `phase49Integration.skillQualityGateEnabled` |
 | ContextUsagePanel | `app-init.ts` 创建实例 | `phase49Integration.contextUsagePanelEnabled` |
 | EvaluationFramework | `app-init.ts` 创建实例 | `phase49Integration.evaluationFrameworkEnabled` |
-| RoutingFunnel | `app-init.ts` 创建实例 | `phase49Integration.routingFunnelEnabled` |
+
+注：RoutingFunnel 已在 Phase 59 删除（路由由 ModelRouter + ScenarioClassifier + PathRouter 承担）。
 
 ### 6.5 React 组件接入（Task 7）
 
@@ -185,3 +187,43 @@ Phase 50 将 41 项"已开发待集成"的资产接入生产代码执行链路�
 ### 6.6 branch-operations 接入（Task 4）
 
 `branch-operations.ts` 经评估保留（有独特功能：delete/insert/undo/redo/squash），通过 `BranchManager.createOperations()` 工厂方法接入。
+
+## 7. Phase 56-60 花架子去除工程总览
+
+Phase 56-60 是 RouteDev 的架构瘦身工程，删除 ~3000 行死代码与无用户可见产物的模块，统一路由层，安全能力默认启用。
+
+### 7.1 D 档清除（Phase 56）
+
+删除无消费方的重型模块：
+- `src/agent/self-evolution/` 整个目录（selfEvolution/godelProposer/selfHarness 配置字段移除）
+- `src/agent/dream-consolidator.ts`（无入口模块）
+- `src/agent/eq-detector.ts`（接口不匹配）
+
+### 7.2 C 档收窄（Phase 57）
+
+将低频能力降级为可选：
+- `voice` 移至 `src/optional/voice/`，默认关闭
+- `vision` 默认关闭，需显式 `vision.enabled: true`
+- `/dream` 改名为 `/consolidate-memory`（Phase 60 删除 deprecated alias）
+- `persona-templates.ts` 删除，硬编码人格改为 config 驱动（`persona.systemPromptAppend`）
+
+### 7.3 路由合并（Phase 58）
+
+三套路由统一为单一 PathRouter：
+- `src/agent/execution-router.ts` + `src/agent/level-path-router.ts` 合并为 `src/agent/path-router.ts`
+- `ExecutionRoute` 类型从 `'single' | 'dag' | 'compose' | 'legacy'` 收窄为 `'single' | 'dag' | 'compose'`
+- `executionRouter.mode` 枚举从 `'auto' | 'legacy' | 'explicit'` 收窄为 `'auto' | 'explicit'`（旧 `legacy` 值由 z.preprocess 自动迁移为 `auto`）
+- 删除 `executePlanWithMultiAgent`（legacy 路径执行函数）
+
+### 7.4 B 档闭环补齐（Phase 59）
+
+清算所有 `*Integration.enabled: false` 字段，消灭"幽灵功能"：
+- **删除 6 个无价值字段**：routingFunnelEnabled / processEvaluation / archAwareMetrics / saturationMonitor / promptBuilderEnabled / requirementChangeEnabled
+- **安全相关 5 个字段默认启用**（false → true）：policyEngine / auditChain / mcpSecurityScan / skillSecurityGate / configGuard；装配块加 fail-open 守卫（try-catch + logger.warn）
+- **删除重复字段**：`phase52Integration.mcpSecurity`（与 `phase53Integration.mcpSecurityScan` 重复，保留 53 的）
+
+### 7.5 A 档打磨（Phase 60）
+
+- 核心模块边界测试补强：PathRouter（6 用例）+ CCRCache（5 用例）
+- 删除 `/dream` deprecated alias
+- 文档同步，版本发布 v4.5.4

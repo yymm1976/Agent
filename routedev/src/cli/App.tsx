@@ -57,8 +57,8 @@ import {
   clarifyCommand, experimentCommand, qualityCommand, scheduleCommand, trustCommand,
   // 接线修复：/doctor 命令原仅有 handleDoctorCommand 函数，无 CommandDefinition，未注册
   doctorCommand,
-  // Phase 57：/consolidate-memory（原 /dream 改名）+ dream deprecated alias
-  consolidateMemoryCommand, dreamAlias,
+  // Phase 57：/consolidate-memory（原 /dream 改名）；Phase 60：dream alias 已删除
+  consolidateMemoryCommand,
 } from './commands/index.js';
 import { initPluginSystem, registerPermissionMiddleware } from './plugin-init.js';
 import { createAppDependencies } from './app-init.js';
@@ -188,7 +188,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   }
   const commandRegistry = commandRegistryRef.current;
   useEffect(() => {
-    [autoCommand, semiCommand, manualCommand, pauseCommand, checkpointCommand, rollbackCommand, goalCommand, branchCommand, initCommand, quitCommand, clearCommand, helpCommand, statusCommand, traceCommand, promptCommand, channelsCommand, costCommand, historyCommand, pluginCommand, diffCommand, buildCommand, planCommand, composeCommand, resumeCommand, tokenCommand, memoryCommand, permissionsCommand, configCommand, outputStyleCommand, techDebtCommand, swarmCommand, btwCommand, reviewCommand, clarifyCommand, experimentCommand, qualityCommand, scheduleCommand, trustCommand, doctorCommand, consolidateMemoryCommand, dreamAlias].forEach(c => commandRegistry.register(c));
+    [autoCommand, semiCommand, manualCommand, pauseCommand, checkpointCommand, rollbackCommand, goalCommand, branchCommand, initCommand, quitCommand, clearCommand, helpCommand, statusCommand, traceCommand, promptCommand, channelsCommand, costCommand, historyCommand, pluginCommand, diffCommand, buildCommand, planCommand, composeCommand, resumeCommand, tokenCommand, memoryCommand, permissionsCommand, configCommand, outputStyleCommand, techDebtCommand, swarmCommand, btwCommand, reviewCommand, clarifyCommand, experimentCommand, qualityCommand, scheduleCommand, trustCommand, doctorCommand, consolidateMemoryCommand].forEach(c => commandRegistry.register(c));
 
     // Phase 47 Task 7：加载自定义 Slash 命令（.routedev/commands/ 目录）
     // 命名空间隔离：自定义命令与内置命令同名时，内置命令优先，自定义命令被忽略并 logger.warn（陷阱 #139）

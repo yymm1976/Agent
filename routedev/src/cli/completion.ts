@@ -19,9 +19,8 @@ export const COMMAND_COMPLETIONS: CompletionItem[] = [
 
   { name: 'branch', subcommands: ['list', 'edit', 'switch'] },
   { name: 'checkpoint', subcommands: ['list', 'create'] },
-  // Phase 57：/consolidate-memory（原 /dream 改名）+ dream deprecated alias
+  // Phase 57：/consolidate-memory（原 /dream 改名）；Phase 60：dream alias 已删除
   { name: 'consolidate-memory', subcommands: [] },
-  { name: 'dream', subcommands: [] },
   { name: 'rollback', subcommands: [] },
   { name: 'pause', subcommands: [] },
   { name: 'auto', subcommands: [] },

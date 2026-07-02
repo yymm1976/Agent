@@ -157,3 +157,71 @@ Task 9 清理了 84 个多余 export，覆盖 46 个文件：
 - **build**：`tsup` 构建通过
 - **build:electron**：`electron-vite build` 构建通过
 - **无残留 broken import**：所有已删除文件的引用均已修复
+
+---
+
+## 6. Phase 56-60 花架子去除工程清理统计
+
+Phase 56-60 在 Phase 50 审计基础上进一步深度清理，删除无用户可见产物的模块、统一路由层、安全能力默认启用。
+
+### 6.1 删除的源文件（Phase 56-59）
+
+| Phase | 文件 | 删除原因 |
+|-------|------|----------|
+| 56 | `src/agent/self-evolution/` 整个目录（含 godel-proposer / self-harness-loop / self-evolution-framework 等） | 无消费方，学术指标无用户可见产物 |
+| 56 | `src/agent/dream-consolidator.ts` | 无入口模块 |
+| 56 | `src/agent/eq-detector.ts` | 接口不匹配，无法接入 |
+| 57 | `src/agent/persona-templates.ts` | 硬编码人格改为 config 驱动 |
+| 58 | `src/agent/execution-router.ts` | 合并入 path-router.ts |
+| 58 | `src/agent/level-path-router.ts` | 合并入 path-router.ts |
+| 58 | `src/agent/execution-router.test.ts` | 合并入 path-router.test.ts |
+| 58 | `src/agent/level-path-router.test.ts` | 合并入 path-router.test.ts |
+| 59 | `src/agent/goal-prompt-builder.ts` | 与 prompts/manager.ts 职责重叠 |
+| 59 | `src/agent/requirement-change.ts` | 需求变更流程未产品化 |
+
+### 6.2 删除的配置字段（Phase 59）
+
+| 字段 | 删除原因 |
+|------|----------|
+| `phase49Integration.routingFunnelEnabled` | routing-funnel.ts 已删，僵尸配置 |
+| `phase52Integration.processEvaluation.enabled` | 学术评估指标，无用户可见产物 |
+| `phase52Integration.archAwareMetrics.enabled` | 学术指标，无用户可见产物 |
+| `phase52Integration.saturationMonitor.enabled` | 饱和度监控无消费方 |
+| `goalIntegration.promptBuilderEnabled` | 与 prompts/manager.ts 职责重叠 |
+| `goalIntegration.requirementChangeEnabled` | 需求变更流程未产品化 |
+| `phase52Integration.mcpSecurity` | 与 phase53Integration.mcpSecurityScan 重复 |
+
+### 6.3 默认启用字段（Phase 59）
+
+| 字段 | 启用原因 |
+|------|----------|
+| `phase53Integration.policyEngine.enabled` | Intent Guard + Playbook 安全核心 |
+| `phase53Integration.auditChain.enabled` | 审计链路合规核心 |
+| `phase53Integration.mcpSecurityScan.enabled` | MCP 工具安全扫描 |
+| `phase53Integration.skillSecurityGate.enabled` | Skill 安全校验 |
+| `phase53Integration.configGuard.enabled` | 配置守卫 |
+
+### 6.4 删除的命令 alias（Phase 60）
+
+| alias | 删除原因 |
+|-------|----------|
+| `/dream` deprecated alias | Phase 57 保留的兼容 alias，Phase 60 删除，`/consolidate-memory` 是唯一入口 |
+
+### 6.5 清理统计汇总
+
+| 维度 | 数量 |
+|------|------|
+| 删除源文件 | 10+（含 self-evolution 目录） |
+| 删除测试文件 | 4+ |
+| 删除配置字段 | 7 |
+| 默认启用字段 | 5 |
+| 合并模块 | 3 套路由 → 1 套 PathRouter |
+| 删除行数 | ~3000+ 行 |
+| 新增边界测试 | 11（PathRouter 6 + CCRCache 5） |
+
+### 6.6 清理验证（Phase 60）
+
+- **typecheck** + **typecheck:desktop**：通过
+- **全量测试**：259 文件 / 3552 用例全部通过（0 失败）
+- **build** + **dist:electron**：通过
+- **残留扫描**：`dream-to-graph|execution-router|level-path-router|self-evolution|dream-consolidator|eq-detector|EQDetector|GodelProposer|SelfHarnessLoop|SelfEvolutionFramework|persona-templates|routing-funnel|executePlanWithMultiAgent` 在 `src/` 无匹配

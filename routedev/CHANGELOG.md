@@ -2,6 +2,72 @@
 
 所有版本变更记录。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## v4.5.4 (2026-07-02) — Phase 60: 花架子去除工程五（A 档打磨与全量验收发布）
+
+> **核心目标：** 花架子去除工程收尾。核心模块边界测试补强、`/dream` deprecated alias 删除、文档同步、版本发布。本 Phase 不新增功能，只做稳定性补强。
+
+### Breaking Changes（汇总 Phase 56-60）
+
+- 删除 `self-evolution/` 模块（selfEvolution/godelProposer/selfHarness 配置字段移除）
+- 删除 `dream-consolidator.ts`（无入口模块）
+- 删除 `eq-detector.ts`（接口不匹配）
+- `/dream` 命令改名 `/consolidate-memory`，Phase 60 删除 deprecated alias，`/consolidate-memory` 是唯一入口
+- `vision` 默认关闭，需显式 `vision.enabled: true`
+- `executionRouter.mode: 'legacy'` 配置值移除，未注入路由器回退到 `single`
+- 删除配置字段：routingFunnelEnabled / processEvaluation / archAwareMetrics / saturationMonitor / promptBuilderEnabled / requirementChangeEnabled / phase52Integration.mcpSecurity
+- `ExecutionRoute` 类型从 `'single' | 'dag' | 'compose' | 'legacy'` 收窄为 `'single' | 'dag' | 'compose'`
+
+### 默认启用（Phase 59）
+
+- `phase53Integration.policyEngine.enabled`（Intent Guard + Playbook 安全核心）
+- `phase53Integration.auditChain.enabled`（审计链路合规核心）
+- `phase53Integration.mcpSecurityScan.enabled`（MCP 工具安全扫描）
+- `phase53Integration.skillSecurityGate.enabled`（Skill 安全校验）
+- `phase53Integration.configGuard.enabled`（配置守卫）
+- 5 个安全模块装配块加 fail-open 守卫（try-catch + logger.warn），装配失败不阻塞主流程
+
+### Added — Phase 60 Task 1：核心模块边界测试补强
+
+- **PathRouter 边界测试**（6 用例）：`tests/agent/path-router.test.ts` 补 explicit+compose / 0 步 plan / contextUsage 边界值（0.84 不触发、0.85 触发）/ goal-runner 决策模拟
+- **CCRCache 边界测试**（5 用例）：`tests/agent/ccr-cache.test.ts` 补 LRU 淘汰 / retrieve 不存在 hash / retrieveByPrefix 完整 hash 与 12 位前缀匹配 / 不匹配前缀返回 null
+
+### Removed — Phase 60 Task 2：删除 /dream deprecated alias
+
+- `src/cli/commands/consolidate-memory.ts` 删除 `dreamAlias` export
+- `src/cli/App.tsx` 删除 `dreamAlias` import 与命令注册
+- `src/cli/completion.ts` 删除 `dream` 补全项
+- 残留扫描 `commands/dream|alias.*dream` 在 `src/` 无匹配
+
+### Changed — Phase 60 Task 3：文档同步
+
+- `routedev/docs/ARCHITECTURE.md` 更新：2.2 节补充 PathRouter；6.1/6.4 节删除已移除模块（GoalPromptBuilder/RequirementChangeAnalyzer/RoutingFunnel）；新增第 7 节"Phase 56-60 花架子去除工程总览"
+- `routedev/docs/DEAD_CODE_AUDIT.md` 新增第 6 节"Phase 56-60 花架子去除工程清理统计"
+- `routedev/CHANGELOG.md` 新增 v4.5.4 条目，汇总 Phase 56-60 所有 breaking change
+
+### Migration Notes
+
+- **配置兼容**：旧 config 中含已删除字段时，Zod safe-parse 默认忽略未知字段，不会报错
+- **安全默认启用**：升级后 5 个安全模块自动开启；若装配失败则 fail-open 跳过并记录警告
+- **/dream 命令**：Phase 60 删除 deprecated alias，请改用 `/consolidate-memory`
+- **路由模式**：旧 `executionRouter.mode: 'legacy'` 由 z.preprocess 自动迁移为 `'auto'`
+
+### Test Stats
+
+- 全量测试：259 个测试文件 / 3552 用例全部通过（0 失败，2 跳过）
+- 新增 11 个边界测试（PathRouter 6 + CCRCache 5）
+- `pnpm typecheck` + `pnpm typecheck:desktop` + `pnpm build` 通过
+- 残留花架子扫描：`dream-to-graph|execution-router|level-path-router|self-evolution|dream-consolidator|eq-detector|EQDetector|GodelProposer|SelfHarnessLoop|SelfEvolutionFramework|persona-templates|routing-funnel|executePlanWithMultiAgent` 在 `src/` 无匹配
+
+### 花架子去除工程总结（Phase 56-60）
+
+| Phase | 主题 | 主要成果 |
+|-------|------|----------|
+| 56 | D 档清除 | self-evolution + dream-consolidator + eq-detector 全删 |
+| 57 | C 档收窄 | voice 移 optional、vision 默认关、dream 改名、persona 简化 |
+| 58 | 路由合并 | 统一 PathRouter，删除 executePlanWithMultiAgent |
+| 59 | B 档闭环 | 6 字段删除、5 安全字段默认启、7 字段补入口 |
+| 60 | A 档打磨 | 边界测试、文档同步、v4.5.4 发布 |
+
 ## v4.5.3 (2026-07-02) — Phase 59: 花架子去除工程四（B 档闭环补齐）
 
 > **核心目标：** 清算 `defaults.ts` 中所有 `*Integration.enabled: false` 字段，每个字段给出明确处置——删除 / 默认启用 / 补设置页入口。消灭"幽灵功能"（写了但不接入也不删的第三种状态）。
