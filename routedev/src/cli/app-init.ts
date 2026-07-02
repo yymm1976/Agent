@@ -57,7 +57,7 @@ import { Orchestrator, type OrchestrationIntegrationOptions } from '../agent/mul
 // Phase 50 Task 1：Goal 流程核心模块（按 config.goalIntegration 渐进接入）
 import { GoalAuditor } from '../agent/goal-audit.js';
 import { GoalPersistence } from '../agent/goal-persistence.js';
-import { GoalPromptBuilder } from '../agent/goal-prompt-builder.js';
+// Phase 59：GoalPromptBuilder 已删除（批次1 无价值 Integration）
 // Phase 50 Task 3：子 Agent 委托体系核心模块（按 config.delegationIntegration 渐进接入）
 import { ContextPacker } from '../agents/context-packer.js';
 import { DelegationGate } from '../agents/delegation-gate.js';
@@ -106,8 +106,8 @@ import { createBoundedRecoveryManager } from '../agent/bounded-recovery.js';
 import type { DualLoopOrchestrator } from '../agent/dual-loop-orchestrator.js';
 // Phase 55：DagEngine 类型（异步创建，goal-runner 通过 ref 延迟读取）
 import type { DagEngine } from '../agent/workflow/dag-engine.js';
-import { ArchitectureAwareMetricsCollector } from '../evaluation/architecture-aware-metrics.js';
-import { SaturationMonitor } from '../evaluation/saturation-monitor.js';
+// Phase 59：ArchitectureAwareMetricsCollector/SaturationMonitor import 已删除（批次1，实例化块移除）
+// 注：类型仍被 score-card.ts / dual-loop-orchestrator.ts / completion-gate.ts 通过各自 import 引用
 // CR-4b：接入 compositional-router（Phase 52 Task 4 组合式路由）
 import { decomposeWithSkillAwareness, retrieveSkill, composeDAG, DEFAULT_ROUTING_CONFIG, type AtomicSubTask, type SkillMatch, type SkillDAGPlan, type CompositionalRoutingConfig } from '../skills/compositional-router.js';
 // Phase 53 Task 5/7：MCP 安全扫描器 + 配置保护守卫（Task 6 SkillSecurityGate 使用动态 import）
@@ -209,16 +209,13 @@ export interface AppDependencies {
   /** Phase 50 Task 1：Goal 流程核心模块实例（按 config.goalIntegration 渐进接入，未开启时为 null） */
   goalAuditor: GoalAuditor | null;
   goalPersistence: GoalPersistence | null;
-  goalPromptBuilder: GoalPromptBuilder | null;
+  // Phase 59：goalPromptBuilder 已删除（批次1 无价值 Integration）
   /** Phase 50 Task 3：子 Agent 委托体系模块实例（按 config.delegationIntegration 渐进接入，未开启时为 null） */
   subAgentLifecycle: SubAgentLifecycle | null;
   subAgentScoreCardCollector: SubAgentScoreCardCollector | null;
   /** Phase 52 Task 1：Skill 生命周期管理器（未启用时为 undefined） */
   skillLifecycleManager?: SkillLifecycleManager;
-  /** Phase 52 Task 6：架构感知指标采集器（未启用时为 undefined） */
-  metricsCollector?: ArchitectureAwareMetricsCollector;
-  /** Phase 52 Task 7：评估集饱和监测器（未启用时为 undefined） */
-  saturationMonitor?: SaturationMonitor;
+  // Phase 59：metricsCollector/saturationMonitor 接口字段已删除（批次1）
   // CR-4b：孤立模块接线点（按各自 config 开关守护，未启用时为 undefined）
   /** 子 Agent 活动面板存储（config.activityPanel.enabled） */
   activityStore?: AgentActivityStore;
@@ -1208,13 +1205,11 @@ export function createAppDependencies(
   const goalIntegrationCfg = config.goalIntegration;
   const goalAuditor = goalIntegrationCfg?.auditEnabled ? new GoalAuditor() : null;
   const goalPersistence = goalIntegrationCfg?.persistenceEnabled ? new GoalPersistence(cwd) : null;
-  const goalPromptBuilder = goalIntegrationCfg?.promptBuilderEnabled ? new GoalPromptBuilder() : null;
-  if (goalIntegrationCfg && (goalAuditor || goalPersistence || goalPromptBuilder)) {
+  // Phase 59：goalPromptBuilder 已删除（批次1 无价值 Integration）
+  if (goalIntegrationCfg && (goalAuditor || goalPersistence)) {
     logger.info('Phase 50: goalIntegration modules wired', {
       auditor: !!goalAuditor,
       persistence: !!goalPersistence,
-      promptBuilder: !!goalPromptBuilder,
-      requirementChange: !!goalIntegrationCfg.requirementChangeEnabled,
     });
   }
 
@@ -1847,11 +1842,7 @@ export function createAppDependencies(
             maxBacktrack: config.phase52Integration.boundedRecovery.maxBacktrack,
           });
         }
-        // Phase 52 消费方接入（I-2）：注入架构感知指标
-        if (metricsCollector) {
-          orchestrator.setMetricsCollector(metricsCollector);
-          logger.info('app-init: metricsCollector 已注入 DualLoopOrchestrator（消费方待 Phase 53）');
-        }
+        // Phase 59：metricsCollector 注入已删除（archAwareMetrics 批次1 删除，metricsCollector 永远 undefined）
         // Phase 55 Task 8：注入 innerAgent（独立 ReActAgentLoop 实例，不注入 orchestrator，避免无限递归）
         // orchestrator.run(params) 会转交给 innerAgent.run(params)；若 innerAgent 是已注入 orchestrator 的
         // agentLoop，run() 会再次转交给 orchestrator，形成无限递归。故必须创建独立实例。
@@ -1960,34 +1951,9 @@ export function createAppDependencies(
     logger.info('app-init: boundedRecovery 配置已确认，将在 Phase 49 DualLoopOrchestrator 创建时注入');
   }
 
-  // Task 6：架构感知指标
-  let metricsCollector: ArchitectureAwareMetricsCollector | undefined;
-  if (config.phase52Integration?.archAwareMetrics?.enabled) {
-    metricsCollector = new ArchitectureAwareMetricsCollector(
-      config.phase52Integration.archAwareMetrics.anomalySensitivity ?? 'medium',
-    );
-    logger.info('app-init: ArchitectureAwareMetricsCollector 已启用');
-  }
-
-  // Task 7：饱和监测
-  let saturationMonitor: SaturationMonitor | undefined;
-  if (config.phase52Integration?.saturationMonitor?.enabled) {
-    saturationMonitor = new SaturationMonitor();
-    logger.info('app-init: SaturationMonitor 已启用');
-  }
-
-  // Phase 52 Task 7：把 SaturationMonitor 注入 CompletionGate（fail-open）
-  // verify 完成后把 checks 转为 EvaluationRunResult 累积历史并评估饱和度，非 healthy 时填 warnings
-  if (saturationMonitor) {
-    try {
-      completionGate.setSaturationMonitor(saturationMonitor);
-      logger.info('app-init: SaturationMonitor 已注入 CompletionGate');
-    } catch (err) {
-      logger.warn('app-init: SaturationMonitor 注入 CompletionGate 失败 (non-blocking)', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
+  // Phase 59：archAwareMetrics/saturationMonitor 已删除（批次1 无价值 Integration）
+  // 原实例化块已移除；类型仍被 score-card.ts / dual-loop-orchestrator.ts / completion-gate.ts 通过 type 引用
+  // 故源文件 architecture-aware-metrics.ts / saturation-monitor.ts 保留，仅删配置字段与实例化
 
   // CR-4b：组合式路由器（config.phase52Integration.compositionalRouting.enabled 守护）
   // 包装 decomposeWithSkillAwareness / composeDAG，按配置注入路由参数，供上层 planner 调用
@@ -2100,14 +2066,12 @@ export function createAppDependencies(
     // Phase 50 Task 1：goalIntegration 实例（App.tsx 传给 createGoalRunner）
     goalAuditor,
     goalPersistence,
-    goalPromptBuilder,
+    // Phase 59：goalPromptBuilder/metricsCollector/saturationMonitor 返回字段已删除（批次1）
     // Phase 50 Task 3：delegationIntegration 实例（供 UI / 测试观察）
     subAgentLifecycle: delegationLifecycle,
     subAgentScoreCardCollector: delegationScoreCardCollector,
     // Phase 52 模块（全部可选，未启用时为 undefined）
     skillLifecycleManager,
-    metricsCollector,
-    saturationMonitor,
     // CR-4b：孤立模块接线点实例（按各自 config 开关守护，未启用时为 undefined）
     activityStore,
     compositionalRouter,

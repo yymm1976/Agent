@@ -130,6 +130,28 @@ export interface Challenge {
 }
 
 // ============================================================
+// Phase 59：五段式目标规范（原 goal-prompt-builder.ts 已删除，类型移至此处）
+// 设计文档见 Phase 40 Task 8；Phase 59 删除 GoalPromptBuilder 实现后，
+// goal-persistence.ts 仍需 FivePartGoalSpec 类型字段，故类型定义保留
+// ============================================================
+
+/** 五段式目标规范 */
+export interface FivePartGoalSpec {
+  /** 目标（一句话） */
+  goal: string;
+  /** 范围（改哪些、不改哪些） */
+  scope: string;
+  /** 约束列表（硬性限制） */
+  constraints: string[];
+  /** 完成标准（可验证的验收条件） */
+  doneWhen: string[];
+  /** 停止条件（遇到即停） */
+  stopIf: string[];
+  /** Token 预算 */
+  tokenBudget: number;
+}
+
+// ============================================================
 // Phase 54：Goal 执行结构化事件（供渲染层 GoalExecutionCard 消费）
 // 数据流：goal-runner.onGoalEvent → engine-bridge → IPC goal:event → store → GoalExecutionCard
 // 设计原则：与 addSystemMessage 并存，CLI 端仍用文本输出，Electron 端消费结构化数据

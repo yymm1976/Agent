@@ -21,7 +21,8 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import { logger } from '../utils/logger.js';
-import type { FivePartGoalSpec } from './goal-prompt-builder.js';
+// Phase 59：FivePartGoalSpec 类型已从 goal-prompt-builder.ts 移至 goal-types.ts
+import type { FivePartGoalSpec } from './goal-types.js';
 import type { ArchivedPlanVersion, PlanAttestation } from './goal-types.js';
 
 // ============================================================

@@ -461,8 +461,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   goalIntegration: {
     auditEnabled: true,
     persistenceEnabled: true,
-    promptBuilderEnabled: false,
-    requirementChangeEnabled: false,
+    // Phase 59：promptBuilderEnabled/requirementChangeEnabled 已删除（批次1 无价值 Integration）
   },
   // Phase 50 Task 2：多 Agent 编排模块接入开关（默认全部 false）
   // Phase 55 RISK 1 修复：原值 true 与 schema(default:false) 和注释矛盾，统一改为 false
@@ -488,13 +487,13 @@ export const DEFAULT_CONFIG: AppConfig = {
     mcpBridgeEnabled: true,
   },
   // Phase 50 Task 6：Phase 49 模块接入确认开关（默认全部 false，实验性）
+  // Phase 59：routingFunnelEnabled 已删除（批次1，routing-funnel.ts Phase 50 已删，僵尸配置）
   phase49Integration: {
     skillFlowEnabled: false,
     dualLoopEnabled: true,
     qualityGateEnabled: true,
     contextUsagePanelEnabled: false,
     evaluationFrameworkEnabled: false,
-    routingFunnelEnabled: false,
   },
   // Phase 51：外部开源借鉴落地配置（默认全部 false，保守启用）
   reviewerPolicy: {
@@ -581,6 +580,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     validateConsistency: true,
   },
   // Phase 52：MUSE-Autoskill 集成（聚合所有 Phase 52 Task 配置，默认全部关闭）
+  // Phase 59：processEvaluation/archAwareMetrics/saturationMonitor 已删除（批次1 无价值学术指标）
   phase52Integration: {
     // Task 1：Skill 生命周期管理
     skillLifecycle: {
@@ -588,13 +588,6 @@ export const DEFAULT_CONFIG: AppConfig = {
       creationTriggerThreshold: 3,
       memoryRetentionDays: 30,
       autoApplyRefinement: false,
-    },
-    // Task 2：过程级缺陷评估
-    processEvaluation: {
-      enabled: false,
-      sensitivity: 'medium',
-      showProcessGrade: true,
-      controlPreservationThreshold: 0.7,
     },
     // Task 3：有界局部恢复
     boundedRecovery: { enabled: true, maxBacktrack: 3, artifactBinding: true, validateConsistency: true },
@@ -604,19 +597,6 @@ export const DEFAULT_CONFIG: AppConfig = {
       maxDecompositionIterations: 2,
       semanticRetrieval: true,
       maxParallelSkills: 2,
-    },
-    // Task 6：架构感知指标
-    archAwareMetrics: {
-      enabled: false,
-      anomalySensitivity: 'medium',
-      showInQualityCommand: true,
-    },
-    // Task 7：饱和度监测
-    saturationMonitor: {
-      enabled: false,
-      passRateThreshold: 0.95,
-      varianceThreshold: 0.05,
-      checkInterval: 10,
     },
     // Task 10：MCP 安全形式化框架
     mcpSecurity: {

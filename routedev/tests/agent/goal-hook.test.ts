@@ -1,6 +1,9 @@
 // tests/agent/goal-hook.test.ts
 // Phase 40 Task 8 & 9：/goal 生命周期进化 + Hook 增强 测试
-// 覆盖：GoalPromptBuilder(7) + GoalPersistence(5) + GoalAuditor(5) + HookEnhancementManager(2) = 19
+// 覆盖：GoalPersistence(5) + GoalAuditor(5) + HookEnhancementManager(2) = 12
+//
+// Phase 59：GoalPromptBuilder(7) 测试已删除（批次1 无价值 Integration，源文件已删）
+//        FivePartGoalSpec 类型移至 goal-types.ts，makeSpec 辅助工厂保留（GoalPersistence 测试依赖）
 //
 // 本任务：已移除 HookEnhancementManager 的试用模式/Hook Group/函数型 Hook 注册测试
 //        （这些 API 作为死代码删除，仅保留 analyzeCommand/detectBase64Command 等安全审查测试）
@@ -9,10 +12,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import {
-  GoalPromptBuilder,
-  type FivePartGoalSpec,
-} from '../../src/agent/goal-prompt-builder.js';
+// Phase 59：FivePartGoalSpec 类型从 goal-prompt-builder.ts 移至 goal-types.ts
+import type { FivePartGoalSpec } from '../../src/agent/goal-types.js';
 import {
   GoalPersistence,
   type PersistedGoal,
@@ -60,86 +61,6 @@ function makePersistedGoal(overrides?: Partial<PersistedGoal>): PersistedGoal {
     ...overrides,
   };
 }
-
-// ============================================================
-// GoalPromptBuilder（7 个）
-// ============================================================
-
-describe('GoalPromptBuilder', () => {
-  const builder = new GoalPromptBuilder();
-
-  it('1. isAmbiguous 短输入返回 true', () => {
-    expect(GoalPromptBuilder.isAmbiguous('修bug')).toBe(true);
-    expect(GoalPromptBuilder.isAmbiguous('')).toBe(true);
-    expect(GoalPromptBuilder.isAmbiguous('   ')).toBe(true);
-  });
-
-  it('2. isAmbiguous 含模糊词返回 true', () => {
-    expect(GoalPromptBuilder.isAmbiguous('实现一些功能，大概差不多了')).toBe(true);
-    expect(GoalPromptBuilder.isAmbiguous('优化一些相关的东西之类的')).toBe(true);
-  });
-
-  it('3. isAmbiguous 简单命令返回 false', () => {
-    expect(GoalPromptBuilder.isAmbiguous('查看 git 状态')).toBe(false);
-    expect(GoalPromptBuilder.isAmbiguous('列出文件')).toBe(false);
-    // 含明确动词且足够长
-    expect(GoalPromptBuilder.isAmbiguous('实现用户登录功能并编写测试')).toBe(false);
-  });
-
-  it('4. generateClarificationQuestions 覆盖四个维度', () => {
-    const questions = GoalPromptBuilder.generateClarificationQuestions('实现登录');
-    const dimensions = questions.map((q) => q.dimension);
-    expect(dimensions).toContain('实现细节');
-    expect(dimensions).toContain('必要决策');
-    expect(dimensions).toContain('完成标准');
-    expect(dimensions).toContain('范围边界');
-    expect(questions.length).toBe(4);
-    // 每个问题都有非空文本
-    for (const q of questions) {
-      expect(q.question.length).toBeGreaterThan(0);
-    }
-  });
-
-  it('5. enrichGoal 合并用户回答', () => {
-    const original = '实现登录功能';
-    const answers = {
-      实现细节: '用 JWT',
-      完成标准: '测试通过',
-    };
-    const enriched = GoalPromptBuilder.enrichGoal(original, answers);
-    expect(enriched).toContain('实现登录功能');
-    expect(enriched).toContain('JWT');
-    expect(enriched).toContain('测试通过');
-    expect(enriched).toContain('补充');
-  });
-
-  it('6. serialize + parse 往返一致', () => {
-    const spec = makeSpec();
-    const markdown = GoalPromptBuilder.serialize(spec);
-    const parsed = GoalPromptBuilder.parse(markdown);
-    expect(parsed.goal).toBe(spec.goal);
-    expect(parsed.scope).toBe(spec.scope);
-    expect(parsed.constraints).toEqual(spec.constraints);
-    expect(parsed.doneWhen).toEqual(spec.doneWhen);
-    expect(parsed.stopIf).toEqual(spec.stopIf);
-    expect(parsed.tokenBudget).toBe(spec.tokenBudget);
-  });
-
-  it('7. build 生成五段式规范', async () => {
-    const spec = await builder.build('实现用户登录功能，基于 TypeScript', {
-      完成标准: '登录测试通过',
-      范围边界: '只改 src/auth/',
-    });
-    expect(spec.goal).toContain('实现用户登录功能');
-    expect(spec.scope).toContain('src/auth/');
-    expect(spec.constraints.length).toBeGreaterThan(0);
-    expect(spec.doneWhen.length).toBeGreaterThan(0);
-    expect(spec.stopIf.length).toBeGreaterThan(0);
-    expect(spec.tokenBudget).toBeGreaterThan(0);
-    // 完成标准应包含澄清回答
-    expect(spec.doneWhen.some((d) => d.includes('登录测试通过'))).toBe(true);
-  });
-});
 
 // ============================================================
 // GoalPersistence（5 个）

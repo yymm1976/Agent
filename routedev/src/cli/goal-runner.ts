@@ -33,8 +33,7 @@ import { archiveCurrentPlan, attestPlan, verifyPlanAttestation } from '../agent/
 // Phase 50 Task 1：接入核心模块（默认 enabled: false，开关在 config.goalIntegration）
 import { GoalAuditor } from '../agent/goal-audit.js';
 import { GoalPersistence } from '../agent/goal-persistence.js';
-import { GoalPromptBuilder } from '../agent/goal-prompt-builder.js';
-import { analyzeChangeImpact, isRequirementChange, type RequirementChange } from '../agent/requirement-change.js';
+// Phase 59：GoalPromptBuilder / requirement-change 已删除（批次1 无价值 Integration）
 import { logger } from '../utils/logger.js';
 import { estimateTokens } from '../utils/token-estimate.js';
 // Phase 30 P1-1：goal 路径补 profiler.persistSession，需 path 解析输出目录
@@ -93,7 +92,7 @@ export interface GoalRunnerDeps {
   /** Phase 50 Task 1：核心模块实例（由 app-init.ts 在开关开启时创建并注入，可选） */
   goalAuditor?: GoalAuditor;
   goalPersistence?: GoalPersistence;
-  goalPromptBuilder?: GoalPromptBuilder;
+  // Phase 59：goalPromptBuilder 已删除（批次1 无价值 Integration）
   /**
    * Phase 54 Task 1：多 Agent 编排实例（可选，三者同时注入后 /goal 走多 Agent 路径）
    * - orchestrator：分析依赖图 + 生成并行组 + 分配角色
@@ -195,7 +194,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     currentPlanRef, awaitingGoalConfirmRef,
     addSystemMessage, requestPlanEdit, setIsProcessing, setTodayTokensUsed, profiler,
     completionGate,
-    goalAuditor, goalPersistence, goalPromptBuilder,
+    goalAuditor, goalPersistence,
     // Phase 54 Task 1/4：多 Agent 编排 + 统一审查器
     orchestrator, workerExecutor, blackboard, unifiedReviewer,
     // Phase 58：统一路径路由器 + DAG 引擎（可选注入，未注入时降级到 single）
@@ -355,31 +354,11 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     const clarifiedDescription = onToolConfirmRequest
       ? await clarifyGoalIfNeeded(description, client, routeDecision.model.id)
       : description;
-    // 用澄清后的描述替换原描述（后续 parser/promptBuilder 都用 clarifiedDescription）
+    // 用澄清后的描述替换原描述（后续 parser 都用 clarifiedDescription）
     description = clarifiedDescription;
 
-    // Phase 50 Task 1：promptBuilderEnabled 时用 GoalPromptBuilder 构造五段式规范
-    // 失败时 try/catch 降级到原行为（直接用 description 喂给 parser）
-    let enrichedDescription = description;
-    if (goalIntegration?.promptBuilderEnabled && goalPromptBuilder) {
-      try {
-        const spec = await goalPromptBuilder.build(description);
-        currentGoalSpec = { doneWhen: spec.doneWhen };
-        // 用 scope + constraints 增强描述，让 GoalParser 拿到更明确的上下文
-        const scopeLine = spec.scope ? `\n范围: ${spec.scope}` : '';
-        const constraintsLine = spec.constraints.length > 0
-          ? `\n约束: ${spec.constraints.join('; ')}`
-          : '';
-        const doneWhenLine = spec.doneWhen.length > 0
-          ? `\n完成标准: ${spec.doneWhen.join('; ')}`
-          : '';
-        enrichedDescription = `${description}${scopeLine}${constraintsLine}${doneWhenLine}`;
-        addSystemMessage('📐 已用 GoalPromptBuilder 构造五段式规范');
-      } catch (error) {
-        logger.warn('GoalPromptBuilder.build failed (non-blocking)', { error: String(error) });
-        currentGoalSpec = null;
-      }
-    }
+    // Phase 59：GoalPromptBuilder 已删除（批次1 无价值 Integration），enrichedDescription 直接用 description
+    const enrichedDescription = description;
 
     const difficultyRoutingConfig = config.goal?.difficultyRouting;
     const difficultyAssessment = difficultyRoutingConfig?.enabled
@@ -2002,69 +1981,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     }
   }
 
-  /**
-   * Phase 50 Task 1：分析需求变更影响
-   * 在用户追加/编辑需求时调用，若 requirementChangeEnabled 则用 analyzeChangeImpact 分析
-   * 失败时 try/catch 降级返回 null
-   *
-   * @param before 变更前的需求文本
-   * @param after 变更后的需求文本
-   * @returns 变更影响分析结果，或 null（开关关闭/降级失败）
-   */
-  async function analyzeRequirementChange(
-    before: string,
-    after: string,
-  ): Promise<{ needsReplan: boolean; reason: string; severity: string; affectedSteps: string[] } | null> {
-    // 开关关闭时回退到原行为（返回 null，调用方不处理）
-    if (!goalIntegration?.requirementChangeEnabled) {
-      return null;
-    }
-    try {
-      const isChange = isRequirementChange(
-        { role: 'user', content: before },
-        { role: 'user', content: after },
-      );
-      if (!isChange) {
-        return { needsReplan: false, reason: '未检测到需求变更', severity: 'minor', affectedSteps: [] };
-      }
-      const change: RequirementChange = {
-        type: 'edit',
-        targetNodeId: 'user-input',
-        before,
-        after,
-        impactedBranches: [],
-        timestamp: Date.now(),
-      };
-      const currentPlan = currentPlanRef.current;
-      const result = analyzeChangeImpact(
-        change,
-        currentPlan
-          ? {
-              description: currentPlan.description,
-              steps: currentPlan.steps.map(s => ({
-                id: s.id,
-                description: s.description,
-                status: s.status,
-              })),
-            }
-          : undefined,
-        // currentGoalSpec 只存了 doneWhen，这里补齐 analyzeChangeImpact 所需的完整结构
-        currentGoalSpec
-          ? { goal: '', scope: '', constraints: [], doneWhen: currentGoalSpec.doneWhen, stopIf: [] }
-          : undefined,
-      );
-      addSystemMessage(`📝 需求变更分析: ${result.severity} - ${result.reason}`);
-      return {
-        needsReplan: result.needsReplan,
-        reason: result.reason,
-        severity: result.severity,
-        affectedSteps: result.affectedSteps,
-      };
-    } catch (error) {
-      logger.warn('analyzeRequirementChange failed (non-blocking)', { error: String(error) });
-      return null;
-    }
-  }
+  // Phase 59：analyzeRequirementChange 函数已删除（批次1 requirementChangeEnabled 无价值 Integration）
 
-  return { handleGoalCommand, executeGoalPlan, analyzeRequirementChange };
+  return { handleGoalCommand, executeGoalPlan };
 }

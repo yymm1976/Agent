@@ -277,7 +277,7 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       completionGate: deps.completionGate,
       goalAuditor: deps.goalAuditor ?? undefined,
       goalPersistence: deps.goalPersistence ?? undefined,
-      goalPromptBuilder: deps.goalPromptBuilder ?? undefined,
+      // Phase 59：goalPromptBuilder 已删除（批次1）
       orchestrator: deps.orchestrator,
       workerExecutor: deps.workerExecutor,
       blackboard: deps.blackboard,

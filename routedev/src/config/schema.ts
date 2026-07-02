@@ -1299,11 +1299,12 @@ export type ImportConfig = z.infer<typeof ImportConfigSchema>;
 
 /**
  * Goal 流程接入配置（Phase 50 Task 1）
- * 控制 /goal 流程中四个核心模块的渐进式接入，默认全部关闭
+ * 控制 /goal 流程中核心模块的渐进式接入
  * - auditEnabled：GoalAuditor 三层独立审计
  * - persistenceEnabled：GoalPersistence 持久化与续跑
- * - promptBuilderEnabled：GoalPromptBuilder 五段式规范构造
- * - requirementChangeEnabled：RequirementChangeAnalyzer 需求变更分析
+ *
+ * Phase 59：promptBuilderEnabled/requirementChangeEnabled 已删除（批次1 无价值 Integration）
+ * 旧配置中的这两个字段会被 Zod safe-parse 忽略（zod v4 默认忽略未知字段）
  */
 export const GoalIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   // Phase 54 修复：auditEnabled 默认 true——三层独立审计是交叉验证的核心保障
@@ -1311,8 +1312,6 @@ export const GoalIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object
   // Phase 47 P1-2 修复：persistenceEnabled 默认 true——GoalPersistence 装配完整但默认关闭导致永不生效，
   // 目标执行状态不落盘，崩溃后无法恢复。开启后写入 .routedev/goals/<id>.json，与 defaults.ts 对齐
   persistenceEnabled: z.boolean().default(true),
-  promptBuilderEnabled: z.boolean().default(false),
-  requirementChangeEnabled: z.boolean().default(false),
 }));
 export type GoalIntegrationConfig = z.infer<typeof GoalIntegrationConfigSchema>;
 
@@ -1370,8 +1369,11 @@ export type Phase48IntegrationConfig = z.infer<typeof Phase48IntegrationConfigSc
 
 /**
  * Phase 49 模块接入确认配置（Phase 50 Task 6）
- * 聚合 DualLoop/QualityGate/ContextUsagePanel/EvaluationFramework 等模块（SkillFlow/RoutingFunnel 已移除）
+ * 聚合 DualLoop/QualityGate/ContextUsagePanel/EvaluationFramework 等模块
  * 默认全部 false——这些模块为实验性功能，需显式开启
+ *
+ * Phase 59：routingFunnelEnabled 已删除（批次1，routing-funnel.ts Phase 50 已删，僵尸配置）
+ * Phase 59：skillFlowEnabled/contextUsagePanelEnabled/evaluationFrameworkEnabled 保留（批次3 补设置页入口）
  */
 export const Phase49IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** SkillFlow 引擎接入（Skill 执行时可选调用） */
@@ -1384,8 +1386,6 @@ export const Phase49IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.obj
   contextUsagePanelEnabled: z.boolean().default(false),
   /** 评估集框架接入（Skill 生成或 /goal 完成时可选调用） */
   evaluationFrameworkEnabled: z.boolean().default(false),
-  /** 意图路由漏斗接入（router 调用） */
-  routingFunnelEnabled: z.boolean().default(false),
 }));
 export type Phase49IntegrationConfig = z.infer<typeof Phase49IntegrationConfigSchema>;
 
@@ -1593,17 +1593,15 @@ export type BoundedRecoveryConfig = z.infer<typeof BoundedRecoveryConfigSchema>;
 /**
  * Phase 52 集成配置（聚合所有 Phase 52 Task 的配置）
  * 各子配置已由 Phase 52 Task 实现为完整 schema，默认 enabled=false（保守启用）
+ *
+ * Phase 59：processEvaluation/archAwareMetrics/saturationMonitor 已删除（批次1 无价值学术指标）
+ * 旧配置中的这三个字段会被 Zod safe-parse 忽略
+ * 注：architecture-aware-metrics.ts / saturation-monitor.ts 源文件保留（被 score-card /
+ * dual-loop-orchestrator / completion-gate 通过 type 引用），仅删配置与实例化
  */
 export const Phase52IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** Task 1：Skill 生命周期管理 */
   skillLifecycle: z.preprocess((v) => v ?? {}, SkillLifecycleConfigSchema),
-  /** Task 2：过程评估 */
-  processEvaluation: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
-    sensitivity: z.enum(['low', 'medium', 'high']).default('medium'),
-    showProcessGrade: z.boolean().default(true),
-    controlPreservationThreshold: z.number().min(0).max(1).default(0.7),
-  })),
   /** Task 3：有界恢复 */
   boundedRecovery: z.preprocess((v) => v ?? {}, BoundedRecoveryConfigSchema),
   /** Task 4：组合式路由 */
@@ -1613,14 +1611,6 @@ export const Phase52IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.obj
     semanticRetrieval: z.boolean().default(true),
     maxParallelSkills: z.number().int().min(1).max(4).default(2),
   })),
-  /** Task 6：架构感知指标 */
-  archAwareMetrics: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
-    anomalySensitivity: z.enum(['low', 'medium', 'high']).default('medium'),
-    showInQualityCommand: z.boolean().default(true),
-  })),
-  /** Task 7：饱和度监测（Phase 52 Task 7 完整 schema） */
-  saturationMonitor: z.preprocess((v) => v ?? {}, SaturationMonitorConfigSchema),
   /** Task 10：MCP 安全形式化框架（4 层深度防御 + 7 类威胁检测） */
   mcpSecurity: z.preprocess((v) => v ?? {}, MCPSecurityConfigSchema),
 }));
