@@ -282,7 +282,8 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       workerExecutor: deps.workerExecutor,
       blackboard: deps.blackboard,
       unifiedReviewer: deps.unifiedReviewer,
-      executionRouter: deps.executionRouter,
+      // Phase 58：executionRouter + levelPathRouter 合并为 pathRouter
+      pathRouter: deps.pathRouter,
       dualLoopOrchestratorRef: deps.dualLoopOrchestratorRef,
       dagEngine: deps.dagEngineRef?.current ?? undefined,
       compositionalRouter: deps.compositionalRouter,

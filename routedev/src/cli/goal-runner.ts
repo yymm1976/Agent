@@ -13,10 +13,9 @@ import type { CheckpointManager } from '../harness/checkpoint-manager.js';
 import type { ContextManager } from '../agent/memory/context-manager.js';
 import type { AppConfig } from '../config/schema.js';
 import type { GoalPlan, GoalPlanStatus, GoalStep, PlanStep, GoalEvent } from '../agent/goal-types.js';
-// Phase 55 Task 6：执行路径判定器（/goal 路径分发）
-import type { ExecutionRouter } from '../agent/execution-router.js';
+// Phase 58：统一路径路由器（合并 execution-router + level-path-router）
+import { PathRouter } from '../agent/path-router.js';
 import { DifficultyAssessor } from '../agent/difficulty-assessor.js';
-import { LevelPathRouter } from '../agent/level-path-router.js';
 import { StateMigration } from '../agent/state-migration.js';
 // Phase 55 Task 9：DualLoop + BoundedRecovery 替代迭代闭环
 import type { DualLoopOrchestrator } from '../agent/dual-loop-orchestrator.js';
@@ -47,7 +46,7 @@ import type { Orchestrator } from '../agent/multi/orchestrator.js';
 import type { WorkerExecutor } from '../agent/multi/worker-executor.js';
 import type { Blackboard } from '../agent/multi/blackboard.js';
 import type { UnifiedReviewer } from '../agent/unified-reviewer.js';
-import type { WorkerTask, WorkerResult, WorkerRole, ExecutionPlan } from '../agent/multi/types.js';
+import type { WorkerTask, WorkerResult, WorkerRole } from '../agent/multi/types.js';
 import type { StepExecutionResult } from '../agent/task-orchestrator-types.js';
 // Phase 55 Task 11：CompositionalRouter（组合式路由器，跨领域任务分解 + Skill 检索）
 import type { CompositionalRouterInstance } from './app-init.js';
@@ -109,10 +108,9 @@ export interface GoalRunnerDeps {
    * GoalAuditor.audit 的第三层（reviewer_agent）需要此结果
    */
   unifiedReviewer?: UnifiedReviewer;
-  /** Phase 55：执行路径判定器（由 app-init.ts 注入，Task 8 完成） */
-  executionRouter?: ExecutionRouter;
+  /** Phase 58：统一路径路由器（合并原 executionRouter + levelPathRouter） */
+  pathRouter?: PathRouter;
   difficultyAssessor?: DifficultyAssessor;
-  levelPathRouter?: LevelPathRouter;
   stateMigration?: StateMigration;
   /**
    * Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，通过 ref 延迟绑定）
@@ -200,8 +198,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     goalAuditor, goalPersistence, goalPromptBuilder,
     // Phase 54 Task 1/4：多 Agent 编排 + 统一审查器
     orchestrator, workerExecutor, blackboard, unifiedReviewer,
-    // Phase 55 Task 6：执行路径判定器 + DAG 引擎（可选注入，未注入时降级到 legacy）
-    executionRouter, difficultyAssessor, levelPathRouter, stateMigration, dagEngine, compositionalRouter,
+    // Phase 58：统一路径路由器 + DAG 引擎（可选注入，未注入时降级到 single）
+    pathRouter, difficultyAssessor, stateMigration, dagEngine, compositionalRouter,
     // Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，通过 ref 延迟绑定）
     dualLoopOrchestratorRef,
     nextId,
@@ -1022,19 +1020,18 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       }
     }
 
-    // Phase 55 Task 6：用 ExecutionRouter 替代 orchestrationEnabled 判定
-    // executionRouter 未注入时降级到 legacy（保持向后兼容，走原多 Agent 编排路径）
+    // Phase 58：统一 PathRouter 替代 executionRouter + levelPathRouter 双重判定
+    // 优先级：难度路由（difficultyRouting.enabled + plan.difficultyAssessment）> route() 启发式 > 默认 'single'
+    const router = pathRouter ?? new PathRouter();
     const difficultyRoute = config.goal?.difficultyRouting?.enabled && plan.difficultyAssessment
-      ? (levelPathRouter ?? new LevelPathRouter()).selectPath(plan.difficultyAssessment.level)
+      ? router.selectPath(plan.difficultyAssessment.level)
       : null;
-    const route = difficultyRoute ? difficultyRoute.route : executionRouter
-      ? executionRouter.route(plan, {
-          mode: config.goal?.executionRouter?.mode ?? 'auto',
-          explicitRoute: config.goal?.executionRouter?.explicitRoute,
-          singleAgentMaxSteps: config.goal?.executionRouter?.singleAgentMaxSteps ?? 2,
-          dagMaxDomains: config.goal?.executionRouter?.dagMaxDomains ?? 1,
-        })
-      : 'legacy';
+    const route = difficultyRoute ? difficultyRoute.route : router.route(plan, {
+      mode: config.goal?.executionRouter?.mode ?? 'auto',
+      explicitRoute: config.goal?.executionRouter?.explicitRoute,
+      singleAgentMaxSteps: config.goal?.executionRouter?.singleAgentMaxSteps ?? 2,
+      dagMaxDomains: config.goal?.executionRouter?.dagMaxDomains ?? 1,
+    });
     if (difficultyRoute) {
       addSystemMessage(`🧭 难度路由: ${plan.difficultyAssessment!.level} → ${route}（${difficultyRoute.reason}）`);
     }
@@ -1054,15 +1051,15 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
         case 'compose':
           await executePlanWithCompose(plan);
           break;
-        case 'legacy':
-          await executePlanWithMultiAgent(plan);
+        default:
+          // Phase 58：未识别路径回退到 single（原 'legacy' 路径已删除）
+          await executePlanWithSingleAgent(plan);
           break;
       }
 
       // 检测升降级信号
       if (config.goal?.difficultyRouting?.dynamicLevelSwitchEnabled && plan.difficultyAssessment && levelSwitchCount < 1) {
-        const levelRouter = levelPathRouter ?? new LevelPathRouter();
-        const suggestion = levelRouter.detectLevelSwitch(plan.difficultyAssessment.level, {
+        const suggestion = router.detectLevelSwitch(plan.difficultyAssessment.level, {
           failureCount: plan.steps.filter(step => step.status === 'failed').length,
           contextUsagePercent: tracker.getTaskUsagePercent(),
           crossDomain: (plan.uniqueDomains?.length ?? 0) > 1,
@@ -1075,7 +1072,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
           // 还有 pending 步骤才需要重跑
           const hasPending = plan.steps.some(step => step.status === 'pending' || step.status === 'failed');
           if (hasPending) {
-            currentRoute = (levelPathRouter ?? new LevelPathRouter()).selectPath(suggestion.to).route;
+            currentRoute = router.selectPath(suggestion.to).route;
             levelSwitchCount++;
             addSystemMessage(`🔁 动态升降级: ${migration.migrationSummary}，切换到 ${currentRoute} 路径重跑剩余步骤`);
             continue;
@@ -1719,108 +1716,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     }
   }
 
-  // Phase 55：legacy fallback 路径，验证通过后删除（见设计文档第 9 节）
-  /**
-   * Phase 54 Task 1：多 Agent 编排执行
-   * 调用 Orchestrator.plan() 生成执行计划（依赖图 + 并行组 + 角色分配）
-   * 按 parallelGroups 执行：组内并行（Promise.all），组间串行
-   * 每个 Worker 的结果写入 Blackboard，供后续 Worker 读取（独立上下文 + 选择性传递）
-   *
-   * 设计要点：
-   *   - Worker 间不共享 conversationHistory，仅通过 Blackboard 快照传递共识（独立上下文）
-   *   - Orchestrator 分配 4 种角色（coder/searcher/tester/reviewer）（多角色任务）
-   *   - WorkerExecutor 内部调用 ContextPacker 按角色权重打包上下文（选择性传递）
-   *   - 任一 Worker 失败不中止整体（异常隔离），失败信息记录到 Blackboard
-   */
-  async function executePlanWithMultiAgent(plan: GoalPlan): Promise<void> {
-    if (!orchestrator || !workerExecutor || !blackboard) {
-      // 类型守卫：调用方应确保三者均已注入
-      logger.warn('Phase 54 Task 1: orchestrator/workerExecutor/blackboard missing, falling back to serial');
-      return;
-    }
-
-    addSystemMessage('🎭 Phase 54：启用多 Agent 协作编排');
-
-    // 1. 初始化 Blackboard：写入当前目标（所有 Worker 可读）
-    blackboard.reset();
-    blackboard.setGoal(plan.description, 'executing');
-
-    // 2. 调用 Orchestrator.plan() 生成执行计划
-    let executionPlan: ExecutionPlan;
-    try {
-      executionPlan = await orchestrator.plan(plan);
-      addSystemMessage(
-        `📋 编排计划：${executionPlan.parallelGroups.length} 个并行组，${executionPlan.dependencies.length} 个依赖\n${executionPlan.analysisNotes}`,
-      );
-    } catch (error) {
-      logger.warn('Phase 54 Task 1: Orchestrator.plan failed, falling back to serial', { error: String(error) });
-      addSystemMessage('⚠️ 编排失败，回退到串行执行');
-      // 回退：按顺序执行，角色统一为 coder
-      for (const step of plan.steps) {
-        if (abortControllerRef.current?.signal.aborted) break;
-        await executeWorkerStep(plan, step, {
-          role: 'coder',
-          rolePrompt: '',
-          likelyFiles: [],
-          stepId: step.id,
-          dependsOn: [],
-        });
-      }
-      return;
-    }
-
-    // 3. 按 parallelGroups 执行：组内并行，组间串行
-    for (const group of executionPlan.parallelGroups) {
-      // 检查中断
-      if (abortControllerRef.current?.signal.aborted) {
-        addSystemMessage('⏸ 多 Agent 编排已暂停');
-        plan.status = 'failed';
-        return;
-      }
-
-      // 找到组内所有步骤（group 是 stepId 数组）
-      const groupSteps = group
-        .map(stepId => plan.steps.find(s => s.id === stepId))
-        .filter((s): s is NonNullable<typeof s> => s !== undefined);
-
-      if (groupSteps.length === 0) continue;
-
-      addSystemMessage(`▶ 并行组 [${group.join(',')}]：${groupSteps.length} 个步骤并行执行`);
-
-      // 组内并行执行（Promise.all），任一失败不中断其他 Worker（异常隔离）
-      const workerResults = await Promise.all(
-        groupSteps.map(step => {
-          // 从 dependencies 中找到该步骤的依赖信息（含角色分配）
-          // StepDependency.assignedRole → executeWorkerStep.dep.role（字段名映射）
-          const dep = executionPlan.dependencies.find(d => d.stepId === step.id);
-          return executeWorkerStep(plan, step, dep
-            ? {
-                role: dep.assignedRole,
-                rolePrompt: '',
-                likelyFiles: dep.likelyFiles,
-                stepId: dep.stepId,
-                dependsOn: dep.dependsOn,
-              }
-            : {
-                role: 'coder' as WorkerRole,
-                rolePrompt: '',
-                likelyFiles: [],
-                stepId: step.id,
-                dependsOn: [],
-              });
-        }),
-      );
-      const abortResult = workerResults.find(result => !result.success && result.suggestedAction === 'abort');
-      if (abortResult) {
-        plan.status = 'failed';
-        addSystemMessage(`⏹ Worker 请求中止：${abortResult.conclusion}`);
-        return;
-      }
-      if ((plan.status as GoalPlanStatus) === 'failed') {
-        return;
-      }
-    }
-  }
+  // Phase 58：executePlanWithMultiAgent（legacy 路径）已删除
+  // 原 Phase 54 Task 1 多 Agent 编排执行函数已移除，未注入 pathRouter 时回退到 single 路径
 
   /**
    * Phase 54 Task 1：执行单个 Worker 步骤

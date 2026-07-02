@@ -44,7 +44,7 @@ export interface GoalStep {
    */
   suggestedRole?: 'researcher' | 'executor' | 'reviewer';
   /**
-   * 步骤所属领域（Phase 55：供 ExecutionRouter 判定路径用）
+   * 步骤所属领域（Phase 55：供 PathRouter 判定路径用）
    * 由 GoalParser 拆分时 LLM 输出，缺失时由 sanitizeSteps 兜底为 'general'
    */
   domain: Domain;
@@ -66,9 +66,9 @@ export interface GoalPlan {
   verificationCriteria?: string;
   /** 分解后的步骤 */
   steps: GoalStep[];
-  /** Phase 55：去重后的领域列表（ExecutionRouter 判定用，由 GoalParser 填充） */
+  /** Phase 55：去重后的领域列表（PathRouter 判定用，由 GoalParser 填充） */
   uniqueDomains?: Domain[];
-  /** Phase 55：是否存在依赖关系（ExecutionRouter 判定用，由 GoalParser 填充） */
+  /** Phase 55：是否存在依赖关系（PathRouter 判定用，由 GoalParser 填充） */
   hasDependencies?: boolean;
   /** 计划状态 */
   status: GoalPlanStatus;

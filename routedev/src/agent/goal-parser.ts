@@ -169,7 +169,7 @@ export class GoalParser {
 
   /**
    * Phase 55：填充 GoalPlan 的推导字段（uniqueDomains 和 hasDependencies）
-   * 在 parse() 的所有返回路径调用，确保 ExecutionRouter 拿到完整的推导数据
+   * 在 parse() 的所有返回路径调用，确保 PathRouter 拿到完整的推导数据
    */
   private fillDerivedFields(plan: GoalPlan): void {
     plan.uniqueDomains = [...new Set(plan.steps.map(s => s.domain))];

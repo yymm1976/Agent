@@ -1,6 +1,6 @@
 import type { DifficultyLevel } from './difficulty-assessor.js';
 import type { GoalPlan, GoalStep } from './goal-types.js';
-import type { LevelSwitchSuggestion } from './level-path-router.js';
+import type { LevelSwitchSuggestion } from './path-router.js';
 
 export interface BlackboardSnapshot {
   facts?: Record<string, unknown>;

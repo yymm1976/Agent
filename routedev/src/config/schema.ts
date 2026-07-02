@@ -1020,18 +1020,27 @@ export const GoalConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   softStopRatio: z.number().min(0.5).max(1.0).default(0.9),
   /**
    * Phase 55 Task 4：/goal 执行路径路由器配置
-   * 字段与 ExecutionRouterOptions 接口保持一致（单一数据源）
+   * 字段与 ExecutionRouterOptions 接口保持一致（单一数据源，Phase 58 起定义在 path-router.ts）
+   * Phase 58：mode 移除 'legacy'（legacy 路径已删除），旧配置 'legacy' 通过 preprocess 自动迁移为 'auto'
    */
-  executionRouter: z.object({
-    /** 判定模式：auto（自动判定）/ legacy（强制旧路径）/ explicit（显式指定） */
-    mode: z.enum(['auto', 'legacy', 'explicit']).default('auto'),
+  executionRouter: z.preprocess((v) => {
+    // Phase 58 向后兼容：mode='legacy' → 'auto'；explicitRoute='legacy' → 删除（回退到 undefined）
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const obj = v as Record<string, unknown>;
+      if (obj.mode === 'legacy') obj.mode = 'auto';
+      if (obj.explicitRoute === 'legacy') delete obj.explicitRoute;
+    }
+    return v;
+  }, z.object({
+    /** 判定模式：auto（自动判定）/ explicit（显式指定） */
+    mode: z.enum(['auto', 'explicit']).default('auto'),
     /** mode=explicit 时生效，指定具体路径 */
-    explicitRoute: z.enum(['single', 'dag', 'compose', 'legacy']).optional(),
+    explicitRoute: z.enum(['single', 'dag', 'compose']).optional(),
     /** 单 Agent 路径的最大步数（1-5，默认 2） */
     singleAgentMaxSteps: z.number().int().min(1).max(5).default(2),
     /** DAG 路径的最大领域数（超过则升级到 compose，1-5，默认 1） */
     dagMaxDomains: z.number().int().min(1).max(5).default(1),
-  }).default({ mode: 'auto', singleAgentMaxSteps: 2, dagMaxDomains: 1 }),
+  }).default({ mode: 'auto', singleAgentMaxSteps: 2, dagMaxDomains: 1 })),
   difficultyRouting: z.object({
     enabled: z.boolean().default(false),
     refineLevelAtExecution: z.boolean().default(true),

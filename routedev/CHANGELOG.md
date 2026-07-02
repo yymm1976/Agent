@@ -2,6 +2,33 @@
 
 所有版本变更记录。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## v4.0.2 (2026-07-02) — Phase 58: 花架子去除工程三（路由合并与 legacy 路径删除）
+
+### Changed
+- **路由合并**：`src/agent/execution-router.ts` + `src/agent/level-path-router.ts` 合并为单一 `src/agent/path-router.ts`（179 行，单一真相源）；`PathRouter` 类聚合三类方法 `selectPath(level)` / `route(plan, options)` / `detectLevelSwitch(currentLevel, signals)`
+- `src/cli/goal-runner.ts` 切换到 `PathRouter`，路径选择逻辑收敛为单次 `router.route()` / `router.selectPath()` 调用；未注入 pathRouter 时回退到 `'single'`（原为 `'legacy'`）
+- `src/cli/app-init.ts` 实例化 `PathRouter` 并通过 `AppDependencies.pathRouter` 注入；`App.tsx` 同步传递 `pathRouter: deps.pathRouter`
+- `src/config/schema.ts` 的 `executionRouter.mode` 枚举从 `'auto' | 'legacy' | 'explicit'` 收窄为 `'auto' | 'explicit'`，新增 `z.preprocess` 向后兼容：旧配置 `mode: 'legacy'` 自动迁移为 `'auto'`，`explicitRoute: 'legacy'` 自动删除
+- `ExecutionRoute` 类型从 `'single' | 'dag' | 'compose' | 'legacy'` 收窄为 `'single' | 'dag' | 'compose'`
+- `src/agent/state-migration.ts` / `goal-parser.ts` / `goal-types.ts` 的 import 与注释同步更新到 `path-router.js`
+
+### Removed
+- `src/agent/execution-router.ts`（54 行，合并入 path-router.ts）
+- `src/agent/level-path-router.ts`（55 行，合并入 path-router.ts）
+- `src/agent/execution-router.test.ts`（合并入 path-router.test.ts）
+- `src/agent/level-path-router.test.ts`（合并入 path-router.test.ts）
+- `src/cli/goal-runner.ts` 中 `executePlanWithMultiAgent` 函数（~90 行，legacy 路径执行函数）与 `case 'legacy'` 分支
+- `src/cli/goal-runner.ts` 中 `ExecutionPlan` 类型 import（仅 legacy 函数内部使用）
+
+### Added
+- `src/agent/path-router.ts`：统一路径路由器（合并 execution-router + level-path-router）
+- `tests/agent/path-router.test.ts`：12 个测试用例，覆盖 selectPath（4）/ route（5）/ detectLevelSwitch（3）
+
+### Migration Notes
+- **配置兼容**：旧的 `executionRouter.mode: 'legacy'` 配置会被 `z.preprocess` 自动迁移为 `'auto'`，无需手动改配置
+- **行为变化**：未注入 pathRouter 时，goal-runner 回退到 `'single'` 路径（原为 `'legacy'`）；由于 `'legacy'` 路径已被移除，原走 legacy 的用户将自动走 single 路径
+- **测试**：`tests/agent/path-router.test.ts` 12 个用例全过；全量 vitest 3584 passed / 3 failed（3 个失败均为 Windows 子进程超时，与本次改动无关）
+
 ## v4.0.1 (2026-06-26) — Phase 50: 死代码接入收尾与模块集成
 
 ### Added

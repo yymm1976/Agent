@@ -36,8 +36,8 @@ import { NotesManager } from '../agent/memory/notes.js';
 import { createDefaultEngine, type PermissionEngine } from '../tools/permission-engine.js';
 import { MCPClientManager } from '../tools/mcp/client.js';
 import { ReActAgentLoop } from '../agent/loop.js';
-// Phase 55 Task 8：注入 ExecutionRouter 到 goal-runner（/goal 执行路径判定器）
-import { ExecutionRouter } from '../agent/execution-router.js';
+// Phase 58：统一 PathRouter（合并 execution-router + level-path-router）
+import { PathRouter } from '../agent/path-router.js';
 import { TokenProfiler } from '../agent/token-profiler.js';
 import { WorkModeController, GuardedToolExecutorAdapter } from '../agent/work-modes.js';
 import { CheckpointManager } from '../harness/checkpoint-manager.js';
@@ -224,8 +224,8 @@ export interface AppDependencies {
   activityStore?: AgentActivityStore;
   /** 组合式路由器（config.phase52Integration.compositionalRouting.enabled） */
   compositionalRouter?: CompositionalRouterInstance;
-  /** Phase 55 Task 8：执行路径判定器（App.tsx 传给 createGoalRunner，/goal 走新执行路径） */
-  executionRouter: ExecutionRouter;
+  /** Phase 58：统一路径路由器（合并原 executionRouter + levelPathRouter） */
+  pathRouter: PathRouter;
   /** Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，goal-runner 通过 ref 延迟读取） */
   dualLoopOrchestratorRef: { current: DualLoopOrchestrator | null };
   /** Phase 55：DagEngine ref（异步创建，goal-runner 通过 ref 延迟读取，未注入时 executePlanWithDag 降级到 single） */
@@ -1180,8 +1180,8 @@ export function createAppDependencies(
 
   // ===== 目标解析与验证（无状态） =====
   const goalParser = new GoalParser();
-  // Phase 55 Task 8：实例化 ExecutionRouter（/goal 执行路径判定器，App.tsx 传给 createGoalRunner）
-  const executionRouter = new ExecutionRouter();
+  // Phase 58：实例化 PathRouter（统一路径路由器，App.tsx 传给 createGoalRunner）
+  const pathRouter = new PathRouter();
   // Phase 53 Task 10：DAG 引擎（受 config.phase53Integration.dagEngine.enabled 守护，fail-open）
   // 使用变量路径让 TypeScript 无法静态解析，避免模块尚未生成时 typecheck 失败
   // Phase 55：dagEngine ref（异步创建，供 goal-runner 通过 ref 延迟读取，与 dualLoopOrchestratorRef 同模式）
@@ -2111,8 +2111,8 @@ export function createAppDependencies(
     // CR-4b：孤立模块接线点实例（按各自 config 开关守护，未启用时为 undefined）
     activityStore,
     compositionalRouter,
-    // Phase 55 Task 8：执行路径判定器（App.tsx 传给 createGoalRunner）
-    executionRouter,
+    // Phase 58：统一路径路由器（App.tsx 传给 createGoalRunner）
+    pathRouter,
     // Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，goal-runner 通过 ref 延迟读取）
     dualLoopOrchestratorRef,
     // Phase 55：DagEngine ref（异步创建，goal-runner 通过 ref 延迟读取）
