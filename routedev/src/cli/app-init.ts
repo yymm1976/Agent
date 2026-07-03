@@ -47,6 +47,8 @@ import { CheckpointManager } from '../harness/checkpoint-manager.js';
 import { ExperimentManager } from '../harness/experiment-manager.js';
 import { CheckpointWriter } from '../agent/memory/checkpoint-writer.js';
 import { ContextManager } from '../agent/memory/context-manager.js';
+// Phase 71 Task D7：Budget Offload 文件清理钩子（会话结束 + 孤儿文件清理）
+import { registerOffloadCleaner } from '../agent/context/offload-cleaner.js';
 import { ContextCompactor } from '../agent/context-compaction.js';
 import { estimateTokens } from '../utils/token-estimate.js';
 import { VisionAssistant } from '../agent/vision.js';
@@ -509,6 +511,14 @@ export function createAppDependencies(
   const trace = new TraceCollector({ storageDir: undefined });
   const audit = new AuditLogger(trace.getSessionId() ?? 'app');
   const projectMemory = new ProjectMemoryManager(cwd, config.projectMemory);
+
+  // Phase 71 Task D7：注册 offload 清理钩子
+  // - 启动时立即清理 7 天前的孤儿文件（防止异常退出累积）
+  // - 退出时（beforeExit / SIGINT / SIGTERM）清理当前 session 的 offload 文件
+  // - 钩子内部 fail-open，清理失败不会导致进程崩溃
+  const offloadSessionId = trace.getSessionId() ?? `app-${Date.now()}`;
+  const offloadRootDir = path.resolve(cwd, '.routedev/offload');
+  registerOffloadCleaner(offloadSessionId, offloadRootDir);
 
   // Phase 53 Task 4：哈希链审计接入（受 config.phase53Integration.auditChain.enabled 守护）
   // 启用后所有 audit.log() 写入的记录会附加 previousHash + hash 字段，形成防篡改链
