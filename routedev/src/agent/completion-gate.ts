@@ -80,6 +80,9 @@ const DEFAULT_SATURATION_CONFIG: SaturationMonitorConfig = {
  * 超时视为 skipped 而非 failed，不阻断任务完成。
  */
 export class CompletionGate {
+  /** I4 修复：saturationHistory 历史上限，防止长生命周期实例无限增长 */
+  private static readonly MAX_SATURATION_HISTORY = 100;
+
   constructor(private readonly config: CompletionGateConfig = DEFAULT_CONFIG) {}
 
   // Phase 52 Task 7：饱和监测器（可选，由 app-init.ts 通过 setSaturationMonitor 注入）
@@ -159,6 +162,10 @@ export class CompletionGate {
           durationMs: checks.reduce((s, c) => s + c.duration, 0),
         };
         this.saturationHistory.push(runResult);
+        // I4 修复：saturationHistory 无限增长，加上限保护
+        if (this.saturationHistory.length > CompletionGate.MAX_SATURATION_HISTORY) {
+          this.saturationHistory.shift();
+        }
         const report = this.saturationMonitor.evaluate(this.saturationHistory, this.saturationConfig);
         if (report.status !== 'healthy') {
           result.warnings = [
@@ -272,11 +279,13 @@ export class CompletionGate {
         ? ['vitest', 'run', '--related', ...files]
         : ['vitest', 'run'];
 
-      const result = spawnSync('npx', args, {
+      // C2 修复：Windows 上不使用 shell:true，避免 files 路径命令注入
+      // 直接调用 npx.cmd（Windows 上 npx 是 .cmd 批处理，必须带 .cmd 后缀才能不用 shell）
+      const cmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+      const result = spawnSync(cmd, args, {
         cwd: projectPath,
         timeout: TEST_TIMEOUT,
         encoding: 'utf-8',
-        shell: process.platform === 'win32',
       });
 
       const duration = Date.now() - start;

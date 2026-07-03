@@ -39,18 +39,6 @@ export function SettingsConversationTab({ draft, updateDraft }: SettingsConversa
             />
           </div>
 
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="conversation-auto-snapshot">自动快照</Label>
-              <p className="text-xs text-rd-textMuted">节点变更时自动写入快照，避免异常退出丢失。</p>
-            </div>
-            <Switch
-              id="conversation-auto-snapshot"
-              checked={conversation.autoSnapshot}
-              onCheckedChange={(checked) => updateConversation({ autoSnapshot: checked })}
-            />
-          </div>
-
           <div className="space-y-2">
             <Label htmlFor="conversation-max-nodes">最大节点数</Label>
             <Input

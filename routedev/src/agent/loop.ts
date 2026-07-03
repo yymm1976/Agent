@@ -453,6 +453,12 @@ export class ReActAgentLoop {
       break;
     }
 
+    // I1 修复：保护至少保留一条消息，避免 trimMessagesWindow 清空所有消息
+    // 极端情况下大量孤立 tool_result 会让 removeCount 增长到 messages.length
+    if (removeCount >= messages.length) {
+      removeCount = messages.length - 1;
+    }
+
     messages.splice(0, removeCount);
 
     // 2. 截断后必须双向清理：tool_use 和 tool_result 必须成对出现
@@ -1175,6 +1181,25 @@ export class ReActAgentLoop {
                   // 安全修复：中间件异常时 fail-closed，拒绝工具执行
                   logger.warn('Middleware onActing threw, denying tool execution (fail-closed)', { error: String(mwErr) });
                   mwCtx.metadata.permissionDenied = `中间件异常: ${String(mwErr)}`;
+                }
+                // Phase 53 Task 3：策略引擎检查（动作级 fail-closed）
+                // C1 修复：串行模式原先缺失策略引擎检查，导致 fail-closed 安全检查被绕过
+                // 与并行模式 L945-960 保持一致：中间件已 deny 则跳过；否则策略引擎再评估
+                if (!mwCtx.metadata.permissionDenied && this.policyEngine) {
+                  try {
+                    const policyDecision = this.policyEngine.evaluateAction({
+                      toolName: toolCall.name,
+                      description: toolCall.name,
+                      args: toolCall.arguments,
+                    });
+                    if (policyDecision.denied) {
+                      mwCtx.metadata.permissionDenied = policyDecision.reason ?? '策略引擎拒绝';
+                    }
+                  } catch (policyErr) {
+                    // 策略引擎异常时 fail-closed（借鉴 AGT）
+                    logger.warn('PolicyEngine evaluateAction threw, denying (fail-closed)', { error: String(policyErr) });
+                    mwCtx.metadata.permissionDenied = `策略引擎异常: ${String(policyErr)}`;
+                  }
                 }
                 // 中间件设置了 permissionDenied → 不执行工具，返回错误结果
                 if (mwCtx.metadata.permissionDenied) {

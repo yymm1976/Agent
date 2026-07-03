@@ -37,6 +37,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 // Phase 53 Task 8：前缀感知缓存（type-only import，避免运行时循环依赖）
 import type { PrefixAwareCache } from './prefix-cache.js';
+// Phase 70：AutoCompactGuardian 类型（通过 compactor 间接引用）
+import type { CompactAction, TokenState } from './auto-compact-guardian.js';
 
 // ============================================================
 // Phase 21 Task 5：压缩事件类型
@@ -217,6 +219,29 @@ export class ContextManager {
     if (!this.config.checkpointEnabled) return false;
     const threshold = this.config.contextWindow * this.config.compressionThreshold;
     return estimatedTokens >= threshold;
+  }
+
+  /**
+   * Phase 70：增强压缩决策——使用 AutoCompactGuardian 的 token 预算 + 断路器
+   *
+   * 通过 compactor 的 shouldCompressEnhanced 方法获取更精细的压缩建议。
+   * 当 compactor 未配置 AutoCompactGuardian 时，降级到 shouldCompress 的简单阈值判断。
+   */
+  shouldCompressEnhanced(
+    _messageCount: number,
+    estimatedTokens: number,
+  ): { should: boolean; action: CompactAction; tokenState: TokenState | null } {
+    try {
+      if (this.compactor) {
+        return this.compactor.shouldCompressEnhanced(estimatedTokens);
+      }
+    } catch (err) {
+      logger.warn('ContextManager: Phase 70 shouldCompressEnhanced failed, fallback', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    const should = this.shouldCompress(_messageCount, estimatedTokens);
+    return { should, action: should ? 'compact' : 'none', tokenState: null };
   }
 
   /**

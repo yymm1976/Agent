@@ -32,7 +32,7 @@ import {
 } from './skill-validator.js';
 
 /** 质量门总结果 */
-export interface QualityGateResult {
+interface QualityGateResult {
   /** 总状态：pass（通过）/ warn（有警告但无危险）/ fail（有危险问题） */
   status: 'pass' | 'warn' | 'fail';
   /** Schema 校验结果 */
@@ -44,7 +44,7 @@ export interface QualityGateResult {
 }
 
 /** 质量门选项 */
-export interface QualityGateOptions {
+interface QualityGateOptions {
   /**
    * 是否运行 3 场景验证
    *

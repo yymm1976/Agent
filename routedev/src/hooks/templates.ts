@@ -68,7 +68,7 @@ export interface HookTemplate {
  *   3. 命令有明确退出码语义
  *   4. 优先使用 {{filePath}}/{{toolName}} 变量而非硬编码
  */
-export const HOOK_TEMPLATES: HookTemplate[] = [
+const HOOK_TEMPLATES: HookTemplate[] = [
   // 1. 阻止写入大文件（>10MB）
   {
     id: 'block-large-file-write',

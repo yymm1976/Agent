@@ -24,7 +24,7 @@ import {
 } from './database.js';
 
 /** 查询选项 */
-export interface QueryOptions {
+interface QueryOptions {
   /** 最大返回数 */
   maxResults?: number;
   /** 是否包含源代码片段 */

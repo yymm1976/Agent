@@ -203,8 +203,9 @@ describe('ContextCompactor', () => {
       expect(summarize).toHaveBeenCalledTimes(1);
       expect(compactionResult.maxStageReached).toBe(5);
       expect(compactionResult.summary).toBe('这是摘要');
-      // L5 后应只剩 1 条 system 消息（摘要）
-      expect(result.length).toBe(1);
+      // I2 修复：L5 保留摘要 + recentTail（最近 3 条），避免破坏 tool_use/tool_result 对偶
+      // 原消息 2 条（user+assistant），recentTail 取全部 2 条，加 1 条 system 摘要 = 3 条
+      expect(result.length).toBe(3);
       expect(result[0].role).toBe('system');
       const content = typeof result[0].content === 'string' ? result[0].content : '';
       expect(content).toBe('这是摘要');

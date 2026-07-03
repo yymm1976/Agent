@@ -16,7 +16,7 @@ import {
 } from './schema.js';
 
 // ---- web-tree-sitter 最小类型声明（兼容 0.22.x / 0.26.x 运行时） ----
-export interface TSPoint {
+interface TSPoint {
   row: number;
   column: number;
 }
@@ -46,13 +46,13 @@ export interface TSTree {
   rootNode: TSNode;
   delete(): void;
 }
-export interface TSParser {
+interface TSParser {
   parse(input: string, oldTree?: TSTree): TSTree;
   setLanguage(lang: unknown): void;
   delete(): void;
   setTimeoutMicros(t: number): void;
 }
-export interface TSLanguage {
+interface TSLanguage {
   // opaque
 }
 interface WTSModule {
@@ -147,7 +147,7 @@ export function createParser(lang: TSLanguage): TSParser {
 }
 
 /** 解析结果 */
-export interface ParseResult {
+interface ParseResult {
   tree: TSTree;
   language: Language;
 }

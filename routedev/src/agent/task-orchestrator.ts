@@ -7,7 +7,6 @@ import { logger } from '../utils/logger.js';
 import type { ClassificationResult, ILLMClient, RoutingResult } from '../router/types.js';
 import type { ScenarioClassifier } from '../router/classifier.js';
 import type { ModelRouter } from '../router/router.js';
-import type { LLMClientManager } from '../router/llm/index.js';
 import type { AppConfig } from '../config/schema.js';
 import type {
   TaskIntent,
@@ -47,7 +46,6 @@ export class TaskOrchestrator {
   constructor(
     private readonly classifier: ScenarioClassifier,
     private readonly modelRouter: ModelRouter,
-    private readonly clientManager: LLMClientManager,
     private readonly config: AppConfig,
   ) {}
 
@@ -58,6 +56,11 @@ export class TaskOrchestrator {
    * 阶段2-5由 App.tsx 根据 OrchestratorAction.type 逐步驱动。
    */
   async handle(userInput: string, projectContext?: ProjectContext): Promise<OrchestratorAction> {
+    // I3 修复：并发保护——已有任务进行中时拒绝重入，避免状态机竞态
+    if (this.stage !== 'idle' && this.stage !== 'completed') {
+      throw new Error(`已有任务进行中 (stage=${this.stage})，请先完成或取消当前任务`);
+    }
+
     // 阶段1：意图理解
     this.stage = 'understanding';
 
@@ -326,10 +329,9 @@ export class TaskOrchestrator {
 export function createTaskOrchestrator(
   classifier: ScenarioClassifier,
   modelRouter: ModelRouter,
-  clientManager: LLMClientManager,
   config: AppConfig,
 ): TaskOrchestrator {
-  return new TaskOrchestrator(classifier, modelRouter, clientManager, config);
+  return new TaskOrchestrator(classifier, modelRouter, config);
 }
 
 // 暴露常量供测试和 UI 使用

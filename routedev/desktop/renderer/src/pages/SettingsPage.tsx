@@ -8,7 +8,7 @@ import {
   CheckCircle2, AlertCircle, Archive, RotateCcw, Folder, BookOpen, Sparkles, RefreshCw,
   ChevronDown, ChevronRight, Map as MapIcon, Webhook, Code, Wand2, GraduationCap,
   ShoppingBag, Gauge, Brain, Lightbulb, Users,
-  ShieldCheck, Split, Activity,
+  ShieldCheck, Split,
 } from 'lucide-react';
 import type {
   AppConfig, ProviderConfig, ModelConfig, RouterRule, SecurityConfig,
@@ -34,18 +34,14 @@ import { ConfirmDialog, AlertBanner } from '../components/ui/dialog.js';
 import { useProjectsStore } from '../store/useProjectsStore.js';
 import { SettingsPersonaTab } from '../components/settings/SettingsPersonaTab.js';
 import { SettingsVoiceTab } from '../components/settings/SettingsVoiceTab.js';
-import { SettingsDiscoveryTab } from '../components/settings/SettingsDiscoveryTab.js';
 import { SettingsConversationTab } from '../components/settings/SettingsConversationTab.js';
 import { SettingsExperimentTab } from '../components/settings/SettingsExperimentTab.js';
 import { SettingsGoalTab } from '../components/settings/SettingsGoalTab.js';
-import { SettingsHookEnhancementTab } from '../components/settings/SettingsHookEnhancementTab.js';
 import { SettingsReviewerTab } from '../components/settings/SettingsReviewerTab.js';
 import { SettingsDelegationTab } from '../components/settings/SettingsDelegationTab.js';
 import { SettingsPhase52IntegrationTab } from '../components/settings/SettingsPhase52IntegrationTab.js';
 import { SettingsPhase53IntegrationTab } from '../components/settings/SettingsPhase53IntegrationTab.js';
-import { SettingsErrorDisplayTab } from '../components/settings/SettingsErrorDisplayTab.js';
 import { SettingsResultSchemaTab } from '../components/settings/SettingsResultSchemaTab.js';
-import { SettingsModelDisplayTab } from '../components/settings/SettingsModelDisplayTab.js';
 import { SettingsConfigLayeringTab } from '../components/settings/SettingsConfigLayeringTab.js';
 
 interface SettingsPageProps {
@@ -63,15 +59,14 @@ type TabId =
   | 'mcp' | 'skills' | 'channels' | 'appearance' | 'sounds' | 'archived' | 'about'
   | 'codemap' | 'hooks' | 'expertise'
   | 'policies' | 'market' | 'subagents'
-  | 'persona' | 'voice' | 'discovery'
+  | 'persona' | 'voice'
   | 'conversation' | 'experiment'
-  | 'goal' | 'hookEnhancement'
+  | 'goal'
   // Phase 51 新增 tab
-  | 'reviewer' | 'delegation' | 'activity'
+  | 'reviewer' | 'delegation'
   // Phase 52 配置补 UI 入口（I-1）
-  | 'phase52Integration' | 'errorDisplay'
-  | 'resultSchema' | 'modelDisplay' | 'configLayering'
-  // Phase 53 集成 tab
+  | 'resultSchema' | 'configLayering'
+  // Phase 53 集成 tab（Phase 60 合并 Phase 52）
   | 'phase53Integration';
 
 // 子 Agent Profile UI 类型（与 src/agents/profiles/types.ts 中的 AgentProfile 对应，
@@ -1149,17 +1144,17 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
     { id: 'appearance', label: '外观', icon: Palette },
     { id: 'router', label: '路由规则', icon: Route },
     { id: 'execution', label: '执行', icon: Zap },
-    { id: 'mcp', label: '插件 & MCP', icon: Plug },
+    { id: 'mcp', label: '插件与 MCP', icon: Plug },
     { id: 'sounds', label: '提示音', icon: Bell },
-    { id: 'expertise', label: '用户体验', icon: GraduationCap },
-    { id: 'persona', label: '人格', icon: Sparkles },
+    { id: 'expertise', label: '引导', icon: GraduationCap },
+    { id: 'persona', label: '角色设定', icon: Sparkles },
     { id: 'voice', label: '语音', icon: Radio },
-    { id: 'goal', label: '/goal', icon: Target },
+    { id: 'goal', label: '目标流程', icon: Target },
     { id: 'conversation', label: '对话', icon: FileText },
-    { id: 'skills', label: 'Skill 技能', icon: BookOpen },
-    { id: 'hooks', label: 'Hooks', icon: Webhook },
-    { id: 'memory', label: '记忆 & 检查点', icon: Brain },
-    { id: 'optimization', label: '可观测性', icon: BarChart3 },
+    { id: 'skills', label: '技能', icon: BookOpen },
+    { id: 'hooks', label: '钩子', icon: Webhook },
+    { id: 'memory', label: '记忆', icon: Brain },
+    { id: 'optimization', label: '统计', icon: BarChart3 },
     { id: 'commands', label: '命令与工具', icon: Target },
     { id: 'codemap', label: '代码地图', icon: MapIcon },
     { id: 'policies', label: '策略引擎', icon: Shield },
@@ -1169,20 +1164,14 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
 
   const advancedTabs = [
     { id: 'experiment', label: '并行实验', icon: Gauge },
-    { id: 'discovery', label: '功能发现', icon: Lightbulb },
-    { id: 'hookEnhancement', label: 'Hook 增强', icon: Wand2 },
-    { id: 'reviewer', label: '审查分级', icon: ShieldCheck },
-    { id: 'delegation', label: '委托策略', icon: Split },
-    { id: 'activity', label: '活动面板', icon: Activity },
-    { id: 'phase52Integration', label: 'Phase 52 集成', icon: RefreshCw },
-    { id: 'phase53Integration', label: 'Phase 53 集成', icon: ShieldCheck },
-    { id: 'errorDisplay', label: '错误显示', icon: AlertCircle },
-    { id: 'resultSchema', label: '结果 Schema', icon: CheckCircle2 },
-    { id: 'modelDisplay', label: '模型显示', icon: Eye },
+    { id: 'reviewer', label: '代码审查', icon: ShieldCheck },
+    { id: 'delegation', label: '任务委托', icon: Split },
+    { id: 'phase53Integration', label: '安全与治理', icon: ShieldCheck },
+    { id: 'resultSchema', label: '结果格式', icon: CheckCircle2 },
     { id: 'configLayering', label: '配置分层', icon: Folder },
     { id: 'security', label: '安全设置', icon: Shield },
-    { id: 'channels', label: '渠道集成', icon: Radio },
-    { id: 'archived', label: '归档对话', icon: Archive },
+    { id: 'channels', label: '渠道', icon: Radio },
+    { id: 'archived', label: '归档', icon: Archive },
     { id: 'about', label: '关于', icon: Info },
   ] as const;
 
@@ -4889,11 +4878,6 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
         <SettingsVoiceTab draft={draft} updateDraft={updateDraft} />
       )}
 
-      {/* ===== 功能发现（Phase 45） ===== */}
-      {activeTab === 'discovery' && (
-        <SettingsDiscoveryTab draft={draft} updateDraft={updateDraft} />
-      )}
-
       {/* ===== 对话持久化（Phase 44） ===== */}
       {activeTab === 'conversation' && (
         <SettingsConversationTab draft={draft} updateDraft={updateDraft} />
@@ -4909,11 +4893,6 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
         <SettingsGoalTab draft={draft} updateDraft={updateDraft} />
       )}
 
-      {/* ===== Hook 增强（Phase 43） ===== */}
-      {activeTab === 'hookEnhancement' && (
-        <SettingsHookEnhancementTab draft={draft} updateDraft={updateDraft} />
-      )}
-
       {/* ===== 审查分级（Phase 51 Task 1/7） ===== */}
       {activeTab === 'reviewer' && (
         <SettingsReviewerTab draft={draft} updateDraft={updateDraft} />
@@ -4924,127 +4903,17 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
         <SettingsDelegationTab draft={draft} updateDraft={updateDraft} />
       )}
 
-      {/* ===== 活动面板（Phase 51 Task 5，内联） ===== */}
-      {activeTab === 'activity' && (
-        <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>活动面板</CardTitle>
-              <CardDescription>控制 Agent 活动面板的显示项与预览长度</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {(() => {
-                const activityPanel = draft.activityPanel ?? {};
-                const updateActivityPanel = (patch: Partial<typeof activityPanel>) => {
-                  updateDraft({ activityPanel: { ...activityPanel, ...patch } });
-                };
-                return (
-                  <>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <Label htmlFor="activity-enabled">启用活动面板</Label>
-                        <p className="text-xs text-rd-textMuted">在主界面显示 Agent 实时活动卡片。</p>
-                      </div>
-                      <Switch
-                        id="activity-enabled"
-                        checked={activityPanel.enabled ?? false}
-                        onCheckedChange={(checked) => updateActivityPanel({ enabled: checked })}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="activity-max-active">最大活跃显示数（1-10）</Label>
-                      <Input
-                        id="activity-max-active"
-                        type="number"
-                        min={1}
-                        max={10}
-                        value={activityPanel.maxActiveDisplay ?? 4}
-                        onChange={(e) => updateActivityPanel({ maxActiveDisplay: Number(e.target.value) })}
-                      />
-                      <p className="text-xs text-rd-textMuted">同时显示的活跃 Agent 卡片数量上限。</p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="activity-max-recent">最近完成显示数（0-20）</Label>
-                      <Input
-                        id="activity-max-recent"
-                        type="number"
-                        min={0}
-                        max={20}
-                        value={activityPanel.maxRecentDisplay ?? 3}
-                        onChange={(e) => updateActivityPanel({ maxRecentDisplay: Number(e.target.value) })}
-                      />
-                      <p className="text-xs text-rd-textMuted">最近完成的 Agent 卡片保留数量。</p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="activity-preview-length">任务预览长度（20-200）</Label>
-                      <Input
-                        id="activity-preview-length"
-                        type="number"
-                        min={20}
-                        max={200}
-                        value={activityPanel.taskPreviewLength ?? 72}
-                        onChange={(e) => updateActivityPanel({ taskPreviewLength: Number(e.target.value) })}
-                      />
-                      <p className="text-xs text-rd-textMuted">活动卡片中任务描述的截断字符数。</p>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <Label htmlFor="activity-tool-stats">显示工具调用统计</Label>
-                        <p className="text-xs text-rd-textMuted">在卡片上展示工具调用次数等统计。</p>
-                      </div>
-                      <Switch
-                        id="activity-tool-stats"
-                        checked={activityPanel.showToolCallStats ?? true}
-                        onCheckedChange={(checked) => updateActivityPanel({ showToolCallStats: checked })}
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <Label htmlFor="activity-thinking-level">显示思考级别</Label>
-                        <p className="text-xs text-rd-textMuted">在卡片上展示当前思考深度级别。</p>
-                      </div>
-                      <Switch
-                        id="activity-thinking-level"
-                        checked={activityPanel.showThinkingLevel ?? true}
-                        onCheckedChange={(checked) => updateActivityPanel({ showThinkingLevel: checked })}
-                      />
-                    </div>
-                  </>
-                );
-              })()}
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* ===== Phase 52 集成总开关（I-1） ===== */}
-      {activeTab === 'phase52Integration' && (
-        <SettingsPhase52IntegrationTab draft={draft} updateDraft={updateDraft} />
-      )}
-
-      {/* ===== Phase 53 集成总开关（代码卫生与安全治理） ===== */}
+      {/* ===== 安全与治理（合并 Phase 52 + Phase 53） ===== */}
       {activeTab === 'phase53Integration' && (
-        <SettingsPhase53IntegrationTab draft={draft} updateDraft={updateDraft} />
-      )}
-
-      {/* ===== 错误显示（Phase 51 Task 9，I-1） ===== */}
-      {activeTab === 'errorDisplay' && (
-        <SettingsErrorDisplayTab draft={draft} updateDraft={updateDraft} />
+        <>
+          <SettingsPhase52IntegrationTab draft={draft} updateDraft={updateDraft} />
+          <SettingsPhase53IntegrationTab draft={draft} updateDraft={updateDraft} />
+        </>
       )}
 
       {/* ===== 子 Agent 结果 Schema（Phase 51 Task 10，I-1） ===== */}
       {activeTab === 'resultSchema' && (
         <SettingsResultSchemaTab draft={draft} updateDraft={updateDraft} />
-      )}
-
-      {/* ===== 模型显示（Phase 51 Task 11，I-1） ===== */}
-      {activeTab === 'modelDisplay' && (
-        <SettingsModelDisplayTab draft={draft} updateDraft={updateDraft} />
       )}
 
       {/* ===== 配置分层（Phase 51 Task 8，I-1） ===== */}

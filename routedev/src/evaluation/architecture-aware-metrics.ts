@@ -25,10 +25,10 @@ import { logger } from '../utils/logger.js';
 // ============================================================
 
 /** 架构组件枚举（绑定到 RouteDev 的 6 个核心组件） */
-export type ArchComponent = 'router' | 'planner' | 'memory' | 'tool_executor' | 'skill_flow' | 'dual_loop';
+type ArchComponent = 'router' | 'planner' | 'memory' | 'tool_executor' | 'skill_flow' | 'dual_loop';
 
 /** 单条指标项 */
-export interface MetricEntry {
+interface MetricEntry {
   /** 指标名称（中文） */
   name: string;
   /** 指标值 */
@@ -66,7 +66,7 @@ export interface TrajectoryInput {
 }
 
 /** 异常敏感度 */
-export type AnomalySensitivity = 'low' | 'medium' | 'high';
+type AnomalySensitivity = 'low' | 'medium' | 'high';
 
 // ============================================================
 // 组件中文标签（用于诊断报告）

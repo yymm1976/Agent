@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import type { CodeMapNode, CodeMapFile } from './schema.js';
 
 /** 渲染选项 */
-export interface RenderOptions {
+interface RenderOptions {
   /** token 预算 */
   tokenBudget?: number;
   /** 每个文件最多显示的符号数 */
@@ -16,7 +16,7 @@ export interface RenderOptions {
 }
 
 /** 渲染结果 */
-export interface RenderResult {
+interface RenderResult {
   /** 渲染后的文本 */
   text: string;
   /** 包含的文件数 */
@@ -119,7 +119,7 @@ export function renderCodeMap(
 /**
  * 渲染单个文件的符号结构
  */
-export function renderFileStructure(filePath: string, nodes: CodeMapNode[]): string {
+function renderFileStructure(filePath: string, nodes: CodeMapNode[]): string {
   const lines: string[] = [];
   lines.push(`${filePath}:`);
   lines.push('⋮...');
@@ -140,7 +140,7 @@ export function renderFileStructure(filePath: string, nodes: CodeMapNode[]): str
 /**
  * 读取文件中某符号的源代码行
  */
-export function readSymbolLines(
+function readSymbolLines(
   rootDir: string,
   node: CodeMapNode,
 ): string | null {

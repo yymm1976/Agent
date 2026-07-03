@@ -51,7 +51,7 @@ const TRUST_LEVEL_ORDER: Record<TrustLevel, number> = {
  *   4. network — 网络访问（web_search, web_fetch）
  *   5. push    — 推送到远程（git push，最高风险）
  */
-export type RiskLevel = 'read' | 'write' | 'execute' | 'network' | 'push';
+type RiskLevel = 'read' | 'write' | 'execute' | 'network' | 'push';
 
 /**
  * 每个 TrustLevel 对应的风险容忍阈值
@@ -93,7 +93,7 @@ interface TemporaryGrant {
 }
 
 /** 持久化偏好记录（写入 .routedev/trust-preferences.json） */
-export interface TrustPreference {
+interface TrustPreference {
   /** 工具名 pattern（如 "file_write"） */
   toolPattern: string;
   /** 参数 pattern（可选，如路径前缀 "src/utils/"） */

@@ -66,7 +66,7 @@ function globToRegExp(pattern: string): RegExp {
  * @param pattern glob 模式
  * @returns 是否匹配
  */
-export function matchGlob(filePath: string, pattern: string): boolean {
+function matchGlob(filePath: string, pattern: string): boolean {
   // 统一路径分隔符为正斜杠，便于匹配
   const normalizedPath = filePath.replace(/\\/g, '/');
   const normalizedPattern = pattern.replace(/\\/g, '/');
@@ -90,7 +90,7 @@ export function matchGlob(filePath: string, pattern: string): boolean {
  * @param pattern 域名通配符模式
  * @returns 是否匹配
  */
-export function matchDomain(hostname: string, pattern: string): boolean {
+function matchDomain(hostname: string, pattern: string): boolean {
   const h = hostname.toLowerCase();
   const p = pattern.toLowerCase();
   if (p.startsWith('*.')) {
@@ -362,8 +362,9 @@ export class SecurityChecker implements ISecurityChecker {
     // 多 token：匹配命令名 + 条目 args 是命令 args 的前缀
     const blocked = commandsToCheck.some(cmd => this.commandBlacklist.some(bl => {
       const blParsed = parseCommand(bl);
-      // 命令名不匹配，直接跳过
-      if (cmd.command.toLowerCase() !== blParsed.command.toLowerCase()) return false;
+      // I6 修复：提取 basename 比较，避免 /usr/bin/rm 绕过 rm 黑名单
+      const cmdBasename = path.basename(cmd.command.toLowerCase());
+      if (cmdBasename !== blParsed.command.toLowerCase()) return false;
       // 单 token 条目（仅命令名），匹配
       if (blParsed.args.length === 0) return true;
       // 多 token 条目：检查条目 args 是命令 args 的前缀
@@ -460,7 +461,15 @@ export class SecurityChecker implements ISecurityChecker {
     }
 
     // I5 修复：速率限制 Map LRU 淘汰，防止 Map 无界增长导致内存泄漏
-    this.trackRateLimit(hostname);
+    // I7 修复：超限时阻断请求，而非仅 warn
+    const rateLimited = this.trackRateLimit(hostname);
+    if (rateLimited) {
+      return {
+        allowed: false,
+        reason: `速率限制：${hostname} 在 ${SecurityChecker.RATE_LIMIT_WINDOW_MS}ms 内超过 ${SecurityChecker.RATE_LIMIT_MAX_REQUESTS} 次请求`,
+        requiresConfirmation: false,
+      };
+    }
 
     // Permission Profile 网络规则检查（glob 级域名白名单/黑名单）
     // 黑名单优先于白名单；白名单非空时必须命中才允许
@@ -491,8 +500,9 @@ export class SecurityChecker implements ISecurityChecker {
    * I5 修复：跟踪网络请求速率（LRU Map）
    * Map 大小上限由 config.security.rateLimitMaxSize 控制（默认 10000）
    * 超过上限时删除最旧条目（LRU 淘汰）
+   * I7 修复：返回 boolean 表示是否超限，调用方据此阻断
    */
-  private trackRateLimit(hostname: string): void {
+  private trackRateLimit(hostname: string): boolean {
     const maxSize = this.securityConfig.rateLimitMaxSize ?? 10000;
     const now = Date.now();
     const windowMs = SecurityChecker.RATE_LIMIT_WINDOW_MS;
@@ -506,12 +516,15 @@ export class SecurityChecker implements ISecurityChecker {
       if (now - existing.windowStart > windowMs) {
         // 窗口过期，重置计数
         this.rateLimitMap.set(hostname, { count: 1, windowStart: now });
+        return false;
       } else {
         existing.count++;
         this.rateLimitMap.set(hostname, existing);
         if (existing.count > maxRequests) {
-          logger.warn('Rate limit exceeded for hostname', { hostname, count: existing.count });
+          logger.warn('Rate limit exceeded for hostname (blocking)', { hostname, count: existing.count });
+          return true;
         }
+        return false;
       }
     } else {
       // 新条目：先检查 Map 大小，超过上限时删除最旧条目（Map 迭代顺序 = 插入顺序）
@@ -521,6 +534,7 @@ export class SecurityChecker implements ISecurityChecker {
         this.rateLimitMap.delete(oldestKey);
       }
       this.rateLimitMap.set(hostname, { count: 1, windowStart: now });
+      return false;
     }
   }
 

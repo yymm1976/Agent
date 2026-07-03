@@ -145,7 +145,7 @@ export function getNodeByName(db: DB, name: string): CodeMapNode[] {
 }
 
 /** 获取节点的调用者（谁调用了此节点） */
-export function getCallers(db: DB, nodeId: string): CodeMapNode[] {
+function getCallers(db: DB, nodeId: string): CodeMapNode[] {
   const edges = queryEdges(
     db,
     'SELECT * FROM edges WHERE target = ? AND kind = ?',
@@ -158,7 +158,7 @@ export function getCallers(db: DB, nodeId: string): CodeMapNode[] {
 }
 
 /** 获取节点的被调用者（此节点调用了谁） */
-export function getCallees(db: DB, nodeId: string): CodeMapNode[] {
+function getCallees(db: DB, nodeId: string): CodeMapNode[] {
   const edges = queryEdges(
     db,
     'SELECT * FROM edges WHERE source = ? AND kind = ?',
@@ -171,7 +171,7 @@ export function getCallees(db: DB, nodeId: string): CodeMapNode[] {
 }
 
 /** 更新节点的 PageRank 分数 */
-export function updateRankScore(db: DB, nodeId: string, score: number): void {
+function updateRankScore(db: DB, nodeId: string, score: number): void {
   db.prepare('UPDATE nodes SET rank_score = ? WHERE id = ?').run(score, nodeId);
 }
 
@@ -192,7 +192,7 @@ export function batchUpdateRankScores(db: DB, scores: Map<string, number>): void
 }
 
 /** 按路径获取文件 */
-export function getFileByPath(db: DB, filePath: string): CodeMapFile | null {
+function getFileByPath(db: DB, filePath: string): CodeMapFile | null {
   const row = db.prepare('SELECT * FROM files WHERE path = ?').get(filePath) as Record<string, unknown> | undefined;
   return row ? rowToFile(row) : null;
 }

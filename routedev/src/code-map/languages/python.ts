@@ -15,7 +15,7 @@ export const PY_SYMBOL_NODE_TYPES: Record<string, SymbolKind> = {
 export const PY_CALL_TYPE = 'call';
 
 /** Python 装饰器节点类型 */
-export const PY_DECORATOR_TYPE = 'decorator';
+const PY_DECORATOR_TYPE = 'decorator';
 
 /** 获取 Python 节点名称 */
 export function getPyNodeName(node: {
@@ -37,7 +37,7 @@ export function isPyAsync(node: {
 }
 
 /** 边类型权重（Python 专用，复用全局权重） */
-export const PY_EDGE_KINDS = {
+const PY_EDGE_KINDS = {
   CALLS: 'CALLS' as EdgeKind,
   IMPORTS: 'IMPORTS' as EdgeKind,
   EXTENDS: 'EXTENDS' as EdgeKind,

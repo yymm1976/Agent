@@ -31,7 +31,7 @@ import type { ScoreCard } from '../agent/multi/score-card.js';
 // ============================================================
 
 /** 监控信号类型（7 类 + 1 类配置 ROI） */
-export type AlertType =
+type AlertType =
   | 'latency'
   | 'cost'
   | 'quality'
@@ -42,7 +42,7 @@ export type AlertType =
   | 'config-roi';
 
 /** 告警严重度 */
-export type AlertSeverity = 'low' | 'medium' | 'high';
+type AlertSeverity = 'low' | 'medium' | 'high';
 
 /** 告警 */
 export interface Alert {
@@ -59,7 +59,7 @@ export interface Alert {
 }
 
 /** runAll 方法的入参（一次性运行全部监控） */
-export interface MonitorParams {
+interface MonitorParams {
   /** 用于延迟/成本/反馈监控的 ScoreCard 列表 */
   scoreCards?: ScoreCard[];
   /** 昨日总 Token 数（成本环比用） */

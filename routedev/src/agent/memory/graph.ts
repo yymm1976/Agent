@@ -12,6 +12,8 @@
 //   4b2. validUntil / supersededBy：过时知识显式标记
 //   4c. recall() 排序综合 PPR 分数和置信度，默认排除已 superseded 的节点
 
+import { tokenizeForJaccard, jaccardSimilarity } from '../../utils/jaccard.js';
+
 export type NodeType = 'fact' | 'decision' | 'skill' | 'event';
 export type EdgeType = 'relates_to' | 'derived_from' | 'supersedes' | 'conflicts_with';
 
@@ -1075,26 +1077,14 @@ export class KnowledgeGraph {
     return merged.sort((a, b) => b.score - a.score).slice(0, maxResults);
   }
 
-  /** 分词（用于 Jaccard 相似度计算） */
+  /** 分词（用于 Jaccard 相似度计算）- P1 修复：复用公共实现 */
   private tokenize(text: string): Set<string> {
-    // 按非字母数字字符切分，过滤空串
-    return new Set(
-      text
-        .toLowerCase()
-        .split(/[^a-z0-9\u4e00-\u9fff]+/)
-        .filter(s => s.length > 0),
-    );
+    return tokenizeForJaccard(text);
   }
 
-  /** 计算 Jaccard 相似度 */
+  /** 计算 Jaccard 相似度 - P1 修复：复用公共实现 */
   private jaccardSimilarity(a: Set<string>, b: Set<string>): number {
-    if (a.size === 0 && b.size === 0) return 1.0;
-    let intersection = 0;
-    for (const word of a) {
-      if (b.has(word)) intersection++;
-    }
-    const union = a.size + b.size - intersection;
-    return union === 0 ? 0 : intersection / union;
+    return jaccardSimilarity(a, b);
   }
 
   /** 序列化为 JSON 字符串 */

@@ -9,7 +9,7 @@ import type { TraceCollector } from '../harness/trace-collector.js';
 import { logger } from '../utils/logger.js';
 
 /** 结构化工具执行结果（P1-5 修复） */
-export interface StructuredToolResult {
+interface StructuredToolResult {
   /** 输出内容 */
   output: string;
   /** 是否为错误（由工具显式声明，而非字符串推断） */

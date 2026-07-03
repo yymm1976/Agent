@@ -3,6 +3,7 @@
 // 本 Tab 聚合关键子任务的核心字段，便于快速启用 / 调参。
 // Phase 59：processEvaluation/archAwareMetrics/saturationMonitor 已删除（批次1 无价值 Integration）
 // Phase 59：mcpSecurity 已删除（批次3，与 phase53Integration.mcpSecurityScan 重复，保留 53 的）
+// Phase 60：合并到 '安全与治理' tab，删除 Task N 编号
 import type { AppConfig, Phase52IntegrationConfig } from '../../../../../src/config/schema.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Label } from '../ui/label.js';
@@ -22,19 +23,19 @@ export function SettingsPhase52IntegrationTab({ draft, updateDraft }: SettingsPh
     updateDraft({ phase52Integration: { ...cfg, ...patch } });
   };
 
-  // Skill 生命周期（Task 1）
+  // Skill 生命周期
   const skillLifecycle = cfg.skillLifecycle ?? {};
   const updateSkillLifecycle = (patch: Partial<typeof skillLifecycle>) => {
     update({ skillLifecycle: { ...skillLifecycle, ...patch } });
   };
 
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
-      {/* Task 1：Skill 生命周期 */}
+    <div className="space-y-6">
+      {/* Skill 生命周期 */}
       <Card>
         <CardHeader>
-          <CardTitle>Skill 生命周期（Task 1）</CardTitle>
-          <CardDescription>MUSE-Autoskill 五阶段生命周期：Creation / Memory / Management / Evaluation / Refinement。</CardDescription>
+          <CardTitle>Skill 生命周期</CardTitle>
+          <CardDescription>五阶段生命周期：创建 / 记忆 / 管理 / 评估 / 优化。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
@@ -77,5 +78,3 @@ export function SettingsPhase52IntegrationTab({ draft, updateDraft }: SettingsPh
     </div>
   );
 }
-
-export default SettingsPhase52IntegrationTab;

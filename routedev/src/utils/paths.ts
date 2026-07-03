@@ -103,7 +103,7 @@ export function getProjectConfigPath(projectPath: string): string {
 /**
  * 项目数据目录
  */
-export function getProjectDataDir(projectPath: string): string {
+function getProjectDataDir(projectPath: string): string {
   const hash = simpleHash(projectPath);
   return join(getAppDataDir(), 'projects', hash);
 }

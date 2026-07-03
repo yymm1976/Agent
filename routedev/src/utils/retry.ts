@@ -1,7 +1,7 @@
 // src/utils/retry.ts
 // 重试 + 熔断工具（仅用于 LLM 调用，不用于不可重试的工具执行）
 
-export interface RetryPolicyOptions {
+interface RetryPolicyOptions {
   maxRetries?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
@@ -50,7 +50,7 @@ export class RetryPolicy {
   }
 }
 
-export interface CircuitBreakerOptions {
+interface CircuitBreakerOptions {
   failureThreshold?: number;
   resetTimeoutMs?: number;
 }

@@ -17,19 +17,19 @@ import { logger } from '../utils/logger.js';
 export type UserExpertise = 'beginner' | 'intermediate' | 'expert';
 
 /** 解释详细度 */
-export type ExplanationDetail = 'none' | 'key-only' | 'full';
+type ExplanationDetail = 'none' | 'key-only' | 'full';
 
 /** 确认频率 */
-export type ConfirmationFrequency = 'always' | 'risky-only' | 'minimal';
+type ConfirmationFrequency = 'always' | 'risky-only' | 'minimal';
 
 /** 错误处理策略 */
-export type ErrorHandling = 'immediate' | 'auto-retry' | 'silent-retry';
+type ErrorHandling = 'immediate' | 'auto-retry' | 'silent-retry';
 
 /** 默认输出风格 */
-export type DefaultOutputStyle = 'concise' | 'detailed' | 'structured';
+type DefaultOutputStyle = 'concise' | 'detailed' | 'structured';
 
 /** 用户经验设置（持久化结构） */
-export interface ExpertiseSettings {
+interface ExpertiseSettings {
   /** 经验等级，默认 'intermediate' */
   level: UserExpertise;
   /** 是否启用自动建议，默认 true */
@@ -83,7 +83,7 @@ export const EXPERTISE_BEHAVIOR: Record<
 };
 
 /** 引导式等级选择问题答案 */
-export interface RecommendAnswers {
+interface RecommendAnswers {
   /** 对开发工具/命令行的熟悉度 */
   familiarity: 'high' | 'medium' | 'low';
   /** 期望的确认频率 */

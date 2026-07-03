@@ -18,7 +18,7 @@ const FIELD_RANGES = {
  * 解析后的 cron 表达式
  * 每个字段为数字集合（Set<number>），* 表示该字段所有合法值
  */
-export interface ParsedCron {
+interface ParsedCron {
   minute: Set<number>;
   hour: Set<number>;
   dayOfMonth: Set<number>;

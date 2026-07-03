@@ -52,7 +52,6 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.5.0",
-    "cross-env": "^10.1.0",
     "electron": "^30.5.1",
     "electron-builder": "^25.1.8",
     "electron-updater": "^6.8.9",

@@ -7,7 +7,7 @@
 // ============================================================
 
 /** 工具参数 JSON Schema */
-export interface ToolParameterSchema {
+interface ToolParameterSchema {
   type: 'object';
   properties: Record<string, unknown>;
   required?: string[];
@@ -164,27 +164,27 @@ export interface IToolExecutor {
 // ============================================================
 
 /** 文件操作工具参数 */
-export interface FileToolArgs {
+interface FileToolArgs {
   path: string;
   content?: string;
   encoding?: 'utf-8' | 'base64';
 }
 
 /** Shell 执行工具参数 */
-export interface ShellToolArgs {
+interface ShellToolArgs {
   command: string;
   workingDirectory?: string;
   timeoutMs?: number;
 }
 
 /** Git 操作工具参数 */
-export interface GitToolArgs {
+interface GitToolArgs {
   operation: 'status' | 'add' | 'commit' | 'push' | 'pull' | 'diff' | 'log';
   args?: string[];
 }
 
 /** 网页抓取工具参数 */
-export interface WebFetchToolArgs {
+interface WebFetchToolArgs {
   url: string;
   method?: 'GET' | 'POST';
   headers?: Record<string, string>;
@@ -192,7 +192,7 @@ export interface WebFetchToolArgs {
 }
 
 /** 代码搜索工具参数 */
-export interface CodeSearchToolArgs {
+interface CodeSearchToolArgs {
   pattern: string;
   path?: string;
   filePattern?: string;

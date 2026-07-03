@@ -33,7 +33,7 @@ interface ModelDefinition {
  * 新增 deterministic 和 matchedRuleId 字段
  * deterministic=true 时调用方应跳过 LLM 调用，直接走确定性规则的 handler
  */
-export interface DeterministicRoutingResult extends RoutingResult {
+interface DeterministicRoutingResult extends RoutingResult {
   /** 是否为确定性路由命中（命中后无需 LLM 调用） */
   deterministic?: boolean;
   /** 命中的确定性规则 ID（仅 deterministic=true 时有值） */

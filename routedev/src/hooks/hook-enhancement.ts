@@ -35,7 +35,7 @@ export type GoalHookEvent =
 // ============================================================
 
 /** Hook 执行上下文（受限 API） */
-export interface HookContext {
+interface HookContext {
   event: string;
   toolName?: string;
   toolArgs?: Record<string, unknown>;
@@ -51,14 +51,14 @@ export interface HookContext {
 }
 
 /** Hook 执行结果 */
-export interface HookResult {
+interface HookResult {
   action: 'continue' | 'block' | 'warn' | 'abort';
   message?: string;
   data?: Record<string, unknown>;
 }
 
 /** 函数型 Hook 签名 */
-export type FunctionHook = (ctx: HookContext) => Promise<HookResult>;
+type FunctionHook = (ctx: HookContext) => Promise<HookResult>;
 
 // ============================================================
 // 安全审查：危险命令关键词

@@ -2,7 +2,7 @@
 // RepoDistill 预算分配
 
 /** 蒸馏节点输入 */
-export interface DistillNode {
+interface DistillNode {
   id: string;
   rankScore: number;
   signature: string;
@@ -10,7 +10,7 @@ export interface DistillNode {
 }
 
 /** 蒸馏选项 */
-export interface DistillOptions {
+interface DistillOptions {
   /** 是否包含邻居节点 */
   includeNeighbors?: boolean;
   /** 最大深度 */
@@ -18,7 +18,7 @@ export interface DistillOptions {
 }
 
 /** 蒸馏结果 */
-export interface DistillResult {
+interface DistillResult {
   selected: DistillNode[];
   truncated: number;
   estimatedTokens: number;
@@ -70,7 +70,7 @@ export function distillContext(
 /**
  * 带邻居的蒸馏：选中节点后，也尝试包含其直接邻居
  */
-export function distillWithNeighbors(
+function distillWithNeighbors(
   nodes: DistillNode[],
   edges: Array<{ source: string; target: string }>,
   budgetTokens: number,

@@ -254,11 +254,17 @@ export function loadConfig(options?: {
   config = migrateConfig(config);
 
   // 4. 合并项目级配置（如果有）——优先级高于全局配置和迁移结果
+  // 受 configLayering.enabled 守护：关闭时不合并项目级配置
   if (options?.projectPath) {
-    const projectPath = getProjectConfigPath(options.projectPath);
-    const projectConfig = loadYamlFile(projectPath);
-    if (projectConfig) {
-      config = deepMerge(config, projectConfig);
+    const layeringEnabled = (config as Record<string, unknown>)?.configLayering
+      ? ((config as Record<string, unknown>).configLayering as Record<string, unknown>)?.enabled !== false
+      : true; // 默认启用
+    if (layeringEnabled) {
+      const projectPath = getProjectConfigPath(options.projectPath);
+      const projectConfig = loadYamlFile(projectPath);
+      if (projectConfig) {
+        config = deepMerge(config, projectConfig);
+      }
     }
   }
 

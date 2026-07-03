@@ -288,6 +288,23 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
       dagEngine: deps.dagEngineRef?.current ?? undefined,
       compositionalRouter: deps.compositionalRouter,
       hookRunner: deps.hookRunner,
+      // Phase 61：ACRouter 闭环模型路由（由 app-init.ts 在 closedLoopRouting.enabled 时创建）
+      routingHistory: deps.routingHistory,
+      routingMemory: deps.routingMemory,
+      executionVerifier: deps.executionVerifier,
+      routingRegretTracker: deps.routingRegretTracker,
+      routingOrchestrator: deps.routingOrchestrator,
+      // Phase 65：记忆系统（可选，由 app-init.ts 注入）
+      memoryStore: deps.memoryStore,
+      hybridRetriever: deps.hybridRetriever,
+      conservativeMerger: deps.conservativeMerger,
+      localMaintenance: deps.localMaintenance,
+      // Phase 68：知识图谱（可选，由 app-init.ts 注入）
+      provenanceGraph: deps.provenanceGraph,
+      agentRejectedAlternativeStore: deps.agentRejectedAlternativeStore,
+      kanObstacleChecker: deps.kanObstacleChecker,
+      quantitativeGate: deps.quantitativeGate,
+      classifyOperation: deps.classifyOperation,
     });
   }
   const goalRunner = goalRunnerRef.current;

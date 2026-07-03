@@ -8,49 +8,49 @@ import { z } from 'zod';
 // --- 基础枚举 ---
 
 // 任务复杂度分级：四级路由的目标
-export const ScenarioTierSchema = z.enum(['simple', 'medium', 'complex', 'reasoning']);
+const ScenarioTierSchema = z.enum(['simple', 'medium', 'complex', 'reasoning']);
 export type ScenarioTier = z.infer<typeof ScenarioTierSchema>;
 
 // LLM 协议：决定调用 OpenAI SDK 还是 Anthropic SDK
-export const ProtocolSchema = z.enum(['openai', 'anthropic']);
+const ProtocolSchema = z.enum(['openai', 'anthropic']);
 export type Protocol = z.infer<typeof ProtocolSchema>;
 
 // Token 预算执行模式：仅追踪 vs 强制执行
-export const BudgetModeSchema = z.enum(['track_only', 'enforce']);
+const BudgetModeSchema = z.enum(['track_only', 'enforce']);
 export type BudgetMode = z.infer<typeof BudgetModeSchema>;
 
 // Agent 自主度（auto 全自动 / semi 关键步骤确认 / manual 逐步确认）
-export const AutonomyModeSchema = z.enum(['auto', 'semi', 'manual']);
+const AutonomyModeSchema = z.enum(['auto', 'semi', 'manual']);
 export type AutonomyMode = z.infer<typeof AutonomyModeSchema>;
 
 // 敏感文件保护策略：只读 vs 禁止访问
-export const SensitiveFilePolicySchema = z.enum(['readonly', 'deny']);
+const SensitiveFilePolicySchema = z.enum(['readonly', 'deny']);
 export type SensitiveFilePolicy = z.infer<typeof SensitiveFilePolicySchema>;
 
 // 用户偏好：省钱 / 平衡 / 高质量
-export const UserPreferenceSchema = z.enum(['saving', 'balanced', 'premium']);
+const UserPreferenceSchema = z.enum(['saving', 'balanced', 'premium']);
 export type UserPreference = z.infer<typeof UserPreferenceSchema>;
 
 // CLI 主题
-export const ThemeSchema = z.enum(['dark', 'light']);
+const ThemeSchema = z.enum(['dark', 'light']);
 export type Theme = z.infer<typeof ThemeSchema>;
 
 // Phase 34：输出样式（信息密度控制权交给用户）
-export const OutputStyleSchema = z.enum(['minimal', 'standard', 'verbose']);
+const OutputStyleSchema = z.enum(['minimal', 'standard', 'verbose']);
 export type OutputStyle = z.infer<typeof OutputStyleSchema>;
 
 // GUI 外观主题：黑白灰蓝四套配色
-export const AppearanceThemeSchema = z.enum(['white', 'black', 'gray', 'blue']);
+const AppearanceThemeSchema = z.enum(['white', 'black', 'gray', 'blue']);
 export type AppearanceTheme = z.infer<typeof AppearanceThemeSchema>;
 
 // CLI 语言
-export const LanguageSchema = z.enum(['zh-CN', 'en-US']);
+const LanguageSchema = z.enum(['zh-CN', 'en-US']);
 export type Language = z.infer<typeof LanguageSchema>;
 
 // --- 提供商与模型配置 ---
 
 // 模型能力标签（用于路由选择）
-export const ModelCapabilitySchema = z.enum([
+const ModelCapabilitySchema = z.enum([
   'reasoning', 'code', 'multimodal', 'fast', 'cheap',
 ]);
 export type ModelCapability = z.infer<typeof ModelCapabilitySchema>;
@@ -83,7 +83,7 @@ export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 // --- 路由配置 ---
 
 // 路由规则：把任务等级映射到具体模型
-export const RouterRuleSchema = z.object({
+const RouterRuleSchema = z.object({
   tier: ScenarioTierSchema,                              // 任务等级
   modelId: z.preprocess((v) => v === '' ? undefined : v, z.string().min(1).optional()),                // 主选模型 id（缺省时由 buildRouterConfig 从 providers 修复）
   fallbackModelId: z.preprocess((v) => v === '' ? undefined : v, z.string().optional()),                // 降级模型 id
@@ -92,7 +92,7 @@ export const RouterRuleSchema = z.object({
 export type RouterRule = z.infer<typeof RouterRuleSchema>;
 
 // Token 预算
-export const TokenBudgetSchema = z.object({
+const TokenBudgetSchema = z.object({
   mode: BudgetModeSchema.default('track_only'),  // 预算执行模式
   dailyLimit: z.number().positive().int().default(500000), // 日 token 上限
   perRequestLimit: z.number().positive().int().optional(),  // 单次请求上限
@@ -101,7 +101,7 @@ export const TokenBudgetSchema = z.object({
 export type TokenBudget = z.infer<typeof TokenBudgetSchema>;
 
 // 路由层配置
-export const RouterConfigSchema = z.object({
+const RouterConfigSchema = z.object({
   rules: z.array(RouterRuleSchema).default([]),                       // 路由规则表
   budget: z.preprocess((v) => v ?? {}, TokenBudgetSchema),         // Token 预算
   classifierModel: z.preprocess((v) => v === '' ? undefined : v, z.string().min(1).default('deepseek-v4-flash')),   // 分类器模型（应选最便宜）
@@ -113,13 +113,13 @@ export type RouterConfig = z.infer<typeof RouterConfigSchema>;
 // --- Checkpoint 配置 ---
 
 // Checkpoint 触发条件
-export const CheckpointTriggerSchema = z.object({
+const CheckpointTriggerSchema = z.object({
   level: z.number().min(1).max(100),  // Agent 嵌套深度 / 步骤数
   action: z.enum(['initial', 'incremental', 'compress']), // 触发动作
 });
 
 // 增量 Checkpoint 配置（MiMo Code 风格，用于压缩记忆）
-export const CheckpointConfigSchema = z.object({
+const CheckpointConfigSchema = z.object({
   enabled: z.boolean().default(true),
   triggers: z.array(CheckpointTriggerSchema).default([
     { level: 20, action: 'initial' },
@@ -133,17 +133,17 @@ export type CheckpointConfig = z.infer<typeof CheckpointConfigSchema>;
 
 // --- 渠道配置（Phase 13） ---
 
-export const ChannelTypeSchema = z.enum(['wechat-work', 'telegram', 'slack']);
+const ChannelTypeSchema = z.enum(['wechat-work', 'telegram', 'slack']);
 export type ChannelType = z.infer<typeof ChannelTypeSchema>;
 
-export const ChannelEntrySchema = z.object({
+const ChannelEntrySchema = z.object({
   id: z.string().min(1),
   type: ChannelTypeSchema,
   enabled: z.boolean().default(true),
   options: z.record(z.string(), z.string()).default({}),
 });
 
-export const ChannelsConfigSchema = z.object({
+const ChannelsConfigSchema = z.object({
   entries: z.array(ChannelEntrySchema).default([]),
   port: z.number().positive().int().default(9800),
   publicUrl: z.string().optional(),
@@ -167,7 +167,7 @@ export type ChannelEntryConfig = z.infer<typeof ChannelEntrySchema>;
 // --- GoalVerifier 配置 ---
 
 // 目标验证器（验证 /goal 是否完成）
-export const GoalVerifierConfigSchema = z.object({
+const GoalVerifierConfigSchema = z.object({
   enabled: z.boolean().default(true),
   modelId: z.string().default('kimi-k2.7'),
   maxTokensPerVerification: z.number().positive().int().default(1000),
@@ -297,7 +297,7 @@ export const AUTONOMY_BEHAVIOR: Record<AutonomyMode, {
 
 // --- 提示音配置 ---
 
-export const SoundsConfigSchema = z.object({
+const SoundsConfigSchema = z.object({
   enabled: z.boolean().default(true),
   completion: z.string().default('default'),
   error: z.string().default('warning'),
@@ -329,7 +329,7 @@ export const UIComponentsSchema = z.preprocess((v) => v ?? {}, z.object({
 }));
 export type UIComponentsConfig = z.infer<typeof UIComponentsSchema>;
 
-export const UIConfigSchema = z.preprocess(
+const UIConfigSchema = z.preprocess(
   (v) => {
     // Phase 34：向后兼容旧版 ui.disclosureLevel 数字 1/2/3
     if (v && typeof v === 'object' && !Array.isArray(v) && 'disclosureLevel' in v) {
@@ -363,7 +363,7 @@ export type UIConfig = z.infer<typeof UIConfigSchema>;
 
 // --- 更新配置 ---
 
-export const UpdatesConfigSchema = z.object({
+const UpdatesConfigSchema = z.object({
   checkOnStartup: z.boolean().default(true),
   autoUpdate: z.boolean().default(false),
 });
@@ -381,10 +381,10 @@ export type UpdatesConfig = z.infer<typeof UpdatesConfigSchema>;
  *   - websocket：SonettoHere 验证
  * 陷阱 #137：导入前必须校验 transport 是否被当前运行时支持，不支持的明确禁用
  */
-export const MCPTransportSchema = z.enum(['stdio', 'http', 'sse', 'streamable_http', 'websocket']);
+const MCPTransportSchema = z.enum(['stdio', 'http', 'sse', 'streamable_http', 'websocket']);
 export type MCPTransport = z.infer<typeof MCPTransportSchema>;
 
-export const MCPServerConfigSchema = z.discriminatedUnion('transport', [
+const MCPServerConfigSchema = z.discriminatedUnion('transport', [
   z.object({
     transport: z.literal('stdio'),
     command: z.string(),
@@ -418,7 +418,7 @@ export const MCPServerConfigSchema = z.discriminatedUnion('transport', [
 ]);
 
 /** MCP 会话生命周期策略（Phase 48 Task 4，受 APIX 启发） */
-export const MCPLifecyclePolicySchema = z.enum(['per-call', 'per-session', 'persistent']);
+const MCPLifecyclePolicySchema = z.enum(['per-call', 'per-session', 'persistent']);
 export type MCPLifecyclePolicy = z.infer<typeof MCPLifecyclePolicySchema>;
 
 export const MCPServerEntrySchema = z.object({
@@ -449,14 +449,14 @@ export type MCPServerEntryConfig = z.infer<typeof MCPServerEntrySchema>;
 
 // --- Prompt 模板配置（Phase 16） ---
 
-export const PromptConfigSchema = z.object({
+const PromptConfigSchema = z.object({
   userTemplatesDir: z.string().optional(),
   projectOverrides: z.boolean().default(true),
   cacheTtlSeconds: z.number().int().min(0).default(0),
 });
 export type PromptConfigType = z.infer<typeof PromptConfigSchema>;
 
-export const ProjectMemoryConfigSchema = z.object({
+const ProjectMemoryConfigSchema = z.object({
   enabled: z.boolean().default(true),
   maxMemorySize: z.number().int().min(100).default(10000),
   maxDecisions: z.number().int().min(10).default(100),
@@ -470,7 +470,7 @@ export type ProjectMemoryConfigType = z.infer<typeof ProjectMemoryConfigSchema>;
  * Token 可观测性配置
  * 默认开启——可观测性不应是实验性的
  */
-export const TokenTrackingConfigSchema = z.object({
+const TokenTrackingConfigSchema = z.object({
   /** 是否启用 Token Profiling（分组件估算） */
   enabled: z.boolean().default(true),
   /** 是否将会话快照写入磁盘 */
@@ -486,7 +486,7 @@ export type TokenTrackingConfig = z.infer<typeof TokenTrackingConfigSchema>;
  * 统一工作流编排配置
  * 把三条执行路径（chat/goal/compose）合并为一条智能流水线
  */
-export const WorkflowConfigSchema = z.object({
+const WorkflowConfigSchema = z.object({
   /** 是否启用统一流水线（默认开启——核心改进） */
   unifiedPipeline: z.boolean().default(true),
   /** 是否自动判断"需要确认需求"还是"直接执行" */
@@ -508,7 +508,7 @@ export type WorkflowConfig = z.infer<typeof WorkflowConfigSchema>;
  * 生产安全防护配置
  * 包含先读后写、工具输出截断、独立验证门等
  */
-export const SafetyConfigSchema = z.object({
+const SafetyConfigSchema = z.object({
   /** 是否启用"先读后写"强制（file_write/file_edit 前必须 file_read 过） */
   readBeforeWrite: z.boolean().default(true),
   /** 工具输出最大字符数（超过则智能截断，优先保留错误区域） */
@@ -530,7 +530,7 @@ export type SafetyConfig = z.infer<typeof SafetyConfigSchema>;
  * - keyword：从 task.description 提取关键词，保留包含关键词的消息（精准）
  * - budget：从最新消息向前累积，超出 token 预算则停止（token 可控）
  */
-export const WorkerContextStrategySchema = z.enum(['tail', 'keyword', 'budget']);
+const WorkerContextStrategySchema = z.enum(['tail', 'keyword', 'budget']);
 export type WorkerContextStrategy = z.infer<typeof WorkerContextStrategySchema>;
 
 /**
@@ -538,7 +538,7 @@ export type WorkerContextStrategy = z.infer<typeof WorkerContextStrategySchema>;
  * 默认启用 tail 策略，保留最近 5 条消息 + Blackboard 注入
  * 关闭时（enabled=false）回退到完整 conversationHistory 透传（向后兼容）
  */
-export const WorkerContextConfigSchema = z.object({
+const WorkerContextConfigSchema = z.object({
   /** 是否启用上下文过滤（关闭时回退到完整历史透传） */
   enabled: z.boolean().default(true),
   /** 过滤策略 */
@@ -558,7 +558,7 @@ export type WorkerContextConfig = z.infer<typeof WorkerContextConfigSchema>;
  * 需求澄清配置
  * 控制 RequirementsClarifier 的行为：模糊度阈值、最大问题数、是否自动跳过
  */
-export const ClarificationConfigSchema = z.object({
+const ClarificationConfigSchema = z.object({
   /** 是否启用需求澄清 */
   enabled: z.boolean().default(true),
   /** 模糊度阈值（0-1，达到此值才追问，默认 0.4） */
@@ -576,7 +576,7 @@ export type ClarificationConfig = z.infer<typeof ClarificationConfigSchema>;
  * Phase 35 Task 1：新增 workerContext（Worker 上下文选择性传递）
  * Phase 37 Task 1：新增 clarification（需求澄清）
  */
-export const OptimizationConfigSchema = z.object({
+const OptimizationConfigSchema = z.object({
   /** Token 可观测性（默认开启） */
   tokenTracking: z.preprocess((v) => v ?? {}, TokenTrackingConfigSchema),
   /** 结构化实体状态（实验性，默认关闭） */
@@ -645,7 +645,7 @@ export type BackgroundBehaviorConfig = z.infer<typeof BackgroundBehaviorConfigSc
  * 知识图谱配置
  * 控制持久化、自动遗忘和多策略召回的默认行为
  */
-export const KnowledgeGraphConfigSchema = z.object({
+const KnowledgeGraphConfigSchema = z.object({
   /** 持久化配置 */
   persistence: z.preprocess((v) => v ?? {}, z.object({
     /** 是否启用磁盘持久化 */
@@ -676,7 +676,7 @@ export type KnowledgeGraphConfig = z.infer<typeof KnowledgeGraphConfigSchema>;
  * 循环检测中间件配置
  * 控制 LoopDetectionMiddleware 的行为：滑动窗口大小、最大重复次数
  */
-export const LoopDetectionConfigSchema = z.object({
+const LoopDetectionConfigSchema = z.object({
   /** 是否启用循环检测 */
   enabled: z.boolean().default(true),
   /** 滑动窗口大小（3-50，记录最近 N 次工具调用） */
@@ -690,7 +690,7 @@ export type LoopDetectionConfig = z.infer<typeof LoopDetectionConfigSchema>;
  * 中间件配置（Phase 38 Task 1）
  * 与 optimization/security 平级，聚合各中间件的开关与参数
  */
-export const MiddlewareConfigSchema = z.object({
+const MiddlewareConfigSchema = z.object({
   /** 循环检测中间件 */
   loopDetection: z.preprocess((v) => v ?? {}, LoopDetectionConfigSchema),
 });
@@ -704,7 +704,7 @@ export type MiddlewareConfig = z.infer<typeof MiddlewareConfigSchema>;
  * 注：Zod 4 严格化后 `.default({})` 不接受空对象字面量，
  *     依赖 AppConfigSchema 中的 `z.preprocess((v) => v ?? {}, AgentConfigSchema)` 填充默认值
  */
-export const AgentConfigSchema = z.object({
+const AgentConfigSchema = z.object({
   /** 最大并行子 Agent 数（1-10，默认 3） */
   // 修复：默认值从 3 提升到 5，避免并行调研多个框架时立即被拒绝
   maxConcurrentSubAgents: z.number().int().min(1).max(10).default(5),
@@ -717,7 +717,7 @@ export type AgentConfig = z.infer<typeof AgentConfigSchema>;
  * 执行配置
  * 控制并发数、熔断机制与检查点提示等运行时行为
  */
-export const ExecutionConfigSchema = z.object({
+const ExecutionConfigSchema = z.object({
   /** 最大并发数（1-20，默认 3） */
   maxConcurrency: z.number().int().min(1).max(20).default(3),
   /** 是否启用熔断机制 */
@@ -728,6 +728,8 @@ export const ExecutionConfigSchema = z.object({
   circuitBreakerDuration: z.number().int().min(1000).default(30000),
   /** 检查点提示开关：开启后保存检查点时显示提示 */
   checkpointNotify: z.boolean().default(true),
+  /** I10 修复：单个 Worker 执行超时（毫秒），超时后终止该 Worker，避免阻塞整个并行组 */
+  workerTimeoutMs: z.number().int().min(1000).default(300000),
 });
 export type ExecutionConfig = z.infer<typeof ExecutionConfigSchema>;
 
@@ -738,7 +740,7 @@ export type ExecutionConfig = z.infer<typeof ExecutionConfigSchema>;
  * - pattern: glob 模式（如所有 .env 文件、secrets 目录下文件等）
  * - access: read（只读）/ write（可读写）/ deny（禁止访问）
  */
-export const FilesystemPermissionRuleSchema = z.object({
+const FilesystemPermissionRuleSchema = z.object({
   /** glob 模式（匹配文件路径，支持通配符） */
   pattern: z.string().min(1),
   /** 访问级别：read=只读，write=可读写，deny=禁止访问 */
@@ -751,7 +753,7 @@ export type FilesystemPermissionRule = z.infer<typeof FilesystemPermissionRuleSc
  * 借鉴 Open Interpreter 的 Permission Profile，用 glob 规则精细控制文件系统和网络访问权限
  * 替代扁平的 security.sensitiveFiles 配置，支持按文件路径模式分级授权
  */
-export const PermissionProfileSchema = z.object({
+const PermissionProfileSchema = z.object({
   /** Profile 名称（用于多 Profile 场景识别，当前仅支持 default） */
   name: z.string().default('default'),
   /** 文件系统权限规则列表（按顺序匹配，命中第一条即生效） */
@@ -778,7 +780,7 @@ export type PermissionProfile = z.infer<typeof PermissionProfileSchema>;
  *   GLM_WEB_SEARCH_API_KEY / ZAI_API_KEY / METASO_API_KEY / BAIDU_API_KEY / QIANFAN_API_KEY
  *   TAVILY_API_KEY / BING_SEARCH_API_KEY / PERPLEXITY_API_KEY / EXA_API_KEY / BRAVE_SEARCH_API_KEY
  */
-export const WebSearchConfigSchema = z.object({
+const WebSearchConfigSchema = z.object({
   /** 智谱 GLM web_search API Key（中国直连可用，推荐） */
   glmApiKey: z.string().default(''),
   /** 秘塔搜索 API Key（中国直连可用） */
@@ -802,7 +804,7 @@ export type WebSearchConfig = z.infer<typeof WebSearchConfigSchema>;
 
 // --- 通用配置 ---
 
-export const GeneralConfigSchema = z.object({
+const GeneralConfigSchema = z.object({
   language: LanguageSchema.default('zh-CN'),
   theme: ThemeSchema.default('dark'),
   startupBehavior: z.enum(['restore', 'project_select']).default('restore'),
@@ -825,7 +827,7 @@ export type GeneralConfig = z.infer<typeof GeneralConfigSchema>;
  * 代码地图配置（Phase 39）
  * 双轨制：内置轻量引擎 + CodeGraph MCP 外接
  */
-export const CodeGraphConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const CodeGraphConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用 CodeGraph 增强引擎（默认关闭，使用内置轻量引擎） */
   enabled: z.boolean().default(false),
   /** 工作区路径（默认当前目录） */
@@ -839,7 +841,7 @@ export type CodeGraphConfig = z.infer<typeof CodeGraphConfigSchema>;
  * 实验分支配置（Phase 39）
  * 控制 Git Worktree 实验分支的并发上限与自动清理
  */
-export const ExperimentsConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const ExperimentsConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 最大活跃 worktree 数量（1-20，默认 5） */
   maxActiveWorktrees: z.number().int().min(1).max(20).default(5),
   /** 实验结束后是否自动清理 worktree（默认 true） */
@@ -851,7 +853,7 @@ export type ExperimentsConfig = z.infer<typeof ExperimentsConfigSchema>;
  * Hooks 配置（Phase 39）
  * 控制 Hook 系统的启用状态与配置文件路径
  */
-export const HooksConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const HooksConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用 Hook 系统（默认 true） */
   enabled: z.boolean().default(true),
   /** Hook 配置文件路径（相对于工作目录） */
@@ -865,7 +867,7 @@ export type HooksConfig = z.infer<typeof HooksConfigSchema>;
  * 渐进式信任配置（Phase 40）
  * 借鉴 Claude Code 的 7 级信任梯度，控制临时授权与偏好持久化
  */
-export const TrustConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const TrustConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 基础信任级别（7 级梯度） */
   baseLevel: z.enum(['plan', 'default', 'acceptEdits', 'acceptAll', 'auto', 'bypassPermissions', 'trusted']).default('default'),
   /** 是否启用临时授权（会话级，resume 时不恢复） */
@@ -883,7 +885,7 @@ export type TrustConfig = z.infer<typeof TrustConfigSchema>;
  * 质量监测配置（Phase 40）
  * 控制隐式反馈检测、信号保留与知识图谱自动改进
  */
-export const QualityConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const QualityConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用隐式反馈检测 */
   enableImplicitFeedback: z.boolean().default(true),
   /** 负面信号降级阈值（0-1，达到此值触发降级） */
@@ -901,7 +903,7 @@ export type QualityConfig = z.infer<typeof QualityConfigSchema>;
  * 用户经验配置（Phase 40）
  * 三级经验等级，控制行为差异化与 System Prompt 注入
  */
-export const ExpertiseConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const ExpertiseConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 经验等级 */
   level: z.enum(['beginner', 'intermediate', 'expert']).default('intermediate'),
   /** 是否启用自动建议 */
@@ -918,7 +920,7 @@ export type ExpertiseConfig = z.infer<typeof ExpertiseConfigSchema>;
  * 自研引擎：tree-sitter (WASM) + SQLite + PageRank + Aider 风格渲染
  * 与现有 codegraph 配置段并存（codegraph 为 CodeGraph MCP 外接，codeMap 为自研引擎）
  */
-export const CodeMapConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const CodeMapConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 解析引擎：tree-sitter（WASM 精确解析）/ regex（轻量回退）/ disabled（关闭） */
   engine: z.enum(['tree-sitter', 'regex', 'disabled']).default('tree-sitter'),
   /** Token 预算（RepoDistill 压缩后的目标 token 数） */
@@ -941,7 +943,7 @@ export type CodeMapConfig = z.infer<typeof CodeMapConfigSchema>;
  * 控制 Skill / Hook 的发布、导入、导出
  * Phase 43：新增 registryUrl / registryToken，支持远程 Registry 拉取
  */
-export const MarketConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const MarketConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用市场 */
   enabled: z.boolean().default(true),
   /** 自动发布（Skill/Hook 创建后自动发布到市场） */
@@ -957,7 +959,7 @@ export type MarketConfig = z.infer<typeof MarketConfigSchema>;
  * 策略引擎配置（Phase 42）
  * Intent Guard + Playbook + Tool Guide + Tool Approval
  */
-export const PoliciesConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const PoliciesConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用策略引擎 */
   enabled: z.boolean().default(true),
   /** 意图护栏（检测危险意图并阻止） */
@@ -977,7 +979,7 @@ export type PoliciesConfig = z.infer<typeof PoliciesConfigSchema>;
  * 推理模式配置（Phase 42）
  * fast（快速）/ balanced（均衡）/ accurate（精准）
  */
-export const ReasoningModeSchema = z.enum(['fast', 'balanced', 'accurate']).default('balanced');
+const ReasoningModeSchema = z.enum(['fast', 'balanced', 'accurate']).default('balanced');
 export type ReasoningMode = z.infer<typeof ReasoningModeSchema>;
 
 // --- Phase 43：子 Agent / Goal / Hook 增强 配置 ---
@@ -987,7 +989,7 @@ export type ReasoningMode = z.infer<typeof ReasoningModeSchema>;
  * 控制子 Agent 派遣的并行上限、默认角色与门控规则
  * 与现有 agent.maxConcurrentSubAgents 并存——agent 是全局上限，subAgents 是细粒度角色门控
  */
-export const SubAgentsConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const SubAgentsConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用子 Agent 派遣 */
   enabled: z.boolean().default(true),
   /** 最大并行子 Agent 数（1-10，默认 3） */
@@ -1007,9 +1009,7 @@ export type SubAgentsConfig = z.infer<typeof SubAgentsConfigSchema>;
  * Goal 配置（Phase 43）
  * 控制 /goal 流程的需求澄清、确认、审计模式与 token 预算
  */
-export const GoalConfigSchema = z.preprocess((v) => v ?? {}, z.object({
-  /** 是否启用需求澄清 */
-  clarify: z.boolean().default(true),
+const GoalConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否要求用户确认（分解后的计划需用户确认才执行） */
   requireConfirmation: z.boolean().default(true),
   /** 审计模式：none（跳过）/ completion_gate_first（验证门优先）/ reviewer_first（审查器优先）/ all_must_pass（全部通过） */
@@ -1059,7 +1059,7 @@ export type GoalConfig = z.infer<typeof GoalConfigSchema>;
  * Phase 55 Task 9：CCR 可逆压缩配置
  * 让 compact 从破坏性变可逆——compact 前缓存原始消息，LLM 可通过 ccr_retrieve 工具取回
  */
-export const CCRCompressionConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const CCRCompressionConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用 CCR 可逆压缩 */
   enabled: z.boolean().default(false),
   /** LRU cache 最大条目数 */
@@ -1071,7 +1071,7 @@ export type CCRCompressionConfig = z.infer<typeof CCRCompressionConfigSchema>;
  * Hook 增强配置（Phase 43）
  * 控制函数级 Hook、沙箱、试用期与 Hook 分组
  */
-export const HookEnhancementConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const HookEnhancementConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用函数级 Hook（精细到函数入口/出口） */
   functionHooks: z.boolean().default(false),
   /** 是否启用沙箱（Hook 在隔离环境执行） */
@@ -1089,15 +1089,13 @@ export type HookEnhancementConfig = z.infer<typeof HookEnhancementConfigSchema>;
  * 对话消息树持久化配置（Phase 44）
  * 控制 JSONL 持久化、节点上限、自动快照与撤销栈大小
  */
-export const ConversationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const ConversationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否持久化消息树到磁盘 */
   persistTree: z.boolean().default(true),
   /** 最大节点数（100-∞，默认 5000） */
   maxNodes: z.number().int().min(100).default(5000),
   /** 最大分支数（5-∞，默认 100） */
   maxBranches: z.number().int().min(5).default(100),
-  /** 是否自动快照（节点变更时自动写入） */
-  autoSnapshot: z.boolean().default(true),
   /** 撤销栈大小（0 表示禁用撤销） */
   undoStackSize: z.number().int().min(0).default(50),
 }));
@@ -1107,7 +1105,7 @@ export type ConversationConfig = z.infer<typeof ConversationConfigSchema>;
  * 并行实验配置（Phase 44）
  * 控制多分支并行实验的启用、并行上限、冲突检测与自动清理
  */
-export const ExperimentConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const ExperimentConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用并行实验 */
   parallelEnabled: z.boolean().default(false),
   /** 最大并行实验数（2-5，默认 3） */
@@ -1125,7 +1123,7 @@ export type ExperimentConfig = z.infer<typeof ExperimentConfigSchema>;
  * 人格配置（Phase 45）
  * 控制 PersonaEngine 的启用状态、强度与当前人格 ID
  */
-export const PersonaConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const PersonaConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用人格引擎 */
   enabled: z.boolean().default(true),
   /** 人格强度：none（关闭）/ low（轻度）/ medium（中度）/ high（高度） */
@@ -1141,7 +1139,7 @@ export type PersonaConfig = z.infer<typeof PersonaConfigSchema>;
  * 视觉配置（Phase 57）
  * 控制是否启用 VisionAssistant（截图分析），默认关闭
  */
-export const VisionConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const VisionConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用视觉助手（默认 false，启用时才装配 VisionAssistant） */
   enabled: z.boolean().default(false),
 }));
@@ -1151,7 +1149,7 @@ export type VisionConfig = z.infer<typeof VisionConfigSchema>;
  * 语音配置（Phase 45）
  * 控制语音输入（STT）和语音输出（TTS）的提供商与语言
  */
-export const VoiceConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const VoiceConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 输入提供商（STT）：web-speech / whisper-local / openai-whisper / off */
   inputProvider: z.enum(['web-speech', 'whisper-local', 'openai-whisper', 'off']).default('off'),
   /** 输出提供商（TTS）：system / openai / off */
@@ -1167,7 +1165,7 @@ export type VoiceConfigType = z.infer<typeof VoiceConfigSchema>;
  * 记忆配置（Phase 45）
  * 控制记忆推理、自动学习与注入阈值
  */
-export const MemoryConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const MemoryConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用记忆推理 */
   inference: z.boolean().default(true),
   /** 是否启用自动学习 */
@@ -1181,7 +1179,7 @@ export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
  * 发现配置（Phase 45）
  * 控制功能发现与启动时提示
  */
-export const DiscoveryConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const DiscoveryConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用功能发现 */
   enabled: z.boolean().default(true),
   /** 是否在启动时显示发现提示 */
@@ -1201,7 +1199,7 @@ export type DiscoveryConfig = z.infer<typeof DiscoveryConfigSchema>;
  * - maxPreflightTokens：preflight 工具调用结果的 token 上限
  * - autoRunPreflight：是否自动执行 preflight 工具（陷阱 #135：自动执行也需经过 PermissionEngine）
  */
-export const CiteConfigSchema = z.object({
+const CiteConfigSchema = z.object({
   /** 是否启用引用系统 */
   enabled: z.boolean().default(true),
   /** 单次最多引用标签数（1-20，默认 10） */
@@ -1229,7 +1227,7 @@ export type CiteConfigType = z.infer<typeof CiteConfigSchema>;
  *
  * maxBytes 对齐 Codex 32KiB 上限，超过时截断并 warn
  */
-export const ProjectDocConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const ProjectDocConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 主加载文件名列表（按顺序尝试，第一个为 base，第二个为 local 覆盖） */
   filenames: z.array(z.string().min(1)).default(['AGENTS.md', 'AGENTS.local.md', 'AGENTS.override.md']),
   /** fallback 文件名列表（主列表全部不存在时使用，第一个为 base，第二个为 local 覆盖） */
@@ -1246,7 +1244,7 @@ export type ProjectDocConfig = z.infer<typeof ProjectDocConfigSchema>;
  * 控制轻量工作流宏的启用与存储路径
  * Macro 是比 Skill 更轻量的流程指引，纯 Markdown，通过 `!` 触发器引用
  */
-export const MacrosConfigSchema = z.object({
+const MacrosConfigSchema = z.object({
   /** 是否启用 Macro 系统 */
   enabled: z.boolean().default(true),
   /** Macro 目录（相对于工作目录，默认 .routedev/macros） */
@@ -1263,7 +1261,7 @@ export type MacrosConfig = z.infer<typeof MacrosConfigSchema>;
  *   - ignore：记录用户选择，不再提示（除非文件更新）
  * 陷阱 #130：导入时必须提示用户选择，不能默默覆盖已有记忆
  */
-export const CodexInstructionsModeSchema = z.enum(['system_prompt', 'project_memory', 'ignore']);
+const CodexInstructionsModeSchema = z.enum(['system_prompt', 'project_memory', 'ignore']);
 export type CodexInstructionsMode = z.infer<typeof CodexInstructionsModeSchema>;
 
 /**
@@ -1273,7 +1271,7 @@ export type CodexInstructionsMode = z.infer<typeof CodexInstructionsModeSchema>;
  * 陷阱 #129：社区来源的 Hook/Skill 默认不直接启用，需用户确认或沙箱试用
  * 陷阱 #132：未映射的工具必须禁用并提示，不能静默失败
  */
-export const ImportConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const ImportConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /**
    * 是否自动启用 anthropic_skills/ 目录下扫描到的 Skill
    * 默认 false：社区来源默认不启用，需用户在设置页或 /plugin 命令中确认
@@ -1306,7 +1304,7 @@ export type ImportConfig = z.infer<typeof ImportConfigSchema>;
  * Phase 59：promptBuilderEnabled/requirementChangeEnabled 已删除（批次1 无价值 Integration）
  * 旧配置中的这两个字段会被 Zod safe-parse 忽略（zod v4 默认忽略未知字段）
  */
-export const GoalIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const GoalIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   // Phase 54 修复：auditEnabled 默认 true——三层独立审计是交叉验证的核心保障
   auditEnabled: z.boolean().default(true),
   // Phase 47 P1-2 修复：persistenceEnabled 默认 true——GoalPersistence 装配完整但默认关闭导致永不生效，
@@ -1322,7 +1320,7 @@ export type GoalIntegrationConfig = z.infer<typeof GoalIntegrationConfigSchema>;
  * - stateGraphEnabled：ExecutionStateGraph 步骤状态管理
  * - branchOrchestrationEnabled：BranchOrchestrator 并行分支调度
  */
-export const OrchestrationIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const OrchestrationIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   strategyEnabled: z.boolean().default(false),
   stateGraphEnabled: z.boolean().default(false),
   branchOrchestrationEnabled: z.boolean().default(false),
@@ -1338,7 +1336,7 @@ export type OrchestrationIntegrationConfig = z.infer<typeof OrchestrationIntegra
  * - lifecycleEnabled：SubAgentLifecycle + AntiAbuseDetector 生命周期与反滥用
  * - scoreCardEnabled：SubAgentScoreCardCollector 执行后收集评分
  */
-export const DelegationIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const DelegationIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   contextPackerEnabled: z.boolean().default(true),
   delegationGateEnabled: z.boolean().default(true),
   delegationEnforcerEnabled: z.boolean().default(true),
@@ -1355,7 +1353,7 @@ export type DelegationIntegrationConfig = z.infer<typeof DelegationIntegrationCo
  * 各子模块自身的配置（cite/macros/import/mcp）已存在，此处仅控制是否在生产路径接入
  * 默认全部 true——这些模块在 Phase 48 已实现，Phase 50 确认接入
  */
-export const Phase48IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const Phase48IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** cite 引用系统接入（CiteResolver 注入 chat-runner） */
   citeEnabled: z.boolean().default(true),
   /** import 外部生态导入接入（ClaudePluginImporter / CodexInstructionImporter） */
@@ -1375,7 +1373,7 @@ export type Phase48IntegrationConfig = z.infer<typeof Phase48IntegrationConfigSc
  * Phase 59：routingFunnelEnabled 已删除（批次1，routing-funnel.ts Phase 50 已删，僵尸配置）
  * Phase 59：skillFlowEnabled/contextUsagePanelEnabled/evaluationFrameworkEnabled 保留（批次3 补设置页入口）
  */
-export const Phase49IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const Phase49IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** SkillFlow 引擎接入（Skill 执行时可选调用） */
   skillFlowEnabled: z.boolean().default(false),
   /** 双循环编排器接入（/goal 执行时可选调用） */
@@ -1392,7 +1390,7 @@ export type Phase49IntegrationConfig = z.infer<typeof Phase49IntegrationConfigSc
 // --- Phase 51：外部开源借鉴落地配置 ---
 
 /** Reviewer 分级策略（Phase 51 Task 1/7） */
-export const ReviewerPolicySchema = z.preprocess((v) => v ?? {}, z.object({
+const ReviewerPolicySchema = z.preprocess((v) => v ?? {}, z.object({
   tieredReviewEnabled: z.boolean().default(true),
   tinyTaskStepThreshold: z.number().int().min(1).max(20).default(5),
   bigTaskStepThreshold: z.number().int().min(10).max(100).default(30),
@@ -1401,14 +1399,13 @@ export const ReviewerPolicySchema = z.preprocess((v) => v ?? {}, z.object({
   crossModelReviewerId: z.string().default(''),
   enforceEvidenceProtocol: z.boolean().default(false),
   highRiskThreshold: z.number().int().min(20).max(100).default(40),
-  autoSelectCrossModel: z.boolean().default(true),
   failureEscalationThreshold: z.number().int().min(1).max(10).default(2),
   contextTokenEscalationRatio: z.number().min(0.5).max(0.95).default(0.8),
 }));
 export type ReviewerPolicyConfig = z.infer<typeof ReviewerPolicySchema>;
 
 /** 委托四维约束+三态策略（Phase 51 Task 2/3/4） */
-export const DelegationPolicySchema = z.preprocess((v) => v ?? {}, z.object({
+const DelegationPolicySchema = z.preprocess((v) => v ?? {}, z.object({
   boundedDelegationEnabled: z.boolean().default(true),
   maxDepth: z.number().int().min(0).max(5).default(1),
   maxParallel: z.number().int().min(1).max(10).default(4),
@@ -1418,16 +1415,13 @@ export const DelegationPolicySchema = z.preprocess((v) => v ?? {}, z.object({
   hardDelegationTypes: z.array(z.string()).default(['research', 'review']),
   refuseIfSpecialistUnavailable: z.boolean().default(false),
   specialistAvailabilityOverride: z.record(z.string(), z.boolean()).default({}),
-  toolCallGuardEnabled: z.boolean().default(false),
   detachedSessionEnabled: z.boolean().default(true),
-  fullContextIsolation: z.boolean().default(true),
   subAgentMaxContextTokens: z.number().int().min(1000).max(200000).default(32000),
-  propagateToolCallsToParent: z.boolean().default(false),
 }));
 export type DelegationPolicyConfig = z.infer<typeof DelegationPolicySchema>;
 
 /** Agent 活动面板（Phase 51 Task 5） */
-export const ActivityPanelSchema = z.preprocess((v) => v ?? {}, z.object({
+const ActivityPanelSchema = z.preprocess((v) => v ?? {}, z.object({
   enabled: z.boolean().default(false),
   maxActiveDisplay: z.number().int().min(1).max(10).default(4),
   maxRecentDisplay: z.number().int().min(0).max(20).default(3),
@@ -1438,7 +1432,7 @@ export const ActivityPanelSchema = z.preprocess((v) => v ?? {}, z.object({
 export type ActivityPanelConfig = z.infer<typeof ActivityPanelSchema>;
 
 /** 三层抽象 Instance/Harness/Session（Phase 51 Task 6） */
-export const InstanceHarnessSchema = z.preprocess((v) => v ?? {}, z.object({
+const InstanceHarnessSchema = z.preprocess((v) => v ?? {}, z.object({
   threeTierAbstractionEnabled: z.boolean().default(false),
   defaultInstanceId: z.string().default(''),
   defaultHarnessName: z.string().default('default'),
@@ -1447,9 +1441,10 @@ export const InstanceHarnessSchema = z.preprocess((v) => v ?? {}, z.object({
 export type InstanceHarnessConfig = z.infer<typeof InstanceHarnessSchema>;
 
 /** 项目级配置分层（Phase 51 Task 8） */
-export const ConfigLayeringSchema = z.preprocess((v) => v ?? {}, z.object({
+const ConfigLayeringSchema = z.preprocess((v) => v ?? {}, z.object({
   // 旧字段(保留向后兼容)
-  enabled: z.boolean().default(false),
+  // 默认 true：启用项目级配置覆盖全局配置（Phase 60 接线后保持原有合并行为）
+  enabled: z.boolean().default(true),
   projectConfigPath: z.string().default('.routedev/config.json'),
   globalConfigPath: z.string().default(''),
   mergeStrategy: z.enum(['deep', 'shallow']).default('deep'),
@@ -1474,7 +1469,7 @@ export const ErrorDisplaySchema = z.preprocess((v) => v ?? {}, z.object({
 export type ErrorDisplayConfig = z.infer<typeof ErrorDisplaySchema>;
 
 /** Result Schema 配置（Phase 51 Task 10） */
-export const ResultSchemaConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const ResultSchemaConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   // 旧字段
   enabled: z.boolean().default(false),
   strictValidation: z.boolean().default(false),
@@ -1487,7 +1482,7 @@ export const ResultSchemaConfigSchema = z.preprocess((v) => v ?? {}, z.object({
 export type ResultSchemaConfig = z.infer<typeof ResultSchemaConfigSchema>;
 
 /** 模型显示配置（Phase 51 Task 11） */
-export const ModelDisplaySchema = z.preprocess((v) => v ?? {}, z.object({
+const ModelDisplaySchema = z.preprocess((v) => v ?? {}, z.object({
   // 旧字段
   showThinkingLevel: z.boolean().default(true),
   showProviderPrefix: z.boolean().default(false),
@@ -1507,7 +1502,7 @@ export type ModelDisplayConfig = z.infer<typeof ModelDisplaySchema>;
  * 默认全部关闭——这些功能为实验性自主能力，需显式开启
  * 陷阱 #171：memoryRetentionDays 必须严格执行，过期记忆立即清理
  */
-export const SkillLifecycleConfigSchema = z.object({
+const SkillLifecycleConfigSchema = z.object({
   /** 是否启用 Skill 生命周期管理 */
   enabled: z.boolean().default(false),
   /** 触发创建的相似任务次数阈值（2-10，默认 3） */
@@ -1556,7 +1551,7 @@ export type BoundedRecoveryConfig = z.infer<typeof BoundedRecoveryConfigSchema>;
  * 注：architecture-aware-metrics.ts / saturation-monitor.ts 源文件保留（被 score-card /
  * dual-loop-orchestrator / completion-gate 通过 type 引用），仅删配置与实例化
  */
-export const Phase52IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const Phase52IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** Task 1：Skill 生命周期管理 */
   skillLifecycle: z.preprocess((v) => v ?? {}, SkillLifecycleConfigSchema),
   /** Task 3：有界恢复 */
@@ -1619,7 +1614,7 @@ export type AuditChainConfigType = z.infer<typeof AuditChainConfigSchema>;
  *
  * Phase 59 Task 2：默认 true——默认关等于不扫描
  */
-export const McpSecurityScanConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const McpSecurityScanConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用 MCP 安全扫描（Phase 59 默认 true） */
   enabled: z.boolean().default(true),
   /** 阻断阈值：severity >= 此级别的发现阻止注册 */
@@ -1635,7 +1630,7 @@ export type McpSecurityScanConfig = z.infer<typeof McpSecurityScanConfigSchema>;
  *
  * Phase 59 Task 2：默认 true——默认关等于不校验
  */
-export const SkillSecurityGateConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const SkillSecurityGateConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用技能安全扫描（Phase 59 默认 true） */
   enabled: z.boolean().default(true),
   /** 自动安装的分数阈值（>此值需用户确认） */
@@ -1651,7 +1646,7 @@ export type SkillSecurityGateConfig = z.infer<typeof SkillSecurityGateConfigSche
  *
  * Phase 59 Task 2：默认 true——默认关等于不守护
  */
-export const ConfigGuardConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const ConfigGuardConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用配置保护（Phase 59 默认 true） */
   enabled: z.boolean().default(true),
   /** 首次触发时是否降级为 info（避免首次误报阻塞） */
@@ -1681,7 +1676,7 @@ export type PrefixCacheConfig = z.infer<typeof PrefixCacheConfigSchema>;
  * Phase 53 Task 9：上下文预算监控配置
  * Token 耗尽、成本超支、范围蔓延、工具循环时注入告警
  */
-export const BudgetMonitorConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const BudgetMonitorConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用预算监控（默认 false，向后兼容） */
   enabled: z.boolean().default(false),
   /** Token 预警比例（0.1-1，达到此值触发 warn 级告警） */
@@ -1697,7 +1692,7 @@ export type BudgetMonitorConfig = z.infer<typeof BudgetMonitorConfigSchema>;
  * Phase 53 Task 10：DAG 工作流引擎配置
  * 拓扑排序 + 并行执行 + 变量替换
  */
-export const DagEngineConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const DagEngineConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用 DAG 工作流（默认 false，向后兼容） */
   enabled: z.boolean().default(false),
   /** 最大并行度（1-10） */
@@ -1728,7 +1723,7 @@ export type CircuitBreakerConfigType = z.infer<typeof CircuitBreakerConfigSchema
 /**
  * Phase 53 Task 12：Doctor 健康检查配置
  */
-export const DoctorConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const DoctorConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 探测超时（毫秒） */
   probeTimeout: z.number().int().min(1000).default(10000),
   /** 是否在启动时自动运行 doctor */
@@ -1740,7 +1735,7 @@ export type DoctorConfig = z.infer<typeof DoctorConfigSchema>;
  * Phase 53 聚合配置：把 10 个子 schema 合并到一个对象
  * 便于在 app-init.ts 中统一读取
  */
-export const Phase53IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const Phase53IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** Task 3：策略引擎接入 */
   policyEngine: PolicyEngineConfigSchema,
   /** Task 4：哈希链审计 */
@@ -1763,6 +1758,83 @@ export const Phase53IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.obj
   doctor: DoctorConfigSchema,
 }));
 export type Phase53IntegrationConfig = z.infer<typeof Phase53IntegrationConfigSchema>;
+
+// --- Phase 61：ACRouter 闭环模型路由配置 ---
+
+/**
+ * 闭环路由配置（Phase 61）
+ * ACRouter C-A-F 循环：Context → Action → Feedback → Context
+ * 所有子模块默认关闭，由总开关和子开关分别守护
+ */
+const ClosedLoopRoutingConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 总开关（默认关闭） */
+  enabled: z.boolean().default(false),
+  /** RoutingHistory 配置 */
+  history: z.preprocess((v) => v ?? {}, z.object({
+    maxRecords: z.number().int().default(20000),
+    persistPath: z.string().default('.routedev/routing-history.jsonl'),
+  })),
+  /** RoutingMemory 配置 */
+  memory: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    topK: z.number().int().min(1).max(50).default(10),
+    minSimilarity: z.number().min(0).max(1).default(0.3),
+    embeddingProvider: z.enum(['openai', 'hash']).default('hash'),
+  })),
+  /** Orchestrator 配置 */
+  orchestrator: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    neighborWeight: z.number().min(0).max(1).default(0.6),
+    priorWeight: z.number().min(0).max(1).default(0.3),
+    baseWeight: z.number().min(0).max(1).default(0.1),
+  })),
+  /** ExecutionVerifier 配置 */
+  verifier: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    signals: z.array(z.enum(['compile', 'test', 'typecheck', 'latency'])).default(['compile', 'typecheck', 'latency']),
+    timeoutMs: z.number().int().default(30000),
+  })),
+}));
+export type ClosedLoopRoutingConfig = z.infer<typeof ClosedLoopRoutingConfigSchema>;
+
+// --- Phase 62：动态工作流模式配置 ---
+
+const DynamicWorkflowConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  enabled: z.boolean().default(false),
+  synthesizeBarrier: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    barrierTimeoutMs: z.number().int().default(60000),
+    defaultStrategy: z.enum(['merge-fields', 'concat-dedup', 'judging']).default('concat-dedup'),
+    includeFailed: z.boolean().default(true),
+  })),
+  adversarialVerification: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    frequency: z.enum(['every-step', 'every-n-steps', 'end-only']).default('end-only'),
+    n: z.number().int().min(1).default(3),
+    forceCrossModel: z.boolean().default(false),
+    verifierModelId: z.string().optional(),
+  })),
+  loopUntilDone: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    maxRounds: z.number().int().min(1).max(20).default(5),
+    stableRoundsRequired: z.number().int().min(1).default(2),
+    minCompletionRatio: z.number().min(0).max(1).default(0.85),
+  })),
+  quarantine: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    untrustedDeniedTools: z.array(z.string()).default(['file_write', 'file_edit', 'shell_exec', 'git_op']),
+    allowIntentForwarding: z.boolean().default(true),
+    contaminationTraceDepth: z.number().int().default(10),
+  })),
+  tournament: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    candidateCount: z.number().int().min(2).max(5).default(3),
+    temperature: z.number().min(0).max(2).default(0.7),
+    singleElimination: z.boolean().default(true),
+    judgeModelId: z.string().optional(),
+  })),
+}));
+export type DynamicWorkflowConfig = z.infer<typeof DynamicWorkflowConfigSchema>;
 
 // --- 全局配置（完整 schema） ---
 // 顶层 AppConfig：所有配置的根节点
@@ -1871,5 +1943,269 @@ export const AppConfigSchema = z.object({
   modelDisplay: z.preprocess((v) => v ?? {}, ModelDisplaySchema),
   // Phase 53：代码卫生与安全治理加固（聚合 10 个子配置）
   phase53Integration: z.preprocess((v) => v ?? {}, Phase53IntegrationConfigSchema),
+  // Phase 61：ACRouter 闭环模型路由
+  closedLoopRouting: z.preprocess((v) => v ?? {}, ClosedLoopRoutingConfigSchema),
+  // Phase 62：动态工作流模式与隔离治理
+  dynamicWorkflow: DynamicWorkflowConfigSchema,
+  // Phase 63：上下文状态外部化（Harness-1 论文落地）
+  stateExternalization: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    curatedSet: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      autoPopulateCount: z.number().int().min(1).max(20).default(8),
+      maxTokenBudget: z.number().int().default(8000),
+      importanceTaggingEnabled: z.boolean().default(true),
+      subtractiveCurationEnabled: z.boolean().default(true),
+    })),
+    kSentenceCompression: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      k: z.number().int().min(1).max(10).default(4),
+      keywordWeight: z.number().min(0).max(1).default(0.5),
+      lengthWeight: z.number().min(0).max(1).default(0.3),
+      positionWeight: z.number().min(0).max(1).default(0.2),
+    })),
+    contentDedup: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      hashAlgorithm: z.enum(['sha256', 'md5']).default('sha256'),
+      minLength: z.number().int().min(0).default(50),
+      replaceWithReference: z.boolean().default(true),
+    })),
+    budgetAwareRendering: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      contextWindow: z.number().int().default(200000),
+      softNotifyThreshold: z.number().min(0).max(1).default(0.5),
+      triggerThreshold: z.number().min(0).max(1).default(0.8),
+      forceThreshold: z.number().min(0).max(1).default(0.9),
+      renderEveryTurn: z.boolean().default(true),
+    })),
+    verificationRecords: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      maxRecords: z.number().int().default(1000),
+      ttlMs: z.number().int().default(3600000),
+    })),
+  })),
+  // Phase 64：组合技能 SAD 迭代分解（v4.6.3）
+  skillRouting: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    sad: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      maxIterations: z.number().int().min(1).max(5).default(1),
+      convergenceTau: z.number().min(0).max(1).default(0.6),
+      inputSideFeedback: z.boolean().default(true),
+    })),
+    biEncoder: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      modelId: z.string().default('Xenova/all-MiniLM-L6-v2'),
+      topK: z.number().int().min(1).max(50).default(10),
+      minScore: z.number().min(0).max(1).default(0.2),
+      backend: z.enum(['memory', 'hnswlib']).default('memory'),
+    })),
+    granularityAudit: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+    })),
+    compatibilityScorer: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      pruneThreshold: z.number().min(0).max(1).default(0.15),
+      weights: z.preprocess((v) => v ?? {}, z.object({
+        ioType: z.number().min(0).max(1).default(0.4),
+        categoryJaccard: z.number().min(0).max(1).default(0.3),
+        keywordCoOccur: z.number().min(0).max(1).default(0.3),
+      })),
+    })),
+    contextOptimizer: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      perSubTaskTopK: z.number().int().min(1).max(10).default(3),
+      maxTotalSkills: z.number().int().min(1).max(30).default(8),
+      maxTokens: z.number().int().min(200).max(5000).default(1200),
+    })),
+  })),
+  // Phase 65：记忆系统四模块重构（v4.6.4）
+  memorySystem: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    store: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      dbPath: z.string().default('.routedev/memory.db'),
+      backend: z.enum(['sqlite', 'file']).default('sqlite'),
+      embeddingProvider: z.enum(['bi-encoder', 'hash', 'none']).default('hash'),
+    })),
+    incrementalExtractor: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      mode: z.enum(['topic', 'none']).default('topic'),
+      modelId: z.string().default('deepseek-v4-flash'),
+    })),
+    hybridRetriever: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      bm25Weight: z.number().min(0).max(1).default(0.4),
+      embeddingWeight: z.number().min(0).max(1).default(0.6),
+      timeDecayHalfLifeDays: z.number().int().min(1).default(30),
+      topK: z.number().int().min(1).max(50).default(10),
+    })),
+    conservativeMerger: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+    })),
+    rejectedAlternative: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+    })),
+    localMaintenance: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      triggerThreshold: z.number().int().min(50).default(500),
+      reorganizeRatio: z.number().min(0.05).max(0.5).default(0.2),
+      minAccessCount: z.number().int().min(0).default(2),
+    })),
+  })),
+  // Phase 66：策略管道编号分段与治理（v4.6.5）
+  foundationProtocol: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    checkpointPipeline: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      enabledSegments: z.array(z.number().int()).default([100, 400, 500]),
+      shortCircuit: z.boolean().default(true),
+    })),
+    callOwner: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      syncWaitMs: z.number().int().min(1000).max(60000).default(10000),
+      persistPath: z.string().default('.routedev/pending-approvals.jsonl'),
+      defaultStrategyForToolApproval: z.enum(['off', 'always_pass', 'conditional', 'always_call']).default('off'),
+      defaultStrategyForIntentGuard: z.enum(['off', 'always_pass', 'conditional', 'always_call']).default('off'),
+    })),
+    stateSnapshotChain: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      arbiterSecretEnv: z.string().default('ROUTEDEV_ARBITER_SECRET'),
+    })),
+    reputationDeriver: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      maxCacheAgeMs: z.number().int().default(60000),
+    })),
+  })),
+  // Phase 67：推理质量诊断与SNR过滤（v4.6.6）
+  reasoningQualityDiagnostics: z.preprocess((v) => v ?? {}, z.object({
+    enabled: z.boolean().default(false),
+    miCrossScorer: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      collapseThreshold: z.number().min(1).max(5).default(1.5),
+      minPrompts: z.number().int().min(1).default(2),
+      samplesPerPrompt: z.number().int().min(1).max(16).default(4),
+    })),
+    snrAwareFilter: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      topP: z.number().min(0.1).max(1).default(0.9),
+      minRVThreshold: z.number().min(0).default(0.01),
+      batchRejectRatio: z.number().min(0.5).max(1).default(0.7),
+    })),
+    epistemicTokenProtector: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      neighborhoodLines: z.number().int().min(1).max(10).default(3),
+      customTokens: z.array(z.string()).optional(),
+    })),
+    epistemicIntegrityChecker: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      overCompressionThreshold: z.number().min(0).max(1).default(0.5),
+      minTokenCount: z.number().int().min(1).default(5),
+    })),
+    epistemicPreservingSummarizer: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      maxTokens: z.number().int().min(100).max(2000).default(500),
+    })),
+    auditMetricsLogging: z.preprocess((v) => v ?? {}, z.object({
+      logEpistemicStats: z.boolean().default(false),
+    })),
+  })),
+  // Phase 68：检索/搜索/发现三分与知识图谱（v4.6.7）
+  phase68Integration: z.preprocess((v) => v ?? {}, z.object({
+    operationClassification: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      logRegimeTransition: z.boolean().default(true),
+    })),
+    provenanceGraph: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      persistPath: z.string().default('.routedev/provenance.jsonl'),
+      maxArtifacts: z.number().int().min(100).default(10000),
+    })),
+    rejectedAlternativeStore: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      persistPath: z.string().default('.routedev/rejected-alternatives.jsonl'),
+      maxRecords: z.number().int().min(100).default(5000),
+      defaultQueryLimit: z.number().int().min(1).max(50).default(5),
+    })),
+    kanObstacleChecker: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      blockOnObstacle: z.boolean().default(false),
+    })),
+    quantitativeGate: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      mdlWeight: z.number().min(0).max(1).default(0.4),
+      aicWeight: z.number().min(0).max(1).default(0.6),
+      acceptThreshold: z.number().min(0).max(1).default(0.7),
+      rejectThreshold: z.number().min(0).max(1).default(0.3),
+      complexityPenalty: z.number().min(0).default(0.01),
+    })),
+  })),
+  // Phase 69：Worktree 隔离执行与多代理并行编排（v4.7.0）
+  phase69Integration: z.preprocess((v) => v ?? {}, z.object({
+    worktree: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      worktreeRoot: z.string().default('.routedev/worktrees'),
+      maxWorktrees: z.number().int().min(1).max(10).default(5),
+      cleanupTimeoutMs: z.number().int().min(60000).default(30 * 60 * 1000),
+    })),
+    parallelExecution: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      maxConcurrency: z.number().int().min(1).max(10).default(3),
+      workerTimeoutMs: z.number().int().min(60000).default(10 * 60 * 1000),
+    })),
+    resultComparator: z.preprocess((v) => v ?? {}, z.object({
+      autoSelect: z.boolean().default(false),
+      weights: z.preprocess((v) => v ?? {}, z.object({
+        brevity: z.number().min(0).max(1).default(0.3),
+        errorCount: z.number().min(0).max(1).default(0.4),
+        testPassRate: z.number().min(0).max(1).default(0.3),
+      })),
+    })),
+    cliAdapters: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      claudeCode: z.preprocess((v) => v ?? {}, z.object({
+        command: z.string().default('claude'),
+        defaultArgs: z.array(z.string()).default([]),
+        spawnTimeoutMs: z.number().int().default(30000),
+      })),
+    })),
+  })),
+  // Phase 70：上下文压缩技术深度优化（v4.7.1）
+  phase70Integration: z.preprocess((v) => v ?? {}, z.object({
+    toolOutputBudget: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      maxCharsPerOutput: z.number().int().min(500).default(2000),
+      previewHeadChars: z.number().int().min(100).default(500),
+      previewTailChars: z.number().int().min(100).default(500),
+      offloadDir: z.string().default('.routedev/offloaded'),
+    })),
+    microCompact: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      cleanBeforeRounds: z.number().int().min(1).default(5),
+      keepRecentRounds: z.number().int().min(1).default(3),
+    })),
+    contextCollapse: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      minToolCallsForChain: z.number().int().min(2).default(3),
+    })),
+    autoCompactGuardian: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      contextWindow: z.number().int().min(10000).default(200000),
+      reservedTokensForSummary: z.number().int().min(1000).default(20000),
+      autoCompactBuffer: z.number().int().min(1000).default(13000),
+      warningBuffer: z.number().int().min(1000).default(20000),
+      errorBuffer: z.number().int().min(1000).default(20000),
+      maxConsecutiveFailures: z.number().int().min(1).default(3),
+    })),
+    compactPrompt: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      defaultDirection: z.enum(['base', 'partial', 'up_to']).default('base'),
+    })),
+    sessionMemory: z.preprocess((v) => v ?? {}, z.object({
+      enabled: z.boolean().default(false),
+      persistPath: z.string().default('.routedev/session-memory.json'),
+      maxMemories: z.number().int().min(10).default(100),
+    })),
+  })),
 });
 export type AppConfig = z.infer<typeof AppConfigSchema>;

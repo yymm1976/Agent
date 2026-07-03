@@ -17,17 +17,17 @@
 // ============================================================
 
 /** MCP 安全威胁类型 */
-export type McpThreatType =
+type McpThreatType =
   | 'poisoning'
   | 'impersonation'
   | 'hidden_instruction'
   | 'carpet_bombing';
 
 /** 严重度等级（升序：low < medium < high < critical） */
-export type Severity = 'low' | 'medium' | 'high' | 'critical';
+type Severity = 'low' | 'medium' | 'high' | 'critical';
 
 /** 安全扫描发现 */
-export interface McpSecurityFinding {
+interface McpSecurityFinding {
   /** 工具名（来自 McpToolDefinition.name） */
   toolName: string;
   /** 威胁类型 */
@@ -41,7 +41,7 @@ export interface McpSecurityFinding {
 }
 
 /** 待扫描的 MCP 工具定义 */
-export interface McpToolDefinition {
+interface McpToolDefinition {
   /** 工具名 */
   name: string;
   /** 工具描述 */
@@ -51,7 +51,7 @@ export interface McpToolDefinition {
 }
 
 /** 扫描器构造配置 */
-export interface McpSecurityScannerOptions {
+interface McpSecurityScannerOptions {
   /** 已知合法工具名列表（用于仿冒检测） */
   knownToolNames?: string[];
   /** 阻断阈值：severity >= 此值时阻断注册（默认 'high'） */

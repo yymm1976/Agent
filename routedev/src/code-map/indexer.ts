@@ -48,7 +48,7 @@ const EXCLUDED_DIRS = new Set([
 const SUPPORTED_EXTENSIONS = new Set(Object.keys(EXTENSION_LANGUAGE_MAP));
 
 /** 索引选项 */
-export interface IndexOptions {
+interface IndexOptions {
   /** 数据库路径 */
   dbPath?: string;
   /** 是否强制全量索引 */

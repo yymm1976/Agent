@@ -1,4 +1,4 @@
-// tests/integration/phase31-workflow.test.ts
+﻿// tests/integration/phase31-workflow.test.ts
 // Phase 31 Task 7：端到端集成测试
 // 验证统一工作流编排的完整流程
 
@@ -75,7 +75,6 @@ describe('Phase 31 端到端集成测试', () => {
       const orchestrator = createTaskOrchestrator(
         createMockClassifier({ tier: 'simple', confidence: 0.9 }),
         createMockRouter(),
-        createMockClientManager(),
         createMockConfig(),
       );
 
@@ -87,7 +86,6 @@ describe('Phase 31 端到端集成测试', () => {
       const orchestrator = createTaskOrchestrator(
         createMockClassifier({ tier: 'simple', confidence: 0.5 }),
         createMockRouter(),
-        createMockClientManager(),
         createMockConfig(),
       );
 
@@ -107,7 +105,6 @@ describe('Phase 31 端到端集成测试', () => {
       const orchestrator = createTaskOrchestrator(
         createMockClassifier({ tier: 'medium', confidence: 0.8 }),
         createMockRouter(),
-        createMockClientManager(),
         createMockConfig({ autoRequirements: false }),
       );
 
@@ -119,7 +116,6 @@ describe('Phase 31 端到端集成测试', () => {
       const orchestrator = createTaskOrchestrator(
         createMockClassifier({ tier: 'simple', confidence: 0.9 }),
         createMockRouter(),
-        createMockClientManager(),
         createMockConfig(),
       );
 
@@ -132,7 +128,6 @@ describe('Phase 31 端到端集成测试', () => {
       const orchestrator = createTaskOrchestrator(
         createMockClassifier({ tier: 'medium', confidence: 0.8 }),
         createMockRouter(),
-        createMockClientManager(),
         createMockConfig(),
       );
 
@@ -149,7 +144,6 @@ describe('Phase 31 端到端集成测试', () => {
       const orchestrator = createTaskOrchestrator(
         createMockClassifier(),
         createMockRouter(),
-        createMockClientManager(),
         createMockConfig(),
       );
 
@@ -167,7 +161,6 @@ describe('Phase 31 端到端集成测试', () => {
       const orchestrator = createTaskOrchestrator(
         createMockClassifier(),
         createMockRouter(),
-        createMockClientManager(),
         createMockConfig(),
       );
 
@@ -318,7 +311,6 @@ describe('Phase 31 端到端集成测试', () => {
       const orchestrator = createTaskOrchestrator(
         createMockClassifier({ tier: 'simple', confidence: 0.95 }),
         createMockRouter(),
-        createMockClientManager(),
         createMockConfig(),
       );
 
@@ -332,7 +324,6 @@ describe('Phase 31 端到端集成测试', () => {
       const orchestrator = createTaskOrchestrator(
         createMockClassifier({ tier: 'medium', confidence: 0.8 }),
         createMockRouter(),
-        createMockClientManager(),
         createMockConfig(),
       );
 
@@ -347,7 +338,6 @@ describe('Phase 31 端到端集成测试', () => {
       const orchestrator = createTaskOrchestrator(
         createMockClassifier({ tier: 'complex', confidence: 0.85 }),
         createMockRouter(),
-        createMockClientManager(),
         createMockConfig(),
       );
 
@@ -367,7 +357,6 @@ describe('Phase 31 端到端集成测试', () => {
       const orchestrator = createTaskOrchestrator(
         createMockClassifier({ tier: 'simple', confidence: 0.9 }),
         createMockRouter(),
-        createMockClientManager(),
         createMockConfig({ unifiedPipeline: false }),
       );
 

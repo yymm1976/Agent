@@ -43,7 +43,7 @@ export interface SkillExecutionRecord {
 }
 
 /** 失败模式聚类 */
-export interface SkillFailurePattern {
+interface SkillFailurePattern {
   /** 模式描述（如「文件路径不存在」「API 限流」） */
   pattern: string;
   /** 出现频率（次数） */
@@ -55,7 +55,7 @@ export interface SkillFailurePattern {
 }
 
 /** Skill 级记忆 */
-export interface SkillMemory {
+interface SkillMemory {
   /** 关联的 Skill ID */
   skillId: string;
   /** 执行历史记录 */
@@ -69,7 +69,7 @@ export interface SkillMemory {
 }
 
 /** Skill 创建建议 */
-export interface SkillCreationSuggestion {
+interface SkillCreationSuggestion {
   /** 建议的 Skill 名称 */
   suggestedName: string;
   /** 建议的分类 */
@@ -83,7 +83,7 @@ export interface SkillCreationSuggestion {
 }
 
 /** Skill 精炼提议 */
-export interface SkillRefinementProposal {
+interface SkillRefinementProposal {
   /** 关联的 Skill ID */
   skillId: string;
   /** 拟修改内容（人类可读描述） */
@@ -99,7 +99,7 @@ export interface SkillRefinementProposal {
 }
 
 /** 历史任务记录（用于触发创建判定） */
-export interface TaskRecord {
+interface TaskRecord {
   /** 任务描述 */
   description: string;
   /** 任务时间戳 */

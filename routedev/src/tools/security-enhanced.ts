@@ -40,10 +40,8 @@ const PRIVATE_IP_PATTERNS: Array<{ name: string; test: (ip: string) => boolean }
 /** 最大重定向深度 */
 const MAX_REDIRECT_DEPTH = 5;
 
-/**
- * SSRF 检查结果
- */
-export interface SSRFCheckResult {
+/** SSRF 检查结果 */
+interface SSRFCheckResult {
   allowed: boolean;
   reason: string;
   resolvedIp?: string;
@@ -234,7 +232,7 @@ function isPathInDirs(
 // ============================================================
 
 /** Bash 安全检查结果 */
-export interface BashSecurityResult {
+interface BashSecurityResult {
   allowed: boolean;
   reason: string;
   /** 命中哪一层检查 */

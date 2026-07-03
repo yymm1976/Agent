@@ -18,7 +18,7 @@ import type { ParsedSkill } from './skill-md-parser.js';
 import type { ILLMClient } from '../router/types.js';
 
 /** 单个测试用例 */
-export interface SkillTestCase {
+interface SkillTestCase {
   /** 测试输入 */
   input: string;
   /** 期望行为描述（不是精确输出，而是行为约束） */
@@ -36,7 +36,7 @@ export interface SkillTestCases {
 }
 
 /** 单场景验证结果 */
-export interface ScenarioResult {
+interface ScenarioResult {
   /** 场景类型 */
   scenario: 'normal' | 'boundary' | 'adversarial';
   /** Skill 是否被正确触发 */

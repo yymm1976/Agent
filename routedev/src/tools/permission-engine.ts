@@ -18,7 +18,7 @@ import type { ParsedCommand } from './command-parser.js';
 import type { TrustGradientManager } from './trust-gradient.js';
 
 /** 权限决策结果（三层） */
-export type PermissionDecision = 'deny' | 'confirm' | 'auto';
+type PermissionDecision = 'deny' | 'confirm' | 'auto';
 
 // ============================================================
 // Phase 47 Task 4：沙箱级与审批级分离的权限模型
@@ -28,10 +28,10 @@ export type PermissionDecision = 'deny' | 'confirm' | 'auto';
 export type SandboxLevel = 'read-only' | 'workspace-write' | 'full-access';
 
 /** 审批级：决定是否询问用户 */
-export type ApprovalLevel = 'always-ask' | 'on-request' | 'never-ask';
+type ApprovalLevel = 'always-ask' | 'on-request' | 'never-ask';
 
 /** 工具分类 */
-export type ToolCategory = 'read' | 'write' | 'shell' | 'network' | 'git-read' | 'git-write' | 'agent' | 'mcp';
+type ToolCategory = 'read' | 'write' | 'shell' | 'network' | 'git-read' | 'git-write' | 'agent' | 'mcp';
 
 /**
  * 沙箱级允许的工具类别映射
@@ -126,7 +126,7 @@ export interface PermissionRule {
 }
 
 /** 权限检查结果 */
-export interface PermissionCheckResult {
+interface PermissionCheckResult {
   /** 最终决策 */
   decision: PermissionDecision;
   /** 命中的规则 ID（fallback 时为 undefined） */

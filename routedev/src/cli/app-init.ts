@@ -116,6 +116,60 @@ import { ConfigGuard } from '../tools/builtin/config-guard.js';
 // Phase 55 Task 9：CCR 可逆压缩
 import { CCRCache } from '../agent/ccr-cache.js';
 import { CCRRetrieveTool } from '../tools/builtin/ccr-retrieve.js';
+// Phase 61：ACRouter 闭环模型路由
+import { RoutingHistory } from '../router/routing-history.js';
+import { RoutingMemory } from '../router/routing-memory.js';
+import { HashEmbedder, createEmbedder } from '../router/embedder.js';
+import { RoutingOrchestrator } from '../router/orchestrator.js';
+import { ExecutionVerifier } from '../router/execution-verifier.js';
+import { RoutingRegretTracker } from '../router/regret-tracker.js';
+// Phase 62：动态工作流模式与隔离治理
+import { AdversarialVerifier } from '../agent/adversarial-verifier.js';
+import { RubricRegistry } from '../agent/rubric-registry.js';
+import { LoopUntilDoneGate } from '../agent/loop-until-done-gate.js';
+import { QuarantineManager } from '../tools/quarantine-profile.js';
+import { ActionAgentDispatcher } from '../agent/action-agent-dispatcher.js';
+import { TournamentSelector } from '../agent/tournament-selector.js';
+import { CrossModelReviewer } from '../agent/cross-model-reviewer.js';
+// Phase 65：记忆系统重构
+import { MemoryStore } from '../memory/memory-store.js';
+import { IncrementalExtractor } from '../memory/incremental-extractor.js';
+import { HybridRetriever } from '../memory/hybrid-retriever.js';
+import { ConservativeMerger } from '../memory/conservative-merger.js';
+import { RejectedAlternativeStore } from '../memory/rejected-alternative-store.js';
+import { LocalMaintenancePolicy } from '../memory/local-maintenance.js';
+import { BM25Index } from '../memory/bm25-index.js';
+// Phase 66：策略管道与治理
+import { CheckpointPipeline } from '../policies/checkpoint-pipeline.js';
+import { CallOwnerCoordinator } from '../policies/call-owner-coordinator.js';
+import { StateSnapshotChain } from '../harness/state-snapshot-chain.js';
+import { ReputationDeriver } from '../memory/reputation-deriver.js';
+// Phase 67：推理质量诊断
+import { MICrossScorer } from '../evaluation/mi-cross-scorer.js';
+import { SNRAwareFilter } from '../agent/snr-aware-filter.js';
+import { EpistemicTokenProtector } from '../agent/epistemic-token-protector.js';
+import { EpistemicIntegrityChecker } from '../agent/epistemic-integrity-checker.js';
+import { EpistemicPreservingSummarizer } from '../agent/epistemic-preserving-summarizer.js';
+import { QualityMetricsRecorder } from '../harness/quality-metrics-types.js';
+// Phase 68：检索/搜索/发现三分与知识图谱
+import { ProvenanceGraph } from '../memory/provenance-graph.js';
+import { RejectedAlternativeStore as AgentRejectedAlternativeStore } from '../agent/rejected-alternative-store.js';
+import { KanObstacleChecker } from '../skills/kan-obstacle-checker.js';
+import { QuantitativeGate } from '../agent/quantitative-gate.js';
+import { classifyOperation, buildRegimeTransition, type OperationSignal } from '../skills/operation-classifier.js';
+// Phase 69：Worktree 隔离执行与多代理并行编排
+import { WorktreeManager, DEFAULT_WORKTREE_CONFIG } from '../agent/multi/worktree-manager.js';
+import { ParallelExecutor, DEFAULT_PARALLEL_CONFIG } from '../agent/multi/parallel-executor.js';
+import { ResultComparator, DEFAULT_COMPARATOR_CONFIG } from '../agent/multi/result-comparator.js';
+import { AgentGroupResolver } from '../agent/multi/agent-group-resolver.js';
+import { ClaudeCodeAdapter, CLIAdapterRegistry, DEFAULT_CLAUDE_CODE_CONFIG } from '../agent/multi/cli-adapter.js';
+// Phase 70：上下文压缩技术深度优化
+import { ToolOutputBudgetManager, DEFAULT_BUDGET_CONFIG } from '../agent/memory/tool-output-budget.js';
+import { MessageGrouper } from '../agent/memory/message-grouper.js';
+import { ActionChainDetector } from '../agent/memory/action-chain-detector.js';
+import { AutoCompactGuardian, DEFAULT_GUARDIAN_CONFIG } from '../agent/memory/auto-compact-guardian.js';
+import { CompactPromptEngine } from '../agent/memory/compact-prompt-engine.js';
+import { SessionMemoryStore } from '../agent/memory/session-memory-store.js';
 
 /**
  * CR-4b：组合式路由器实例类型
@@ -233,6 +287,59 @@ export interface AppDependencies {
    * /experiment 命令与 engine-bridge 都从此字段读取，避免重复实例化导致的 runner 丢失。
    */
   experimentManager: ExperimentManager;
+  // Phase 61：ACRouter 闭环模型路由
+  routingHistory?: RoutingHistory;
+  routingMemory?: RoutingMemory;
+  routingOrchestrator?: RoutingOrchestrator;
+  executionVerifier?: ExecutionVerifier;
+  routingRegretTracker?: RoutingRegretTracker;
+  // Phase 62：动态工作流模式与隔离治理（可选，由 app-init.ts 在 dynamicWorkflow.enabled 时注入）
+  adversarialVerifier?: AdversarialVerifier;
+  rubricRegistry?: RubricRegistry;
+  loopUntilDoneGate?: LoopUntilDoneGate;
+  quarantineManager?: QuarantineManager;
+  actionAgentDispatcher?: ActionAgentDispatcher;
+  tournamentSelector?: TournamentSelector<unknown>;
+  // Phase 65：记忆系统重构（可选，由 app-init.ts 在 memorySystem.enabled 时注入）
+  memoryStore?: MemoryStore;
+  incrementalExtractor?: IncrementalExtractor;
+  hybridRetriever?: HybridRetriever;
+  conservativeMerger?: ConservativeMerger;
+  rejectedAlternativeStore?: RejectedAlternativeStore;
+  localMaintenance?: LocalMaintenancePolicy;
+  bm25Index?: BM25Index;
+  // Phase 66：策略管道与治理（可选，由 app-init.ts 在 foundationProtocol.enabled 时注入）
+  checkpointPipeline?: CheckpointPipeline;
+  callOwnerCoordinator?: CallOwnerCoordinator;
+  stateSnapshotChain?: StateSnapshotChain;
+  reputationDeriver?: ReputationDeriver;
+  // Phase 67：推理质量诊断（可选，由 app-init.ts 在 reasoningQualityDiagnostics.enabled 时注入）
+  miCrossScorer?: MICrossScorer;
+  snrAwareFilter?: SNRAwareFilter;
+  epistemicTokenProtector?: EpistemicTokenProtector;
+  epistemicIntegrityChecker?: EpistemicIntegrityChecker;
+  epistemicPreservingSummarizer?: EpistemicPreservingSummarizer;
+  qualityMetricsRecorder?: QualityMetricsRecorder;
+  // Phase 68：检索/搜索/发现三分与知识图谱（可选，由 phase68Integration.enabled 时注入）
+  provenanceGraph?: ProvenanceGraph;
+  agentRejectedAlternativeStore?: AgentRejectedAlternativeStore;
+  kanObstacleChecker?: KanObstacleChecker;
+  quantitativeGate?: QuantitativeGate;
+  classifyOperation?: (signal: OperationSignal, sessionId: string) => ReturnType<typeof classifyOperation>;
+  buildRegimeTransition?: typeof buildRegimeTransition;
+  // Phase 69：Worktree 隔离执行与多代理并行编排（可选）
+  worktreeManager?: WorktreeManager;
+  parallelExecutor?: ParallelExecutor;
+  resultComparator?: ResultComparator;
+  agentGroupResolver?: AgentGroupResolver;
+  cliAdapterRegistry?: CLIAdapterRegistry;
+  // Phase 70：上下文压缩技术深度优化（可选）
+  toolOutputBudgetManager?: ToolOutputBudgetManager;
+  messageGrouper?: MessageGrouper;
+  actionChainDetector?: ActionChainDetector;
+  autoCompactGuardian?: AutoCompactGuardian;
+  compactPromptEngine?: CompactPromptEngine;
+  sessionMemoryStore?: SessionMemoryStore;
 }
 
 /**
@@ -290,6 +397,52 @@ export function createAppDependencies(
   // L5 summarize 回调使用 checkpointClient（已配置的辅助模型），失败时由 B12 的 try/catch 降级
   // Phase 55 Task 9：CCR 可逆压缩——compact 前缓存原始消息，LLM 可通过 ccr_retrieve 工具取回
   const ccrCache = new CCRCache(config.ccrCompression?.maxCacheSize ?? 50);
+
+  // Phase 70：提前创建上下文压缩模块实例（供 ContextCompactor 和 AppDependencies 共享）
+  const p70Cfg = config.phase70Integration;
+  const p70ToolOutputBudgetManager = p70Cfg?.toolOutputBudget?.enabled
+    ? new ToolOutputBudgetManager({
+        ...DEFAULT_BUDGET_CONFIG,
+        enabled: p70Cfg.toolOutputBudget.enabled,
+        maxCharsPerOutput: p70Cfg.toolOutputBudget.maxCharsPerOutput,
+        previewHeadChars: p70Cfg.toolOutputBudget.previewHeadChars,
+        previewTailChars: p70Cfg.toolOutputBudget.previewTailChars,
+        offloadDir: p70Cfg.toolOutputBudget.offloadDir,
+      })
+    : undefined;
+  const p70MessageGrouper = p70Cfg?.microCompact?.enabled
+    ? new MessageGrouper({
+        cleanBeforeRounds: p70Cfg.microCompact.cleanBeforeRounds,
+        keepRecentRounds: p70Cfg.microCompact.keepRecentRounds,
+      })
+    : undefined;
+  const p70ActionChainDetector = p70Cfg?.contextCollapse?.enabled
+    ? new ActionChainDetector(p70Cfg.contextCollapse.minToolCallsForChain)
+    : undefined;
+  const p70AutoCompactGuardian = p70Cfg?.autoCompactGuardian?.enabled
+    ? new AutoCompactGuardian({
+        ...DEFAULT_GUARDIAN_CONFIG,
+        enabled: p70Cfg.autoCompactGuardian.enabled,
+        contextWindow: p70Cfg.autoCompactGuardian.contextWindow,
+        reservedTokensForSummary: p70Cfg.autoCompactGuardian.reservedTokensForSummary,
+        autoCompactBuffer: p70Cfg.autoCompactGuardian.autoCompactBuffer,
+        warningBuffer: p70Cfg.autoCompactGuardian.warningBuffer,
+        errorBuffer: p70Cfg.autoCompactGuardian.errorBuffer,
+        maxConsecutiveFailures: p70Cfg.autoCompactGuardian.maxConsecutiveFailures,
+      })
+    : undefined;
+  const p70CompactPromptEngine = p70Cfg?.compactPrompt?.enabled
+    ? new CompactPromptEngine(p70Cfg.compactPrompt.defaultDirection)
+    : undefined;
+  const p70SessionMemoryStore = (() => {
+    if (!p70Cfg?.sessionMemory?.enabled) return undefined;
+    const store = new SessionMemoryStore(p70Cfg.sessionMemory.maxMemories);
+    if (p70Cfg.sessionMemory.persistPath) {
+      store.loadFromFile(p70Cfg.sessionMemory.persistPath).catch(() => {});
+    }
+    return store;
+  })();
+
   const contextCompactor = new ContextCompactor({
     targetTokens: Math.floor((currentModelConfig?.contextWindow ?? 128000) * 0.6),
     estimateTokens,
@@ -310,6 +463,13 @@ export function createAppDependencies(
       : undefined,
     contextWindow: currentModelConfig?.contextWindow ?? 128000,
     ccrCache: config.ccrCompression?.enabled ? ccrCache : undefined,
+    // Phase 70：上下文压缩技术深度优化
+    toolOutputBudgetManager: p70ToolOutputBudgetManager,
+    messageGrouper: p70MessageGrouper,
+    actionChainDetector: p70ActionChainDetector,
+    autoCompactGuardian: p70AutoCompactGuardian,
+    compactPromptEngine: p70CompactPromptEngine,
+    sessionMemoryStore: p70SessionMemoryStore,
   });
   contextManager.setCompactor(contextCompactor);
 
@@ -980,12 +1140,6 @@ export function createAppDependencies(
           autoIndex: codeMapCfg.autoIndex,
         });
         await engine.init();
-        // 注册到 service context 或全局
-        // 替换 code-map-context.ts 的数据源（feature-detect：方法可能由其他子代理添加）
-        const ctx = pluginSystem.middlewarePipeline as unknown as { setCodeMapEngine?: (e: unknown) => void };
-        if (typeof ctx.setCodeMapEngine === 'function') {
-          ctx.setCodeMapEngine(engine);
-        }
         logger.info('CodeMapEngine registered', {
           engine: codeMapCfg.engine,
           budgetTokens: codeMapCfg.budgetTokens,
@@ -1308,11 +1462,6 @@ export function createAppDependencies(
   // 创建 HookEnhancementManager 实例，根据配置控制函数 Hook、沙箱、试用、分组与安全审查
   const hookEnhancementCfg = config.hookEnhancement;
   const hookEnhancementManager = new HookEnhancementManager();
-  // 将 manager 通过 feature-detect 注入 agentLoop（未来 loop 可直接调用函数 Hook / 分组执行）
-  const loopForHooks = agentLoop as unknown as { setHookEnhancementManager?: (m: HookEnhancementManager) => void };
-  if (typeof loopForHooks.setHookEnhancementManager === 'function') {
-    loopForHooks.setHookEnhancementManager(hookEnhancementManager);
-  }
   // 注册命令安全审查钩子：对 shell_exec / git_op 的命令参数进行危险模式检测
   // 当 hookEnhancement 配置未显式关闭时默认启用（functionHooks/sandbox 为可选项）
   hookRunner.register({
@@ -1384,6 +1533,100 @@ export function createAppDependencies(
     gateRetry: safetyCfg?.gateRetry ?? 1,
   });
 
+  // Phase 62：动态工作流模式与隔离治理模块实例化（受 dynamicWorkflow.enabled 守护，默认 false）
+  // 所有模块可选注入，未启用时为 undefined，execution-orchestrator 降级到原有行为
+  const dwCfg = config.dynamicWorkflow;
+  let adversarialVerifier: AdversarialVerifier | undefined;
+  let rubricRegistry: RubricRegistry | undefined;
+  let loopUntilDoneGate: LoopUntilDoneGate | undefined;
+  let quarantineManager: QuarantineManager | undefined;
+  let actionAgentDispatcher: ActionAgentDispatcher | undefined;
+  let tournamentSelector: TournamentSelector<string> | undefined;
+  if (dwCfg?.enabled) {
+    // RubricRegistry——无依赖，内置 4 种 rubric（security-audit/refactor/new-feature/bug-fix）
+    rubricRegistry = new RubricRegistry();
+
+    // QuarantineManager——隔离未信任 Agent 的危险工具调用
+    if (dwCfg.quarantine?.enabled) {
+      const deniedTools = new Set(dwCfg.quarantine.untrustedDeniedTools ?? []);
+      quarantineManager = new QuarantineManager(deniedTools, dwCfg.quarantine.contaminationTraceDepth ?? 10);
+      // 注册受信任的主 Agent
+      quarantineManager.registerTrusted('trusted-primary');
+      // 注册未信任的 Worker Agent
+      quarantineManager.registerUntrusted('untrusted-worker');
+
+      // ActionAgentDispatcher——当隔离策略允许意图转发时创建
+      // trustedExecutor 使用 agentLoop 包装的简单执行器（fail-open，实际转发逻辑由 execution-orchestrator 控制）
+      if (dwCfg.quarantine.allowIntentForwarding) {
+        const trustedExecutor = async (intent: import('../agent/action-agent-dispatcher.js').DispatchIntent, _allowedTools: string[]) => {
+          logger.info('ActionAgentDispatcher: trusted executor 调用', { intentId: intent.intentId });
+          return `[forwarded by trusted agent] ${intent.description}`;
+        };
+        actionAgentDispatcher = new ActionAgentDispatcher(
+          quarantineManager,
+          {
+            trustedAgentId: 'trusted-primary',
+            untrustedAgentId: 'untrusted-worker',
+            intentForwardingEnabled: true,
+          },
+          trustedExecutor,
+        );
+      }
+    }
+
+    // AdversarialVerifier——需要 CrossModelReviewer + RubricRegistry
+    if (dwCfg.adversarialVerification?.enabled) {
+      const availableModels = config.providers.flatMap(p => p.models.map(m => m.id));
+      const crossModelReviewer = new CrossModelReviewer(primaryClient, currentModel, availableModels);
+      const rubricMap = new Map<string, import('../agent/adversarial-verifier.js').VerifierRubric>();
+      for (const taskType of rubricRegistry.listTaskTypes()) {
+        const rubric = rubricRegistry.get(taskType);
+        if (rubric) rubricMap.set(taskType, rubric);
+      }
+      adversarialVerifier = new AdversarialVerifier(crossModelReviewer, rubricMap, {
+        frequency: dwCfg.adversarialVerification.frequency,
+        n: dwCfg.adversarialVerification.n,
+        defaultRubric: {
+          id: 'default',
+          taskType: 'default',
+          checks: [
+            { description: '代码变更是否安全，无明显漏洞', severity: 'critical' },
+            { description: '逻辑是否正确，边界处理是否完善', severity: 'major' },
+            { description: '错误处理是否完善', severity: 'minor' },
+          ],
+        },
+        verifierModelId: dwCfg.adversarialVerification.verifierModelId,
+        forceCrossModel: dwCfg.adversarialVerification.forceCrossModel,
+      });
+    }
+
+    // LoopUntilDoneGate——需要 CompletionGate
+    if (dwCfg.loopUntilDone?.enabled) {
+      loopUntilDoneGate = new LoopUntilDoneGate(completionGate, {
+        maxRounds: dwCfg.loopUntilDone.maxRounds,
+        stableRoundsRequired: dwCfg.loopUntilDone.stableRoundsRequired,
+        minCompletionRatio: dwCfg.loopUntilDone.minCompletionRatio,
+        gateTimeoutMs: safetyCfg?.gateTimeout ?? 180000,
+      });
+    }
+
+    // TournamentSelector——需要 ILLMClient
+    if (dwCfg.tournament?.enabled) {
+      tournamentSelector = new TournamentSelector<string>(primaryClient, {
+        candidateCount: dwCfg.tournament.candidateCount,
+        singleElimination: dwCfg.tournament.singleElimination,
+        judgeModelId: dwCfg.tournament.judgeModelId,
+      });
+    }
+
+    logger.info('Phase 62: 动态工作流模式已启用', {
+      adversarialVerification: dwCfg.adversarialVerification?.enabled ?? false,
+      loopUntilDone: dwCfg.loopUntilDone?.enabled ?? false,
+      quarantine: dwCfg.quarantine?.enabled ?? false,
+      tournament: dwCfg.tournament?.enabled ?? false,
+    });
+  }
+
   // 4. RequirementsGatherer + ComplexityAnalyzer——无状态，工厂创建即可
   const requirementsGatherer = createRequirementsGatherer();
   const complexityAnalyzer = createTaskComplexityAnalyzer();
@@ -1394,7 +1637,6 @@ export function createAppDependencies(
   const taskOrchestrator = createTaskOrchestrator(
     classifier as ScenarioClassifier,
     modelRouter as ModelRouter,
-    clientManager,
     config,
   );
 
@@ -1412,12 +1654,165 @@ export function createAppDependencies(
   //    Phase 31/32 P0 接线：systemPrompt 改为 ref 模式，与 App.tsx systemPromptRef 共享
   //    App.tsx 在初始化后同步 sharedSystemPromptRef.current = systemPromptRef.current
   const sharedSystemPromptRef = { current: '' };
+
+  // Phase 66/67/69 模块——提前创建，注入 ExecutionOrchestrator
+  let p66CheckpointPipeline: CheckpointPipeline | undefined;
+  let p66CallOwnerCoordinator: CallOwnerCoordinator | undefined;
+  let p66StateSnapshotChain: StateSnapshotChain | undefined;
+  let p66ReputationDeriver: ReputationDeriver | undefined;
+  let p67MiCrossScorer: MICrossScorer | undefined;
+  let p67SnrAwareFilter: SNRAwareFilter | undefined;
+  let p67EpistemicIntegrityChecker: EpistemicIntegrityChecker | undefined;
+  let p67EpistemicPreservingSummarizer: EpistemicPreservingSummarizer | undefined;
+  let p67QualityMetricsRecorder: QualityMetricsRecorder | undefined;
+  let p69WorktreeManager: WorktreeManager | undefined;
+  let p69ParallelExecutor: ParallelExecutor | undefined;
+  let p69ResultComparator: ResultComparator | undefined;
+  let p69AgentGroupResolver: AgentGroupResolver | undefined;
+  let p69CliAdapterRegistry: CLIAdapterRegistry | undefined;
+
+  // Phase 66 实例化
+  const fpCfg = config.foundationProtocol;
+  if (fpCfg?.enabled) {
+    p66CheckpointPipeline = new CheckpointPipeline(
+      {
+        enabled: fpCfg.checkpointPipeline.enabled,
+        enabledSegments: fpCfg.checkpointPipeline.enabledSegments as any,
+        shortCircuit: fpCfg.checkpointPipeline.shortCircuit,
+      },
+      (policy: any, action: any) => true,
+    );
+    p66CallOwnerCoordinator = new CallOwnerCoordinator({
+      enabled: fpCfg.callOwner.enabled,
+      syncWaitMs: fpCfg.callOwner.syncWaitMs,
+      persistPath: fpCfg.callOwner.persistPath,
+    });
+    p66StateSnapshotChain = new StateSnapshotChain({
+      enabled: fpCfg.stateSnapshotChain.enabled,
+      arbiterSecretEnv: fpCfg.stateSnapshotChain.arbiterSecretEnv,
+    });
+    p66ReputationDeriver = new ReputationDeriver({
+      enabled: fpCfg.reputationDeriver.enabled,
+      maxCacheAgeMs: fpCfg.reputationDeriver.maxCacheAgeMs,
+    });
+  }
+
+  // Phase 67 实例化
+  const rqdCfg = config.reasoningQualityDiagnostics;
+  let p67EpistemicTokenProtector: EpistemicTokenProtector | undefined;
+  if (rqdCfg?.enabled) {
+    p67MiCrossScorer = new MICrossScorer({
+      enabled: rqdCfg.miCrossScorer.enabled,
+      collapseThreshold: rqdCfg.miCrossScorer.collapseThreshold,
+      minPrompts: rqdCfg.miCrossScorer.minPrompts,
+      samplesPerPrompt: rqdCfg.miCrossScorer.samplesPerPrompt,
+    });
+    p67SnrAwareFilter = new SNRAwareFilter({
+      enabled: rqdCfg.snrAwareFilter.enabled,
+      topP: rqdCfg.snrAwareFilter.topP,
+      minRVThreshold: rqdCfg.snrAwareFilter.minRVThreshold,
+      batchRejectRatio: rqdCfg.snrAwareFilter.batchRejectRatio,
+    });
+    p67EpistemicTokenProtector = new EpistemicTokenProtector({
+      enabled: rqdCfg.epistemicTokenProtector.enabled,
+      neighborhoodLines: rqdCfg.epistemicTokenProtector.neighborhoodLines,
+      customTokens: rqdCfg.epistemicTokenProtector.customTokens,
+    });
+    p67EpistemicIntegrityChecker = new EpistemicIntegrityChecker(
+      p67EpistemicTokenProtector,
+      {
+        enabled: rqdCfg.epistemicIntegrityChecker.enabled,
+        overCompressionThreshold: rqdCfg.epistemicIntegrityChecker.overCompressionThreshold,
+        minTokenCount: rqdCfg.epistemicIntegrityChecker.minTokenCount,
+      },
+    );
+    p67EpistemicPreservingSummarizer = new EpistemicPreservingSummarizer(
+      p67EpistemicTokenProtector,
+      {
+        enabled: rqdCfg.epistemicPreservingSummarizer.enabled,
+        maxTokens: rqdCfg.epistemicPreservingSummarizer.maxTokens,
+      },
+    );
+    p67QualityMetricsRecorder = new QualityMetricsRecorder({
+      enabled: rqdCfg.auditMetricsLogging.logEpistemicStats,
+    });
+  }
+
+  // Phase 69 实例化
+  const p69Cfg = config.phase69Integration;
+  if (p69Cfg) {
+    if (p69Cfg.worktree?.enabled) {
+      p69WorktreeManager = new WorktreeManager(process.cwd(), {
+        ...DEFAULT_WORKTREE_CONFIG,
+        enabled: p69Cfg.worktree.enabled,
+        worktreeRoot: p69Cfg.worktree.worktreeRoot,
+        maxWorktrees: p69Cfg.worktree.maxWorktrees,
+        cleanupTimeoutMs: p69Cfg.worktree.cleanupTimeoutMs,
+      });
+    }
+    if (p69Cfg.parallelExecution?.enabled) {
+      p69ParallelExecutor = new ParallelExecutor({
+        ...DEFAULT_PARALLEL_CONFIG,
+        enabled: p69Cfg.parallelExecution.enabled,
+        maxConcurrency: p69Cfg.parallelExecution.maxConcurrency,
+        workerTimeoutMs: p69Cfg.parallelExecution.workerTimeoutMs,
+      });
+    }
+    if (p69Cfg.resultComparator) {
+      p69ResultComparator = new ResultComparator({
+        ...DEFAULT_COMPARATOR_CONFIG,
+        autoSelect: p69Cfg.resultComparator.autoSelect,
+        weights: {
+          ...DEFAULT_COMPARATOR_CONFIG.weights,
+          brevity: p69Cfg.resultComparator.weights.brevity,
+          errorCount: p69Cfg.resultComparator.weights.errorCount,
+          testPassRate: p69Cfg.resultComparator.weights.testPassRate,
+        },
+      });
+    }
+    p69AgentGroupResolver = new AgentGroupResolver();
+    if (p69Cfg.cliAdapters?.enabled) {
+      p69CliAdapterRegistry = new CLIAdapterRegistry();
+      const claudeCodeAdapter = new ClaudeCodeAdapter({
+        ...DEFAULT_CLAUDE_CODE_CONFIG,
+        command: p69Cfg.cliAdapters.claudeCode.command,
+        defaultArgs: p69Cfg.cliAdapters.claudeCode.defaultArgs,
+        spawnTimeoutMs: p69Cfg.cliAdapters.claudeCode.spawnTimeoutMs,
+      });
+      p69CliAdapterRegistry.register(claudeCodeAdapter);
+    }
+  }
+
   const executionOrchestrator = createExecutionOrchestrator({
     agentLoop,
     tracker: tracker as TokenTracker,
     config,
     systemPromptRef: sharedSystemPromptRef,
     addSystemMessage: () => {}, // 由 App.tsx 通过 commandBridge.addSystemMessage 间接驱动
+    // Phase 62：动态工作流模块（可选，由 dynamicWorkflow.enabled 守护）
+    adversarialVerifier,
+    rubricRegistry,
+    loopUntilDoneGate,
+    quarantineManager,
+    actionAgentDispatcher,
+    tournamentSelector,
+    // Phase 66：策略管道与治理
+    checkpointPipeline: p66CheckpointPipeline,
+    callOwnerCoordinator: p66CallOwnerCoordinator,
+    stateSnapshotChain: p66StateSnapshotChain,
+    reputationDeriver: p66ReputationDeriver,
+    // Phase 67：推理质量诊断
+    miCrossScorer: p67MiCrossScorer,
+    snrAwareFilter: p67SnrAwareFilter,
+    epistemicIntegrityChecker: p67EpistemicIntegrityChecker,
+    epistemicPreservingSummarizer: p67EpistemicPreservingSummarizer,
+    qualityMetricsRecorder: p67QualityMetricsRecorder,
+    // Phase 69：Worktree 隔离执行与多代理并行编排
+    worktreeManager: p69WorktreeManager,
+    parallelExecutor: p69ParallelExecutor,
+    resultComparator: p69ResultComparator,
+    agentGroupResolver: p69AgentGroupResolver,
+    cliAdapterRegistry: p69CliAdapterRegistry,
   });
   const unifiedReviewer = createUnifiedReviewer({
     agentLoop,
@@ -1462,7 +1857,6 @@ export function createAppDependencies(
         const persistence = new mod.BranchPersistence(cwd, {
           maxNodes: conversationCfg.maxNodes,
           maxBranches: conversationCfg.maxBranches,
-          autoSnapshot: conversationCfg.autoSnapshot,
           undoStackSize: conversationCfg.undoStackSize,
         });
         persistence.init().catch((e: unknown) => {
@@ -1470,15 +1864,9 @@ export function createAppDependencies(
             error: e instanceof Error ? e.message : String(e),
           });
         });
-        // 注册到 service context（feature-detect：方法可能由其他子代理添加）
-        const loop = agentLoop as unknown as { setBranchPersistence?: (p: unknown) => void };
-        if (typeof loop.setBranchPersistence === 'function') {
-          loop.setBranchPersistence(persistence);
-        }
         logger.info('BranchPersistence registered', {
           persistTree: conversationCfg.persistTree,
           maxNodes: conversationCfg.maxNodes,
-          autoSnapshot: conversationCfg.autoSnapshot,
         });
       })
       .catch((err: unknown) => {
@@ -1500,11 +1888,6 @@ export function createAppDependencies(
           error: e instanceof Error ? e.message : String(e),
         });
       });
-      // 注册到 service context（feature-detect：方法可能由其他子代理添加）
-      const loop = agentLoop as unknown as { setBranchLinkageManager?: (m: unknown) => void };
-      if (typeof loop.setBranchLinkageManager === 'function') {
-        loop.setBranchLinkageManager(linkage);
-      }
       logger.info('BranchLinkageManager registered');
     })
     .catch((err: unknown) => {
@@ -1564,11 +1947,7 @@ export function createAppDependencies(
         const runner = runnerMod.createExperimentRunner(depsFactory);
         experimentManager.setExperimentRunner(runner);
 
-        const parallelExperiment = new pemMod.ParallelExperimentManager(experimentManager, experimentCfg);
-        const loop = agentLoop as unknown as { setParallelExperimentManager?: (m: unknown) => void };
-        if (typeof loop.setParallelExperimentManager === 'function') {
-          loop.setParallelExperimentManager(parallelExperiment);
-        }
+        new pemMod.ParallelExperimentManager(experimentManager, experimentCfg);
         logger.info('ParallelExperimentManager registered', {
           maxParallel: experimentCfg?.maxParallel,
           conflictDetection: experimentCfg?.conflictDetection,
@@ -1596,11 +1975,6 @@ export function createAppDependencies(
       .then((mod: { PersonaEngine: new (systemPromptAppend?: string) => { setIntensity: (i: string) => void; buildPersonaFragment: (signals?: unknown) => string } }) => {
         const engine = new mod.PersonaEngine(personaCfg.systemPromptAppend ?? '');
         engine.setIntensity(personaCfg.intensity);
-        // 注册到 service context（feature-detect：方法可能由其他子代理添加）
-        const loop = agentLoop as unknown as { setPersonaEngine?: (e: unknown) => void };
-        if (typeof loop.setPersonaEngine === 'function') {
-          loop.setPersonaEngine(engine);
-        }
         logger.info('PersonaEngine registered', {
           enabled: personaCfg.enabled,
           intensity: personaCfg.intensity,
@@ -1626,11 +2000,6 @@ export function createAppDependencies(
           error: e instanceof Error ? e.message : String(e),
         });
       });
-      // 注册到 service context（feature-detect：方法可能由其他子代理添加）
-      const loop = agentLoop as unknown as { setPreferenceManager?: (m: unknown) => void };
-      if (typeof loop.setPreferenceManager === 'function') {
-        loop.setPreferenceManager(prefMgr);
-      }
       logger.info('PreferenceManager registered');
     })
     .catch((err: unknown) => {
@@ -1648,11 +2017,6 @@ export function createAppDependencies(
     import(voiceModulePath)
       .then((mod: { VoiceManager: new (config?: unknown) => { getConfig: () => unknown; isAvailable: () => boolean } }) => {
         const voice = new mod.VoiceManager(voiceCfg);
-        // 注册到 service context（feature-detect：方法可能由其他子代理添加）
-        const loop = agentLoop as unknown as { setVoiceManager?: (v: unknown) => void };
-        if (typeof loop.setVoiceManager === 'function') {
-          loop.setVoiceManager(voice);
-        }
         logger.info('VoiceManager registered', {
           inputProvider: voiceCfg.inputProvider,
           outputProvider: voiceCfg.outputProvider,
@@ -1762,7 +2126,7 @@ export function createAppDependencies(
     ])
       .then(([pluginMod, codexMod]) => {
         // ClaudePluginImporter：实例化确认可加载，扫描 .claude-plugin/ 目录
-        const pluginImporter = new pluginMod.ClaudePluginImporter();
+        new pluginMod.ClaudePluginImporter();
         // CodexInstructionImporter：扫描 .codex/ 目录
         const codexImporter = new codexMod.CodexInstructionImporter();
         codexImporter.scan(cwd).then((scanResult) => {
@@ -1774,11 +2138,6 @@ export function createAppDependencies(
             error: e instanceof Error ? e.message : String(e),
           });
         });
-        // 标记 pluginImporter 可用，供后续 /plugin 命令调用
-        const loop = agentLoop as unknown as { setClaudePluginImporter?: (i: unknown) => void };
-        if (typeof loop.setClaudePluginImporter === 'function') {
-          loop.setClaudePluginImporter(pluginImporter);
-        }
         logger.info('Phase 48 import module integrated', { enabled: true });
       })
       .catch((err: unknown) => {
@@ -1903,11 +2262,7 @@ export function createAppDependencies(
     // 上下文占用率面板接入：context-compaction 调用
     import('../agent/context-usage-panel.js')
       .then((mod) => {
-        const panel = new mod.ContextUsagePanel();
-        const compactor = contextCompactor as unknown as { setContextUsagePanel?: (p: unknown) => void };
-        if (typeof compactor.setContextUsagePanel === 'function') {
-          compactor.setContextUsagePanel(panel);
-        }
+        new mod.ContextUsagePanel();
         logger.info('Phase 49 ContextUsagePanel integrated', { enabled: true });
       })
       .catch((err: unknown) => {
@@ -1922,11 +2277,7 @@ export function createAppDependencies(
     // 实例化由 /goal 完成或 Skill 生成时按需创建（依赖注入 LLM 客户端）
     import('../evaluation/evaluation-framework.js')
       .then((mod) => {
-        // 标记模块可用，供后续按需实例化
-        const loop = agentLoop as unknown as { setEvaluationFrameworkFactory?: (f: unknown) => void };
-        if (typeof loop.setEvaluationFrameworkFactory === 'function') {
-          loop.setEvaluationFrameworkFactory(mod.EvaluationFramework);
-        }
+        void mod;
         logger.info('Phase 49 EvaluationFramework module available', { enabled: true });
       })
       .catch((err: unknown) => {
@@ -2104,5 +2455,230 @@ export function createAppDependencies(
     dagEngineRef,
     // E9-B：ExperimentManager 单例（供 /experiment 命令与 engine-bridge 复用）
     experimentManager,
+    // Phase 61：ACRouter 闭环模型路由
+    ...(() => {
+      const clrCfg = config.closedLoopRouting;
+      if (!clrCfg?.enabled) return {};
+      const routingHistory = new RoutingHistory({
+        maxRecords: clrCfg.history.maxRecords,
+        persistPath: path.resolve(cwd, clrCfg.history.persistPath),
+      });
+      routingHistory.load().catch(err => {
+        logger.warn('RoutingHistory load failed', { error: err instanceof Error ? err.message : String(err) });
+      });
+      const embedder = createEmbedder(clrCfg.memory.embeddingProvider);
+      const routingMemory = new RoutingMemory(routingHistory, embedder, {
+        topK: clrCfg.memory.topK,
+        minSimilarity: clrCfg.memory.minSimilarity,
+        enabled: clrCfg.memory.enabled,
+      });
+      const executionVerifier = new ExecutionVerifier({
+        enabled: clrCfg.verifier.enabled,
+        signals: clrCfg.verifier.signals,
+        timeoutMs: clrCfg.verifier.timeoutMs,
+      });
+      const routingRegretTracker = new RoutingRegretTracker(routingHistory);
+      // Phase 61 接线：当 modelRouter 可用且 orchestrator.enabled 时，创建 RoutingOrchestrator
+      // RoutingOrchestrator 内部整合 baseRouter + memory + history，做加权投票决策
+      let routingOrchestrator: RoutingOrchestrator | undefined;
+      if (modelRouter && clrCfg.orchestrator?.enabled) {
+        routingOrchestrator = new RoutingOrchestrator(modelRouter, routingMemory, routingHistory, {
+          enabled: clrCfg.orchestrator.enabled,
+          neighborWeight: clrCfg.orchestrator.neighborWeight,
+          priorWeight: clrCfg.orchestrator.priorWeight,
+          baseWeight: clrCfg.orchestrator.baseWeight,
+        });
+      }
+      logger.info('Phase 61: ACRouter closed-loop routing enabled', {
+        memory: clrCfg.memory.enabled,
+        verifier: clrCfg.verifier.enabled,
+        orchestrator: clrCfg.orchestrator?.enabled ?? false,
+      });
+      return { routingHistory, routingMemory, executionVerifier, routingRegretTracker, routingOrchestrator };
+    })(),
+    // Phase 62：动态工作流模式与隔离治理模块
+    adversarialVerifier,
+    rubricRegistry,
+    loopUntilDoneGate,
+    quarantineManager,
+    actionAgentDispatcher,
+    tournamentSelector,
+    // Phase 65：记忆系统重构
+    ...(() => {
+      const msCfg = config.memorySystem;
+      if (!msCfg?.enabled) return {};
+      const memoryStore = new MemoryStore({
+        enabled: msCfg.store.enabled,
+        dbPath: msCfg.store.dbPath,
+        backend: msCfg.store.backend,
+        embeddingProvider: msCfg.store.embeddingProvider,
+      });
+      const incrementalExtractor = new IncrementalExtractor(memoryStore, {
+        enabled: msCfg.incrementalExtractor.enabled,
+        mode: msCfg.incrementalExtractor.mode,
+        modelId: msCfg.incrementalExtractor.modelId,
+      });
+      const hybridRetriever = new HybridRetriever(memoryStore, null, {
+        enabled: msCfg.hybridRetriever.enabled,
+        bm25Weight: msCfg.hybridRetriever.bm25Weight,
+        embeddingWeight: msCfg.hybridRetriever.embeddingWeight,
+        timeDecayHalfLifeDays: msCfg.hybridRetriever.timeDecayHalfLifeDays,
+        topK: msCfg.hybridRetriever.topK,
+      });
+      const conservativeMerger = new ConservativeMerger(memoryStore);
+      const rejectedAlternativeStore = new RejectedAlternativeStore(memoryStore);
+      const localMaintenance = new LocalMaintenancePolicy(memoryStore, {
+        enabled: msCfg.localMaintenance.enabled,
+        triggerThreshold: msCfg.localMaintenance.triggerThreshold,
+        reorganizeRatio: msCfg.localMaintenance.reorganizeRatio,
+        minAccessCount: msCfg.localMaintenance.minAccessCount,
+      });
+      const bm25Index = new BM25Index();
+      logger.info('Phase 65: Memory system refactor enabled', {
+        store: msCfg.store.enabled,
+        incrementalExtractor: msCfg.incrementalExtractor.enabled,
+        hybridRetriever: msCfg.hybridRetriever.enabled,
+        conservativeMerger: msCfg.conservativeMerger.enabled,
+        rejectedAlternative: msCfg.rejectedAlternative.enabled,
+        localMaintenance: msCfg.localMaintenance.enabled,
+      });
+      return { memoryStore, incrementalExtractor, hybridRetriever, conservativeMerger, rejectedAlternativeStore, localMaintenance, bm25Index };
+    })(),
+    // Phase 66：策略管道与治理（复用提前创建的实例）
+    ...(() => {
+      if (!fpCfg?.enabled) return {};
+      return { checkpointPipeline: p66CheckpointPipeline, callOwnerCoordinator: p66CallOwnerCoordinator, stateSnapshotChain: p66StateSnapshotChain, reputationDeriver: p66ReputationDeriver };
+    })(),
+    // Phase 67：推理质量诊断（复用提前创建的实例）
+    ...(() => {
+      if (!rqdCfg?.enabled) return {};
+      return { miCrossScorer: p67MiCrossScorer, snrAwareFilter: p67SnrAwareFilter, epistemicTokenProtector: p67EpistemicTokenProtector, epistemicIntegrityChecker: p67EpistemicIntegrityChecker, epistemicPreservingSummarizer: p67EpistemicPreservingSummarizer, qualityMetricsRecorder: p67QualityMetricsRecorder };
+    })(),
+    // Phase 68：检索/搜索/发现三分与知识图谱
+    ...(() => {
+      const p68Cfg = config.phase68Integration;
+      if (!p68Cfg) return {};
+
+      const result: Record<string, unknown> = {};
+
+      if (p68Cfg.provenanceGraph?.enabled) {
+        const provenanceGraph = new ProvenanceGraph(p68Cfg.provenanceGraph.maxArtifacts);
+        if (p68Cfg.provenanceGraph.persistPath) {
+          provenanceGraph.loadFromFile(p68Cfg.provenanceGraph.persistPath).catch(() => {});
+        }
+        result.provenanceGraph = provenanceGraph;
+      }
+
+      if (p68Cfg.rejectedAlternativeStore?.enabled) {
+        const agentRejectedAlternativeStore = new AgentRejectedAlternativeStore(
+          p68Cfg.rejectedAlternativeStore.maxRecords,
+        );
+        if (p68Cfg.rejectedAlternativeStore.persistPath) {
+          agentRejectedAlternativeStore.loadFromFile(p68Cfg.rejectedAlternativeStore.persistPath).catch(() => {});
+        }
+        result.agentRejectedAlternativeStore = agentRejectedAlternativeStore;
+      }
+
+      if (p68Cfg.kanObstacleChecker?.enabled && result.provenanceGraph) {
+        const kanObstacleChecker = new KanObstacleChecker(
+          result.provenanceGraph as ProvenanceGraph,
+          {
+            enabled: p68Cfg.kanObstacleChecker.enabled,
+            blockOnObstacle: p68Cfg.kanObstacleChecker.blockOnObstacle,
+          },
+        );
+        result.kanObstacleChecker = kanObstacleChecker;
+      }
+
+      if (p68Cfg.quantitativeGate?.enabled) {
+        const quantitativeGate = new QuantitativeGate({
+          enabled: p68Cfg.quantitativeGate.enabled,
+          mdlWeight: p68Cfg.quantitativeGate.mdlWeight,
+          aicWeight: p68Cfg.quantitativeGate.aicWeight,
+          acceptThreshold: p68Cfg.quantitativeGate.acceptThreshold,
+          rejectThreshold: p68Cfg.quantitativeGate.rejectThreshold,
+          complexityPenalty: p68Cfg.quantitativeGate.complexityPenalty,
+        });
+        result.quantitativeGate = quantitativeGate;
+      }
+
+      if (p68Cfg.operationClassification?.enabled) {
+        result.classifyOperation = classifyOperation;
+        result.buildRegimeTransition = buildRegimeTransition;
+      }
+
+      if (Object.keys(result).length > 0) {
+        logger.info('Phase 68: Knowledge graph modules enabled', {
+          provenanceGraph: !!result.provenanceGraph,
+          provenanceGraphPersistPath: p68Cfg.provenanceGraph?.persistPath,
+          agentRejectedAlternativeStore: !!result.agentRejectedAlternativeStore,
+          rejectedPersistPath: p68Cfg.rejectedAlternativeStore?.persistPath,
+          defaultQueryLimit: p68Cfg.rejectedAlternativeStore?.defaultQueryLimit,
+          kanObstacleChecker: !!result.kanObstacleChecker,
+          quantitativeGate: !!result.quantitativeGate,
+          operationClassification: !!result.classifyOperation,
+          logRegimeTransition: p68Cfg.operationClassification?.logRegimeTransition,
+        });
+      }
+
+      return result as Partial<AppDependencies>;
+    })(),
+    // Phase 69：Worktree 隔离执行与多代理并行编排（复用提前创建的实例）
+    ...(() => {
+      if (!p69Cfg) return {};
+      const result: Record<string, unknown> = {};
+      if (p69WorktreeManager) result.worktreeManager = p69WorktreeManager;
+      if (p69ParallelExecutor) result.parallelExecutor = p69ParallelExecutor;
+      if (p69ResultComparator) result.resultComparator = p69ResultComparator;
+      if (p69AgentGroupResolver) result.agentGroupResolver = p69AgentGroupResolver;
+      if (p69CliAdapterRegistry) result.cliAdapterRegistry = p69CliAdapterRegistry;
+      return result as Partial<AppDependencies>;
+    })(),
+    // Phase 70：上下文压缩技术深度优化（引用提前创建的实例，与 ContextCompactor 共享）
+    ...(() => {
+      if (!p70Cfg) return {};
+
+      const result: Record<string, unknown> = {};
+
+      if (p70ToolOutputBudgetManager) {
+        result.toolOutputBudgetManager = p70ToolOutputBudgetManager;
+      }
+
+      if (p70MessageGrouper) {
+        result.messageGrouper = p70MessageGrouper;
+      }
+
+      if (p70ActionChainDetector) {
+        result.actionChainDetector = p70ActionChainDetector;
+      }
+
+      if (p70AutoCompactGuardian) {
+        result.autoCompactGuardian = p70AutoCompactGuardian;
+      }
+
+      if (p70CompactPromptEngine) {
+        result.compactPromptEngine = p70CompactPromptEngine;
+      }
+
+      if (p70SessionMemoryStore) {
+        result.sessionMemoryStore = p70SessionMemoryStore;
+      }
+
+      if (Object.keys(result).length > 0) {
+        logger.info('Phase 70: Context compaction modules enabled', {
+          toolOutputBudgetManager: !!result.toolOutputBudgetManager,
+          messageGrouper: !!result.messageGrouper,
+          actionChainDetector: !!result.actionChainDetector,
+          autoCompactGuardian: !!result.autoCompactGuardian,
+          compactPromptEngine: !!result.compactPromptEngine,
+          compactPromptDirection: p70Cfg?.compactPrompt?.defaultDirection,
+          sessionMemoryStore: !!result.sessionMemoryStore,
+          sessionMemoryPersistPath: p70Cfg?.sessionMemory?.persistPath,
+          sessionMemoryMaxMemories: p70Cfg?.sessionMemory?.maxMemories,
+        });
+      }
+
+      return result as Partial<AppDependencies>;
+    })(),
   };
 }

@@ -109,8 +109,14 @@ export class WebhookServer {
     }
     return new Promise(resolve => {
       if (this.server) {
-        this.server.close(() => {
-          logger.info('WebhookServer stopped');
+        // I8 修复：close 回调仅在成功时调用，失败时 error 事件触发但 Promise 永不 settle
+        // 改为无论成功失败都 resolve，避免阻塞 ChannelManager.stop()
+        this.server.close((err) => {
+          if (err) {
+            logger.warn('WebhookServer close error', { error: String(err) });
+          } else {
+            logger.info('WebhookServer stopped');
+          }
           this.server = null;
           resolve();
         });

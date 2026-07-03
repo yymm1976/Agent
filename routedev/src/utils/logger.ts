@@ -94,4 +94,4 @@ export const logger = new Proxy(_logger, {
   },
 });
 
-export type { winston };
+

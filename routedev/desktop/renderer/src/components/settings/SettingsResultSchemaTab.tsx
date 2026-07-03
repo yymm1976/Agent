@@ -68,5 +68,3 @@ export function SettingsResultSchemaTab({ draft, updateDraft }: SettingsResultSc
     </div>
   );
 }
-
-export default SettingsResultSchemaTab;

@@ -108,7 +108,6 @@ function makeOrchestrator(classifyResult: ClassificationResult, configOverrides?
   const orchestrator = new TaskOrchestrator(
     classifier as never,
     modelRouter as never,
-    clientManager as never,
     config,
   );
   return { orchestrator, classifier, modelRouter, config };

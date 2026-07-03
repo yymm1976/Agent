@@ -14,10 +14,10 @@
 // ============================================================
 
 /** 严重度等级 */
-export type Severity = 'low' | 'medium' | 'high' | 'critical';
+type Severity = 'low' | 'medium' | 'high' | 'critical';
 
 /** 安全扫描发现 */
-export interface SkillSecurityFinding {
+interface SkillSecurityFinding {
   /** 规则名（如 'command_injection'） */
   rule: string;
   /** 严重度 */
@@ -29,7 +29,7 @@ export interface SkillSecurityFinding {
 }
 
 /** 扫描结果 */
-export interface SkillScanResult {
+interface SkillScanResult {
   /** 技能 ID */
   skillId: string;
   /** 风险评分（0-100，越低越安全） */
@@ -47,7 +47,7 @@ export interface SkillScanResult {
 }
 
 /** 漏洞规则定义 */
-export interface VulnerabilityRule {
+interface VulnerabilityRule {
   /** 规则名（如 'command_injection'） */
   name: string;
   /** 正则模式 */
@@ -57,7 +57,7 @@ export interface VulnerabilityRule {
 }
 
 /** 门控构造配置 */
-export interface SkillSecurityGateOptions {
+interface SkillSecurityGateOptions {
   /** 自动安装阈值：score <= 此值才允许自动安装（默认 30） */
   autoInstallThreshold?: number;
   /** 基线发现列表（用于基线抑制） */

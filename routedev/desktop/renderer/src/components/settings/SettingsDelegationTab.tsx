@@ -110,18 +110,6 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
 
           <div className="flex items-center justify-between">
             <div>
-              <Label htmlFor="delegation-tool-guard">启用工具调用守卫</Label>
-              <p className="text-xs text-rd-textMuted">子 Agent 工具调用前经父 Agent 审核。</p>
-            </div>
-            <Switch
-              id="delegation-tool-guard"
-              checked={policy.toolCallGuardEnabled ?? false}
-              onCheckedChange={(checked) => updatePolicy({ toolCallGuardEnabled: checked })}
-            />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
               <Label htmlFor="delegation-detached">启用分离会话</Label>
               <p className="text-xs text-rd-textMuted">子 Agent 在独立会话中运行，结束后合并结果。</p>
             </div>
@@ -129,18 +117,6 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
               id="delegation-detached"
               checked={policy.detachedSessionEnabled ?? true}
               onCheckedChange={(checked) => updatePolicy({ detachedSessionEnabled: checked })}
-            />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="delegation-context-iso">完全上下文隔离</Label>
-              <p className="text-xs text-rd-textMuted">子 Agent 不继承父 Agent 的对话上下文。</p>
-            </div>
-            <Switch
-              id="delegation-context-iso"
-              checked={policy.fullContextIsolation ?? true}
-              onCheckedChange={(checked) => updatePolicy({ fullContextIsolation: checked })}
             />
           </div>
 
@@ -155,18 +131,6 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
               onChange={(e) => updatePolicy({ subAgentMaxContextTokens: Number(e.target.value) })}
             />
             <p className="text-xs text-rd-textMuted">单个子 Agent 的上下文窗口上限。</p>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="delegation-propagate">向父 Agent 传播工具调用</Label>
-              <p className="text-xs text-rd-textMuted">子 Agent 的工具调用同步回父 Agent 上下文。</p>
-            </div>
-            <Switch
-              id="delegation-propagate"
-              checked={policy.propagateToolCallsToParent ?? false}
-              onCheckedChange={(checked) => updatePolicy({ propagateToolCallsToParent: checked })}
-            />
           </div>
         </CardContent>
       </Card>
@@ -253,5 +217,3 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
     </div>
   );
 }
-
-export default SettingsDelegationTab;

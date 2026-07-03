@@ -21,10 +21,10 @@ export const TS_FUNCTION_TYPES = new Set(['function_declaration', 'function', 'a
 export const TS_METHOD_TYPES = new Set(['method_definition']);
 
 /** import 语句中的 source 字段（字符串字面量） */
-export const TS_IMPORT_SOURCE_FIELD = 'source';
+const TS_IMPORT_SOURCE_FIELD = 'source';
 
 /** class_heritage 子节点类型 */
-export const TS_HERITAGE_TYPES = {
+const TS_HERITAGE_TYPES = {
   extends: 'class_heritage',
   implements: 'class_heritage',
 };
@@ -57,7 +57,7 @@ export function isTsAsync(node: {
 }
 
 /** 边类型权重（TS 专用，复用全局权重） */
-export const TS_EDGE_KINDS = {
+const TS_EDGE_KINDS = {
   CALLS: 'CALLS' as EdgeKind,
   IMPORTS: 'IMPORTS' as EdgeKind,
   EXTENDS: 'EXTENDS' as EdgeKind,

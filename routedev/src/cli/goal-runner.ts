@@ -2,7 +2,7 @@
 // 目标分解与执行器：从 App.tsx 提取的 /goal 命令核心逻辑
 // 包含 handleGoalCommand（解析+分解+确认）和 executeGoalPlan（执行+验证）
 
-import type { LLMMessage, ILLMClient, ScenarioTier } from '../router/types.js';
+import type { LLMMessage, ILLMClient, ScenarioTier, RoutingResult } from '../router/types.js';
 import type { ScenarioClassifier } from '../router/classifier.js';
 import type { ModelRouter } from '../router/router.js';
 import type { LLMClientManager } from '../router/llm/index.js';
@@ -20,6 +20,8 @@ import { StateMigration } from '../agent/state-migration.js';
 // Phase 55 Task 9：DualLoop + BoundedRecovery 替代迭代闭环
 import type { DualLoopOrchestrator } from '../agent/dual-loop-orchestrator.js';
 import type { DualLoopParams } from '../agent/dual-loop-types.js';
+// Phase 60：跨模型审查接线——高风险任务用不同模型交叉审查
+import { CrossModelReviewer } from '../agent/cross-model-reviewer.js';
 // Phase 55：DagEngine 真实类型（替代 unknown 占位，适配 execute(workflow, executor) 签名）
 import type { DagEngine, DagWorkflow, DagNode } from '../agent/workflow/dag-engine.js';
 // Phase 54 Task 5：自主度行为映射（auto/semi/manual → 具体行为开关）
@@ -53,6 +55,12 @@ import type { CompositionalRouterInstance } from './app-init.js';
 import type { AtomicSubTask } from '../skills/compositional-router.js';
 // Phase 53 P5：步骤级钩子运行器（pre-step/post-step/on-complete）
 import type { HookRunner, HookContext, StepResult } from '../agent/hooks.js';
+// Phase 61：ACRouter 闭环模型路由
+import type { RoutingHistory, RoutingRecord } from '../router/routing-history.js';
+import type { RoutingMemory } from '../router/routing-memory.js';
+import type { ExecutionVerifier } from '../router/execution-verifier.js';
+import type { RoutingRegretTracker } from '../router/regret-tracker.js';
+import type { RoutingOrchestrator } from '../router/orchestrator.js';
 
 /** GoalRunner 依赖的外部对象（由 App.tsx 注入） */
 export interface GoalRunnerDeps {
@@ -157,6 +165,23 @@ export interface GoalRunnerDeps {
    * 间接复用 AgentLoop.fireHookSafe，此处仅补充步骤级 hook，不重复触发工具级 hook
    */
   hookRunner?: HookRunner;
+  // Phase 61：ACRouter 闭环模型路由（可选，由 app-init.ts 注入）
+  routingHistory?: RoutingHistory;
+  routingMemory?: RoutingMemory;
+  executionVerifier?: ExecutionVerifier;
+  routingRegretTracker?: RoutingRegretTracker;
+  routingOrchestrator?: RoutingOrchestrator;
+  // Phase 65：记忆系统（可选，由 app-init.ts 注入）
+  memoryStore?: import('../memory/memory-store.js').MemoryStore;
+  hybridRetriever?: import('../memory/hybrid-retriever.js').HybridRetriever;
+  conservativeMerger?: import('../memory/conservative-merger.js').ConservativeMerger;
+  localMaintenance?: import('../memory/local-maintenance.js').LocalMaintenancePolicy;
+  // Phase 68：知识图谱（可选，由 app-init.ts 注入）
+  provenanceGraph?: import('../memory/provenance-graph.js').ProvenanceGraph;
+  agentRejectedAlternativeStore?: import('../agent/rejected-alternative-store.js').RejectedAlternativeStore;
+  kanObstacleChecker?: import('../skills/kan-obstacle-checker.js').KanObstacleChecker;
+  quantitativeGate?: import('../agent/quantitative-gate.js').QuantitativeGate;
+  classifyOperation?: (signal: import('../skills/operation-classifier.js').OperationSignal, sessionId: string) => import('../skills/operation-classifier.js').OperationClassification;
 }
 
 /**
@@ -208,6 +233,12 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     onToolConfirmRequest,
     // Phase 53 P5：步骤级钩子运行器（可选，未注入时短路）
     hookRunner,
+    // Phase 61：ACRouter 闭环模型路由
+    routingHistory, routingMemory, executionVerifier, routingRegretTracker, routingOrchestrator,
+    // Phase 65：记忆系统
+    memoryStore, hybridRetriever, conservativeMerger, localMaintenance,
+    // Phase 68：知识图谱
+    provenanceGraph, agentRejectedAlternativeStore, kanObstacleChecker, quantitativeGate, classifyOperation,
   } = deps;
 
   // Phase 54：emit 辅助函数——安全调用 onGoalEvent（CLI 端未注入时为 no-op）
@@ -884,6 +915,17 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       },
       completionGate,
       maxReruns: config.goalVerifier?.iterative?.maxRounds ?? 3,
+      // Phase 60：跨模型审查接线——启用 autoCrossModelForHighRisk 时注入 CrossModelReviewer
+      // 用 verifyClient 作为审查客户端（已路由到与内循环不同的模型），availableModels 从 router 获取
+      ...(config.reviewerPolicy?.autoCrossModelForHighRisk
+        ? {
+            crossModelReviewer: new CrossModelReviewer(
+              verifyClient,
+              execRoute.model.id,
+              modelRouter.getAvailableModels().map(m => m.id),
+            ),
+          }
+        : {}),
     };
 
     addSystemMessage('🔄 启动 DualLoop 双循环恢复（含 BoundedRecovery）...');
@@ -1208,7 +1250,65 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
 
     const softStopRatio = goalCfg?.softStopRatio ?? 0.9;
     const classifyResult = await classifier.classify({ query: step.description });
-    const routeDecision = await modelRouter.route(classifyResult);
+
+    // ===== Phase 65：检索相关记忆用于上下文增强 =====
+    let relevantMemories: string | null = null;
+    if (hybridRetriever) {
+      try {
+        const scored = await hybridRetriever.retrieve(step.description);
+        if (scored.length > 0) {
+          relevantMemories = scored.map(m => `[${m.type}] ${m.content}`).join('\n');
+          logger.info('Phase 65: 检索到相关记忆', { count: scored.length });
+        }
+      } catch (err) {
+        logger.warn('Phase 65: HybridRetriever.retrieve 失败（fail-open）', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // ===== Phase 68：操作分类 =====
+    let operationClassification: import('../skills/operation-classifier.js').OperationClassification | null = null;
+    if (classifyOperation) {
+      try {
+        operationClassification = classifyOperation({}, gid);
+        logger.info('Phase 68: 操作分类', { kind: operationClassification.kind });
+      } catch (err) {
+        logger.warn('Phase 68: classifyOperation 失败（fail-open）', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // ===== Phase 68：Kan 障碍检查 =====
+    if (kanObstacleChecker) {
+      try {
+        const obstacleResult = kanObstacleChecker.check([]);
+        if (obstacleResult.hasObstacle) {
+          addSystemMessage(`⚠️ Kan 障碍: ${obstacleResult.warning}`);
+        }
+      } catch (err) {
+        logger.warn('Phase 68: KanObstacleChecker.check 失败（fail-open）', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Phase 61 接线：当 RoutingOrchestrator 可用时，用它的 route() 方法做综合路由决策
+    // RoutingOrchestrator 内部整合 baseRouter + memory(kNN 检索) + history(先验)，做加权投票
+    let routeDecision: RoutingResult;
+    if (routingOrchestrator?.isEnabled()) {
+      try {
+        routeDecision = await routingOrchestrator.route(step.description, classifyResult);
+      } catch (err) {
+        logger.warn('Phase 61: RoutingOrchestrator.route 失败，回退到基础路由', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        routeDecision = await modelRouter.route(classifyResult);
+      }
+    } else {
+      routeDecision = await modelRouter.route(classifyResult);
+    }
     const stepFallbackNotice = notifyRoutingFallback(routeDecision);
     if (stepFallbackNotice) addSystemMessage(stepFallbackNotice);
     const client = clientManager.get(routeDecision.providerId);
@@ -1217,6 +1317,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     }
 
     let stepContent = '';
+    // Phase 61 接线：记录步骤执行起始时间，供 ExecutionVerifier 计算 latency 信号
+    const stepStartMs = Date.now();
     const stepAbort = new AbortController();
     abortControllerRef.current = stepAbort;
     for await (const event of agentLoop.run({
@@ -1277,6 +1379,61 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       // Phase 30：token_profile 事件由 profiler 内部记录，无需额外处理
     }
 
+    // ===== Phase 61：记录路由历史 =====
+    if (routingHistory) {
+      const record: RoutingRecord = {
+        taskSignature: step.description.slice(0, 200),
+        modelId: routeDecision.model.id,
+        timestamp: Date.now(),
+        userOverride: !!deps.modelRouter.getManualOverride(),
+      };
+      if (routingMemory?.isEnabled()) {
+        try {
+          const { HashEmbedder } = await import('../router/embedder.js');
+          const embedder = new HashEmbedder();
+          record.taskEmbedding = await embedder.embed(record.taskSignature);
+        } catch { /* fail-open */ }
+      }
+      // Phase 61 接线：当 ExecutionVerifier 可用时，验证执行结果并填充 qualityScore
+      // ExecutionVerifier 通过沙盒原生多路信号（compile/typecheck/test/latency）聚合打分
+      if (executionVerifier?.isEnabled()) {
+        try {
+          const executionMs = Date.now() - stepStartMs;
+          const verification = await executionVerifier.verify({
+            modifiedFiles: [],
+            projectPath: process.cwd(),
+            executionMs,
+          });
+          record.qualityScore = verification.qualityScore;
+          record.verificationTrace = verification.trace;
+        } catch (err) {
+          logger.warn('Phase 61: ExecutionVerifier.verify 失败（fail-open）', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      routingHistory.append(record);
+
+      // Phase 61 接线：当 RoutingRegretTracker 可用时，记录累积遗憾指标
+      // RoutingRegretTracker 基于 history 中所有 record 计算 oracle 近似与累积遗憾
+      if (routingRegretTracker) {
+        try {
+          const regretResult = routingRegretTracker.computeCumulativeRegret();
+          if (regretResult.regret > 0) {
+            logger.info('Phase 61: RoutingRegretTracker 累积遗憾指标', {
+              regret: regretResult.regret,
+              records: routingHistory.getRecordCount(),
+              perModelRegret: Object.fromEntries(regretResult.perModelRegret),
+            });
+          }
+        } catch (err) {
+          logger.warn('Phase 61: RoutingRegretTracker.computeCumulativeRegret 失败（fail-open）', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+
     // 用户中断：抛 PlanAbortError，调用方据此中止整个 plan
     if (stepAbort.signal.aborted) {
       throw new PlanAbortError('用户中断');
@@ -1308,6 +1465,87 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       } catch (err) {
         if (err instanceof PlanAbortError) throw err;
         logger.warn('GoalRunner: post-step hook failed (fail-open)', { error: String(err) });
+      }
+    }
+
+    // ===== Phase 65：存储步骤结果到记忆系统 =====
+    if (memoryStore?.isEnabled()) {
+      try {
+        await memoryStore.write({
+          content: stepContent.slice(0, 2000),
+          type: 'fact',
+          source: `goal-step-${step.id}`,
+          validFrom: Date.now(),
+          topics: [step.description.slice(0, 100)],
+          metadata: { stepId: String(step.id), goalId: gid },
+        });
+        logger.info('Phase 65: 步骤结果已存储到 MemoryStore', { stepId: step.id });
+      } catch (err) {
+        logger.warn('Phase 65: MemoryStore.write 失败（fail-open）', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // ===== Phase 65：定期维护记忆索引 =====
+    if (localMaintenance) {
+      try {
+        const maintStatus = localMaintenance.shouldMaintain();
+        if (maintStatus.needed) {
+          const maintResult = await localMaintenance.maintain();
+          logger.info('Phase 65: 记忆维护完成', {
+            reorganized: maintResult.reorganized,
+            merged: maintResult.merged,
+          });
+        }
+      } catch (err) {
+        logger.warn('Phase 65: LocalMaintenancePolicy 维护失败（fail-open）', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // ===== Phase 68：记录决策制品到溯源图 =====
+    if (provenanceGraph) {
+      try {
+        const { randomUUID } = await import('node:crypto');
+        provenanceGraph.addArtifact({
+          id: randomUUID(),
+          artifactType: 'decision',
+          producingOperation: operationClassification?.kind ?? 'retrieval',
+          parentIds: [],
+          content: stepContent.slice(0, 1000),
+          relatedFiles: [],
+          timestamp: Date.now(),
+          sessionId: gid,
+          operationKind: operationClassification?.kind,
+        });
+        logger.info('Phase 68: 决策制品已记录到 ProvenanceGraph');
+      } catch (err) {
+        logger.warn('Phase 68: ProvenanceGraph.addArtifact 失败（fail-open）', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // ===== Phase 68：定量门评估 =====
+    if (quantitativeGate) {
+      try {
+        const gateEval = quantitativeGate.evaluate({
+          id: String(step.id),
+          description: step.description,
+          artifact: stepContent.slice(0, 500),
+        });
+        if (gateEval.decision === 'reject') {
+          logger.warn('Phase 68: QuantitativeGate 评估为 reject', {
+            compositeScore: gateEval.compositeScore,
+            rationale: gateEval.rationale,
+          });
+        }
+      } catch (err) {
+        logger.warn('Phase 68: QuantitativeGate.evaluate 失败（fail-open）', {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 

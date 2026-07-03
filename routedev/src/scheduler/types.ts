@@ -34,7 +34,7 @@ export interface ScheduledTask {
 }
 
 /** 任务执行状态 */
-export type TaskStatus = 'idle' | 'running' | 'completed' | 'failed';
+type TaskStatus = 'idle' | 'running' | 'completed' | 'failed';
 
 /**
  * 任务执行记录

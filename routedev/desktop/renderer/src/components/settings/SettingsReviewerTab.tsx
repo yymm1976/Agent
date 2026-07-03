@@ -110,18 +110,6 @@ export function SettingsReviewerTab({ draft, updateDraft }: SettingsReviewerTabP
 
           <div className="flex items-center justify-between">
             <div>
-              <Label htmlFor="reviewer-auto-select">自动选择跨模型</Label>
-              <p className="text-xs text-rd-textMuted">未指定 ID 时按路由自动挑选不同模型。</p>
-            </div>
-            <Switch
-              id="reviewer-auto-select"
-              checked={policy.autoSelectCrossModel ?? true}
-              onCheckedChange={(checked) => updatePolicy({ autoSelectCrossModel: checked })}
-            />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
               <Label htmlFor="reviewer-evidence">强制三条证据协议</Label>
               <p className="text-xs text-rd-textMuted">审查结论必须附三条独立证据。</p>
             </div>
@@ -176,5 +164,3 @@ export function SettingsReviewerTab({ draft, updateDraft }: SettingsReviewerTabP
     </div>
   );
 }
-
-export default SettingsReviewerTab;

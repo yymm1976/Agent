@@ -5,7 +5,7 @@
  * MCP Server 传输类型（Phase 48 Task 4 扩展）
  * 覆盖 Claude Code / SonettoHere / APIX / MCP 2025-03-26 规范全部传输
  */
-export type MCPTransportType = 'stdio' | 'http' | 'sse' | 'streamable_http' | 'websocket';
+type MCPTransportType = 'stdio' | 'http' | 'sse' | 'streamable_http' | 'websocket';
 
 /** stdio 传输配置 */
 export interface MCPStdioConfig {

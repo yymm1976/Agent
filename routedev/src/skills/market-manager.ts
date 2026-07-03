@@ -25,9 +25,9 @@ import type { SkillQualityGate } from './quality-gate.js';
 // 类型定义
 // ============================================================
 
-export type MarketItemStatus = 'draft' | 'published' | 'deprecated';
+type MarketItemStatus = 'draft' | 'published' | 'deprecated';
 
-export interface MarketItem {
+interface MarketItem {
   name: string;
   version: string;
   type: 'skill' | 'hook';

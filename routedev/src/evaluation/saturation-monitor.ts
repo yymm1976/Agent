@@ -28,10 +28,10 @@ import { logger } from '../utils/logger.js';
 // ============================================================
 
 /** 评估集饱和状态 */
-export type SaturationStatus = 'healthy' | 'aging' | 'saturated';
+type SaturationStatus = 'healthy' | 'aging' | 'saturated';
 
 /** 饱和后的建议操作 */
-export type SaturationRecommendation =
+type SaturationRecommendation =
   | 'none'
   | 'add_difficult_cases'
   | 'retire_easy_cases'

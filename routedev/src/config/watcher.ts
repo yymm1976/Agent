@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import EventEmitter from 'node:events';
 import { logger } from '../utils/logger.js';
 
-export interface ConfigWatcherOptions {
+interface ConfigWatcherOptions {
   debounceMs?: number;
 }
 

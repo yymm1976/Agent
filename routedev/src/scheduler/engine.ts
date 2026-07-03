@@ -89,7 +89,7 @@ class TaskMinHeap {
 }
 
 /** 调度引擎选项 */
-export interface ScheduleEngineOptions {
+interface ScheduleEngineOptions {
   /** 任务存储 */
   store: ScheduleStore;
   /** 任务触发回调（异步） */

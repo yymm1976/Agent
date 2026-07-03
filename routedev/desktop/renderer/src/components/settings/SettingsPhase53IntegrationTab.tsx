@@ -1,6 +1,7 @@
 // desktop/renderer/src/components/settings/SettingsPhase53IntegrationTab.tsx
 // Phase 53 代码卫生与安全治理加固（含 10 个子任务）
 // 本 Tab 聚合关键子任务的核心字段，便于快速启用 / 调参。
+// Phase 60：合并到 '安全与治理' tab，删除 Task N 编号
 import type { AppConfig, Phase53IntegrationConfig } from '../../../../../src/config/schema.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Label } from '../ui/label.js';
@@ -28,73 +29,73 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
     updateDraft({ phase53Integration: { ...cfg, ...patch } });
   };
 
-  // 策略引擎（Task 3）
+  // 策略引擎
   const policyEngine = cfg.policyEngine ?? {};
   const updatePolicyEngine = (patch: Partial<typeof policyEngine>) => {
     update({ policyEngine: { ...policyEngine, ...patch } });
   };
 
-  // 哈希链审计（Task 4）
+  // 哈希链审计
   const auditChain = cfg.auditChain ?? {};
   const updateAuditChain = (patch: Partial<typeof auditChain>) => {
     update({ auditChain: { ...auditChain, ...patch } });
   };
 
-  // MCP 安全扫描（Task 5）
+  // MCP 安全扫描
   const mcpSecurityScan = cfg.mcpSecurityScan ?? {};
   const updateMcpSecurityScan = (patch: Partial<typeof mcpSecurityScan>) => {
     update({ mcpSecurityScan: { ...mcpSecurityScan, ...patch } });
   };
 
-  // 技能安全门控（Task 6）
+  // 技能安全门控
   const skillSecurityGate = cfg.skillSecurityGate ?? {};
   const updateSkillSecurityGate = (patch: Partial<typeof skillSecurityGate>) => {
     update({ skillSecurityGate: { ...skillSecurityGate, ...patch } });
   };
 
-  // 配置保护守卫（Task 7）
+  // 配置保护守卫
   const configGuard = cfg.configGuard ?? {};
   const updateConfigGuard = (patch: Partial<typeof configGuard>) => {
     update({ configGuard: { ...configGuard, ...patch } });
   };
 
-  // 前缀感知缓存（Task 8）
+  // 前缀感知缓存
   const prefixCache = cfg.prefixCache ?? {};
   const updatePrefixCache = (patch: Partial<typeof prefixCache>) => {
     update({ prefixCache: { ...prefixCache, ...patch } });
   };
 
-  // 上下文预算监控（Task 9）
+  // 上下文预算监控
   const budgetMonitor = cfg.budgetMonitor ?? {};
   const updateBudgetMonitor = (patch: Partial<typeof budgetMonitor>) => {
     update({ budgetMonitor: { ...budgetMonitor, ...patch } });
   };
 
-  // DAG 工作流引擎（Task 10）
+  // DAG 工作流引擎
   const dagEngine = cfg.dagEngine ?? {};
   const updateDagEngine = (patch: Partial<typeof dagEngine>) => {
     update({ dagEngine: { ...dagEngine, ...patch } });
   };
 
-  // 熔断器（Task 11）
+  // 熔断器
   const circuitBreaker = cfg.circuitBreaker ?? {};
   const updateCircuitBreaker = (patch: Partial<typeof circuitBreaker>) => {
     update({ circuitBreaker: { ...circuitBreaker, ...patch } });
   };
 
-  // Doctor 健康检查（Task 12）
+  // Doctor 健康检查
   const doctor = cfg.doctor ?? {};
   const updateDoctor = (patch: Partial<typeof doctor>) => {
     update({ doctor: { ...doctor, ...patch } });
   };
 
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
-      {/* Task 3：策略引擎接入 */}
+    <div className="space-y-6">
+      {/* 策略引擎 */}
       <Card>
         <CardHeader>
-          <CardTitle>策略引擎（Task 3）</CardTitle>
-          <CardDescription>策略引擎接入：deny/allow 默认策略 + deny-overrides 冲突解决 + 规则文件路径。</CardDescription>
+          <CardTitle>策略引擎</CardTitle>
+          <CardDescription>deny/allow 默认策略 + deny-overrides 冲突解决 + 规则文件路径。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
@@ -134,10 +135,10 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
         </CardContent>
       </Card>
 
-      {/* Task 4：哈希链审计 */}
+      {/* 哈希链审计 */}
       <Card>
         <CardHeader>
-          <CardTitle>哈希链审计（Task 4）</CardTitle>
+          <CardTitle>哈希链审计</CardTitle>
           <CardDescription>AuditLogger 写入 SHA-256 链式哈希，溢出时保留接缝哈希。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -176,10 +177,10 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
         </CardContent>
       </Card>
 
-      {/* Task 5：MCP 安全扫描 */}
+      {/* MCP 安全扫描 */}
       <Card>
         <CardHeader>
-          <CardTitle>MCP 安全扫描（Task 5）</CardTitle>
+          <CardTitle>MCP 安全扫描</CardTitle>
           <CardDescription>MCP 工具注册前扫描 4 类威胁，按阈值阻断；可配置已知工具名用于仿冒检测。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -217,10 +218,10 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
         </CardContent>
       </Card>
 
-      {/* Task 6：技能安全门控 */}
+      {/* 技能安全门控 */}
       <Card>
         <CardHeader>
-          <CardTitle>技能安全门控（Task 6）</CardTitle>
+          <CardTitle>技能安全门控</CardTitle>
           <CardDescription>第三方技能安装前通过 17 类漏洞扫描，分数 ≤ 阈值时自动安装。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -260,10 +261,10 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
         </CardContent>
       </Card>
 
-      {/* Task 7：配置保护守卫 */}
+      {/* 配置保护守卫 */}
       <Card>
         <CardHeader>
-          <CardTitle>配置保护守卫（Task 7）</CardTitle>
+          <CardTitle>配置保护守卫</CardTitle>
           <CardDescription>阻止 Agent 弱化自身的安全约束，首次触发可降级为 info。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -302,10 +303,10 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
         </CardContent>
       </Card>
 
-      {/* Task 8：前缀感知缓存 */}
+      {/* 前缀感知缓存 */}
       <Card>
         <CardHeader>
-          <CardTitle>前缀感知缓存（Task 8）</CardTitle>
+          <CardTitle>前缀感知缓存</CardTitle>
           <CardDescription>借鉴 LMCache 的内容可寻址分块缓存，按 blockSize 分块并写入 L1 内存缓存。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -344,10 +345,10 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
         </CardContent>
       </Card>
 
-      {/* Task 9：上下文预算监控 */}
+      {/* 上下文预算监控 */}
       <Card>
         <CardHeader>
-          <CardTitle>上下文预算监控（Task 9）</CardTitle>
+          <CardTitle>上下文预算监控</CardTitle>
           <CardDescription>Token 耗尽、成本超支、范围蔓延、工具循环时注入告警。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -400,10 +401,10 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
         </CardContent>
       </Card>
 
-      {/* Task 10：DAG 工作流引擎 */}
+      {/* DAG 工作流引擎 */}
       <Card>
         <CardHeader>
-          <CardTitle>DAG 工作流引擎（Task 10）</CardTitle>
+          <CardTitle>DAG 工作流引擎</CardTitle>
           <CardDescription>拓扑排序 + 并行执行 + 变量替换，失败超阈值后请求人类介入。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -454,10 +455,10 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
         </CardContent>
       </Card>
 
-      {/* Task 11：熔断器 */}
+      {/* 熔断器 */}
       <Card>
         <CardHeader>
-          <CardTitle>熔断器（Task 11）</CardTitle>
+          <CardTitle>熔断器</CardTitle>
           <CardDescription>三态机：closed / open / half_open，连续失败超阈值后熔断。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -506,10 +507,10 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
         </CardContent>
       </Card>
 
-      {/* Task 12：Doctor 健康检查 */}
+      {/* Doctor 健康检查 */}
       <Card>
         <CardHeader>
-          <CardTitle>Doctor 健康检查（Task 12）</CardTitle>
+          <CardTitle>Doctor 健康检查</CardTitle>
           <CardDescription>启动时可自动运行健康检查，超时时间可调。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -539,5 +540,3 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
     </div>
   );
 }
-
-export default SettingsPhase53IntegrationTab;

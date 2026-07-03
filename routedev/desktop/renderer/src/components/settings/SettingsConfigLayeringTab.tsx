@@ -83,5 +83,3 @@ export function SettingsConfigLayeringTab({ draft, updateDraft }: SettingsConfig
     </div>
   );
 }
-
-export default SettingsConfigLayeringTab;

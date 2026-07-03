@@ -43,9 +43,10 @@ const PHASE_CONFIGS: Record<ComposePhase, ComposePhaseConfig> = {
 - 完成后用文本回复"需求分析完成"，不要调用工具`,
     allowedToolCategories: ['file_read', 'code_search', 'file_search', 'list_directory'],
     autoAdvanceCondition: (result) => {
-      // LLM 返回非 tool_call 文本（包含"完成"关键词）→ 自动进入下一阶段
+      // I11 修复：原 includes('完成') 会误匹配"还没完成"等否定语境
+      // 精确匹配阶段标记"需求分析完成"，避免宽泛的"完成"误判
       const content = result.output ?? '';
-      return content.includes('完成') || content.includes('需求分析完成');
+      return content.includes('需求分析完成');
     },
   },
   coding: {

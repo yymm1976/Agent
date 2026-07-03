@@ -501,8 +501,8 @@ describe('Phase 51 场景 3: 配置三层合并', () => {
     const parsed = AppConfigSchema.safeParse(DEFAULT_CONFIG);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      // configLayering 默认 enabled=false, mergeStrategy='deep'
-      expect(parsed.data.configLayering.enabled).toBe(false);
+      // configLayering 默认 enabled=true（Phase 60 接线后保持原有合并行为），mergeStrategy='deep'
+      expect(parsed.data.configLayering.enabled).toBe(true);
       expect(parsed.data.configLayering.mergeStrategy).toBe('deep');
       expect(parsed.data.configLayering.projectConfigPath).toBe('.routedev/config.json');
     }

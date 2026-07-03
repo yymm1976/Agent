@@ -134,7 +134,9 @@ export type AuditAction =
   | 'trajectory_summary'
   // Phase 35 Task 2：会话生命周期事件（内置钩子写入）
   | 'session_start'
-  | 'session_end';
+  | 'session_end'
+  // Phase 68 Task 1：体制迁移记录
+  | 'regime_transition';
 
 /** 审计记录 */
 export interface AuditRecord {

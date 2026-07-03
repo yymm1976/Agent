@@ -60,18 +60,6 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <Label htmlFor="goal-clarify">启用需求澄清</Label>
-              <p className="text-xs text-rd-textMuted">执行前若目标模糊，自动追问澄清。</p>
-            </div>
-            <Switch
-              id="goal-clarify"
-              checked={goal.clarify}
-              onCheckedChange={(checked) => updateGoal({ clarify: checked })}
-            />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
               <Label htmlFor="goal-require-confirmation">要求用户确认计划</Label>
               <p className="text-xs text-rd-textMuted">分解后的子任务计划需用户确认后才执行。</p>
             </div>

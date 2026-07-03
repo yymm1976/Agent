@@ -203,6 +203,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     circuitBreaker: true,
     circuitBreakerThreshold: 5,
     circuitBreakerDuration: 30000,
+    workerTimeoutMs: 300000,
     checkpointNotify: true,
   },
   middleware: {
@@ -343,9 +344,8 @@ export const DEFAULT_CONFIG: AppConfig = {
       reviewerMaxParallel: 2,
     },
   },
-  // Phase 43：Goal 配置（澄清 + 确认 + 审计模式 + token 预算）
+  // Phase 43：Goal 配置（确认 + 审计模式 + token 预算）
   goal: {
-    clarify: true,
     requireConfirmation: true,
     auditMode: 'completion_gate_first',
     tokenBudget: 50000,
@@ -380,7 +380,6 @@ export const DEFAULT_CONFIG: AppConfig = {
     persistTree: true,
     maxNodes: 5000,
     maxBranches: 100,
-    autoSnapshot: true,
     undoStackSize: 50,
   },
   // Phase 44：并行实验（多分支并行 + 冲突检测 + 自动清理）
@@ -505,7 +504,6 @@ export const DEFAULT_CONFIG: AppConfig = {
     crossModelReviewerId: '',
     enforceEvidenceProtocol: false,
     highRiskThreshold: 40,
-    autoSelectCrossModel: true,
     failureEscalationThreshold: 2,
     contextTokenEscalationRatio: 0.8,
   },
@@ -519,11 +517,8 @@ export const DEFAULT_CONFIG: AppConfig = {
     hardDelegationTypes: ['research', 'review'],
     refuseIfSpecialistUnavailable: false,
     specialistAvailabilityOverride: {},
-    toolCallGuardEnabled: false,
     detachedSessionEnabled: true,
-    fullContextIsolation: true,
     subAgentMaxContextTokens: 32000,
-    propagateToolCallsToParent: false,
   },
   activityPanel: {
     enabled: false,
@@ -540,7 +535,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     scopeAbortCascadeEnabled: false,
   },
   configLayering: {
-    enabled: false,
+    enabled: true,
     projectConfigPath: '.routedev/config.json',
     globalConfigPath: '',
     mergeStrategy: 'deep',
@@ -673,6 +668,317 @@ export const DEFAULT_CONFIG: AppConfig = {
     doctor: {
       probeTimeout: 10000,
       runOnStartup: false,
+    },
+  },
+  // Phase 61：ACRouter 闭环模型路由
+  closedLoopRouting: {
+    enabled: true,
+    history: {
+      maxRecords: 20000,
+      persistPath: '.routedev/routing-history.jsonl',
+    },
+    memory: {
+      enabled: true,
+      topK: 10,
+      minSimilarity: 0.3,
+      embeddingProvider: 'hash',
+    },
+    orchestrator: {
+      enabled: true,
+      neighborWeight: 0.6,
+      priorWeight: 0.3,
+      baseWeight: 0.1,
+    },
+    verifier: {
+      enabled: true,
+      signals: ['compile', 'typecheck', 'latency'],
+      timeoutMs: 30000,
+    },
+  },
+  dynamicWorkflow: {
+    enabled: true,
+    synthesizeBarrier: {
+      enabled: true,
+      barrierTimeoutMs: 60000,
+      defaultStrategy: 'concat-dedup',
+      includeFailed: true,
+    },
+    adversarialVerification: {
+      enabled: true,
+      frequency: 'end-only',
+      n: 3,
+      forceCrossModel: false,
+    },
+    loopUntilDone: {
+      enabled: true,
+      maxRounds: 5,
+      stableRoundsRequired: 2,
+      minCompletionRatio: 0.85,
+    },
+    quarantine: {
+      enabled: true,
+      untrustedDeniedTools: ['file_write', 'file_edit', 'shell_exec', 'git_op'],
+      allowIntentForwarding: true,
+      contaminationTraceDepth: 10,
+    },
+    tournament: {
+      enabled: true,
+      candidateCount: 3,
+      temperature: 0.7,
+      singleElimination: true,
+    },
+  },
+  stateExternalization: {
+    enabled: true,
+    curatedSet: {
+      enabled: true,
+      autoPopulateCount: 8,
+      maxTokenBudget: 8000,
+      importanceTaggingEnabled: true,
+      subtractiveCurationEnabled: true,
+    },
+    kSentenceCompression: {
+      enabled: true,
+      k: 4,
+      keywordWeight: 0.5,
+      lengthWeight: 0.3,
+      positionWeight: 0.2,
+    },
+    contentDedup: {
+      enabled: true,
+      hashAlgorithm: 'sha256' as const,
+      minLength: 50,
+      replaceWithReference: true,
+    },
+    budgetAwareRendering: {
+      enabled: true,
+      contextWindow: 200000,
+      softNotifyThreshold: 0.5,
+      triggerThreshold: 0.8,
+      forceThreshold: 0.9,
+      renderEveryTurn: true,
+    },
+    verificationRecords: {
+      enabled: true,
+      maxRecords: 1000,
+      ttlMs: 3600000,
+    },
+  },
+  skillRouting: {
+    enabled: true,
+    sad: {
+      enabled: true,
+      maxIterations: 1,
+      convergenceTau: 0.6,
+      inputSideFeedback: true,
+    },
+    biEncoder: {
+      enabled: true,
+      modelId: 'Xenova/all-MiniLM-L6-v2',
+      topK: 10,
+      minScore: 0.2,
+      backend: 'memory' as const,
+    },
+    granularityAudit: {
+      enabled: true,
+    },
+    compatibilityScorer: {
+      enabled: true,
+      pruneThreshold: 0.15,
+      weights: {
+        ioType: 0.4,
+        categoryJaccard: 0.3,
+        keywordCoOccur: 0.3,
+      },
+    },
+    contextOptimizer: {
+      enabled: true,
+      perSubTaskTopK: 3,
+      maxTotalSkills: 8,
+      maxTokens: 1200,
+    },
+  },
+  // Phase 65：记忆系统四模块重构（v4.6.4）
+  memorySystem: {
+    enabled: true,
+    store: {
+      enabled: true,
+      dbPath: '.routedev/memory.db',
+      backend: 'sqlite' as const,
+      embeddingProvider: 'hash' as const,
+    },
+    incrementalExtractor: {
+      enabled: true,
+      mode: 'topic' as const,
+      modelId: 'deepseek-v4-flash',
+    },
+    hybridRetriever: {
+      enabled: true,
+      bm25Weight: 0.4,
+      embeddingWeight: 0.6,
+      timeDecayHalfLifeDays: 30,
+      topK: 10,
+    },
+    conservativeMerger: {
+      enabled: true,
+    },
+    rejectedAlternative: {
+      enabled: true,
+    },
+    localMaintenance: {
+      enabled: true,
+      triggerThreshold: 500,
+      reorganizeRatio: 0.2,
+      minAccessCount: 2,
+    },
+  },
+  // Phase 66：策略管道编号分段与治理（v4.6.5）
+  foundationProtocol: {
+    enabled: true,
+    checkpointPipeline: {
+      enabled: true,
+      enabledSegments: [100, 400, 500],
+      shortCircuit: true,
+    },
+    callOwner: {
+      enabled: true,
+      syncWaitMs: 10000,
+      persistPath: '.routedev/pending-approvals.jsonl',
+      defaultStrategyForToolApproval: 'off' as const,
+      defaultStrategyForIntentGuard: 'off' as const,
+    },
+    stateSnapshotChain: {
+      enabled: true,
+      arbiterSecretEnv: 'ROUTEDEV_ARBITER_SECRET',
+    },
+    reputationDeriver: {
+      enabled: true,
+      maxCacheAgeMs: 60000,
+    },
+  },
+  // Phase 67：推理质量诊断与SNR过滤（v4.6.6）
+  reasoningQualityDiagnostics: {
+    enabled: true,
+    miCrossScorer: {
+      enabled: true,
+      collapseThreshold: 1.5,
+      minPrompts: 2,
+      samplesPerPrompt: 4,
+    },
+    snrAwareFilter: {
+      enabled: true,
+      topP: 0.9,
+      minRVThreshold: 0.01,
+      batchRejectRatio: 0.7,
+    },
+    epistemicTokenProtector: {
+      enabled: true,
+      neighborhoodLines: 3,
+    },
+    epistemicIntegrityChecker: {
+      enabled: true,
+      overCompressionThreshold: 0.5,
+      minTokenCount: 5,
+    },
+    epistemicPreservingSummarizer: {
+      enabled: true,
+      maxTokens: 500,
+    },
+    auditMetricsLogging: {
+      logEpistemicStats: true,
+    },
+  },
+  // Phase 68：检索/搜索/发现三分与知识图谱（v4.6.7）
+  phase68Integration: {
+    operationClassification: {
+      enabled: false,
+      logRegimeTransition: true,
+    },
+    provenanceGraph: {
+      enabled: false,
+      persistPath: '.routedev/provenance.jsonl',
+      maxArtifacts: 10000,
+    },
+    rejectedAlternativeStore: {
+      enabled: false,
+      persistPath: '.routedev/rejected-alternatives.jsonl',
+      maxRecords: 5000,
+      defaultQueryLimit: 5,
+    },
+    kanObstacleChecker: {
+      enabled: false,
+      blockOnObstacle: false,
+    },
+    quantitativeGate: {
+      enabled: false,
+      mdlWeight: 0.4,
+      aicWeight: 0.6,
+      acceptThreshold: 0.7,
+      rejectThreshold: 0.3,
+      complexityPenalty: 0.01,
+    },
+  },
+  // Phase 69：Worktree 隔离执行与多代理并行编排（v4.7.0）
+  phase69Integration: {
+    worktree: {
+      enabled: false,
+      worktreeRoot: '.routedev/worktrees',
+      maxWorktrees: 5,
+      cleanupTimeoutMs: 30 * 60 * 1000,
+    },
+    parallelExecution: {
+      enabled: false,
+      maxConcurrency: 3,
+      workerTimeoutMs: 10 * 60 * 1000,
+    },
+    resultComparator: {
+      autoSelect: false,
+      weights: { brevity: 0.3, errorCount: 0.4, testPassRate: 0.3 },
+    },
+    cliAdapters: {
+      enabled: false,
+      claudeCode: {
+        command: 'claude',
+        defaultArgs: [],
+        spawnTimeoutMs: 30000,
+      },
+    },
+  },
+  // Phase 70：上下文压缩技术深度优化（v4.7.1）
+  phase70Integration: {
+    toolOutputBudget: {
+      enabled: false,
+      maxCharsPerOutput: 2000,
+      previewHeadChars: 500,
+      previewTailChars: 500,
+      offloadDir: '.routedev/offloaded',
+    },
+    microCompact: {
+      enabled: false,
+      cleanBeforeRounds: 5,
+      keepRecentRounds: 3,
+    },
+    contextCollapse: {
+      enabled: false,
+      minToolCallsForChain: 3,
+    },
+    autoCompactGuardian: {
+      enabled: false,
+      contextWindow: 200000,
+      reservedTokensForSummary: 20000,
+      autoCompactBuffer: 13000,
+      warningBuffer: 20000,
+      errorBuffer: 20000,
+      maxConsecutiveFailures: 3,
+    },
+    compactPrompt: {
+      enabled: false,
+      defaultDirection: 'base',
+    },
+    sessionMemory: {
+      enabled: false,
+      persistPath: '.routedev/session-memory.json',
+      maxMemories: 100,
     },
   },
 };

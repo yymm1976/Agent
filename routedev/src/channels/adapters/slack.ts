@@ -204,9 +204,13 @@ export class SlackAdapter implements ChannelAdapter {
     if (this.processedEventIds.has(eventId)) {
       return true;
     }
-    // 容量保护：超过上限时清空旧记录
+    // I9 修复：容量保护改为 LRU 淘汰最旧 25%，避免 clear() 瞬间遗忘所有已处理事件
     if (this.processedEventIds.size >= this.DEDUP_MAX_SIZE) {
-      this.processedEventIds.clear();
+      const entries = [...this.processedEventIds];
+      const removeCount = Math.floor(this.DEDUP_MAX_SIZE * 0.25);
+      for (let i = 0; i < removeCount; i++) {
+        this.processedEventIds.delete(entries[i]);
+      }
     }
     this.processedEventIds.add(eventId);
     return false;

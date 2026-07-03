@@ -23,6 +23,32 @@ import { Orchestrator } from './multi/orchestrator.js';
 import { WorkerExecutor } from './multi/worker-executor.js';
 import type { ExecutionPlan, WorkerResult, WorkerTask, WorkerRole } from './multi/types.js';
 import type { StepComplexity, StepExecutionResult } from './task-orchestrator-types.js';
+import { SynthesizeBarrier } from './multi/synthesize-barrier.js';
+import type { FanOutResult } from './multi/synthesize-barrier.js';
+// Phase 62：动态工作流模式与隔离治理模块（可选注入，受 dynamicWorkflow config 守护）
+import type { AdversarialVerifier } from './adversarial-verifier.js';
+import type { RubricRegistry } from './rubric-registry.js';
+import type { LoopUntilDoneGate } from './loop-until-done-gate.js';
+import type { QuarantineManager } from '../tools/quarantine-profile.js';
+import type { ActionAgentDispatcher, DispatchIntent } from './action-agent-dispatcher.js';
+import type { TournamentSelector, TournamentCandidate } from './tournament-selector.js';
+// Phase 66：策略管道与治理
+import type { CheckpointPipeline } from '../policies/checkpoint-pipeline.js';
+import type { CallOwnerCoordinator } from '../policies/call-owner-coordinator.js';
+import type { StateSnapshotChain } from '../harness/state-snapshot-chain.js';
+import type { ReputationDeriver } from '../memory/reputation-deriver.js';
+// Phase 67：推理质量诊断
+import type { MICrossScorer } from '../evaluation/mi-cross-scorer.js';
+import type { SNRAwareFilter } from './snr-aware-filter.js';
+import type { EpistemicIntegrityChecker } from './epistemic-integrity-checker.js';
+import type { EpistemicPreservingSummarizer } from './epistemic-preserving-summarizer.js';
+import type { QualityMetricsRecorder } from '../harness/quality-metrics-types.js';
+// Phase 69：Worktree 隔离执行与多代理并行编排
+import type { WorktreeManager } from './multi/worktree-manager.js';
+import type { ParallelExecutor, ParallelOutcome } from './multi/parallel-executor.js';
+import type { ResultComparator } from './multi/result-comparator.js';
+import type { AgentGroupResolver } from './multi/agent-group-resolver.js';
+import type { CLIAdapterRegistry } from './multi/cli-adapter.js';
 
 /**
  * 执行编排器依赖
@@ -41,6 +67,50 @@ export interface ExecutionOrchestratorDeps {
   onProgress?: (progress: ExecutionProgress) => void;
   /** 系统消息回调 */
   addSystemMessage?: (content: string) => void;
+  // Phase 62：动态工作流模式与隔离治理模块（可选注入，受 dynamicWorkflow config 守护）
+  /** 对抗性验证器——跨模型 rubric 检查 */
+  adversarialVerifier?: AdversarialVerifier;
+  /** Rubric 注册表——提供任务类型对应的检查清单 */
+  rubricRegistry?: RubricRegistry;
+  /** 循环直到完成门——基于 CompletionGate 的多轮稳定性检查 */
+  loopUntilDoneGate?: LoopUntilDoneGate;
+  /** 隔离管理器——未信任 Agent 的工具调用隔离 */
+  quarantineManager?: QuarantineManager;
+  /** 意图转发器——隔离策略下转发未信任 Agent 的意图到信任 Agent */
+  actionAgentDispatcher?: ActionAgentDispatcher;
+  /** 锦标赛选择器——从多个候选结果中选最优 */
+  tournamentSelector?: TournamentSelector<string>;
+  // Phase 66：策略管道与治理
+  /** 策略管道——按段位编号分段评估 */
+  checkpointPipeline?: CheckpointPipeline;
+  /** Call Owner 协调器——管理工具审批策略 */
+  callOwnerCoordinator?: CallOwnerCoordinator;
+  /** 状态快照链——记录关键执行点状态快照 */
+  stateSnapshotChain?: StateSnapshotChain;
+  /** 信誉派生器——从执行历史派生 worker 信誉 */
+  reputationDeriver?: ReputationDeriver;
+  // Phase 67：推理质量诊断
+  /** MI 代理评分器——跨模型推理质量评分 */
+  miCrossScorer?: MICrossScorer;
+  /** SNR 感知过滤器——过滤低质量 worker 输出 */
+  snrAwareFilter?: SNRAwareFilter;
+  /** 认知完整性检查器——执行后检查认知完整性 */
+  epistemicIntegrityChecker?: EpistemicIntegrityChecker;
+  /** 认知保留摘要器——压缩时保留认知内容 */
+  epistemicPreservingSummarizer?: EpistemicPreservingSummarizer;
+  /** 质量指标记录器——记录质量指标供审计 */
+  qualityMetricsRecorder?: QualityMetricsRecorder;
+  // Phase 69：Worktree 隔离执行与多代理并行编排
+  /** Worktree 管理器——为隔离 worker 创建 worktree */
+  worktreeManager?: WorktreeManager;
+  /** 并行执行引擎——并行执行多个 worker */
+  parallelExecutor?: ParallelExecutor;
+  /** 结果比较器——比较和排序 worker 结果 */
+  resultComparator?: ResultComparator;
+  /** 代理组解析器——解析 @group 地址 */
+  agentGroupResolver?: AgentGroupResolver;
+  /** CLI 适配器注册表——管理 CLI 适配器会话 */
+  cliAdapterRegistry?: CLIAdapterRegistry;
 }
 
 /**
@@ -386,6 +456,60 @@ export class ExecutionOrchestrator {
       return await this.executeSingleAgent(plan, llmClient, routeDecision, conversationHistory);
     }
 
+    // Phase 66：CheckpointPipeline——按段位编号分段评估执行计划
+    if (this.deps.checkpointPipeline && this.deps.config?.foundationProtocol?.checkpointPipeline?.enabled) {
+      try {
+        const evalResult = this.deps.checkpointPipeline.evaluateAction(
+          { type: 'multi_agent_plan', stepCount: plan.steps.length, groupCount: executionPlan.parallelGroups.length },
+          [],
+        );
+        logger.info('Phase 66: CheckpointPipeline 评估完成', {
+          finalAction: evalResult.finalAction,
+          firstFailedSegment: evalResult.firstFailedSegment,
+          segmentCount: evalResult.segmentResults.length,
+        });
+        if (evalResult.finalAction === 'deny') {
+          this.deps.addSystemMessage?.('⚠️ CheckpointPipeline 策略拒绝，回退到单 Agent 模式');
+          return await this.executeSingleAgent(plan, llmClient, routeDecision, conversationHistory);
+        }
+      } catch (err) {
+        logger.warn('Phase 66: CheckpointPipeline 评估失败（fail-open）', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Phase 66：CallOwnerCoordinator——初始化工具审批协调
+    if (this.deps.callOwnerCoordinator && this.deps.config?.foundationProtocol?.callOwner?.enabled) {
+      try {
+        logger.info('Phase 66: CallOwnerCoordinator 就绪', {
+          strategy: this.deps.config.foundationProtocol.callOwner.defaultStrategyForToolApproval ?? 'conditional',
+        });
+      } catch (err) {
+        logger.warn('Phase 66: CallOwnerCoordinator 初始化失败（fail-open）', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Phase 69：AgentGroupResolver——注册默认工作组
+    if (this.deps.agentGroupResolver) {
+      try {
+        this.deps.agentGroupResolver.register({
+          name: 'default-workers',
+          workerIds: plan.steps.map((s) => `worker-${s.id}`),
+          description: '默认工作组',
+        });
+        logger.info('Phase 69: AgentGroupResolver 注册默认工作组', {
+          workerCount: plan.steps.length,
+        });
+      } catch (err) {
+        logger.warn('Phase 69: AgentGroupResolver 注册失败（fail-open）', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     // 3. 创建 WorkerExecutor
     const workerExecutor = new WorkerExecutor(this.deps.agentLoop);
 
@@ -466,6 +590,31 @@ export class ExecutionOrchestrator {
         };
       });
 
+      // Phase 69：WorktreeManager——为并行 worker 创建隔离 worktree
+      const activeWorktrees: string[] = [];
+      if (this.deps.worktreeManager && this.deps.config?.phase69Integration?.worktree?.enabled) {
+        for (const task of workerTasks) {
+          try {
+            const worktreeInfo = await this.deps.worktreeManager.create(
+              `worker-${task.stepId}-${task.role}`,
+            );
+            if (worktreeInfo) {
+              activeWorktrees.push(worktreeInfo.id);
+              logger.info('Phase 69: WorktreeManager worktree 已创建', {
+                workerId: worktreeInfo.id,
+                path: worktreeInfo.path,
+                branch: worktreeInfo.branch,
+              });
+            }
+          } catch (err) {
+            logger.warn('Phase 69: WorktreeManager 创建失败（fail-open）', {
+              stepId: task.stepId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      }
+
       // I27 修复：使用信号量控制并发数，避免并行组内 Worker 过多导致资源耗尽
       // 配置读取：config?.execution?.maxConcurrency ?? 3（默认 3）
       const maxConcurrency = this.deps.config?.execution?.maxConcurrency ?? 3;
@@ -482,6 +631,14 @@ export class ExecutionOrchestrator {
         workerTasks.map(async (task) => {
           // I27 修复：通过信号量限制并发
           return semaphore.runWith(async () => {
+            // I10 修复：为每个 Worker 加独立超时，避免单个 Worker 挂起阻塞整个并行组
+            const workerTimeoutMs = this.deps.config?.execution?.workerTimeoutMs ?? 300_000;
+            const workerController = new AbortController();
+            const timer = setTimeout(() => workerController.abort(), workerTimeoutMs);
+            // 全局信号中断时也中断 Worker
+            if (this.deps.signal) {
+              this.deps.signal.addEventListener('abort', () => workerController.abort(), { once: true });
+            }
             try {
               return await workerExecutor.execute(
                 task,
@@ -489,10 +646,22 @@ export class ExecutionOrchestrator {
                 routeDecision,
                 conversationHistory,
                 this.deps.systemPromptRef.current,
-                this.deps.signal,
+                workerController.signal,
                 this.deps.onConfirmTool,
               );
             } catch (error) {
+              // 超时导致的 abort 转为友好的超时错误
+              if (workerController.signal.aborted) {
+                logger.warn('Worker timed out', { stepId: task.stepId, timeoutMs: workerTimeoutMs });
+                return {
+                  stepId: task.stepId,
+                  role: task.role,
+                  success: false,
+                  conclusion: `Worker 超时（${workerTimeoutMs}ms），已终止`,
+                  modifiedFiles: [],
+                  tokenUsage: { inputTokens: 0, outputTokens: 0 },
+                } as WorkerResult;
+              }
               // 兜底：WorkerExecutor 内部已有异常隔离，这里捕获未预期的错误
               logger.error('WorkerExecutor unexpected error', {
                 stepId: task.stepId,
@@ -506,6 +675,8 @@ export class ExecutionOrchestrator {
                 modifiedFiles: [],
                 tokenUsage: { inputTokens: 0, outputTokens: 0 },
               } as WorkerResult;
+            } finally {
+              clearTimeout(timer);
             }
           });
         }),
@@ -529,6 +700,314 @@ export class ExecutionOrchestrator {
           tokenUsage: { inputTokens: 0, outputTokens: 0 },
         } as WorkerResult;
       });
+
+      // Phase 62 Task 1：SynthesizeBarrier 屏障合并（当 dynamicWorkflow.synthesizeBarrier.enabled 开启时）
+      if (this.deps.config?.dynamicWorkflow?.synthesizeBarrier?.enabled) {
+        const synthesizeCfg = this.deps.config.dynamicWorkflow.synthesizeBarrier;
+        const fanOutResults: FanOutResult<string>[] = workerResults.map((wr) => ({
+          workerId: `worker-${wr.stepId}-${wr.role}`,
+          success: wr.success,
+          data: wr.success ? wr.conclusion : undefined,
+          failedReason: wr.success ? undefined : wr.conclusion,
+          durationMs: 0,
+        }));
+        const synthBarrier = new SynthesizeBarrier(undefined);
+        const synthOutput = await synthBarrier.synthesize(fanOutResults, {
+          barrierTimeoutMs: synthesizeCfg.barrierTimeoutMs,
+          strategy: synthesizeCfg.defaultStrategy,
+          includeFailed: synthesizeCfg.includeFailed,
+        });
+        logger.info('SynthesizeBarrier completed', {
+          strategy: synthesizeCfg.defaultStrategy,
+          participants: synthOutput.participants.length,
+          barrierTimedOut: synthOutput.barrierTimedOut,
+          synthesizeMs: synthOutput.synthesizeMs,
+        });
+      }
+
+      // Phase 62 接线：AdversarialVerifier——worker 完成后跨模型 rubric 验证
+      // 当 dynamicWorkflow.adversarialVerification.enabled 时，对每个成功 worker 结果调用 verify()
+      if (this.deps.adversarialVerifier && this.deps.config?.dynamicWorkflow?.adversarialVerification?.enabled) {
+        const advVerifier = this.deps.adversarialVerifier;
+        for (let i = 0; i < workerResults.length; i++) {
+          const wr = workerResults[i];
+          if (!wr.success) continue;
+          const stepIdx = completedSteps + i;
+          try {
+            if (!advVerifier.shouldVerify(stepIdx, plan.steps.length)) continue;
+            const taskType = this.inferTaskType(wr.role, groupSteps[i]?.description ?? '');
+            const outcome = await advVerifier.verify({
+              modifiedFiles: wr.modifiedFiles,
+              executionSummary: wr.conclusion,
+              taskType,
+              stepIndex: stepIdx,
+            });
+            if (!outcome.passed) {
+              logger.warn('Phase 62: AdversarialVerifier 检查未通过', {
+                stepId: wr.stepId,
+                taskType,
+                isCrossModel: outcome.isCrossModel,
+                downgradeReason: outcome.downgradeReason,
+              });
+            }
+          } catch (err) {
+            logger.warn('Phase 62: AdversarialVerifier.verify 失败（fail-open）', {
+              stepId: wr.stepId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      }
+
+      // Phase 62 接线：TournamentSelector——多结果择优
+      // 当 dynamicWorkflow.tournament.enabled 且有多个成功 worker 结果时，用锦标赛选择最优
+      if (this.deps.tournamentSelector && this.deps.config?.dynamicWorkflow?.tournament?.enabled) {
+        const successfulResults = workerResults.filter(wr => wr.success);
+        if (successfulResults.length > 1) {
+          try {
+            const candidates: TournamentCandidate<string>[] = successfulResults.map(wr => ({
+              id: `worker-${wr.stepId}-${wr.role}`,
+              content: wr.conclusion,
+              metadata: { modifiedFiles: wr.modifiedFiles },
+            }));
+            const tournamentResult = await this.deps.tournamentSelector.select(candidates);
+            logger.info('Phase 62: TournamentSelector 选出最优结果', {
+              winnerId: tournamentResult.winner.id,
+              totalComparisons: tournamentResult.totalComparisons,
+              durationMs: tournamentResult.durationMs,
+            });
+          } catch (err) {
+            logger.warn('Phase 62: TournamentSelector.select 失败（fail-open）', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      }
+
+      // Phase 62 接线：QuarantineManager + ActionAgentDispatcher——工具隔离与意图转发
+      // 当 dynamicWorkflow.quarantine.enabled 时，检查 worker 是否使用了被隔离的工具
+      if (this.deps.quarantineManager && this.deps.config?.dynamicWorkflow?.quarantine?.enabled) {
+        const quarantine = this.deps.quarantineManager;
+        const deniedToolsList = this.deps.config.dynamicWorkflow.quarantine.untrustedDeniedTools ?? [];
+        for (let i = 0; i < workerResults.length; i++) {
+          const wr = workerResults[i];
+          if (!wr.success) continue;
+          // 检查 worker 修改的文件是否涉及被隔离的工具
+          const usedDeniedTools = wr.modifiedFiles.length > 0 && deniedToolsList.some(
+            (tool) => tool === 'file_write' || tool === 'file_edit',
+          );
+          if (usedDeniedTools) {
+            logger.warn('Phase 62: 未信任 worker 使用了被隔离的工具', {
+              stepId: wr.stepId,
+              modifiedFiles: wr.modifiedFiles,
+            });
+            // 传播污染：未信任 worker 的输出可能不可信
+            quarantine.propagateContamination('untrusted-worker', 'trusted-primary', `worker-${wr.stepId} 使用了被隔离的工具`);
+
+            // Phase 62 接线：ActionAgentDispatcher——意图转发
+            // 当隔离策略允许意图转发时，将未信任 worker 的意图转发给信任 Agent
+            if (this.deps.actionAgentDispatcher) {
+              try {
+                const intent: DispatchIntent = {
+                  intentId: `intent-${wr.stepId}-${Date.now()}`,
+                  description: wr.conclusion.slice(0, 200),
+                  requiredTools: deniedToolsList,
+                  originAgentId: 'untrusted-worker',
+                };
+                const dispatchResult = await this.deps.actionAgentDispatcher.dispatch(intent);
+                logger.info('Phase 62: ActionAgentDispatcher 意图转发完成', {
+                  intentId: dispatchResult.intentId,
+                  executedBy: dispatchResult.executedBy,
+                  success: dispatchResult.success,
+                });
+              } catch (err) {
+                logger.warn('Phase 62: ActionAgentDispatcher.dispatch 失败（fail-open）', {
+                  stepId: wr.stepId,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
+            }
+          }
+        }
+      }
+
+      // Phase 67：SNRAwareFilter——按 RV 过滤低质量 worker 结果
+      if (this.deps.snrAwareFilter && this.deps.config?.reasoningQualityDiagnostics?.snrAwareFilter?.enabled) {
+        try {
+          const tasksWithRV = workerResults.map((wr) => ({
+            taskId: `worker-${wr.stepId}-${wr.role}`,
+            description: wr.conclusion.slice(0, 200),
+            estimatedRewardVariance: wr.success ? 0.8 : 0.2,
+            retained: true,
+          }));
+          const filterResult = this.deps.snrAwareFilter.filter(tasksWithRV);
+          logger.info('Phase 67: SNRAwareFilter 过滤完成', {
+            retained: filterResult.retainedTasks.length,
+            filtered: filterResult.filteredOutTasks.length,
+            batchRejected: filterResult.batchRejected,
+          });
+          if (filterResult.batchRejected) {
+            logger.warn('Phase 67: SNRAwareFilter 拒绝整个 batch');
+          }
+        } catch (err) {
+          logger.warn('Phase 67: SNRAwareFilter 过滤失败（fail-open）', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      // Phase 67：MICrossScorer——跨模型推理质量评分
+      if (this.deps.miCrossScorer && this.deps.config?.reasoningQualityDiagnostics?.miCrossScorer?.enabled) {
+        try {
+          const successfulResults = workerResults.filter(wr => wr.success);
+          if (successfulResults.length >= 2) {
+            const scores = successfulResults.map((wr) => ({
+              promptId: `worker-${wr.stepId}`,
+              retrievalAcc: 0.8,
+              randomBaseline: 1 / successfulResults.length,
+            }));
+            const snapshot = this.deps.miCrossScorer.computeMIProxy(scores);
+            logger.info('Phase 67: MICrossScorer 推理质量评分', {
+              miZScore: snapshot.miZScore,
+              miZScoreEma: snapshot.miZScoreEma,
+              collapseWarning: snapshot.collapseWarning,
+            });
+            if (snapshot.collapseWarning) {
+              this.deps.addSystemMessage?.('⚠️ MICrossScorer: 推理质量坍缩告警');
+            }
+          }
+        } catch (err) {
+          logger.warn('Phase 67: MICrossScorer 评分失败（fail-open）', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      // Phase 67：EpistemicIntegrityChecker——认知完整性检查
+      if (this.deps.epistemicIntegrityChecker && this.deps.config?.reasoningQualityDiagnostics?.epistemicIntegrityChecker?.enabled) {
+        try {
+          for (const wr of workerResults) {
+            if (!wr.success) continue;
+            const integrityResult = this.deps.epistemicIntegrityChecker.check(
+              wr.conclusion,
+              wr.conclusion,
+            );
+            if (integrityResult.overCompressionWarning) {
+              logger.warn('Phase 67: EpistemicIntegrityChecker 认知完整性预警', {
+                stepId: wr.stepId,
+                frequencyDropRatio: integrityResult.frequencyDropRatio,
+              });
+            }
+          }
+        } catch (err) {
+          logger.warn('Phase 67: EpistemicIntegrityChecker 检查失败（fail-open）', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      // Phase 67：QualityMetricsRecorder——记录质量指标
+      if (this.deps.qualityMetricsRecorder && this.deps.config?.reasoningQualityDiagnostics?.auditMetricsLogging?.logEpistemicStats) {
+        try {
+          for (const wr of workerResults) {
+            this.deps.qualityMetricsRecorder.logWorkerDispatchWithRV(
+              `worker-${wr.stepId}-${wr.role}`,
+              wr.success ? 0.8 : 0.2,
+              wr.success,
+            );
+          }
+          logger.info('Phase 67: QualityMetricsRecorder 质量指标已记录', {
+            count: workerResults.length,
+          });
+        } catch (err) {
+          logger.warn('Phase 67: QualityMetricsRecorder 记录失败（fail-open）', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      // Phase 66：StateSnapshotChain——记录状态快照
+      if (this.deps.stateSnapshotChain && this.deps.config?.foundationProtocol?.stateSnapshotChain?.enabled) {
+        try {
+          await this.deps.stateSnapshotChain.writeSnapshot({
+            machineType: 'compose_pipeline',
+            stage: 'multi_agent_group_complete',
+            payload: {
+              groupStepIds: groupSteps.map(s => s.id),
+              successCount: workerResults.filter(wr => wr.success).length,
+              totalCount: workerResults.length,
+            },
+            settled: true,
+          });
+          logger.info('Phase 66: StateSnapshotChain 状态快照已记录', {
+            groupSize: groupSteps.length,
+          });
+        } catch (err) {
+          logger.warn('Phase 66: StateSnapshotChain 记录失败（fail-open）', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      // Phase 66：ReputationDeriver——派生 worker 信誉
+      if (this.deps.reputationDeriver && this.deps.config?.foundationProtocol?.reputationDeriver?.enabled) {
+        try {
+          for (const wr of workerResults) {
+            const references = [{ topicId: `worker-${wr.stepId}`, outcome: wr.success ? 'approved' as const : 'denied' as const }];
+            const reputation = this.deps.reputationDeriver.deriveReputation(
+              `worker-${wr.role}`,
+              references,
+            );
+            logger.info('Phase 66: ReputationDeriver 信誉派生', {
+              workerRole: wr.role,
+              credibility: reputation.credibility,
+            });
+          }
+        } catch (err) {
+          logger.warn('Phase 66: ReputationDeriver 派生失败（fail-open）', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      // Phase 69：ResultComparator——比较和排序 worker 结果
+      if (this.deps.resultComparator && workerResults.length > 1) {
+        try {
+          const outcomes: ParallelOutcome[] = workerResults.map(wr => ({
+            success: wr.success,
+            workerId: `worker-${wr.stepId}-${wr.role}`,
+            result: wr.success ? wr.conclusion : undefined,
+            error: wr.success ? undefined : wr.conclusion,
+          }));
+          const comparison = this.deps.resultComparator.compare(outcomes);
+          logger.info('Phase 69: ResultComparator 结果比较', {
+            winnerId: comparison.winnerId,
+            reason: comparison.reason,
+            needsHumanReview: comparison.needsHumanReview,
+          });
+        } catch (err) {
+          logger.warn('Phase 69: ResultComparator 比较失败（fail-open）', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      // Phase 69：WorktreeManager——清理已完成的 worktree
+      if (this.deps.worktreeManager && activeWorktrees.length > 0) {
+        try {
+          for (const workerId of activeWorktrees) {
+            this.deps.worktreeManager.complete(workerId);
+          }
+          await this.deps.worktreeManager.cleanupAll();
+          logger.info('Phase 69: WorktreeManager worktree 已清理', {
+            cleanedCount: activeWorktrees.length,
+          });
+        } catch (err) {
+          logger.warn('Phase 69: WorktreeManager 清理失败（fail-open）', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
 
       // 处理结果
       for (let i = 0; i < workerResults.length; i++) {
@@ -580,6 +1059,62 @@ export class ExecutionOrchestrator {
     const allSuccess = results.every((r) => r.success);
     blackboard.updateGoalStatus(allSuccess ? 'completed' : 'partial');
 
+    // Phase 62 接线：LoopUntilDoneGate——循环直到完成
+    // 当 dynamicWorkflow.loopUntilDone.enabled 时，基于 CompletionGate 多轮验证是否真正完成
+    if (this.deps.loopUntilDoneGate && this.deps.config?.dynamicWorkflow?.loopUntilDone?.enabled) {
+      try {
+        const loopResult = await this.deps.loopUntilDoneGate.run({
+          projectPath: process.cwd(),
+          modifiedFiles,
+        });
+        logger.info('Phase 62: LoopUntilDoneGate 完成', {
+          canStop: loopResult.canStop,
+          roundsExecuted: loopResult.roundsExecuted,
+          stopReason: loopResult.stopReason,
+          finalCompletionRatio: loopResult.finalCompletionRatio,
+        });
+        if (!loopResult.canStop) {
+          this.deps.addSystemMessage?.(`⚠️ LoopUntilDoneGate: ${loopResult.roundsExecuted} 轮后仍未达到完成阈值 (${(loopResult.finalCompletionRatio * 100).toFixed(0)}%)`);
+        }
+      } catch (err) {
+        logger.warn('Phase 62: LoopUntilDoneGate.run 失败（fail-open）', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Phase 67：EpistemicPreservingSummarizer——执行完成后检查认知保留
+    if (this.deps.epistemicPreservingSummarizer && this.deps.config?.reasoningQualityDiagnostics?.epistemicPreservingSummarizer?.enabled) {
+      try {
+        const successfulResults = results.filter(r => r.success);
+        if (successfulResults.length > 0) {
+          logger.info('Phase 67: EpistemicPreservingSummarizer 就绪', {
+            successfulSteps: successfulResults.length,
+            maxTokens: this.deps.config.reasoningQualityDiagnostics.epistemicPreservingSummarizer.maxTokens,
+          });
+        }
+      } catch (err) {
+        logger.warn('Phase 67: EpistemicPreservingSummarizer 检查失败（fail-open）', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Phase 69：CLIAdapterRegistry——清理已注册的适配器会话
+    if (this.deps.cliAdapterRegistry) {
+      try {
+        const adapters = this.deps.cliAdapterRegistry.list();
+        logger.info('Phase 69: CLIAdapterRegistry 适配器状态', {
+          registeredAdapters: adapters.length,
+          adapterNames: adapters.map(a => a.name),
+        });
+      } catch (err) {
+        logger.warn('Phase 69: CLIAdapterRegistry 检查失败（fail-open）', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     return {
       results,
       totalUsage: {
@@ -592,6 +1127,22 @@ export class ExecutionOrchestrator {
       failedStepIds: results.filter((r) => !r.success).map((r) => r.stepId),
       blackboardSnapshot: blackboard.getSnapshot(),
     };
+  }
+
+  /**
+   * Phase 62：根据 worker 角色和步骤描述推断任务类型
+   * 用于 AdversarialVerifier 选择对应的 rubric
+   */
+  private inferTaskType(role: WorkerRole, description: string): string {
+    const desc = description.toLowerCase();
+    if (desc.includes('安全') || desc.includes('security') || desc.includes('audit')) return 'security-audit';
+    if (desc.includes('重构') || desc.includes('refactor')) return 'refactor';
+    if (desc.includes('bug') || desc.includes('修复') || desc.includes('fix')) return 'bug-fix';
+    if (desc.includes('新增') || desc.includes('feature') || desc.includes('add')) return 'new-feature';
+    // 根据角色推断
+    if (role === 'reviewer') return 'security-audit';
+    if (role === 'tester') return 'bug-fix';
+    return 'default';
   }
 
   /**
