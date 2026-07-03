@@ -10,6 +10,7 @@ import type {
   CodeMapFile,
   IndexStatus,
 } from './schema.js';
+import type { PendingReference } from './extractor.js';
 
 export type DB = DatabaseSync;
 
@@ -58,12 +59,22 @@ export function initDatabase(dbPath: string): DB {
       weight REAL NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS unresolved_refs (
+      id INTEGER PRIMARY KEY,
+      source_node_id TEXT NOT NULL,
+      callee_name TEXT NOT NULL,
+      line INTEGER NOT NULL,
+      file_path TEXT NOT NULL,
+      FOREIGN KEY (source_node_id) REFERENCES nodes(id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_nodes_name ON nodes(name);
     CREATE INDEX IF NOT EXISTS idx_nodes_file ON nodes(file_path);
     CREATE INDEX IF NOT EXISTS idx_nodes_kind ON nodes(kind);
     CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source);
     CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target);
     CREATE INDEX IF NOT EXISTS idx_edges_kind ON edges(kind);
+    CREATE INDEX IF NOT EXISTS idx_unresolved_callee ON unresolved_refs(callee_name);
   `);
 
   return db;
@@ -112,6 +123,44 @@ export function insertEdge(db: DB, edge: CodeMapEdge): void {
     INSERT OR REPLACE INTO edges (id, source, target, kind, weight)
     VALUES (?, ?, ?, ?, ?)
   `).run(edge.id, edge.source, edge.target, edge.kind, edge.weight);
+}
+
+/** 批量插入未解析调用引用 */
+export function insertUnresolvedRefs(db: DB, refs: PendingReference[]): void {
+  if (refs.length === 0) return;
+  const stmt = db.prepare(`
+    INSERT INTO unresolved_refs (source_node_id, callee_name, line, file_path)
+    VALUES (?, ?, ?, ?)
+  `);
+  const begin = db.prepare('BEGIN');
+  begin.run();
+  try {
+    for (const ref of refs) {
+      stmt.run(ref.sourceId, ref.calleeName, ref.line, ref.filePath);
+    }
+    db.prepare('COMMIT').run();
+  } catch (e) {
+    db.prepare('ROLLBACK').run();
+    throw e;
+  }
+}
+
+/** 按 callee 名字查询未解析引用（供后续索引补全使用） */
+export function getUnresolvedRefsByCallee(db: DB, calleeName: string): PendingReference[] {
+  const rows = db.prepare(
+    'SELECT source_node_id AS sourceId, callee_name AS calleeName, line, file_path AS filePath FROM unresolved_refs WHERE callee_name = ?',
+  ).all(calleeName) as Array<Record<string, unknown>>;
+  return rows.map(row => ({
+    sourceId: row.sourceId as string,
+    calleeName: row.calleeName as string,
+    line: row.line as number,
+    filePath: row.filePath as string,
+  }));
+}
+
+/** 删除指定文件的所有未解析引用（重新索引前清理） */
+export function deleteFileUnresolvedRefs(db: DB, filePath: string): void {
+  db.prepare('DELETE FROM unresolved_refs WHERE file_path = ?').run(filePath);
 }
 
 /** 删除文件的所有节点和边（级联） */
@@ -195,6 +244,28 @@ export function batchUpdateRankScores(db: DB, scores: Map<string, number>): void
 function getFileByPath(db: DB, filePath: string): CodeMapFile | null {
   const row = db.prepare('SELECT * FROM files WHERE path = ?').get(filePath) as Record<string, unknown> | undefined;
   return row ? rowToFile(row) : null;
+}
+
+/**
+ * 读取文件已存储的 content hash
+ * 供 indexer 在增量索引时与当前文件 hash 比对，相同则跳过重新解析
+ * @returns 已存储的 hash；文件未索引时返回 null
+ */
+export function getFileContentHash(db: DB, filePath: string): string | null {
+  const row = db.prepare('SELECT content_hash FROM files WHERE path = ?').get(filePath) as { content_hash: string } | undefined;
+  return row?.content_hash ?? null;
+}
+
+/**
+ * 更新文件的 content hash（同时刷新 indexed_at）
+ * 供 indexer 在跳过重新解析时仅更新 hash 和索引时间（轻量 touch）
+ */
+export function setFileContentHash(db: DB, filePath: string, hash: string): void {
+  db.prepare('UPDATE files SET content_hash = ?, indexed_at = ? WHERE path = ?').run(
+    hash,
+    new Date().toISOString(),
+    filePath,
+  );
 }
 
 /** 获取所有文件 */

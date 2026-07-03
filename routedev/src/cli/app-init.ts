@@ -47,6 +47,8 @@ import { CheckpointManager } from '../harness/checkpoint-manager.js';
 import { ExperimentManager } from '../harness/experiment-manager.js';
 import { CheckpointWriter } from '../agent/memory/checkpoint-writer.js';
 import { ContextManager } from '../agent/memory/context-manager.js';
+// Phase 71 Task B3：记忆召回注入器——接通 KnowledgeGraph.recall() 到 system prompt
+import { MemoryRecallInjector } from '../agent/memory/recall-injector.js';
 // Phase 71 Task D7：Budget Offload 文件清理钩子（会话结束 + 孤儿文件清理）
 import { registerOffloadCleaner } from '../agent/context/offload-cleaner.js';
 import { ContextCompactor } from '../agent/context-compaction.js';
@@ -161,7 +163,6 @@ import { QuantitativeGate } from '../agent/quantitative-gate.js';
 import { classifyOperation, buildRegimeTransition, type OperationSignal } from '../skills/operation-classifier.js';
 // Phase 69：Worktree 隔离执行与多代理并行编排
 import { WorktreeManager, DEFAULT_WORKTREE_CONFIG } from '../agent/multi/worktree-manager.js';
-import { ParallelExecutor, DEFAULT_PARALLEL_CONFIG } from '../agent/multi/parallel-executor.js';
 import { ResultComparator, DEFAULT_COMPARATOR_CONFIG } from '../agent/multi/result-comparator.js';
 import { AgentGroupResolver } from '../agent/multi/agent-group-resolver.js';
 import { ClaudeCodeAdapter, CLIAdapterRegistry, DEFAULT_CLAUDE_CODE_CONFIG } from '../agent/multi/cli-adapter.js';
@@ -172,6 +173,8 @@ import { ActionChainDetector } from '../agent/memory/action-chain-detector.js';
 import { AutoCompactGuardian, DEFAULT_GUARDIAN_CONFIG } from '../agent/memory/auto-compact-guardian.js';
 import { CompactPromptEngine } from '../agent/memory/compact-prompt-engine.js';
 import { SessionMemoryStore } from '../agent/memory/session-memory-store.js';
+import { CodebaseMemory } from '../memory/codebase-memory.js';
+import { IntegrityManifest } from '../security/integrity-manifest.js';
 
 /**
  * CR-4b：组合式路由器实例类型
@@ -331,7 +334,6 @@ export interface AppDependencies {
   buildRegimeTransition?: typeof buildRegimeTransition;
   // Phase 69：Worktree 隔离执行与多代理并行编排（可选）
   worktreeManager?: WorktreeManager;
-  parallelExecutor?: ParallelExecutor;
   resultComparator?: ResultComparator;
   agentGroupResolver?: AgentGroupResolver;
   cliAdapterRegistry?: CLIAdapterRegistry;
@@ -342,6 +344,8 @@ export interface AppDependencies {
   autoCompactGuardian?: AutoCompactGuardian;
   compactPromptEngine?: CompactPromptEngine;
   sessionMemoryStore?: SessionMemoryStore;
+  /** 代码库语义索引（config.memory.codebaseMemoryEnabled=true 时创建） */
+  codebaseMemory?: CodebaseMemory;
 }
 
 /**
@@ -395,6 +399,18 @@ export function createAppDependencies(
     checkpointWriter,
   );
 
+  // Phase 71 Task B3：装配记忆召回注入器
+  // - contextManager 持有 KnowledgeGraph，recallInjector 通过 graph.recall() 唤醒死数据
+  // - 同时注入到 contextManager（统一入口）和 agentLoop（run() 中消费）
+  // - injectThreshold 来自 config.memory.injectThreshold（默认 0.7）
+  // - maxMemories 用字面量 5（config.memory 无此字段）
+  const recallInjector = new MemoryRecallInjector(
+    contextManager.getKnowledgeGraph(),
+    config.memory?.injectThreshold ?? 0.7,
+    5,
+  );
+  contextManager.setRecallInjector(recallInjector);
+
   // A3：激活 ContextCompactor——消除双引擎不统一，让上下文压缩在生产路径生效
   // L5 summarize 回调使用 checkpointClient（已配置的辅助模型），失败时由 B12 的 try/catch 降级
   // Phase 55 Task 9：CCR 可逆压缩——compact 前缓存原始消息，LLM 可通过 ccr_retrieve 工具取回
@@ -437,12 +453,40 @@ export function createAppDependencies(
     ? new CompactPromptEngine(p70Cfg.compactPrompt.defaultDirection)
     : undefined;
   const p70SessionMemoryStore = (() => {
-    if (!p70Cfg?.sessionMemory?.enabled) return undefined;
-    const store = new SessionMemoryStore(p70Cfg.sessionMemory.maxMemories);
-    if (p70Cfg.sessionMemory.persistPath) {
-      store.loadFromFile(p70Cfg.sessionMemory.persistPath).catch(() => {});
+    // 跨会话持久化记忆：优先读 config.memory（Phase 45 记忆配置段）
+    // 兼容 phase70Integration.sessionMemory.enabled 作为 fallback 开关
+    const memCfg = config.memory;
+    const persistentEnabled = memCfg?.sessionMemoryPersistent ?? true;
+    const p70Enabled = p70Cfg?.sessionMemory?.enabled ?? false;
+    if (!p70Enabled && !persistentEnabled) return undefined;
+
+    const maxMemories = p70Cfg?.sessionMemory?.maxMemories ?? 100;
+    // persistentPath 由 config.memory.sessionMemoryPath 解析得到，不写死
+    const persistentPath = persistentEnabled
+      ? path.resolve(cwd, memCfg?.sessionMemoryPath ?? '.routedev/session-memory.jsonl')
+      : undefined;
+    const store = new SessionMemoryStore(maxMemories, persistentPath);
+
+    // 注册服务关闭钩子：进程退出前 flush 最终状态，避免 debounce 中的待写数据丢失
+    if (persistentPath) {
+      const handleClose = () => { store.close().catch(() => {}); };
+      process.on('beforeExit', handleClose);
     }
     return store;
+  })();
+
+  // CodebaseMemory：扫描项目根目录建立语义索引，跨会话复用
+  const codebaseMemory = (() => {
+    const memCfg = config.memory;
+    const enabled = memCfg?.codebaseMemoryEnabled ?? true;
+    if (!enabled) return undefined;
+    const maxFiles = memCfg?.codebaseMemoryMaxFiles ?? 500;
+    const memory = new CodebaseMemory(cwd, { maxFiles });
+    // 后台异步扫描，不阻塞主流程
+    memory.scan().catch((err) => {
+      logger.warn('CodebaseMemory: initial scan failed', { error: err instanceof Error ? err.message : String(err) });
+    });
+    return memory;
   })();
 
   const contextCompactor = new ContextCompactor({
@@ -644,6 +688,11 @@ export function createAppDependencies(
   });
   // Phase 34：注入 TraceCollector，记录 LLM 调用与循环事件
   agentLoop.setTraceCollector(trace);
+
+  // Phase 71 Task B3：注入记忆召回注入器到 agentLoop
+  // run() 在 systemPrompt 处理完后调用 recallInjector.recallToPrompt(userMessage)
+  // 把 KnowledgeGraph 中相关记忆格式化为【相关记忆】片段追加到 systemPrompt
+  agentLoop.setRecallInjector(recallInjector);
 
   // 任务1：注入 ComposePipeline，让 Compose 模式具备阶段提示词注入和自动流转能力
   agentLoop.setComposePipeline(workModeController.getComposePipeline());
@@ -1026,6 +1075,27 @@ export function createAppDependencies(
       });
   }
 
+  // ===== Phase 41/42：tree-sitter 代码地图引擎预热 =====
+  // 启动时异步触发首次 fullIndex，不阻塞主流程（.then().catch() 模式）
+  // 失败时仅 warn 不崩溃；middleware 首次调用时会再次尝试 fullIndex，
+  // 若仍失败则降级到 regex 方案（fail-open）
+  import('../code-map/indexer.js')
+    .then(async (mod: { fullIndex: (rootDir: string, opts?: { maxFiles?: number }) => Promise<{ stats: unknown; db: unknown }> }) => {
+      try {
+        await mod.fullIndex(cwd, { maxFiles: 5000 });
+        logger.info('CodeMap fullIndex prewarmed', { rootDir: cwd });
+      } catch (err) {
+        logger.warn('CodeMap fullIndex prewarm failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })
+    .catch((err: unknown) => {
+      logger.warn('CodeMap indexer module not available', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
   // ===== Phase 39：HookConfigRegistry 接线 =====
   // 已移至 hookRunner 创建后执行（需要 hookRunner 实例进行注册）
   // 见下方 "HookConfigRegistry → HookRunner 接线" 段
@@ -1159,6 +1229,38 @@ export function createAppDependencies(
       .catch((err: unknown) => {
         // fail-open：回退到正则 repo-map
         logger.debug('CodeMapEngine not available yet, falling back to regex repo-map', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+
+  // ===== Phase 71 Task A5：CodeMap Watcher 接线 =====
+  // watchMode 默认关闭，启用时监听源码文件变更并触发增量索引
+  // fail-open：watcher 启动失败不阻塞主流程；进程退出时 close() 释放句柄
+  if (config.codeMap?.watchMode === true) {
+    const watcherModulePath = '../code-map/watcher.js';
+    import(watcherModulePath)
+      .then((mod: { CodeMapWatcher: new (rootDir: string, dbPath: string) => { start: () => void; close: () => void } }) => {
+        const dbPath = path.join(cwd, '.routedev', 'code-map', 'code-map.db');
+        const watcher = new mod.CodeMapWatcher(cwd, dbPath);
+        watcher.start();
+        logger.info('CodeMapWatcher started', { rootDir: cwd, watchMode: true });
+
+        // 注册进程退出钩子，释放 fs.watch 句柄避免泄漏
+        const handleClose = () => {
+          try {
+            watcher.close();
+          } catch {
+            // fail-open：关闭失败不影响退出
+          }
+        };
+        process.on('beforeExit', handleClose);
+        process.on('SIGINT', handleClose);
+        process.on('SIGTERM', handleClose);
+      })
+      .catch((err: unknown) => {
+        // fail-open：watcher 模块加载失败不阻塞主流程
+        logger.warn('CodeMapWatcher not available, skip watch mode', {
           error: err instanceof Error ? err.message : String(err),
         });
       });
@@ -1676,7 +1778,6 @@ export function createAppDependencies(
   let p67EpistemicPreservingSummarizer: EpistemicPreservingSummarizer | undefined;
   let p67QualityMetricsRecorder: QualityMetricsRecorder | undefined;
   let p69WorktreeManager: WorktreeManager | undefined;
-  let p69ParallelExecutor: ParallelExecutor | undefined;
   let p69ResultComparator: ResultComparator | undefined;
   let p69AgentGroupResolver: AgentGroupResolver | undefined;
   let p69CliAdapterRegistry: CLIAdapterRegistry | undefined;
@@ -1760,14 +1861,6 @@ export function createAppDependencies(
         cleanupTimeoutMs: p69Cfg.worktree.cleanupTimeoutMs,
       });
     }
-    if (p69Cfg.parallelExecution?.enabled) {
-      p69ParallelExecutor = new ParallelExecutor({
-        ...DEFAULT_PARALLEL_CONFIG,
-        enabled: p69Cfg.parallelExecution.enabled,
-        maxConcurrency: p69Cfg.parallelExecution.maxConcurrency,
-        workerTimeoutMs: p69Cfg.parallelExecution.workerTimeoutMs,
-      });
-    }
     if (p69Cfg.resultComparator) {
       p69ResultComparator = new ResultComparator({
         ...DEFAULT_COMPARATOR_CONFIG,
@@ -1819,10 +1912,11 @@ export function createAppDependencies(
     qualityMetricsRecorder: p67QualityMetricsRecorder,
     // Phase 69：Worktree 隔离执行与多代理并行编排
     worktreeManager: p69WorktreeManager,
-    parallelExecutor: p69ParallelExecutor,
     resultComparator: p69ResultComparator,
     agentGroupResolver: p69AgentGroupResolver,
     cliAdapterRegistry: p69CliAdapterRegistry,
+    // LLM 客户端——供 SynthesizeBarrier judging 策略等内部模块使用
+    llmClient: primaryClient,
   });
   const unifiedReviewer = createUnifiedReviewer({
     agentLoop,
@@ -2019,28 +2113,16 @@ export function createAppDependencies(
       });
     });
 
-  // 4. VoiceManager 接线：语音输入/输出管理
-  //    voice-manager.ts 已由本 Phase 创建，使用变量路径动态 import 保持一致性
+  // 4. VoiceManager：语音输入/输出管理（仅 Desktop renderer 可用，CLI 跳过）
+  //    voice-manager.ts 使用浏览器 API（webkitSpeechRecognition / SpeechSynthesisUtterance），
+  //    在 Node CLI 环境 isAvailable() 永远返回 false，此处不再实例化。
+  //    Desktop renderer 通过 preload 暴露的 API 自行接入。
   const voiceCfg = config.voice;
   if (voiceCfg && (voiceCfg.inputProvider !== 'off' || voiceCfg.outputProvider !== 'off')) {
-    const voiceModulePath = '../optional/voice/voice-manager.js';
-    import(voiceModulePath)
-      .then((mod: { VoiceManager: new (config?: unknown) => { getConfig: () => unknown; isAvailable: () => boolean } }) => {
-        const voice = new mod.VoiceManager(voiceCfg);
-        logger.info('VoiceManager registered', {
-          inputProvider: voiceCfg.inputProvider,
-          outputProvider: voiceCfg.outputProvider,
-          language: voiceCfg.language,
-          autoPlay: voiceCfg.autoPlay,
-          available: voice.isAvailable(),
-        });
-      })
-      .catch((err: unknown) => {
-        // fail-open：voice-manager.ts 不可用时跳过
-        logger.debug('VoiceManager not available', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
+    logger.debug('Voice config detected but skipped in CLI mode (browser-only)', {
+      inputProvider: voiceCfg.inputProvider,
+      outputProvider: voiceCfg.outputProvider,
+    });
   }
 
   // Phase 48 Task 3：ScheduleEngine 实例化与启动
@@ -2088,6 +2170,24 @@ export function createAppDependencies(
   // cite/import/macros/mcp 四模块按 config.phase48Integration 开关接入生产路径
   // 全部使用动态 import + fail-open，模块不可用时跳过不影响主流程
   const phase48Cfg = config.phase48Integration;
+
+  // 依赖完整性校验清单实例化（受 config.security.integrityCheck 守护）
+  // 启用后传入 ClaudePluginImporter / AnthropicSkillsLoader（CLI 路径）
+  // SkillMarketManager 的 integrity 校验由 desktop/main/engine-bridge.ts 在 installSkill 时注入，
+  // CLI 模式不直接操作 SkillMarketManager，故此处不传入
+  let integrityManifest: IntegrityManifest | undefined;
+  let integrityManifestLoadPromise: Promise<void> | undefined;
+  if (config.security?.integrityCheck) {
+    const manifestPath = path.resolve(cwd, config.security.integrityManifestPath);
+    integrityManifest = new IntegrityManifest(manifestPath);
+    // 异步加载 manifest（不阻塞主流程；phase48 块内部 await load 确保 verify 前记录就绪）
+    integrityManifestLoadPromise = integrityManifest.load().catch((err: unknown) => {
+      logger.warn('IntegrityManifest load failed', {
+        path: manifestPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
   if (phase48Cfg?.citeEnabled && config.cite?.enabled) {
     // CiteManager + CiteResolver 接入：引用管理器 + 引用解析器实例化并注入 AgentLoop
     // CiteManager 在 callLLMStream 末尾收集 [cite:type:source] 标记
@@ -2133,21 +2233,77 @@ export function createAppDependencies(
     Promise.all([
       import('../import/claude-plugin-importer.js'),
       import('../import/codex-importer.js'),
+      import('../import/anthropic-skills-loader.js'),
     ])
-      .then(([pluginMod, codexMod]) => {
-        // ClaudePluginImporter：实例化确认可加载，扫描 .claude-plugin/ 目录
-        new pluginMod.ClaudePluginImporter();
-        // CodexInstructionImporter：扫描 .codex/ 目录
-        const codexImporter = new codexMod.CodexInstructionImporter();
-        codexImporter.scan(cwd).then((scanResult) => {
-          if (scanResult.found) {
-            logger.info('Codex instructions found', { files: scanResult.files.length });
+      .then(async ([pluginMod, codexMod, anthropicMod]) => {
+        // 等待 IntegrityManifest 加载完成（若启用），确保 verify 前记录就绪
+        if (integrityManifestLoadPromise) await integrityManifestLoadPromise;
+
+        // ClaudePluginImporter：扫描项目根下的 .claude-plugin/ 目录并导入
+        // 注入 integrityManifest：导入完成后 record 输出文件 SHA-256，下次导入前 verify 跳过重复
+        const pluginImporter = new pluginMod.ClaudePluginImporter(integrityManifest);
+        const claudePluginDir = path.join(cwd, '.claude-plugin');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const existsSync = require('node:fs').existsSync as (p: string) => boolean;
+        if (existsSync(claudePluginDir)) {
+          try {
+            const result = await pluginImporter.importFromPath(cwd, {
+              autoEnable: true,
+              outputRoot: path.join(cwd, '.routedev'),
+            });
+            logger.info('Claude plugin imported', {
+              skills: result.skills.length,
+              agents: result.agents.length,
+              hooks: result.hooks.length,
+              warnings: result.warnings.length,
+            });
+          } catch (e: unknown) {
+            logger.warn('ClaudePluginImporter import failed', {
+              error: e instanceof Error ? e.message : String(e),
+            });
           }
-        }).catch((e: unknown) => {
-          logger.debug('CodexInstructionImporter scan failed', {
+        }
+        // CodexInstructionImporter：扫描 .codex/ 目录并导入为系统提示词
+        const codexImporter = new codexMod.CodexInstructionImporter();
+        try {
+          const scanResult = await codexImporter.scan(cwd);
+          if (scanResult.found) {
+            const importResult = await codexImporter.import({
+              projectRoot: cwd,
+              mode: 'system_prompt',
+            });
+            // 将 Codex 指令注入系统提示词（追加到 sharedSystemPromptRef）
+            if (importResult.systemPromptContent) {
+              sharedSystemPromptRef.current = `${sharedSystemPromptRef.current}\n\n--- Codex Instructions ---\n${importResult.systemPromptContent}`.trim();
+              logger.info('Codex instructions integrated into system prompt', {
+                files: importResult.importedFiles.length,
+                bytes: importResult.totalBytes,
+              });
+            }
+          }
+        } catch (e: unknown) {
+          logger.debug('CodexInstructionImporter import failed', {
             error: e instanceof Error ? e.message : String(e),
           });
-        });
+        }
+        // AnthropicSkillsLoader：扫描 anthropic_skills/ 目录并加载
+        // 注入 integrityManifest：加载每个 SKILL.md 后 record，下次加载前 verify
+        const anthropicSkillsDir = path.join(cwd, anthropicMod.AnthropicSkillsLoader.SKILLS_DIR_NAME);
+        if (existsSync(anthropicSkillsDir)) {
+          try {
+            const anthropicLoader = new anthropicMod.AnthropicSkillsLoader(integrityManifest);
+            const autoEnable = config.import?.anthropicSkillsAutoEnable ?? false;
+            const loadResult = await anthropicLoader.load(cwd, { autoEnable });
+            logger.info('Anthropic skills loaded', {
+              loaded: loadResult.loaded.length,
+              errors: loadResult.errors.length,
+            });
+          } catch (e: unknown) {
+            logger.warn('AnthropicSkillsLoader load failed', {
+              error: e instanceof Error ? e.message : String(e),
+            });
+          }
+        }
         logger.info('Phase 48 import module integrated', { enabled: true });
       })
       .catch((err: unknown) => {
@@ -2638,7 +2794,6 @@ export function createAppDependencies(
       if (!p69Cfg) return {};
       const result: Record<string, unknown> = {};
       if (p69WorktreeManager) result.worktreeManager = p69WorktreeManager;
-      if (p69ParallelExecutor) result.parallelExecutor = p69ParallelExecutor;
       if (p69ResultComparator) result.resultComparator = p69ResultComparator;
       if (p69AgentGroupResolver) result.agentGroupResolver = p69AgentGroupResolver;
       if (p69CliAdapterRegistry) result.cliAdapterRegistry = p69CliAdapterRegistry;
@@ -2674,6 +2829,10 @@ export function createAppDependencies(
         result.sessionMemoryStore = p70SessionMemoryStore;
       }
 
+      if (codebaseMemory) {
+        result.codebaseMemory = codebaseMemory;
+      }
+
       if (Object.keys(result).length > 0) {
         logger.info('Phase 70: Context compaction modules enabled', {
           toolOutputBudgetManager: !!result.toolOutputBudgetManager,
@@ -2685,6 +2844,7 @@ export function createAppDependencies(
           sessionMemoryStore: !!result.sessionMemoryStore,
           sessionMemoryPersistPath: p70Cfg?.sessionMemory?.persistPath,
           sessionMemoryMaxMemories: p70Cfg?.sessionMemory?.maxMemories,
+          codebaseMemory: !!result.codebaseMemory,
         });
       }
 

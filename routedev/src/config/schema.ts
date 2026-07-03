@@ -248,6 +248,12 @@ export const SecurityConfigSchema = z.object({
   sandbox: SandboxLevelSchema.default('workspace-write'),
   /** Phase 47 Task 4：审批级覆盖 — 按工具类别覆盖默认审批级（可选，部分覆盖） */
   approval: z.record(z.string(), ApprovalLevelSchema).optional(),
+  /** 依赖完整性校验开关：启用后对 Skill/Plugin/Anthropic Skills 计算 SHA-256 并在加载时校验 */
+  integrityCheck: z.boolean().default(true),
+  /** 严格模式：true 时校验失败抛错阻断；false 时只 warn（fail-open） */
+  integrityStrict: z.boolean().default(false),
+  /** IntegrityManifest 持久化路径（相对工作目录） */
+  integrityManifestPath: z.string().default('.routedev/integrity-manifest.json'),
 });
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 
@@ -499,6 +505,27 @@ const WorkflowConfigSchema = z.object({
   reviewModel: z.string().default('auto'),
   /** 审查严格度 */
   reviewStrictness: z.enum(['low', 'medium', 'high']).default('medium'),
+  /** Phase 72：Deep Review 并行多 reviewer 总开关（默认关闭，避免影响现有 /review） */
+  deepReviewEnabled: z.boolean().default(false),
+  /** Deep Review 启用的审查维度（focus 列表） */
+  deepReviewFocuses: z.array(z.enum(['correctness', 'security', 'performance', 'style']))
+    .default(['correctness', 'security', 'performance', 'style']),
+  /** Deep Review 并行 reviewer 数量上限（1-4）。
+   *  注：MVP 阶段保留字段，实际串行执行（沙箱共享 permissionEngine 不能并行）；
+   *  P2 将通过 sandboxOverride 参数启用真正并行。 */
+  deepReviewParallel: z.number().int().min(1).max(4).default(2),
+  /** 仲裁策略：critical-veto / majority-vote / highest-severity / all-must-pass */
+  deepReviewArbitration: z.enum(['critical-veto', 'majority-vote', 'highest-severity', 'all-must-pass'])
+    .default('critical-veto'),
+  /** 聚合模式：concat（拼接）/ llm-summary（LLM 汇总）/ tournament（锦标赛，暂未实现降级为 llm-summary） */
+  deepReviewAggregateMode: z.enum(['concat', 'llm-summary', 'tournament'])
+    .default('llm-summary'),
+  /** 是否跨模型审查（不同 focus 用不同模型）。
+   *  注：MVP 阶段保留字段，spawn_agent 入参暂未支持 model 覆盖；
+   *  P2 将扩展 spawn_agent 支持 model 参数后启用。 */
+  deepReviewCrossModel: z.boolean().default(false),
+  /** 风险评分阈值（10-100），低于此值时 Deep Review 降级为单 reviewer */
+  deepReviewRiskThreshold: z.number().int().min(10).max(100).default(40),
 });
 export type WorkflowConfig = z.infer<typeof WorkflowConfigSchema>;
 
@@ -579,14 +606,6 @@ export type ClarificationConfig = z.infer<typeof ClarificationConfigSchema>;
 const OptimizationConfigSchema = z.object({
   /** Token 可观测性（默认开启） */
   tokenTracking: z.preprocess((v) => v ?? {}, TokenTrackingConfigSchema),
-  /** 结构化实体状态（实验性，默认关闭） */
-  structuredState: z.object({
-    enabled: z.boolean().default(false),
-  }).default({ enabled: false }),
-  /** 声明式上下文获取（实验性，默认关闭） */
-  declarativeContext: z.object({
-    enabled: z.boolean().default(false),
-  }).default({ enabled: false }),
   /** 简洁思考约束（实验性，默认关闭） */
   conciseThinking: z.object({
     enabled: z.boolean().default(false),
@@ -935,6 +954,8 @@ const CodeMapConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   maxContextSymbols: z.number().int().min(10).default(50),
   /** 自动索引（文件变更时自动重建索引） */
   autoIndex: z.boolean().default(true),
+  /** Phase 71 Task A5：watch mode（监听文件变更触发增量索引，默认关闭避免无谓 IO） */
+  watchMode: z.boolean().default(false),
 }));
 export type CodeMapConfig = z.infer<typeof CodeMapConfigSchema>;
 
@@ -1164,6 +1185,8 @@ export type VoiceConfigType = z.infer<typeof VoiceConfigSchema>;
 /**
  * 记忆配置（Phase 45）
  * 控制记忆推理、自动学习与注入阈值
+ * 新增跨会话持久化记忆与 codebase-memory 开关
+ * 注：新增字段用 .optional() 避免破坏 defaults.ts 等历史调用方，默认值在 app-init.ts 中通过 ?? 提供
  */
 const MemoryConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用记忆推理 */
@@ -1172,6 +1195,14 @@ const MemoryConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   autoLearn: z.boolean().default(true),
   /** 注入阈值（0-1，达到此相关度才注入记忆） */
   injectThreshold: z.number().min(0).max(1).default(0.7),
+  /** SessionMemoryStore 是否启用跨会话持久化（默认 true，由 app-init.ts 在读取时 ?? true 兜底） */
+  sessionMemoryPersistent: z.boolean().optional(),
+  /** SessionMemoryStore 持久化文件路径（相对工作目录，默认 .routedev/session-memory.jsonl） */
+  sessionMemoryPath: z.string().optional(),
+  /** 是否启用 CodebaseMemory 代码库语义索引（默认 true，由 app-init.ts 在读取时 ?? true 兜底） */
+  codebaseMemoryEnabled: z.boolean().optional(),
+  /** CodebaseMemory 最大索引文件数（默认 500，由 app-init.ts 在读取时 ?? 500 兜底） */
+  codebaseMemoryMaxFiles: z.number().int().min(1).optional(),
 }));
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 
@@ -2207,5 +2238,20 @@ export const AppConfigSchema = z.object({
       maxMemories: z.number().int().min(10).default(100),
     })),
   })),
+  // Phase 71：Plan diff + 遗漏点分析配置
+  // 控制计划修订前后 diff 视图、LLM 遗漏点检查与修订历史持久化
+  plan: z.preprocess((v) => v ?? {}, z.object({
+    /** 是否启用 Plan 修订 diff 视图（默认 true——纯前端展示，无 LLM 调用） */
+    diffEnabled: z.boolean().default(true),
+    /** 是否启用遗漏点检查（默认 false——依赖 LLM 调用，需用户显式开启） */
+    omissionCheckEnabled: z.boolean().default(false),
+    /** 遗漏点检查使用的模型 id（默认 'fast'——廉价快速模型） */
+    omissionCheckModel: z.string().default('fast'),
+    /** Plan 修订历史持久化目录（相对于工作目录，默认 '.routedev/plan-revisions/'） */
+    revisionHistoryPath: z.string().default('.routedev/plan-revisions/'),
+  })),
 });
 export type AppConfig = z.infer<typeof AppConfigSchema>;
+
+/** Plan diff + 遗漏点分析配置（Phase 71） */
+export type PlanConfig = AppConfig['plan'];

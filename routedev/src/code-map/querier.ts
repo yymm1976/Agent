@@ -20,8 +20,12 @@ import {
   getAllNodes,
   getAllEdges,
   getIndexStatus,
+  batchUpdateRankScores,
   type DB,
 } from './database.js';
+import { computePersonalizedPageRank, incrementalPageRank, type RankedEdge } from './ranker.js';
+import { getSeedNodeIdsFromCache } from './git-integration.js';
+import { getChangedFilesSinceRank, clearChangedFilesSinceRank } from './indexer.js';
 
 /** 查询选项 */
 interface QueryOptions {
@@ -57,14 +61,68 @@ export function explore(
 
   // 搜索节点：name 或 signature 匹配关键词
   const allNodes = getAllNodes(db);
-  const matched = allNodes
-    .filter(node => {
-      const nameLower = node.name.toLowerCase();
-      const sigLower = (node.signature ?? '').toLowerCase();
-      return keywords.some(kw => nameLower.includes(kw) || sigLower.includes(kw));
-    })
-    .sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0))
-    .slice(0, maxResults);
+  const filtered = allNodes.filter(node => {
+    const nameLower = node.name.toLowerCase();
+    const sigLower = (node.signature ?? '').toLowerCase();
+    return keywords.some(kw => nameLower.includes(kw) || sigLower.includes(kw));
+  });
+
+  // Phase 71 Task A5：content hash 变更检测 → 增量 PageRank
+  // 有变更时走 incrementalPageRank（仅重算受影响节点 + 一阶邻居），无变更时走 PPR
+  const changedFiles = getChangedFilesSinceRank(db);
+  let rankedNodes: CodeMapNode[];
+
+  if (changedFiles.size > 0) {
+    // 有变更：增量 PageRank
+    try {
+      const allEdges = getAllEdges(db);
+      const rankedEdges = allEdges
+        .filter(e => e.kind !== 'CONTAINS')
+        .map(e => ({ source: e.source, target: e.target, weight: e.weight })) as RankedEdge[];
+
+      // 计算受影响节点：变更文件的节点 + 一阶邻居（CALLS/IMPORTS 等边连接的节点）
+      const affectedNodeIds = new Set<string>();
+      for (const node of allNodes) {
+        if (changedFiles.has(node.filePath)) {
+          affectedNodeIds.add(node.id);
+        }
+      }
+      for (const edge of allEdges) {
+        if (affectedNodeIds.has(edge.source)) affectedNodeIds.add(edge.target);
+        if (affectedNodeIds.has(edge.target)) affectedNodeIds.add(edge.source);
+      }
+
+      // 旧分数（来自 DB rank_score）
+      const oldScores = new Map<string, number>();
+      for (const node of allNodes) {
+        oldScores.set(node.id, node.rankScore ?? 0);
+      }
+
+      const scores = incrementalPageRank(
+        allNodes.map(n => n.id),
+        rankedEdges,
+        affectedNodeIds,
+        oldScores,
+      );
+
+      // 持久化新分数到 DB + 清空变更集
+      batchUpdateRankScores(db, scores);
+      clearChangedFilesSinceRank(db);
+
+      rankedNodes = filtered
+        .map(n => ({ ...n, rankScore: scores.get(n.id) ?? 0 }))
+        .sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0))
+        .slice(0, maxResults);
+    } catch {
+      // 增量 PageRank 失败：fail-open 清空变更集，回退 PPR
+      clearChangedFilesSinceRank(db);
+      rankedNodes = rankByPPROrScore(db, allNodes, filtered, maxResults);
+    }
+  } else {
+    // 无变更：走 PPR 或 rankScore 排序
+    rankedNodes = rankByPPROrScore(db, allNodes, filtered, maxResults);
+  }
+  const matched = rankedNodes;
 
   // 收集源代码片段
   const snippets: CodeSnippet[] = [];
@@ -310,6 +368,52 @@ export function getStatus(db: DB): IndexStatus {
 }
 
 // ---- 辅助函数 ----
+
+/**
+ * PPR 或 rankScore 排序（原 explore 排序逻辑，抽取为辅助函数供增量分支 fail-open 回退复用）
+ *
+ * Phase 71 Task A3：PPR 上下文感知排序
+ * 种子 = git diff 变更文件符号（缓存） + query 关键词匹配符号
+ */
+function rankByPPROrScore(
+  db: DB,
+  allNodes: CodeMapNode[],
+  filtered: CodeMapNode[],
+  maxResults: number,
+): CodeMapNode[] {
+  const gitSeeds = getSeedNodeIdsFromCache(db);
+  const querySeeds = new Set(filtered.map(n => n.id));
+  const seedNodeIds = new Set<string>([...gitSeeds, ...querySeeds]);
+
+  if (seedNodeIds.size > 0) {
+    // 有种子：用 Personalized PageRank 重排序
+    try {
+      const allEdges = getAllEdges(db).map(e => ({
+        source: e.source,
+        target: e.target,
+        weight: e.weight,
+      })) as RankedEdge[];
+      const scores = computePersonalizedPageRank(
+        allNodes.map(n => n.id),
+        allEdges,
+        seedNodeIds,
+      );
+      return filtered
+        .map(n => ({ ...n, rankScore: scores.get(n.id) ?? 0 }))
+        .sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0))
+        .slice(0, maxResults);
+    } catch {
+      // PPR 计算失败：fail-open 回退原 rankScore 排序
+      return filtered
+        .sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0))
+        .slice(0, maxResults);
+    }
+  }
+  // 无种子：保留原 rankScore 排序（零回归）
+  return filtered
+    .sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0))
+    .slice(0, maxResults);
+}
 
 /** 读取源代码片段 */
 async function readSnippetAsync(

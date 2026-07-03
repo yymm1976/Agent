@@ -326,6 +326,8 @@ export const DEFAULT_CONFIG: AppConfig = {
     indexExclude: ['node_modules', '.git', 'dist', 'release-v*'],
     maxContextSymbols: 50,
     autoIndex: true,
+    // Phase 71 Task A5：watch mode 默认关闭，启用时监听文件变更触发增量索引
+    watchMode: false,
   },
   // Phase 42：市场配置（Skill/Hook 发布、导入、导出）
   market: {

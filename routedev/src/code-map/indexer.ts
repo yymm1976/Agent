@@ -20,14 +20,44 @@ import {
   insertFile,
   insertNode,
   insertEdge,
+  insertUnresolvedRefs,
   deleteFileNodes,
-  getAllFiles,
+  deleteFileUnresolvedRefs,
   getAllNodes,
   getAllEdges,
   batchUpdateRankScores,
+  getFileContentHash,
+  setFileContentHash,
   type DB,
 } from './database.js';
 import { computePageRank } from './ranker.js';
+
+/**
+ * 自上次 PageRank 计算以来发生 content hash 变化的文件路径集合
+ * 按 DB 实例隔离（WeakMap），indexer 在 indexFile 检测到 hash 变化时写入，
+ * querier.explore 消费后清空，触发 incrementalPageRank
+ */
+const changedFilesSinceRank = new WeakMap<DB, Set<string>>();
+
+/** 标记文件 content hash 已变化（供 indexFile 在 hash 不匹配时调用） */
+function markFileChanged(db: DB, filePath: string): void {
+  let set = changedFilesSinceRank.get(db);
+  if (!set) {
+    set = new Set();
+    changedFilesSinceRank.set(db, set);
+  }
+  set.add(filePath);
+}
+
+/** 读取自上次 PageRank 以来变更的文件集合（供 querier.explore 消费） */
+export function getChangedFilesSinceRank(db: DB): Set<string> {
+  return changedFilesSinceRank.get(db) ?? new Set();
+}
+
+/** 清空变更文件集合（querier.explore 调用 incrementalPageRank 后清空） */
+export function clearChangedFilesSinceRank(db: DB): void {
+  changedFilesSinceRank.delete(db);
+}
 
 /** 排除的目录 */
 const EXCLUDED_DIRS = new Set([
@@ -118,14 +148,19 @@ export async function indexFile(
     return { nodeCount: 0, edgeCount: 0, skipped: true };
   }
 
-  // 检查是否需要重新索引
-  const existingFiles = getAllFiles(db);
-  const existing = existingFiles.find(f => f.path === relPath);
-  if (existing && existing.contentHash === contentHash) {
+  // content hash 比对：与数据库存储的 hash 比较，相同则跳过重新解析（只 touch indexed_at）
+  const storedHash = getFileContentHash(db, relPath);
+  if (storedHash === contentHash) {
+    // hash 相同：仅更新索引时间（mtime 等价），跳过昂贵的 AST 解析
+    setFileContentHash(db, relPath, contentHash);
     return { nodeCount: 0, edgeCount: 0, skipped: true };
   }
 
-  // 删除旧数据
+  // hash 不同或新文件：标记变更，供 querier.explore 触发增量 PageRank
+  markFileChanged(db, relPath);
+
+  // 删除旧数据（含 unresolved_refs）
+  deleteFileUnresolvedRefs(db, relPath);
   deleteFileNodes(db, relPath);
 
   // 解析 AST
@@ -144,7 +179,7 @@ export async function indexFile(
   }
 
   // 提取符号和边
-  const { nodes, edges } = extractFromTree(parseResult.tree, relPath, parseResult.language);
+  const { nodes, edges, unresolvedRefs } = extractFromTree(parseResult.tree, relPath, parseResult.language);
   parseResult.tree.delete();
 
   // 写入数据库
@@ -162,6 +197,10 @@ export async function indexFile(
   }
   for (const edge of edges) {
     insertEdge(db, edge);
+  }
+  // 持久化未解析调用引用（供后续索引补全：Task A3 通过 getUnresolvedRefsByCallee 跨文件解析）
+  if (unresolvedRefs && unresolvedRefs.length > 0) {
+    insertUnresolvedRefs(db, unresolvedRefs);
   }
 
   return { nodeCount: nodes.length, edgeCount: edges.length, skipped: false };
@@ -250,7 +289,7 @@ export async function incrementalIndex(
   return { stats, db };
 }
 
-/** 更新 PageRank 分数 */
+/** 更新 PageRank 分数（全量重算） */
 export function updatePageRank(db: DB): void {
   const nodes = getAllNodes(db);
   const edges = getAllEdges(db);
@@ -262,4 +301,7 @@ export function updatePageRank(db: DB): void {
 
   const scores = computePageRank(nodeIds, rankedEdges);
   batchUpdateRankScores(db, scores);
+
+  // 全量 PageRank 已消费所有变更，清空变更集（避免 querier 重复触发增量计算）
+  clearChangedFilesSinceRank(db);
 }
