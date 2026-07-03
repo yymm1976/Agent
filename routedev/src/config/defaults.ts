@@ -76,6 +76,10 @@ export const DEFAULT_CONFIG: AppConfig = {
     devModeAuth: true,
     // Phase 47 Task 4：沙箱级默认 workspace-write
     sandbox: 'workspace-write',
+    // 依赖完整性校验：默认开启，fail-open（strict=false 时仅 warn）
+    integrityCheck: true,
+    integrityStrict: false,
+    integrityManifestPath: '.routedev/integrity-manifest.json',
     // approval 为可选字段，不配置时使用引擎内置的 DEFAULT_APPROVAL
   },
   channels: {
@@ -158,8 +162,6 @@ export const DEFAULT_CONFIG: AppConfig = {
       persistSession: true,
       outputDir: '.routedev/token-logs',
     },
-    structuredState: { enabled: false },
-    declarativeContext: { enabled: false },
     conciseThinking: { enabled: false },
     workflow: {
       unifiedPipeline: true,
@@ -168,6 +170,14 @@ export const DEFAULT_CONFIG: AppConfig = {
       reviewMode: 'builtin',
       reviewModel: 'auto',
       reviewStrictness: 'medium',
+      // Phase 72：Deep Review 并行多 reviewer（默认关闭，避免影响现有 /review）
+      deepReviewEnabled: false,
+      deepReviewFocuses: ['correctness', 'security', 'performance', 'style'],
+      deepReviewParallel: 2,
+      deepReviewArbitration: 'critical-veto',
+      deepReviewAggregateMode: 'llm-summary',
+      deepReviewCrossModel: false,
+      deepReviewRiskThreshold: 40,
     },
     safety: {
       readBeforeWrite: true,
@@ -410,10 +420,15 @@ export const DEFAULT_CONFIG: AppConfig = {
     autoPlay: false,
   },
   // Phase 45：记忆配置（推理/自动学习/注入阈值）
+  // Phase 71：新增持久化与 codebase-memory 开关
   memory: {
     inference: true,
     autoLearn: true,
     injectThreshold: 0.7,
+    sessionMemoryPersistent: true,
+    sessionMemoryPath: '.routedev/session-memory.jsonl',
+    codebaseMemoryEnabled: true,
+    codebaseMemoryMaxFiles: 500,
   },
   // Phase 45：发现配置（功能发现/启动提示）
   discovery: {
@@ -799,13 +814,16 @@ export const DEFAULT_CONFIG: AppConfig = {
     },
   },
   // Phase 65：记忆系统四模块重构（v4.6.4）
+  // Phase 71 Task D5：embeddingProvider 从 'hash' 升级为 'bi-encoder'（真实语义 provider）
+  // 消费链：app-init.ts L2638 读 msCfg.store.embeddingProvider → 传入 MemoryStore 构造
+  // → memory-store.ts L61 按 provider 值分支处理（bi-encoder 模式由 setEmbedder 注入外部 embedder）
   memorySystem: {
     enabled: true,
     store: {
       enabled: true,
       dbPath: '.routedev/memory.db',
       backend: 'sqlite' as const,
-      embeddingProvider: 'hash' as const,
+      embeddingProvider: 'bi-encoder' as const,
     },
     incrementalExtractor: {
       enabled: true,
@@ -947,23 +965,24 @@ export const DEFAULT_CONFIG: AppConfig = {
   // Phase 70：上下文压缩技术深度优化（v4.7.1）
   phase70Integration: {
     toolOutputBudget: {
-      enabled: false,
+      enabled: false, // P2: 启用 offload 机制
       maxCharsPerOutput: 2000,
       previewHeadChars: 500,
       previewTailChars: 500,
       offloadDir: '.routedev/offloaded',
     },
     microCompact: {
-      enabled: false,
+      enabled: false, // P2: 启用微压缩清理
       cleanBeforeRounds: 5,
       keepRecentRounds: 3,
     },
     contextCollapse: {
-      enabled: false,
+      enabled: false, // P2: 启用上下文折叠
       minToolCallsForChain: 3,
     },
     autoCompactGuardian: {
-      enabled: false,
+      // Phase 71 Task C2：启用（原 false）——Phase 70 已实现但默认关闭，造成配置僵尸
+      enabled: true,
       contextWindow: 200000,
       reservedTokensForSummary: 20000,
       autoCompactBuffer: 13000,
@@ -972,13 +991,20 @@ export const DEFAULT_CONFIG: AppConfig = {
       maxConsecutiveFailures: 3,
     },
     compactPrompt: {
-      enabled: false,
+      enabled: false, // P2: 启用压缩提示词
       defaultDirection: 'base',
     },
     sessionMemory: {
-      enabled: false,
+      enabled: false, // P2: 待 Task B3/B4 接入
       persistPath: '.routedev/session-memory.json',
       maxMemories: 100,
     },
+  },
+  // Phase 71：Plan diff + 遗漏点分析
+  plan: {
+    diffEnabled: true,
+    omissionCheckEnabled: false,
+    omissionCheckModel: 'fast',
+    revisionHistoryPath: '.routedev/plan-revisions/',
   },
 };
