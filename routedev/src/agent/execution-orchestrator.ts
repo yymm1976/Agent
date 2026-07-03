@@ -711,7 +711,8 @@ export class ExecutionOrchestrator {
           failedReason: wr.success ? undefined : wr.conclusion,
           durationMs: 0,
         }));
-        const synthBarrier = new SynthesizeBarrier(undefined);
+        // 修复：传入 LLM 客户端以支持 judging 策略
+        const synthBarrier = new SynthesizeBarrier(this.deps.llmClient);
         const synthOutput = await synthBarrier.synthesize(fanOutResults, {
           barrierTimeoutMs: synthesizeCfg.barrierTimeoutMs,
           strategy: synthesizeCfg.defaultStrategy,
