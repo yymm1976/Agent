@@ -18,6 +18,12 @@ import type { TraceCollector } from '../harness/trace-collector.js';
 import type { AuditLogger } from '../harness/audit-logger.js';
 // Phase 37：SkillsRouter——按用户消息匹配已启用 Skill，注入到 system prompt
 import type { SkillsRouter } from '../plugins/filesystem-discovery.js';
+// Phase 71 Task D1：统一 system prompt 静态拼装
+import { buildSystemPrompt } from '../agent/context/system-prompt-builder.js';
+// Phase 71 Task E3：上下文工程纪律 prompt 片段
+import { buildContextDisciplinePrompt } from '../agent/context/context-discipline-prompt.js';
+// Phase 71 Task D2：用户偏好加载器（user_profile.md 注入 system prompt）
+import { loadUserProfile, type UserProfile } from '../agent/context/user-profile-loader.js';
 // Phase 34 Task 3：动作动词体系
 import { formatToolFeedback, getToolRunningMessageId } from './tool-verb.js';
 // Phase 34 Task 2：微摘要
@@ -143,6 +149,21 @@ export function createChatRunner(deps: ChatRunnerDeps) {
     return getOutputStyle ? getOutputStyle() : config.ui.outputStyle;
   }
 
+  // Phase 71 Task D2：用户偏好加载（局部缓存，避免每次发消息都读文件）
+  // undefined=未加载 / null=已加载但不存在 / UserProfile=已加载
+  let userProfileCache: UserProfile | null | undefined = undefined;
+  async function getUserProfileRaw(): Promise<string | undefined> {
+    if (userProfileCache === undefined) {
+      try {
+        userProfileCache = await loadUserProfile();
+      } catch {
+        // fail-open：加载异常视为不存在
+        userProfileCache = null;
+      }
+    }
+    return userProfileCache?.raw;
+  }
+
   /**
    * 处理非命令输入：分类路由 → 视觉处理 → Agent Loop → Token 统计 → 检查点/压缩
    * 调用方需在调用前已将用户消息追加到 messages，并设置 isProcessing=true
@@ -212,6 +233,7 @@ export function createChatRunner(deps: ChatRunnerDeps) {
       try {
         // Phase 37 P0-1：Skill 路由——按用户消息匹配已启用 Skill，将内容追加到 systemPrompt
         // 与 engine-bridge.ts sendChat 路径对齐，避免 CLI 端 Skill 永不生效
+        // Phase 71 Task D1：改用 buildSystemPrompt 统一拼装（原 \n\n 前缀由 builder 的 join 处理）
         let skillPromptSuffix = '';
         if (skillsRouter) {
           const matchedSkills = skillsRouter.route(actualUserMessage, 3);
@@ -219,12 +241,19 @@ export function createChatRunner(deps: ChatRunnerDeps) {
             const skillBlocks = matchedSkills.map((s) =>
               `## Skill: ${s.name}\n${s.content}`,
             );
-            skillPromptSuffix = `\n\n---\n# 已激活的 Skill（根据任务自动匹配）\n${skillBlocks.join('\n\n')}`;
+            skillPromptSuffix = `---\n# 已激活的 Skill（根据任务自动匹配）\n${skillBlocks.join('\n\n')}`;
           }
         }
+        const assembledSystemPrompt = buildSystemPrompt({
+          basePrompt: systemPromptRef.current,
+          userPreferences: await getUserProfileRaw(),  // Phase 71 Task D2：注入用户偏好
+          contextDiscipline: buildContextDisciplinePrompt(),  // Phase 71 Task E3：注入上下文工程纪律
+          skillSuffix: skillPromptSuffix,
+          // projectRules/projectMemory 暂留空，后续 Task 接入
+        });
         for await (const event of agentLoop.run({
           userMessage: actualUserMessage, llmClient: client, routeDecision: rd,
-          conversationHistory: conversationHistoryRef.current, systemPrompt: systemPromptRef.current + skillPromptSuffix,
+          conversationHistory: conversationHistoryRef.current, systemPrompt: assembledSystemPrompt,
           signal: chatAbort.signal,
           onModelSuccess: modelId => modelRouter.recordModelSuccess(modelId),
           onModelFailure: modelId => modelRouter.recordModelFailure(modelId),
