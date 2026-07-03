@@ -33,6 +33,9 @@ import { SpawnAgentTool, type SpawnAgentFunction, type SpawnAgentParams, type Su
 import { AgentProfileManager } from '../agents/profiles/manager.js';
 import { NotesTool } from '../tools/builtin/notes-tool.js';
 import { NotesManager } from '../agent/memory/notes.js';
+// Phase 71 Task E1：进程内 VFS + 4 个 VFS 工具
+import { createVFS } from '../agent/context/virtual-fs.js';
+import { VfsReadTool, VfsWriteTool, VfsListTool, VfsDeleteTool } from '../agent/tools/vfs-tool.js';
 import { createDefaultEngine, type PermissionEngine } from '../tools/permission-engine.js';
 import { MCPClientManager } from '../tools/mcp/client.js';
 import { ReActAgentLoop } from '../agent/loop.js';
@@ -624,6 +627,15 @@ export function createAppDependencies(
   const sessionDir = path.join(homedir(), '.qoderwork', 'routedev', 'sessions', trace.getSessionId() ?? `app-${Date.now()}`);
   const notesManager = new NotesManager(sessionDir);
   registry.register(new NotesTool(notesManager));
+  // Phase 71 Task E1：进程内 VFS + 4 个 VFS 工具
+  // - VirtualFS 实例由 app-init 创建，与 agentLoop 共享同一实例
+  // - 4 个工具通过构造函数注入 VFS 实例，loop 通过 setVirtualFS 注入
+  // - VFS 作为 Agent 工作内存统一抽象（todo/scratchpad/notes/中间产物）
+  const virtualFS = createVFS();
+  registry.register(new VfsReadTool(virtualFS));
+  registry.register(new VfsWriteTool(virtualFS));
+  registry.register(new VfsListTool(virtualFS));
+  registry.register(new VfsDeleteTool(virtualFS));
   // Phase 55 Task 9：CCR 取回工具（让 LLM 可按需取回被压缩的原始上下文）
   if (config.ccrCompression?.enabled) {
     registry.register(new CCRRetrieveTool(ccrCache));
@@ -695,6 +707,10 @@ export function createAppDependencies(
   // run() 在 systemPrompt 处理完后调用 recallInjector.recallToPrompt(userMessage)
   // 把 KnowledgeGraph 中相关记忆格式化为【相关记忆】片段追加到 systemPrompt
   agentLoop.setRecallInjector(recallInjector);
+
+  // Phase 71 Task E1：注入 VirtualFS 到 agentLoop
+  // loop 持有同一 VFS 实例（与上方注册的 4 个 VFS 工具共享），保证工具层与 loop 状态一致
+  agentLoop.setVirtualFS(virtualFS);
 
   // 任务1：注入 ComposePipeline，让 Compose 模式具备阶段提示词注入和自动流转能力
   agentLoop.setComposePipeline(workModeController.getComposePipeline());

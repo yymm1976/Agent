@@ -55,6 +55,8 @@ import type { DualLoopOrchestrator } from './dual-loop-orchestrator.js';
 import type { MemoryRecallInjector } from './memory/recall-injector.js';
 // Phase 71 Task D3：工具输出统一处理 pipeline（Sanitizer + Concise Thinking + Budget Offload）
 import type { ToolOutputPipeline } from './context/tool-output-pipeline.js';
+// Phase 71 Task E1：进程内 VFS（运行时 import：构造函数中需默认实例化，无循环依赖风险）
+import { VirtualFS, createVFS } from './context/virtual-fs.js';
 
 /**
  * Phase 55：结构化 system block（支持 Anthropic cache_control: ephemeral）
@@ -186,6 +188,12 @@ export class ReActAgentLoop {
    * 注入到 systemPrompt 而非每轮 messages，避免重复召回浪费 token
    */
   private recallInjector: MemoryRecallInjector | null = null;
+  /**
+   * Phase 71 Task E1：进程内虚拟文件系统（Agent 工作内存统一抽象）
+   * 默认实例化（构造时 createVFS），供 VFS 工具（vfs_read/write/list/delete）共享。
+   * 调用方可通过 setVirtualFS 注入自定义实例（如多 Loop 共享同一 VFS）。
+   */
+  private virtualFS: VirtualFS = createVFS();
 
   constructor(
     toolExecutor: ToolExecutorAdapter,
@@ -414,6 +422,17 @@ export class ReActAgentLoop {
    */
   setRecallInjector(injector: MemoryRecallInjector | null): void {
     this.recallInjector = injector;
+  }
+
+  /**
+   * Phase 71 Task E1：注入进程内虚拟文件系统
+   * 接入后，VFS 工具（vfs_read/write/list/delete）通过此实例读写 Agent 工作内存。
+   * 传入 null 时回退到新的默认实例（重置全部 VFS 状态，用于会话隔离场景）。
+   * 注意：app-init.ts 应在注册 VFS 工具时与调用此 setter 使用同一 VirtualFS 实例，
+   * 保证工具层与 loop 持有的 VFS 一致。
+   */
+  setVirtualFS(vfs: VirtualFS | null): void {
+    this.virtualFS = vfs ?? createVFS();
   }
 
   /**
