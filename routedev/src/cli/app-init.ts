@@ -98,6 +98,8 @@ import type { AgentMiddlewarePipeline } from '../agent/middleware.js';
 import type { PluginRegistry } from '../plugins/registry.js';
 import { SkillsRouter, FilesystemDiscovery } from '../plugins/filesystem-discovery.js';
 import { LoopDetectionMiddleware } from '../agent/middleware/loop-detection.js';
+// Phase 71 Task B2：@-mention 统一引用协议中间件
+import { MentionResolverMiddleware } from '../agent/middleware/mention-resolver.js';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
 // Phase 48 Task 6 修复：scheduler 模块静态 import（替代原 await import，避免非 async 函数中的 typecheck 错误）
@@ -1049,6 +1051,14 @@ export function createAppDependencies(
       maxRepeats: loopDetectionCfg?.maxRepeats ?? 3,
     });
   }
+
+  // Phase 71 Task B2：注册 MentionResolverMiddleware 到 onUserMessage 阶段
+  // @-mention 统一引用协议：解析用户输入中的 @文件路径 / @符号名 / @URL
+  // 把解析结果注入 ctx.metadata.mentions，并把 @-mention 标准化为绝对路径
+  // fail-open：解析失败时不阻塞用户消息
+  const mentionResolver = new MentionResolverMiddleware(cwd);
+  pluginSystem.middlewarePipeline.register('onUserMessage', mentionResolver.getHandler());
+  logger.info('MentionResolverMiddleware registered', { cwd });
 
   // ===== Phase 39：CodeMapContextMiddleware 接线 =====
   // 代码地图上下文中间件：自动注入项目结构到 system prompt

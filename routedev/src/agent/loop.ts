@@ -51,6 +51,10 @@ import type { BudgetMonitor } from './budget-monitor.js';
 // Phase 55 Task 7：DualLoop 编排器（type-only import，避免运行时循环依赖）
 // 注入后 run() 会把控制权转交给 orchestrator.run()
 import type { DualLoopOrchestrator } from './dual-loop-orchestrator.js';
+// Phase 71 Task B3：记忆召回注入器（type-only import，避免运行时循环依赖）
+import type { MemoryRecallInjector } from './memory/recall-injector.js';
+// Phase 71 Task D3：工具输出统一处理 pipeline（Sanitizer + Concise Thinking + Budget Offload）
+import type { ToolOutputPipeline } from './context/tool-output-pipeline.js';
 
 /**
  * Phase 55：结构化 system block（支持 Anthropic cache_control: ephemeral）
@@ -115,6 +119,12 @@ export class ReActAgentLoop {
   private profiler: TokenProfiler | null = null;
   /** Phase 32 Task 1.2：工具结果净化器（注入检测 + 智能截断 + 敏感字段脱敏，可选） */
   private sanitizer: ToolResultSanitizer | null = null;
+  /**
+   * Phase 71 Task D3：工具输出统一处理 pipeline（可选）
+   * 注入后 sanitizeToolResult 会优先走 pipeline.process()，收拢 Sanitizer / Concise Thinking / Budget Offload
+   * 未注入时回退到原 sanitizeToolResult 逻辑（零回归保护）
+   */
+  private toolOutputPipeline: ToolOutputPipeline | null = null;
   /** Phase 34：Trace 收集器（可选，用于记录 LLM 调用与循环事件） */
   private trace: TraceCollector | null = null;
   /**
@@ -170,6 +180,12 @@ export class ReActAgentLoop {
    * 注入后 run() 会把控制权转交给 orchestrator.run()，由双循环编排器接管
    */
   private dualLoopOrchestrator: DualLoopOrchestrator | null = null;
+  /**
+   * Phase 71 Task B3：记忆召回注入器（可选）
+   * 接入后，run() 在 systemPrompt 处理完后注入相关记忆片段（fail-open）
+   * 注入到 systemPrompt 而非每轮 messages，避免重复召回浪费 token
+   */
+  private recallInjector: MemoryRecallInjector | null = null;
 
   constructor(
     toolExecutor: ToolExecutorAdapter,
@@ -199,6 +215,19 @@ export class ReActAgentLoop {
    */
   setSanitizer(sanitizer: ToolResultSanitizer | null): void {
     this.sanitizer = sanitizer;
+  }
+
+  /**
+   * Phase 71 Task D3：注入工具输出统一处理 pipeline
+   *
+   * 注入后 sanitizeToolResult 优先走 pipeline.process()，把 Sanitizer / Concise Thinking /
+   * Budget Offload 三个阶段收拢到一处编排。传入 null 可显式卸载（回退到原逻辑）。
+   *
+   * 注意：pipeline 内部会读取自身的 sanitizer / conciseThinkingEnabled 配置，
+   * 与本类的 setSanitizer / setConciseThinking 相互独立——调用方需保证两者配置一致。
+   */
+  setToolOutputPipeline(pipeline: ToolOutputPipeline | null): void {
+    this.toolOutputPipeline = pipeline;
   }
 
   /** Phase 34：注入 TraceCollector */
@@ -373,6 +402,18 @@ export class ReActAgentLoop {
    */
   setDualLoopOrchestrator(orchestrator: DualLoopOrchestrator | null): void {
     this.dualLoopOrchestrator = orchestrator;
+  }
+
+  /**
+   * Phase 71 Task B3：注入记忆召回注入器
+   * 接入后，run() 在 systemPrompt 处理完后调用 recallToPrompt(userMessage)，
+   * 把知识图谱中相关记忆格式化为【相关记忆】片段追加到 systemPrompt 末尾。
+   * 注入到 systemPrompt 而非每轮 messages：userMessage 在整个 run() 期间不变，
+   * 每轮召回结果相同，注入一次让 effectiveSystemPrompt 继承即可，避免 token 浪费。
+   * 传入 null 可显式卸载（用于配置热重载场景）。fail-open：未注入时跳过。
+   */
+  setRecallInjector(injector: MemoryRecallInjector | null): void {
+    this.recallInjector = injector;
   }
 
   /**
@@ -553,6 +594,11 @@ export class ReActAgentLoop {
    * 任务3：简洁思考约束启用时，额外调用 trimToolResult 裁剪过长工具返回
    */
   private sanitizeToolResult(toolName: string, result: string): string {
+    // Phase 71 Task D3：优先走 ToolOutputPipeline（收拢 Sanitizer / Concise Thinking / Budget Offload）
+    if (this.toolOutputPipeline) {
+      return this.toolOutputPipeline.process(toolName, result).output;
+    }
+    // 回退：pipeline 未注入时走原逻辑（零回归保护）
     let processed = result;
     if (this.sanitizer) {
       try {
@@ -597,6 +643,9 @@ export class ReActAgentLoop {
       onModelSuccess,
       onModelFailure,
     } = params;
+    // Phase 71 Task D1：systemPrompt 已由 system-prompt-builder.ts 静态拼装（chat-runner.ts 接入）
+    // 此处的 middleware onSystemPrompt / conciseThinking / recallInjector 是运行时动态追加，
+    // 不纳入静态 builder（因 middleware 可运行时修改，systemBlocks 需独立处理）
     // Phase 38 Task 1：systemPrompt 改为 let，允许 onSystemPrompt 中间件修改
     let systemPrompt = params.systemPrompt;
     // Phase 55：systemBlocks（结构化 blocks，支持 per-block cache_control）
@@ -637,6 +686,20 @@ export class ReActAgentLoop {
       }
     }
 
+    // Phase 71 Task B3：每轮 ReAct 循环开始时主动召回相关记忆
+    // 注入到 systemPrompt（首轮一次），effectiveSystemPrompt 每轮继承，避免重复召回浪费 token
+    // fail-open：recallInjector 为 null 或 recall 抛错时跳过（recallToPrompt 内部已 try/catch）
+    if (this.recallInjector && userMessage) {
+      const memoryPrompt = this.recallInjector.recallToPrompt(userMessage);
+      if (memoryPrompt) {
+        if (systemBlocks) {
+          systemBlocks = [...systemBlocks, { type: 'text', text: memoryPrompt }];
+        } else {
+          systemPrompt = (systemPrompt ?? '') + memoryPrompt;
+        }
+      }
+    }
+
     // 构建初始消息列表
     const messages: LLMMessage[] = [];
 
@@ -653,7 +716,28 @@ export class ReActAgentLoop {
     const effectiveUserMessage = this.macroManager
       ? this.expandMacros(userMessage)
       : userMessage;
-    messages.push({ role: 'user', content: effectiveUserMessage });
+
+    // Phase 71 Task B2：onUserMessage 中间件——@-mention 解析等用户消息预处理（fail-open）
+    // 中间件可读取 ctx.metadata.userMessage，解析 @-mention 后写回标准化消息
+    // 解析结果通过 ctx.metadata.mentions 传递给后续中间件/工具
+    let finalUserMessage = effectiveUserMessage;
+    if (this.middleware) {
+      const mwCtx: MiddlewareContext = {
+        phase: 'onUserMessage',
+        metadata: { userMessage: effectiveUserMessage },
+      };
+      try {
+        await this.middleware.execute('onUserMessage', mwCtx);
+        // 中间件可能修改 ctx.metadata.userMessage（如 @-mention 标准化替换）
+        if (typeof mwCtx.metadata.userMessage === 'string') {
+          finalUserMessage = mwCtx.metadata.userMessage;
+        }
+      } catch (mwErr) {
+        logger.warn('Middleware onUserMessage threw, continuing (fail-open)', { error: String(mwErr) });
+      }
+    }
+
+    messages.push({ role: 'user', content: finalUserMessage });
 
     // 获取可用工具定义
     const toolDefs = this.config.toolsEnabled

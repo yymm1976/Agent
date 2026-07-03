@@ -3,13 +3,14 @@
 
 import type { LLMMessage, LLMToolDefinition } from '../router/types.js';
 
-/** 中间件可拦截的五个阶段 */
+/** 中间件可拦截的阶段 */
 export type MiddlewarePhase =
   | 'onAgent'        // Agent 启动时（进入 ReAct 循环前）
   | 'onReasoning'    // 每次 LLM 推理前
   | 'onActing'       // 每次工具调用前
   | 'onModelCall'    // LLM API 调用时（可替换/缓存）
-  | 'onSystemPrompt'; // 系统提示词生成时
+  | 'onSystemPrompt' // 系统提示词生成时
+  | 'onUserMessage'; // Phase 71 Task B2：用户消息处理时（@-mention 解析等）
 
 /** 中间件上下文 */
 export interface MiddlewareContext {
