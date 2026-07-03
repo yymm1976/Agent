@@ -57,6 +57,9 @@ import type { MemoryRecallInjector } from './memory/recall-injector.js';
 import type { ToolOutputPipeline } from './context/tool-output-pipeline.js';
 // Phase 71 Task E1：进程内 VFS（运行时 import：构造函数中需默认实例化，无循环依赖风险）
 import { VirtualFS, createVFS } from './context/virtual-fs.js';
+// Phase 71 Task E2：显式 plan 状态（type-only import，避免运行时循环依赖）
+// PlanState 实例由 app-init 构造（注入 VirtualFS），通过 setPlanState 注入 loop
+import type { PlanState } from './context/plan-state.js';
 
 /**
  * Phase 55：结构化 system block（支持 Anthropic cache_control: ephemeral）
@@ -194,6 +197,13 @@ export class ReActAgentLoop {
    * 调用方可通过 setVirtualFS 注入自定义实例（如多 Loop 共享同一 VFS）。
    */
   private virtualFS: VirtualFS = createVFS();
+  /**
+   * Phase 71 Task E2：显式 plan 状态（可选）
+   * 由 app-init 构造（注入同一 VirtualFS 实例）并通过 setPlanState 注入。
+   * plan 工具（plan_get/set/update_step/add_step/remove_step）通过此实例读写 plan。
+   * 默认 null（未注入时跳过 plan 状态能力，向后兼容）。
+   */
+  private planState: PlanState | null = null;
 
   constructor(
     toolExecutor: ToolExecutorAdapter,
@@ -433,6 +443,18 @@ export class ReActAgentLoop {
    */
   setVirtualFS(vfs: VirtualFS | null): void {
     this.virtualFS = vfs ?? createVFS();
+  }
+
+  /**
+   * Phase 71 Task E2：注入显式 plan 状态
+   * 接入后，plan 工具（plan_get/set/update_step/add_step/remove_step）通过此实例读写
+   * Agent 的 plan 状态（存储在 VFS 的 /plan/current.json）。
+   * 传入 null 可显式卸载（用于会话隔离或重置场景）。
+   * 注意：app-init.ts 应在注册 plan 工具时与调用此 setter 使用同一 PlanState 实例，
+   * 保证工具层与 loop 持有的 PlanState 一致；PlanState 内部复用同一 VirtualFS 实例。
+   */
+  setPlanState(planState: PlanState | null): void {
+    this.planState = planState;
   }
 
   /**

@@ -36,6 +36,9 @@ import { NotesManager } from '../agent/memory/notes.js';
 // Phase 71 Task E1：进程内 VFS + 4 个 VFS 工具
 import { createVFS } from '../agent/context/virtual-fs.js';
 import { VfsReadTool, VfsWriteTool, VfsListTool, VfsDeleteTool } from '../agent/tools/vfs-tool.js';
+// Phase 71 Task E2：显式 plan 状态 + 5 个 plan 工具
+import { PlanState } from '../agent/context/plan-state.js';
+import { PlanGetTool, PlanSetTool, PlanUpdateStepTool, PlanAddStepTool, PlanRemoveStepTool } from '../agent/tools/plan-tool.js';
 import { createDefaultEngine, type PermissionEngine } from '../tools/permission-engine.js';
 import { MCPClientManager } from '../tools/mcp/client.js';
 import { ReActAgentLoop } from '../agent/loop.js';
@@ -636,6 +639,16 @@ export function createAppDependencies(
   registry.register(new VfsWriteTool(virtualFS));
   registry.register(new VfsListTool(virtualFS));
   registry.register(new VfsDeleteTool(virtualFS));
+  // Phase 71 Task E2：显式 plan 状态 + 5 个 plan 工具
+  // - PlanState 复用上方 virtualFS 实例（plan 存储在 VFS 的 /plan/current.json）
+  // - 5 个工具通过构造函数注入 PlanState 实例，loop 通过 setPlanState 注入
+  // - plan 状态对 LLM 暴露为显式可读写实体，避免散落在 system prompt
+  const planState = new PlanState(virtualFS);
+  registry.register(new PlanGetTool(planState));
+  registry.register(new PlanSetTool(planState));
+  registry.register(new PlanUpdateStepTool(planState));
+  registry.register(new PlanAddStepTool(planState));
+  registry.register(new PlanRemoveStepTool(planState));
   // Phase 55 Task 9：CCR 取回工具（让 LLM 可按需取回被压缩的原始上下文）
   if (config.ccrCompression?.enabled) {
     registry.register(new CCRRetrieveTool(ccrCache));
@@ -711,6 +724,10 @@ export function createAppDependencies(
   // Phase 71 Task E1：注入 VirtualFS 到 agentLoop
   // loop 持有同一 VFS 实例（与上方注册的 4 个 VFS 工具共享），保证工具层与 loop 状态一致
   agentLoop.setVirtualFS(virtualFS);
+
+  // Phase 71 Task E2：注入 PlanState 到 agentLoop
+  // loop 持有同一 PlanState 实例（内部复用 virtualFS），保证工具层与 loop 状态一致
+  agentLoop.setPlanState(planState);
 
   // 任务1：注入 ComposePipeline，让 Compose 模式具备阶段提示词注入和自动流转能力
   agentLoop.setComposePipeline(workModeController.getComposePipeline());
