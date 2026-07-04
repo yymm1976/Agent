@@ -42,8 +42,6 @@ export function getPresetConfig(preset: ConfigPreset): Record<string, any> {
         adversarial: { enabled: false },
         optimization: {
           tokenTracking: { enabled: false },
-          structuredState: { enabled: false },
-          declarativeContext: { enabled: false },
           conciseThinking: { enabled: false },
         },
       };
@@ -59,8 +57,6 @@ export function getPresetConfig(preset: ConfigPreset): Record<string, any> {
         adversarial: { enabled: true, threshold: 0.6 },
         optimization: {
           tokenTracking: { enabled: true, persistSession: true },
-          structuredState: { enabled: true },
-          declarativeContext: { enabled: true },
           conciseThinking: { enabled: true },
         },
       };
@@ -73,8 +69,6 @@ export function getPresetConfig(preset: ConfigPreset): Record<string, any> {
         adversarial: { enabled: true, threshold: 0.7 },
         optimization: {
           tokenTracking: { enabled: true, persistSession: true },
-          structuredState: { enabled: true },
-          declarativeContext: { enabled: true },
           conciseThinking: { enabled: true },
         },
       };

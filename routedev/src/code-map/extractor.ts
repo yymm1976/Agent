@@ -33,10 +33,24 @@ import {
   extractPyBases,
 } from './languages/python.js';
 
+/** 待解析的调用引用（callee 暂时只知名字，未匹配到定义节点） */
+export interface PendingReference {
+  /** 调用者节点 ID */
+  sourceId: string;
+  /** 被调用函数/方法名（来自 call_expression） */
+  calleeName: string;
+  /** 调用所在行（1-based） */
+  line: number;
+  /** 调用所在文件路径 */
+  filePath: string;
+}
+
 /** 提取结果 */
 export interface ExtractionResult {
   nodes: CodeMapNode[];
   edges: CodeMapEdge[];
+  /** 未解析到定义节点的调用引用（供后续索引补全） */
+  unresolvedRefs?: PendingReference[];
 }
 
 /** 生成节点 ID */
@@ -179,6 +193,7 @@ function walkAndExtract(
   nodes: CodeMapNode[],
   edges: CodeMapEdge[],
   fileNodeId: string,
+  pendingReferences: PendingReference[],
 ): void {
   const nodeType = node.type;
 
@@ -260,7 +275,7 @@ function walkAndExtract(
         for (const child of node.children) {
           if (child.type === 'class_body') {
             for (const mb of child.children) {
-              walkAndExtract(mb, filePath, language, name, nodes, edges, fileNodeId);
+              walkAndExtract(mb, filePath, language, name, nodes, edges, fileNodeId, pendingReferences);
             }
           }
         }
@@ -442,19 +457,18 @@ function walkAndExtract(
         });
       }
     }
-    // call_expression → CALLS 边
+    // call_expression → 收集 pendingReference（在 extractFromTree 末尾解析为 CALLS 边）
     else if (nodeType === TS_CALL_EXPRESSION_TYPE) {
       const calleeName = extractTsCallName(node);
       if (calleeName) {
         // 找到包含此 call 的最近符号节点
         const enclosingSymbol = findEnclosingSymbol(node, filePath, nodes);
         if (enclosingSymbol) {
-          edges.push({
-            id: makeEdgeId(enclosingSymbol.id, calleeName, 'CALLS'),
-            source: enclosingSymbol.id,
-            target: calleeName,
-            kind: 'CALLS',
-            weight: EDGE_WEIGHTS.CALLS,
+          pendingReferences.push({
+            sourceId: enclosingSymbol.id,
+            calleeName,
+            line: node.startPosition.row + 1,
+            filePath,
           });
         }
       }
@@ -523,7 +537,7 @@ function walkAndExtract(
         for (const child of node.children) {
           if (child.type === 'block') {
             for (const bb of child.children) {
-              walkAndExtract(bb, filePath, language, name, nodes, edges, fileNodeId);
+              walkAndExtract(bb, filePath, language, name, nodes, edges, fileNodeId, pendingReferences);
             }
           }
         }
@@ -562,18 +576,17 @@ function walkAndExtract(
         });
       }
     }
-    // call → CALLS 边
+    // call → 收集 pendingReference（在 extractFromTree 末尾解析为 CALLS 边）
     else if (nodeType === PY_CALL_TYPE) {
       const calleeName = extractPyCallName(node);
       if (calleeName) {
         const enclosingSymbol = findEnclosingSymbol(node, filePath, nodes);
         if (enclosingSymbol) {
-          edges.push({
-            id: makeEdgeId(enclosingSymbol.id, calleeName, 'CALLS'),
-            source: enclosingSymbol.id,
-            target: calleeName,
-            kind: 'CALLS',
-            weight: EDGE_WEIGHTS.CALLS,
+          pendingReferences.push({
+            sourceId: enclosingSymbol.id,
+            calleeName,
+            line: node.startPosition.row + 1,
+            filePath,
           });
         }
       }
@@ -582,7 +595,7 @@ function walkAndExtract(
 
   // 递归遍历子节点
   for (const child of node.children) {
-    walkAndExtract(child, filePath, language, parentClass, nodes, edges, fileNodeId);
+    walkAndExtract(child, filePath, language, parentClass, nodes, edges, fileNodeId, pendingReferences);
   }
 }
 
@@ -615,9 +628,31 @@ export function extractFromTree(
 ): ExtractionResult {
   const nodes: CodeMapNode[] = [];
   const edges: CodeMapEdge[] = [];
+  const pendingReferences: PendingReference[] = [];
+  const unresolvedRefs: PendingReference[] = [];
   const fileNodeId = `file:${filePath}`;
 
-  walkAndExtract(tree.rootNode, filePath, language, null, nodes, edges, fileNodeId);
+  walkAndExtract(tree.rootNode, filePath, language, null, nodes, edges, fileNodeId, pendingReferences);
 
-  return { nodes, edges };
+  // 解析 pendingReferences：按名字匹配定义节点，匹配成功生成 CALLS 边（target=节点 ID），未匹配存入 unresolvedRefs
+  for (const ref of pendingReferences) {
+    // 优先精确匹配：同文件作用域内或跨文件 exported
+    const def = nodes.find(n =>
+      n.name === ref.calleeName &&
+      (n.filePath === ref.filePath || n.exported === true),
+    );
+    if (def) {
+      edges.push({
+        id: makeEdgeId(ref.sourceId, def.id, 'CALLS'),
+        source: ref.sourceId,
+        target: def.id, // 修复：target 是节点 ID，不是字符串名字
+        kind: 'CALLS',
+        weight: EDGE_WEIGHTS.CALLS,
+      });
+    } else {
+      unresolvedRefs.push(ref);
+    }
+  }
+
+  return { nodes, edges, unresolvedRefs };
 }

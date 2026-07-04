@@ -46,7 +46,6 @@ describe('Config Presets', () => {
       expect(config.foundationProtocol?.enabled).toBe(true);
       expect(config.reasoningQualityDiagnostics?.enabled).toBe(true);
       expect(config.adversarial?.enabled).toBe(true);
-      expect(config.optimization?.structuredState?.enabled).toBe(true);
     });
 
     it('should return research config with experimental features enabled', () => {

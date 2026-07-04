@@ -28,6 +28,10 @@ import { KnowledgeGraph } from './graph.js';
 import type { GraphNode, GraphEdge, NodeType } from './graph.js';
 import type { MemoryConfig } from '../../config/schema.js';
 import { ContextCompactor } from '../context-compaction.js';
+// Phase 71 Task B3：记忆召回注入器（type-only import，避免运行时循环依赖）
+import type { MemoryRecallInjector } from './recall-injector.js';
+// Phase 71 Task B4：episodic memory（type-only import，避免运行时循环依赖）
+import type { EpisodicMemory } from './episodic-memory.js';
 import { logger } from '../../utils/logger.js';
 import { estimateTokens } from '../../utils/token-estimate.js';
 import { join } from 'node:path';
@@ -119,6 +123,16 @@ export class ContextManager {
    * 接入后，compress 前会记录缓存命中统计（fail-open，不改变压缩行为）
    */
   private prefixCache?: PrefixAwareCache;
+  /**
+   * Phase 71 Task B3：记忆召回注入器（可选）
+   * 接入后供 loop.ts 通过 getRecallInjector() 取用，在 ReAct 每轮开始注入相关记忆
+   */
+  private recallInjector: MemoryRecallInjector | null = null;
+  /**
+   * Phase 71 Task B4：episodic memory（可选，注入后 checkpoint 完成时存 episode）
+   * 接入后，每次 checkpoint 成功写入时把解决路径存为 episode，供后续相似问题复用
+   */
+  private episodicMemory: EpisodicMemory | null = null;
 
   constructor(config: ContextManagerConfig, writer: CheckpointWriter) {
     this.config = config;
@@ -140,6 +154,38 @@ export class ContextManager {
    */
   setPrefixCache(cache: PrefixAwareCache | null): void {
     this.prefixCache = cache ?? undefined;
+  }
+
+  /**
+   * Phase 71 Task B3：注入记忆召回注入器
+   * 接入后，loop.ts 可通过 getRecallInjector() 取用，在 ReAct 每轮开始注入相关记忆
+   */
+  setRecallInjector(injector: MemoryRecallInjector): void {
+    this.recallInjector = injector;
+  }
+
+  /**
+   * Phase 71 Task B3：获取记忆召回注入器（供 loop.ts 每轮调用）
+   * 未注入时返回 null，调用方需 fail-open 跳过
+   */
+  getRecallInjector(): MemoryRecallInjector | null {
+    return this.recallInjector;
+  }
+
+  /**
+   * Phase 71 Task B4：注入 episodic memory
+   * 接入后，每次 checkpoint 成功写入时把解决路径存为 episode，供后续相似问题复用
+   */
+  setEpisodicMemory(em: EpisodicMemory): void {
+    this.episodicMemory = em;
+  }
+
+  /**
+   * Phase 71 Task B4：获取 episodic memory（供测试和 recall-injector 装配取用）
+   * 未注入时返回 null，调用方需 fail-open 跳过
+   */
+  getEpisodicMemory(): EpisodicMemory | null {
+    return this.episodicMemory;
   }
 
   /** Phase 21 Task 5：注册压缩回调 */
@@ -201,6 +247,20 @@ export class ContextManager {
       this.triggeredLevels.add(level);
       // 增量更新知识图谱（从 checkpoint 提取关键事实）
       this.ingestCheckpointToGraph(output.checkpoint);
+      // Phase 71 Task B4：checkpoint 成功完成时存 episode（fail-open，store 内部已 try/catch）
+      if (this.episodicMemory) {
+        const cp = output.checkpoint;
+        this.episodicMemory.store({
+          id: `ep-${Date.now()}`,
+          query: cp.currentIntent,
+          solutionPath: this.extractCompletedSteps(cp.taskTree),
+          outcome: 'success',
+          toolsUsed: [],
+          durationMs: 0,
+          createdAt: Date.now(),
+          tags: cp.crossTaskDiscoveries.slice(0, 5),
+        }).catch(err => logger.warn('episodic memory store failed', { err }));
+      }
       logger.info('Checkpoint triggered', {
         level,
         usagePercent: `${(usagePercent * 100).toFixed(0)}%`,
@@ -849,5 +909,18 @@ export class ContextManager {
     if (source === target) return;
     const edge: GraphEdge = { source, target, type, weight: 1 };
     this.knowledgeGraph.addEdge(edge);
+  }
+
+  /**
+   * Phase 71 Task B4：从 taskTree 提取已完成的步骤描述（深度优先）
+   * 用于把 checkpoint 的解决路径存入 episodic memory
+   */
+  private extractCompletedSteps(node: CheckpointData['taskTree']): string[] {
+    const steps: string[] = [];
+    if (node.status === 'completed') steps.push(node.description);
+    for (const child of node.children) {
+      steps.push(...this.extractCompletedSteps(child));
+    }
+    return steps;
   }
 }

@@ -4,6 +4,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import type { CodeMapNode, CodeMapFile } from './schema.js';
+import { countTokens } from './token-counter.js';
 
 /** 渲染选项 */
 interface RenderOptions {
@@ -25,11 +26,6 @@ interface RenderResult {
   symbolCount: number;
   /** 估算的 token 数 */
   estimatedTokens: number;
-}
-
-/** 估算字符串的 token 数（粗略：1 token ≈ 4 字符） */
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
 }
 
 /**
@@ -87,25 +83,39 @@ export function renderCodeMap(
     fileBlock.push(`${file.path}:`);
     fileBlock.push('⋮...');
 
+    let addedInFile = 0;
+    let budgetExceeded = false;
+
+    // 符号级预算累加：每个符号按 signature 计 token，超预算则停止（至少包含 1 个符号）
     for (const node of sortedNodes) {
       const signature = node.signature ?? node.name;
+      const symbolTokens = countTokens(signature);
+
+      if (totalTokens + symbolTokens > tokenBudget && symbolCount > 0) {
+        budgetExceeded = true;
+        break;
+      }
+
       const lineNum = showLineNumbers ? `${node.startLine + 1}: ` : '';
       fileBlock.push(`│${lineNum}${signature}`);
+      totalTokens += symbolTokens;
+      symbolCount++;
+      addedInFile++;
     }
-    fileBlock.push('⋮...');
 
-    const blockText = fileBlock.join('\n') + '\n';
-    const blockTokens = estimateTokens(blockText);
-
-    // 检查预算
-    if (totalTokens + blockTokens > tokenBudget && fileCount > 0) {
+    // 预算已满且当前文件无法加入任何符号，则停止
+    if (addedInFile === 0 && symbolCount > 0) {
       break;
     }
 
+    fileBlock.push('⋮...');
+    const blockText = fileBlock.join('\n') + '\n';
     lines.push(blockText);
-    totalTokens += blockTokens;
     fileCount++;
-    symbolCount += sortedNodes.length;
+
+    if (budgetExceeded) {
+      break;
+    }
   }
 
   return {

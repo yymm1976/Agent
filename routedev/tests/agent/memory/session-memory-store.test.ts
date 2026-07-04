@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   SessionMemoryStore,
   type SessionMemory,
@@ -15,6 +18,11 @@ function makeMemory(overrides: Partial<SessionMemory> = {}): SessionMemory {
     updatedAt: 2000,
     ...overrides,
   };
+}
+
+/** 创建临时目录用于持久化测试 */
+function makeTmpDir(prefix = 'routedev-test-'): string {
+  return mkdtempSync(join(tmpdir(), prefix));
 }
 
 describe('SessionMemoryStore', () => {
@@ -147,6 +155,135 @@ describe('SessionMemoryStore', () => {
       store.save(makeMemory({ sessionId: 's1' }));
       store.deserialize('{"foo": "bar"}');
       expect(store.size()).toBe(0);
+    });
+  });
+
+  // ===== 持久化测试（跨会话 JSONL 落盘） =====
+  describe('persistence (JSONL)', () => {
+    let tmpDir: string;
+    let persistPath: string;
+
+    beforeEach(() => {
+      tmpDir = makeTmpDir();
+      persistPath = join(tmpDir, 'session-memory.jsonl');
+    });
+
+    afterEach(() => {
+      // 清理临时目录，避免污染后续测试
+      try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* 忽略 */ }
+    });
+
+    it('纯内存模式（不传 persistentPath）不写文件', async () => {
+      const memStore = new SessionMemoryStore(100);
+      memStore.save(makeMemory({ sessionId: 's1' }));
+      // 等待可能的 debounce
+      await new Promise((r) => setTimeout(r, 600));
+      expect(existsSync(persistPath)).toBe(false);
+    });
+
+    it('构造时自动加载已持久化的 JSONL 文件', async () => {
+      // 预写一条 JSONL 数据
+      const mem = makeMemory({ sessionId: 'persisted-1', summary: 'pre-existing memory' });
+      mkdirSync(tmpDir, { recursive: true });
+      writeFileSync(persistPath, JSON.stringify(mem) + '\n', 'utf-8');
+
+      const store = new SessionMemoryStore(100, persistPath);
+      // 等待构造时的异步 loadFromFile 完成
+      await new Promise((r) => setTimeout(r, 50));
+
+      const loaded = store.get('persisted-1');
+      expect(loaded).toBeDefined();
+      expect(loaded!.summary).toBe('pre-existing memory');
+    });
+
+    it('save 后 debounce 500ms 异步落盘', async () => {
+      const store = new SessionMemoryStore(100, persistPath);
+      // 等待构造时 loadFromFile 完成（文件不存在，静默跳过）
+      await new Promise((r) => setTimeout(r, 50));
+
+      store.save(makeMemory({ sessionId: 's1', summary: 'first save' }));
+      // 立即检查：debounce 尚未触发，文件不应存在
+      await new Promise((r) => setTimeout(r, 100));
+      expect(existsSync(persistPath)).toBe(false);
+
+      // 等待 debounce 500ms 触发
+      await new Promise((r) => setTimeout(r, 600));
+      expect(existsSync(persistPath)).toBe(true);
+
+      // 验证文件内容为 JSONL 格式（每行一个 SessionMemory）
+      const content = readFileSync(persistPath, 'utf-8').trim();
+      const lines = content.split('\n');
+      expect(lines.length).toBe(1);
+      const parsed = JSON.parse(lines[0]) as SessionMemory;
+      expect(parsed.sessionId).toBe('s1');
+      expect(parsed.summary).toBe('first save');
+    });
+
+    it('close() 立即 flush 取消 pending debounce', async () => {
+      const store = new SessionMemoryStore(100, persistPath);
+      await new Promise((r) => setTimeout(r, 50));
+
+      store.save(makeMemory({ sessionId: 's1', summary: 'before close' }));
+      // 不等 debounce，直接 close
+      await store.close();
+
+      expect(existsSync(persistPath)).toBe(true);
+      const content = readFileSync(persistPath, 'utf-8').trim();
+      const parsed = JSON.parse(content) as SessionMemory;
+      expect(parsed.sessionId).toBe('s1');
+    });
+
+    it('跨会话恢复：close → 重新构造 → 自动加载', async () => {
+      // 会话 1：保存并 close
+      const store1 = new SessionMemoryStore(100, persistPath);
+      await new Promise((r) => setTimeout(r, 50));
+      store1.save(makeMemory({ sessionId: 'session-a', summary: 'auth module' }));
+      store1.save(makeMemory({ sessionId: 'session-b', summary: 'cache layer' }));
+      await store1.close();
+
+      // 会话 2：重新构造，应自动加载会话 1 持久化的数据
+      const store2 = new SessionMemoryStore(100, persistPath);
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(store2.size()).toBe(2);
+      expect(store2.get('session-a')!.summary).toBe('auth module');
+      expect(store2.get('session-b')!.summary).toBe('cache layer');
+    });
+
+    it('损坏的 JSONL 行被静默跳过（fail-open）', async () => {
+      mkdirSync(tmpDir, { recursive: true });
+      const validLine = JSON.stringify(makeMemory({ sessionId: 'valid-1' }));
+      const corruptLine = '{ this is not valid json }}}';
+      writeFileSync(persistPath, validLine + '\n' + corruptLine + '\n', 'utf-8');
+
+      const store = new SessionMemoryStore(100, persistPath);
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(store.get('valid-1')).toBeDefined();
+      expect(store.size()).toBe(1);
+    });
+
+    it('文件不存在时构造不抛错（fail-open）', async () => {
+      const nonExistentPath = join(tmpDir, 'nonexistent', 'memory.jsonl');
+      const store = new SessionMemoryStore(100, nonExistentPath);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(store.size()).toBe(0);
+    });
+
+    it('多次 save 在 debounce 窗口内只触发一次落盘', async () => {
+      const store = new SessionMemoryStore(100, persistPath);
+      await new Promise((r) => setTimeout(r, 50));
+
+      // 连续 save 5 次
+      for (let i = 0; i < 5; i++) {
+        store.save(makeMemory({ sessionId: `s${i}`, summary: `save ${i}` }));
+      }
+      // 等待 debounce 完成
+      await new Promise((r) => setTimeout(r, 600));
+
+      expect(existsSync(persistPath)).toBe(true);
+      const lines = readFileSync(persistPath, 'utf-8').trim().split('\n');
+      expect(lines.length).toBe(5);
     });
   });
 });

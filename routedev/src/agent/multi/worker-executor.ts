@@ -38,6 +38,8 @@ import { WORKER_ROLE_PROMPTS, executeWorkerIsolated, type WorkerFunction } from 
 import { logger } from '../../utils/logger.js';
 import type { WorkerContextConfig } from '../../config/schema.js';
 import { estimateTokens } from '../../utils/token-estimate.js';
+// Phase 71 Task B1：tiktoken 精确截断替代 slice(-maxMessages)，学习 Cline 保留最后 tool_use+tool_result 对
+import { sliceByTokenBudget } from '../context/token-aware-slicer.js';
 // Phase 53 Task 11：熔断器（type-only import，避免运行时循环依赖）
 import type { CircuitBreaker } from '../circuit-breaker.js';
 // Phase 55 Task 15 修复：CacheStatsTracker（type-only import，避免运行时循环依赖）
@@ -342,14 +344,24 @@ export class WorkerExecutor {
 
     // Phase 55 改造：不再强制清空，按 workerContextConfig 策略取 tail 切片
     // 移除原"profileManager 注入则强制清空 workerHistory"的 detached session 逻辑
-    // - tail 策略：保留 filteredHistory 尾部 maxMessages 条（让 Worker 拿到近期对话上下文）
+    // - tail 策略：保留 filteredHistory 尾部消息（让 Worker 拿到近期对话上下文）
     // - 其他策略或禁用：回退到空数组（保持原 profileManager 注入时的隔离语义）
     // 注意：非 tail 策略下 Worker 失去历史上下文，是 Phase 55 为换取 prompt cache 命中率的故意取舍
-    // 默认配置（DEFAULT_WORKER_CONTEXT_CONFIG）使用 tail 策略，filterContext 已 slice(-maxMessages)，
+    // 默认配置（DEFAULT_WORKER_CONTEXT_CONFIG）使用 tail 策略，filterContext 已做角色感知过滤，
     // 故默认配置下 workerHistory 与原 filteredHistory 内容等价；非默认配置需 Task 15 集成验证
     // 配合 systemBlocks 固定前缀缓存，不同 Worker 共享同一份 baseSystemPrompt 命中 Anthropic prompt cache
+    //
+    // Phase 71 Task B1 改造：将 slice(-maxMessages) 改为 tiktoken 精确截断
+    // - 实装 workerContext.maxTokens 死字段（原本仅 budget 策略使用，tail 策略未用）
+    // - 保留 system 消息 + 最后 tool_use/tool_result 对（Cline 风格，避免工具上下文断链）
+    // - maxMessages 保留为兼容字段（schema default），Phase 71 Task B1 后改用 maxTokens 控制预算
     const workerHistory = (this.workerContextConfig.enabled && this.workerContextConfig.strategy === 'tail')
-      ? filteredHistory.slice(-this.workerContextConfig.maxMessages)
+      ? sliceByTokenBudget(filteredHistory, {
+          maxTokens: this.workerContextConfig.maxTokens ?? 4000,
+          strategy: 'tail',
+          preserveSystemMessages: true,
+          preserveLastToolPair: true,
+        }).sliced
       : [];
 
     // 闭包变量：捕获每次执行尝试的中间状态（重试时会重置）

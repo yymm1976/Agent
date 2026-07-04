@@ -10,6 +10,10 @@ import {
   ExpertiseManager,
   type UserExpertise,
 } from '../../config/expertise-manager.js';
+import {
+  computeDisclosureLevel,
+  applyDisclosure,
+} from '../../skills/progressive-disclosure.js';
 
 /** 各等级的 System Prompt 注入片段 */
 const EXPERTISE_PROMPTS: Record<UserExpertise, string> = {
@@ -36,13 +40,30 @@ const EXPERTISE_PROMPTS: Record<UserExpertise, string> = {
  * 在 onSystemPrompt 阶段将 EXPERTISE_PROMPTS[level] 追加到 systemPrompt。
  */
 export class ExpertisePromptMiddleware {
-  constructor(private expertiseManager: ExpertiseManager) {}
+  constructor(
+    private expertiseManager: ExpertiseManager,
+    /** Phase 71 Task D6：上下文占用率获取函数（可选，未注入时默认 0） */
+    private getTokenUsageRatio?: () => number,
+    /** Phase 71 Task D6：任务复杂度（可选，默认 medium） */
+    private taskComplexity: 'low' | 'medium' | 'high' = 'medium',
+  ) {}
 
   /** 获取中间件处理器（注册到 onSystemPrompt 阶段） */
   getHandler(): MiddlewareHandler {
     return async (ctx: MiddlewareContext, next: () => Promise<void>) => {
       const level = this.expertiseManager.getLevel();
-      const promptFragment = EXPERTISE_PROMPTS[level];
+      let promptFragment = EXPERTISE_PROMPTS[level];
+
+      // Phase 71 Task D6：根据披露级别压缩 prompt fragment
+      if (promptFragment) {
+        const tokenUsageRatio = this.getTokenUsageRatio?.() ?? 0;
+        const disclosureLevel = computeDisclosureLevel({
+          tokenUsageRatio,
+          expertiseLevel: level,
+          taskComplexity: this.taskComplexity,
+        });
+        promptFragment = applyDisclosure(promptFragment, disclosureLevel);
+      }
 
       if (ctx.systemPrompt !== undefined && promptFragment) {
         ctx.systemPrompt += '\n\n' + promptFragment;

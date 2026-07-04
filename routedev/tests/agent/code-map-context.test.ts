@@ -1,11 +1,34 @@
 // tests/agent/code-map-context.test.ts
 // Phase 39 Task 1：CodeMapContextMiddleware 测试
 // 覆盖：formatSummary / findRelatedFiles / formatRelatedFiles / handler 注入
+// 注：Phase 41/42 接入 tree-sitter 后，此处 mock tree-sitter 模块失败，
+//     强制走 regex fallback 路径，保留对原 regex 行为的覆盖
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+
+// mock tree-sitter 模块全部失败，强制 middleware 走 regex fallback 路径
+vi.mock('../../src/code-map/indexer.js', () => ({
+  fullIndex: vi.fn().mockRejectedValue(new Error('mocked: tree-sitter disabled in this test')),
+  incrementalIndex: vi.fn().mockRejectedValue(new Error('mocked: tree-sitter disabled in this test')),
+}));
+vi.mock('../../src/code-map/querier.js', () => ({
+  explore: vi.fn(),
+}));
+vi.mock('../../src/code-map/database.js', () => ({
+  getIndexStatus: vi.fn(),
+}));
+vi.mock('../../src/utils/logger.js', () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 import { CodeMapContextMiddleware } from '../../src/agent/middleware/code-map-context.js';
 import type { MiddlewareContext } from '../../src/agent/middleware.js';
 import type { RepoMapFileEntry } from '../../src/tools/repo-map.js';

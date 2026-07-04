@@ -120,3 +120,11 @@ export interface ConflictResult {
   /** 建议 */
   suggestion: string;
 }
+
+/** 并行 Worker 执行结果（供 ResultComparator 使用） */
+export interface ParallelOutcome {
+  success: boolean;
+  workerId: string;
+  result?: string;
+  error?: string;
+}

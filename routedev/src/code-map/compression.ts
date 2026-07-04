@@ -1,6 +1,8 @@
 // src/code-map/compression.ts
 // RepoDistill 预算分配
 
+import { countTokens } from './token-counter.js';
+
 /** 蒸馏节点输入 */
 interface DistillNode {
   id: string;
@@ -22,11 +24,6 @@ interface DistillResult {
   selected: DistillNode[];
   truncated: number;
   estimatedTokens: number;
-}
-
-/** 估算字符串的 token 数（粗略：1 token ≈ 4 字符） */
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
 }
 
 /**
@@ -51,7 +48,7 @@ export function distillContext(
   let truncated = 0;
 
   for (const node of sorted) {
-    const nodeTokens = estimateTokens(node.signature + '\n' + node.source);
+    const nodeTokens = countTokens(node.signature + '\n' + node.source);
     if (usedTokens + nodeTokens > budgetTokens) {
       truncated = sorted.length - selected.length;
       break;
@@ -97,7 +94,7 @@ function distillWithNeighbors(
 
   function tryAdd(node: DistillNode, depth: number): boolean {
     if (selectedIds.has(node.id)) return false;
-    const nodeTokens = estimateTokens(node.signature + '\n' + node.source);
+    const nodeTokens = countTokens(node.signature + '\n' + node.source);
     if (usedTokens + nodeTokens > budgetTokens) {
       return false;
     }

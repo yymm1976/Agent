@@ -123,12 +123,14 @@ describe('CodeMap Engine', () => {
 
   // 6. 验证 CALLS 边（函数调用）
   it('should extract CALLS edge', async () => {
-    const code = `function greet() { return helper(); }`;
+    // 注意：新机制下 target 必须是节点 ID，因此被调用函数需在同文件中定义
+    const code = `function helper() {}\nfunction greet() { return helper(); }`;
     const result = await parseFile('test.ts', code);
     const extracted = extractFromTree(result!.tree, 'test.ts', 'typescript');
     const callsEdges = extracted.edges.filter(e => e.kind === 'CALLS');
     expect(callsEdges.length).toBeGreaterThan(0);
-    expect(callsEdges.some(e => e.target === 'helper')).toBe(true);
+    // target 是节点 ID（filePath:startLine:name），不再是裸名字 "helper"
+    expect(callsEdges.some(e => e.target === 'test.ts:0:helper')).toBe(true);
   });
 
   // 7. 验证 IMPORTS 边

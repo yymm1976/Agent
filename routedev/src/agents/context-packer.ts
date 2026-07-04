@@ -2,6 +2,8 @@
 // 上下文筛选与打包：按角色权重选择来源，在 token 预算内组装上下文包
 // Task 2：子 Agent 上下文打包器
 
+import { countTokens } from '../code-map/token-counter.js';
+
 export type AgentRole = 'researcher' | 'executor' | 'reviewer' | 'custom';
 
 interface RelevantSymbol {
@@ -169,9 +171,9 @@ export class ContextPacker {
     };
   }
 
-  /** token 估算（简单：1 token ≈ 4 字符） */
+  /** Phase 71 Task D4：token 估算改用 tiktoken 精确计数（原 length/4 估算误差 ±30%） */
   private estimateTokens(text: string): number {
-    return Math.ceil(text.length / 4);
+    return countTokens(text);
   }
 
   /** 按 PageRank 排序符号并截断到预算内 */
