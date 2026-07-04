@@ -5,8 +5,19 @@
 import type { ILLMClient } from '../types.js';
 import { OpenAIClient } from './openai.js';
 import { AnthropicClient } from './anthropic.js';
+import { GeminiClient } from './gemini-client.js';
+import { DeepSeekClient } from './deepseek-client.js';
+import { QwenClient } from './qwen-client.js';
+import { OllamaClient } from './ollama-client.js';
 import { logger } from '../../utils/logger.js';
 import type { Protocol } from '../../config/schema.js';
+
+/**
+ * 客户端类型标识
+ * - openai/anthropic/gemini：与 protocol 一一对应
+ * - deepseek/qwen/ollama：共享 'openai' protocol，通过 clientType 区分子类
+ */
+export type LLMClientType = Protocol | 'deepseek' | 'qwen' | 'ollama';
 
 /** LLM 客户端配置 */
 export interface LLMClientConfig {
@@ -15,13 +26,54 @@ export interface LLMClientConfig {
   baseUrl: string;
   apiKey: string;
   timeoutMs?: number;
+  /**
+   * 客户端子类型标识（可选）
+   * 当 protocol='openai' 时，可指定 'deepseek'/'qwen'/'ollama' 创建对应子类
+   * 未指定时按 protocol 分发到基础客户端
+   */
+  clientType?: LLMClientType;
 }
 
 /**
  * 创建 LLM 客户端
- * 根据协议类型返回对应的客户端实例
+ * 优先按 clientType 分发（区分 OpenAI 兼容子类），否则按 protocol 分发
  */
 export function createLLMClient(config: LLMClientConfig): ILLMClient {
+  // 优先按 clientType 分发：处理共享 'openai' protocol 的子类
+  switch (config.clientType) {
+    case 'gemini':
+      return new GeminiClient({
+        providerId: config.id,
+        baseUrl: config.baseUrl,
+        apiKey: config.apiKey,
+        timeoutMs: config.timeoutMs,
+      });
+    case 'deepseek':
+      return new DeepSeekClient({
+        providerId: config.id,
+        baseUrl: config.baseUrl,
+        apiKey: config.apiKey,
+        timeoutMs: config.timeoutMs,
+      });
+    case 'qwen':
+      return new QwenClient({
+        providerId: config.id,
+        baseUrl: config.baseUrl,
+        apiKey: config.apiKey,
+        timeoutMs: config.timeoutMs,
+      });
+    case 'ollama':
+      return new OllamaClient({
+        providerId: config.id,
+        baseUrl: config.baseUrl,
+        timeoutMs: config.timeoutMs,
+      });
+    default:
+      // clientType 未指定或与 protocol 同名时，回退到 protocol 分发
+      break;
+  }
+
+  // 按 protocol 分发：处理 openai/anthropic/gemini 基础客户端
   switch (config.protocol) {
     case 'openai':
       return new OpenAIClient({
@@ -32,6 +84,13 @@ export function createLLMClient(config: LLMClientConfig): ILLMClient {
       });
     case 'anthropic':
       return new AnthropicClient({
+        providerId: config.id,
+        baseUrl: config.baseUrl,
+        apiKey: config.apiKey,
+        timeoutMs: config.timeoutMs,
+      });
+    case 'gemini':
+      return new GeminiClient({
         providerId: config.id,
         baseUrl: config.baseUrl,
         apiKey: config.apiKey,
@@ -132,3 +191,7 @@ export class LLMClientManager {
 export { OpenAIClient } from './openai.js';
 export { AnthropicClient } from './anthropic.js';
 export { BaseLLMClient } from './base.js';
+export { GeminiClient } from './gemini-client.js';
+export { DeepSeekClient } from './deepseek-client.js';
+export { QwenClient } from './qwen-client.js';
+export { OllamaClient } from './ollama-client.js';
