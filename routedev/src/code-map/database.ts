@@ -158,6 +158,59 @@ export function getUnresolvedRefsByCallee(db: DB, calleeName: string): PendingRe
   }));
 }
 
+/** 读取所有未解析调用引用（供 resolveCrossFileSteps 跨文件回填使用） */
+export function getAllUnresolvedRefs(db: DB): PendingReference[] {
+  const rows = db.prepare(
+    'SELECT source_node_id AS sourceId, callee_name AS calleeName, line, file_path AS filePath FROM unresolved_refs',
+  ).all() as Array<Record<string, unknown>>;
+  return rows.map(row => ({
+    sourceId: row.sourceId as string,
+    calleeName: row.calleeName as string,
+    line: row.line as number,
+    filePath: row.filePath as string,
+  }));
+}
+
+/** 删除单条未解析引用（成功回填 CALLS 边后调用） */
+export function deleteUnresolvedRef(
+  db: DB,
+  sourceId: string,
+  calleeName: string,
+  line: number,
+  filePath: string,
+): void {
+  db.prepare(
+    'DELETE FROM unresolved_refs WHERE source_node_id = ? AND callee_name = ? AND line = ? AND file_path = ?',
+  ).run(sourceId, calleeName, line, filePath);
+}
+
+/** 按 name 查询节点 id 和 file_path（供跨文件 CALLS 解析使用） */
+export function getNodeIdsByName(db: DB, name: string): Array<{ id: string; filePath: string; rankScore: number }> {
+  const rows = db.prepare(
+    'SELECT id, file_path AS filePath, rank_score AS rankScore FROM nodes WHERE name = ?',
+  ).all(name) as Array<Record<string, unknown>>;
+  return rows.map(row => ({
+    id: row.id as string,
+    filePath: row.filePath as string,
+    rankScore: (row.rankScore as number) ?? 0,
+  }));
+}
+
+/** 检查指定边是否已存在（避免重复插入 CALLS 边） */
+export function edgeExists(db: DB, source: string, target: string, kind: string): boolean {
+  const row = db.prepare(
+    'SELECT 1 AS c FROM edges WHERE source = ? AND target = ? AND kind = ?',
+  ).get(source, target, kind) as { c: number } | undefined;
+  return row !== undefined;
+}
+
+/** 删除指定边（按 source + target + kind） */
+export function deleteEdge(db: DB, source: string, target: string, kind: string): void {
+  db.prepare(
+    'DELETE FROM edges WHERE source = ? AND target = ? AND kind = ?',
+  ).run(source, target, kind);
+}
+
 /** 删除指定文件的所有未解析引用（重新索引前清理） */
 export function deleteFileUnresolvedRefs(db: DB, filePath: string): void {
   db.prepare('DELETE FROM unresolved_refs WHERE file_path = ?').run(filePath);
@@ -297,6 +350,58 @@ export function getIndexStatus(db: DB): IndexStatus {
     lastIndexedAt: lastRow?.indexed_at ?? null,
     initialized: true,
   };
+}
+
+/** Top 文件结果（按 PageRank 排序） */
+export interface TopFileEntry {
+  filePath: string;
+  nodeCount: number;
+}
+
+/** Top 符号结果（精简版，仅含注入 systemPrompt 所需字段） */
+export interface TopSymbolEntry {
+  name: string;
+  kind: string;
+  signature: string | null;
+}
+
+/**
+ * 按 PageRank 排序获取 top N 文件
+ * 排序依据：文件内节点最大 rank_score；排除 import 节点
+ * 供 middleware 注入 <project_structure> 文件清单使用
+ */
+export function getTopFilesByRank(db: DB, limit: number): TopFileEntry[] {
+  const rows = db.prepare(
+    `SELECT file_path AS filePath, COUNT(*) AS nodeCount
+     FROM nodes
+     WHERE kind != 'import'
+     GROUP BY file_path
+     ORDER BY MAX(rank_score) DESC
+     LIMIT ?`,
+  ).all(limit) as Array<Record<string, unknown>>;
+  return rows.map(row => ({
+    filePath: row.filePath as string,
+    nodeCount: row.nodeCount as number,
+  }));
+}
+
+/**
+ * 按 rank_score 排序获取指定文件的 top N 符号
+ * 排除 import 节点；供 middleware 在 <project_structure> 中渲染每个文件的符号签名
+ */
+export function getTopSymbolsByFile(db: DB, filePath: string, limit: number): TopSymbolEntry[] {
+  const rows = db.prepare(
+    `SELECT name, kind, signature
+     FROM nodes
+     WHERE file_path = ? AND kind != 'import'
+     ORDER BY rank_score DESC
+     LIMIT ?`,
+  ).all(filePath, limit) as Array<Record<string, unknown>>;
+  return rows.map(row => ({
+    name: row.name as string,
+    kind: row.kind as string,
+    signature: (row.signature as string) ?? null,
+  }));
 }
 
 /** 关闭数据库 */

@@ -4,13 +4,22 @@
 // 注册到 onSystemPrompt 阶段，将项目结构和相关文件注入系统提示词
 // 帮助 Agent 在不调用 repo_map 工具的情况下获得项目结构感知
 
+import path from 'node:path';
+import fsp from 'node:fs/promises';
 import type { MiddlewareContext, MiddlewareHandler } from '../middleware.js';
 import { incrementalScan, type RepoMapFileEntry } from '../../tools/repo-map.js';
 import { fullIndex, incrementalIndex } from '../../code-map/indexer.js';
 import { explore } from '../../code-map/querier.js';
-import { getIndexStatus, type DB } from '../../code-map/database.js';
+import {
+  getIndexStatus,
+  getTopFilesByRank,
+  getTopSymbolsByFile,
+  type DB,
+  type TopFileEntry,
+} from '../../code-map/database.js';
 import { refreshGitSeedCache } from '../../code-map/git-integration.js';
-import type { CodeMapNode, IndexStatus } from '../../code-map/schema.js';
+import type { CodeMapNode, CodeSnippet, IndexStatus } from '../../code-map/schema.js';
+import { countTokens } from '../../code-map/token-counter.js';
 import { logger } from '../../utils/logger.js';
 
 /**
@@ -25,6 +34,8 @@ import { logger } from '../../utils/logger.js';
 export class CodeMapContextMiddleware {
   private repoMapEntries: RepoMapFileEntry[] | null = null;
   private rootDir: string;
+  /** token 预算：注入 systemPrompt 的总 token 上限（统计 + 文件清单 + 相关符号 + snippet） */
+  private budgetTokens: number;
   /** tree-sitter 数据库实例（复用，避免重复 fullIndex） */
   private db: DB | null = null;
   /** 是否已成功 fullIndex 过 */
@@ -36,9 +47,20 @@ export class CodeMapContextMiddleware {
 
   /** 增量索引节流间隔（毫秒） */
   private static readonly REFRESH_INTERVAL_MS = 60_000;
+  /** snippet 长度上限（行数） */
+  private static readonly SNIPPET_MAX_LINES = 30;
+  /** snippet 渲染行数（前 N 行带行号） */
+  private static readonly SNIPPET_RENDER_LINES = 5;
+  /** top 文件清单上限 */
+  private static readonly TOP_FILES_LIMIT = 50;
+  /** 每文件 top 符号数 */
+  private static readonly SYMBOLS_PER_FILE = 3;
+  /** 异步读取 snippet 的节点数上限 */
+  private static readonly SNIPPET_NODE_LIMIT = 3;
 
-  constructor(rootDir: string) {
+  constructor(rootDir: string, budgetTokens?: number) {
     this.rootDir = rootDir;
+    this.budgetTokens = budgetTokens ?? 2048;
   }
 
   /**
@@ -131,15 +153,40 @@ export class CodeMapContextMiddleware {
 
   /**
    * tree-sitter 路径：用 explore 查询相关符号，注入 systemPrompt
+   *
+   * 注入内容（按 token 预算控制）：
+   *   1. <project_structure>：统计数字（4 行，始终保留）+ top 50 文件清单（按 PageRank 排序，每文件 top 3 符号签名）
+   *   2. <related_files>：explore 节点 + top 3 节点 snippet（前 5 行带行号）
+   *
+   * 优先级：统计数字 > related_files > project_structure 文件清单 > snippet
    */
   private async handleTreeSitter(ctx: MiddlewareContext, db: DB): Promise<void> {
     const status = getIndexStatus(db);
     const userQuery = (ctx.metadata.userQuery as string) || '';
 
-    // 项目结构摘要（索引状态）
-    const summary = this.formatTreeSitterSummary(status);
+    // 1. 统计数字（始终保留，约 50 token）
+    const statsLines = this.formatTreeSitterStats(status);
+    const statsTokens = countTokens(statsLines);
 
-    // 用 explore 查询相关符号（空查询返回空结果，不报错）
+    // 2. top 文件清单（按 PageRank 排序，对标 regex 路径的 formatSummary）
+    //    预算：剩余预算的 40%（约 800 token）
+    const filesBudget = Math.max(0, (this.budgetTokens - statsTokens) * 0.4);
+    let topFiles: TopFileEntry[] = [];
+    try {
+      topFiles = getTopFilesByRank(db, CodeMapContextMiddleware.TOP_FILES_LIMIT);
+    } catch (err) {
+      logger.warn('getTopFilesByRank 失败，跳过文件清单注入', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    const filesBlock = this.formatTopFilesBlock(db, topFiles, filesBudget);
+
+    // 拼接 <project_structure>：统计 + 文件清单
+    const projectStructure = this.wrapProjectStructure(statsLines, filesBlock);
+
+    // 3. explore 查询相关符号
+    //    includeSnippets=false 避免 explore 内部同步 readFileSync 阻塞
+    //    middleware 单独异步读取 top 3 节点的 snippet
     let exploreNodes: CodeMapNode[] = [];
     if (userQuery.trim()) {
       try {
@@ -156,15 +203,27 @@ export class CodeMapContextMiddleware {
       }
     }
 
-    // 注入 systemPrompt
-    if (ctx.systemPrompt !== undefined) {
-      ctx.systemPrompt += '\n\n' + summary;
-    } else {
-      ctx.systemPrompt = summary;
-    }
+    // 4. 异步读取 top 3 节点的 snippet（30 行上限）
+    const snippets = await this.readTopSnippets(
+      exploreNodes.slice(0, CodeMapContextMiddleware.SNIPPET_NODE_LIMIT),
+      this.rootDir,
+    );
 
-    if (exploreNodes.length > 0) {
-      ctx.systemPrompt += '\n\n' + this.formatExploreNodes(exploreNodes);
+    // 5. <related_files>（优先保留，预算：剩余的 60%）
+    const projectTokens = countTokens(projectStructure);
+    const relatedBudget = Math.max(0, this.budgetTokens - projectTokens);
+    const relatedBlock = exploreNodes.length > 0
+      ? this.formatExploreNodes(exploreNodes, snippets, relatedBudget)
+      : '';
+
+    // 6. 注入 systemPrompt
+    if (ctx.systemPrompt !== undefined) {
+      ctx.systemPrompt += '\n\n' + projectStructure;
+    } else {
+      ctx.systemPrompt = projectStructure;
+    }
+    if (relatedBlock) {
+      ctx.systemPrompt += '\n\n' + relatedBlock;
     }
 
     ctx.metadata.codeMapInjected = true;
@@ -175,6 +234,10 @@ export class CodeMapContextMiddleware {
 
   /**
    * regex fallback 路径：用 incrementalScan + findRelatedFiles
+   *
+   * 注入内容（按 token 预算控制）：
+   *   1. <project_structure>：前 50 个文件签名摘要（按 token 预算截断）
+   *   2. <related_files>：关键词匹配的前 10 个相关文件（优先保留）
    */
   private async handleRegex(ctx: MiddlewareContext): Promise<void> {
     if (!this.repoMapEntries) {
@@ -191,8 +254,12 @@ export class CodeMapContextMiddleware {
       return;
     }
 
-    // 注入项目结构摘要（前 50 个文件）
-    const summary = this.formatSummary(entries.slice(0, 50));
+    // token 预算分配：related 优先（60%），project_structure 文件清单其次（40%）
+    const filesBudget = this.budgetTokens * 0.4;
+    const relatedBudget = this.budgetTokens * 0.6;
+
+    // 注入项目结构摘要（按 token 预算截断）
+    const summary = this.formatSummary(entries.slice(0, 50), filesBudget);
 
     // 根据用户查询匹配相关文件
     const userQuery = (ctx.metadata.userQuery as string) || '';
@@ -200,14 +267,11 @@ export class CodeMapContextMiddleware {
 
     if (ctx.systemPrompt !== undefined) {
       ctx.systemPrompt += '\n\n' + summary;
-      if (related.length > 0) {
-        ctx.systemPrompt += '\n\n' + this.formatRelatedFiles(related);
-      }
     } else {
       ctx.systemPrompt = summary;
-      if (related.length > 0) {
-        ctx.systemPrompt += '\n\n' + this.formatRelatedFiles(related);
-      }
+    }
+    if (related.length > 0) {
+      ctx.systemPrompt += '\n\n' + this.formatRelatedFiles(related, relatedBudget);
     }
 
     ctx.metadata.codeMapInjected = true;
@@ -228,6 +292,7 @@ export class CodeMapContextMiddleware {
 
   /**
    * 格式化 tree-sitter 索引状态为 <project_structure> 段落
+   * 注：保留原签名以兼容现有测试；handleTreeSitter 内部使用 formatTreeSitterStats + wrapProjectStructure 拼接文件清单
    */
   formatTreeSitterSummary(status: IndexStatus): string {
     const lines: string[] = ['<project_structure>'];
@@ -242,16 +307,133 @@ export class CodeMapContextMiddleware {
   }
 
   /**
-   * 格式化 explore 节点为 <related_files> 段落
+   * 仅格式化统计数字（不含 <project_structure> 开闭标签），供 handleTreeSitter 拼接文件清单使用
    */
-  formatExploreNodes(nodes: CodeMapNode[]): string {
-    const lines: string[] = ['<related_files>'];
-    for (const node of nodes) {
-      lines.push(`  ${node.filePath}`);
-      lines.push(`    symbol: ${node.name} (${node.kind})`);
-      if (node.signature) {
-        lines.push(`    signature: ${node.signature}`);
+  private formatTreeSitterStats(status: IndexStatus): string {
+    const lines: string[] = [];
+    lines.push(`  indexed_files: ${status.fileCount}`);
+    lines.push(`  indexed_symbols: ${status.nodeCount}`);
+    lines.push(`  indexed_edges: ${status.edgeCount}`);
+    if (status.lastIndexedAt) {
+      lines.push(`  last_indexed_at: ${status.lastIndexedAt}`);
+    }
+    return lines.join('\n');
+  }
+
+  /**
+   * 将统计数字 + 文件清单块拼装为 <project_structure> 段落
+   */
+  private wrapProjectStructure(statsLines: string, filesBlock: string): string {
+    const lines: string[] = ['<project_structure>'];
+    lines.push(statsLines);
+    if (filesBlock) {
+      lines.push(filesBlock);
+    }
+    lines.push('</project_structure>');
+    return lines.join('\n');
+  }
+
+  /**
+   * 格式化 top 文件清单（按 PageRank 排序），按 token 预算截断
+   * 格式与 regex 路径 formatSummary 对齐：每文件一行路径 + top 3 符号签名
+   */
+  private formatTopFilesBlock(db: DB, topFiles: TopFileEntry[], budgetTokens: number): string {
+    if (topFiles.length === 0 || budgetTokens <= 0) return '';
+    const lines: string[] = [];
+    let used = 0;
+    for (const file of topFiles) {
+      let symbols: Array<{ name: string; kind: string; signature: string | null }> = [];
+      try {
+        symbols = getTopSymbolsByFile(db, file.filePath, CodeMapContextMiddleware.SYMBOLS_PER_FILE);
+      } catch {
+        // 查询失败跳过此文件的符号行
       }
+      const fileLines: string[] = [`  ${file.filePath}`];
+      for (const sym of symbols) {
+        const sig = (sym.signature ?? '').trim() || `${sym.kind} ${sym.name}`;
+        fileLines.push(`    ${sig}`);
+      }
+      const fileText = fileLines.join('\n');
+      const fileTokens = countTokens(fileText + '\n');
+      if (used + fileTokens > budgetTokens) break;
+      lines.push(fileText);
+      used += fileTokens;
+    }
+    return lines.join('\n');
+  }
+
+  /**
+   * 异步读取 top 节点的源代码片段（每个最多 30 行）
+   * fail-open：文件不存在或读取失败时跳过
+   *
+   * 不依赖 explore 的 includeSnippets 参数（explore 内部用同步 readFileSync 会阻塞），
+   * middleware 单独异步读取，只读 top 3 节点（避免读取全部 10 个节点的片段）
+   */
+  private async readTopSnippets(nodes: CodeMapNode[], rootDir: string): Promise<CodeSnippet[]> {
+    const snippets: CodeSnippet[] = [];
+    for (const node of nodes) {
+      try {
+        const fullPath = path.join(rootDir, node.filePath);
+        const content = await fsp.readFile(fullPath, 'utf-8');
+        const fileLines = content.split('\n');
+        const start = Math.max(0, node.startLine);
+        // snippet 长度上限：30 行
+        const end = Math.min(fileLines.length - 1, node.endLine, start + CodeMapContextMiddleware.SNIPPET_MAX_LINES - 1);
+        const snippetLines = fileLines.slice(start, end + 1);
+        snippets.push({
+          filePath: node.filePath,
+          startLine: start,
+          endLine: end,
+          content: snippetLines.join('\n'),
+          symbolName: node.name,
+        });
+      } catch {
+        // 文件不存在或读取失败：fail-open 跳过
+      }
+    }
+    return snippets;
+  }
+
+  /**
+   * 格式化 explore 节点为 <related_files> 段落
+   * 含 snippet 渲染（前 5 行带行号），按 token 预算截断
+   *
+   * @param nodes explore 返回的节点
+   * @param snippets middleware 异步读取的 snippet（按 symbolName 匹配节点）
+   * @param budgetTokens 可选 token 预算；未传则不截断（兼容现有测试）
+   */
+  formatExploreNodes(nodes: CodeMapNode[], snippets: CodeSnippet[] = [], budgetTokens?: number): string {
+    const lines: string[] = ['<related_files>'];
+    let used = countTokens(lines[0] + '\n');
+
+    // snippet 按 symbolName 索引，便于节点匹配
+    const snippetByName = new Map<string, CodeSnippet>();
+    for (const sn of snippets) {
+      if (sn.symbolName) snippetByName.set(sn.symbolName, sn);
+    }
+
+    for (const node of nodes) {
+      const nodeLines: string[] = [
+        `  ${node.filePath}`,
+        `    symbol: ${node.name} (${node.kind})`,
+      ];
+      if (node.signature) {
+        nodeLines.push(`    signature: ${node.signature}`);
+      }
+      // snippet 渲染：前 5 行带行号
+      const sn = snippetByName.get(node.name);
+      if (sn) {
+        const snippetLines = sn.content.split('\n').slice(0, CodeMapContextMiddleware.SNIPPET_RENDER_LINES);
+        nodeLines.push('    snippet:');
+        for (let i = 0; i < snippetLines.length; i++) {
+          nodeLines.push(`      ${sn.startLine + i + 1}: ${snippetLines[i]}`);
+        }
+      }
+      const nodeText = nodeLines.join('\n');
+      const nodeTokens = countTokens(nodeText + '\n');
+      if (budgetTokens !== undefined && used + nodeTokens > budgetTokens) break;
+      lines.push(nodeText);
+      used += nodeTokens;
     }
     lines.push('</related_files>');
     return lines.join('\n');
@@ -265,18 +447,27 @@ export class CodeMapContextMiddleware {
    *   src/utils.ts
    *     export function helper()
    * </project_structure>
+   *
+   * @param entries 文件条目
+   * @param budgetTokens 可选 token 预算；未传则不截断（兼容现有测试）
    */
-  formatSummary(entries: RepoMapFileEntry[]): string {
+  formatSummary(entries: RepoMapFileEntry[], budgetTokens?: number): string {
     const lines: string[] = ['<project_structure>'];
+    let used = countTokens(lines[0] + '\n');
     for (const entry of entries) {
-      lines.push(`  ${entry.path}`);
+      const entryLines: string[] = [`  ${entry.path}`];
       // 每个文件最多展示 3 个签名
       for (const sig of entry.signatures.slice(0, 3)) {
-        lines.push(`    ${sig.trim()}`);
+        entryLines.push(`    ${sig.trim()}`);
       }
       if (entry.exports.length > 0 && entry.signatures.length === 0) {
-        lines.push(`    exports: ${entry.exports.slice(0, 5).join(', ')}`);
+        entryLines.push(`    exports: ${entry.exports.slice(0, 5).join(', ')}`);
       }
+      const entryText = entryLines.join('\n');
+      const entryTokens = countTokens(entryText + '\n');
+      if (budgetTokens !== undefined && used + entryTokens > budgetTokens) break;
+      lines.push(entryText);
+      used += entryTokens;
     }
     lines.push('</project_structure>');
     return lines.join('\n');
@@ -348,18 +539,27 @@ export class CodeMapContextMiddleware {
    *   src/auth/session.ts
    *     exports: createSession
    * </related_files>
+   *
+   * @param entries 文件条目
+   * @param budgetTokens 可选 token 预算；未传则不截断（兼容现有测试）
    */
-  formatRelatedFiles(entries: RepoMapFileEntry[]): string {
+  formatRelatedFiles(entries: RepoMapFileEntry[], budgetTokens?: number): string {
     const lines: string[] = ['<related_files>'];
+    let used = countTokens(lines[0] + '\n');
     for (const entry of entries) {
-      lines.push(`  ${entry.path}`);
+      const entryLines: string[] = [`  ${entry.path}`];
       if (entry.exports.length > 0) {
-        lines.push(`    exports: ${entry.exports.slice(0, 5).join(', ')}`);
+        entryLines.push(`    exports: ${entry.exports.slice(0, 5).join(', ')}`);
       }
       if (entry.signatures.length > 0) {
         const sig = entry.signatures[0].trim();
-        lines.push(`    signature: ${sig}`);
+        entryLines.push(`    signature: ${sig}`);
       }
+      const entryText = entryLines.join('\n');
+      const entryTokens = countTokens(entryText + '\n');
+      if (budgetTokens !== undefined && used + entryTokens > budgetTokens) break;
+      lines.push(entryText);
+      used += entryTokens;
     }
     lines.push('</related_files>');
     return lines.join('\n');
