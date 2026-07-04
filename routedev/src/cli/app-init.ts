@@ -24,6 +24,7 @@ import { GitOpTool } from '../tools/builtin/git-op.js';
 import { WebSearchTool } from '../tools/builtin/web-search.js';
 import { WebFetchTool } from '../tools/builtin/web-fetch.js';
 import { CodeSearchTool } from '../tools/builtin/code-search.js';
+import { CodeGraphQueryTool } from '../tools/builtin/code-graph-query.js';
 import { RepoMapTool } from '../tools/builtin/repo-map.js';
 import { TodoWriteTool } from '../tools/builtin/todo-write.js';
 import { AskUserTool } from '../tools/builtin/ask-user.js';
@@ -617,6 +618,8 @@ export function createAppDependencies(
   registry.register(fileWriteTool);
   // Phase 34 Task 4：Repo Map 代码检索增强
   registry.register(new RepoMapTool());
+  // 短板 2 修复：代码地图查询工具（find_callers/find_callees/impact_analysis/search_symbols）
+  registry.register(new CodeGraphQueryTool());
   // P1-4：文件编辑工具（str_replace，避免全量重写）
   registry.register(fileEditTool);
   // P0-2：目录列表工具（补全 work-modes.ts 的 list_directory 引用）
