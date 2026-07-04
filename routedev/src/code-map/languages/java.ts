@@ -135,7 +135,10 @@ export function extractJavaImportedNames(node: TSNode): string[] {
 
 /** 从 method_invocation 提取被调用方法名 */
 export function extractJavaCallName(node: TSNode): string | null {
-  // method_invocation: identifier (argument_list) 或 member_access . identifier
+  // method_invocation 的 name field 是方法名（obj.foo() → foo; foo() → foo）
+  const nameField = node.childForFieldName('name');
+  if (nameField) return nameField.text;
+  // 回退：无 receiver 的简单调用，取第一个 identifier
   for (const child of node.children) {
     if (child.type === 'identifier') {
       return child.text;

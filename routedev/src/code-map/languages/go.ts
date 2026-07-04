@@ -115,6 +115,14 @@ export function extractGoImportSources(node: TSNode): Array<{ path: string; impo
 export function extractGoCallName(node: TSNode): string | null {
   const funcNode = node.childForFieldName('function');
   if (funcNode) {
+    // selector_expression: obj.method → 取 method（field field）
+    if (funcNode.type === 'selector_expression' || funcNode.type === 'field_access') {
+      const field = funcNode.childForFieldName('field');
+      if (field) return field.text;
+      // 回退：取最后一个 identifier 子节点
+      const ids = funcNode.children.filter(c => c.type === 'identifier');
+      if (ids.length > 0) return ids[ids.length - 1].text;
+    }
     return funcNode.text;
   }
   // 回退：第一个 identifier

@@ -87,14 +87,13 @@ export class RepoMapTool implements ITool {
     );
     if (fs.existsSync(dbPath)) {
       try {
-        const dbOutput = this.buildFromDB(dbPath, maxFiles ?? 50);
-        if (dbOutput !== null) {
-          const fileCount = (dbOutput.match(/^[^\s].+$/gm) || []).length;
+        const dbResult = this.buildFromDB(dbPath, maxFiles ?? 50);
+        if (dbResult !== null) {
           return {
             success: true,
-            output: dbOutput,
+            output: dbResult.output,
             durationMs: Date.now() - start,
-            metadata: { source: 'code-map-db', fileCount },
+            metadata: { source: 'code-map-db', fileCount: dbResult.fileCount },
           };
         }
       } catch {
@@ -146,7 +145,7 @@ export class RepoMapTool implements ITool {
    * 从 code-map DB 构建 Aider 风格的 repo map
    * @returns 格式化文本；DB 为空（无文件）时返回 null 触发 regex 降级
    */
-  private buildFromDB(dbPath: string, maxFiles: number): string | null {
+  private buildFromDB(dbPath: string, maxFiles: number): { output: string; fileCount: number } | null {
     let db: DB;
     try {
       db = initDatabase(dbPath);
@@ -176,7 +175,7 @@ export class RepoMapTool implements ITool {
         lines.push('');
       }
 
-      return lines.join('\n').trim();
+      return { output: lines.join('\n').trim(), fileCount: topFiles.length };
     } finally {
       try {
         db.close();

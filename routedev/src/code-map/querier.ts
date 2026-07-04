@@ -324,6 +324,8 @@ export function findCallChain(
   direction: 'callers' | 'callees',
   maxDepth = 3,
 ): CallPath[] {
+  // 防爆炸：硬限制 maxDepth ≤ 5
+  const effectiveDepth = Math.min(maxDepth, 5);
   const startNodes = getNodeByName(db, symbolName);
   if (startNodes.length === 0) return [];
 
@@ -352,7 +354,7 @@ export function findCallChain(
       const { path, depth, visited } = stack.pop()!;
 
       // 深度达到上限：提交路径（仅长度 ≥ 2）
-      if (depth >= maxDepth) {
+      if (depth >= effectiveDepth) {
         if (path.nodeIds.length >= 2) {
           const key = path.nodeIds.join('|');
           if (!seenPathKeys.has(key)) {

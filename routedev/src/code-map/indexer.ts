@@ -418,8 +418,14 @@ export function resolveSymbolEdges(db: DB): { resolved: number; deleted: number 
     if (candidates.length === 1) {
       targetId = candidates[0].id;
     } else {
-      const sorted = [...candidates].sort((a, b) => b.rankScore - a.rankScore);
-      targetId = sorted[0].id;
+      const topRank = candidates.reduce((max, c) => Math.max(max, c.rankScore), 0);
+      if (topRank > 0) {
+        const sorted = [...candidates].sort((a, b) => b.rankScore - a.rankScore);
+        targetId = sorted[0].id;
+      } else {
+        // 首次 fullIndex：所有 rank_score=0，排序不稳定，跳过等下次处理
+        continue;
+      }
     }
 
     // 已是节点 ID（与匹配的节点 id 相同），跳过
