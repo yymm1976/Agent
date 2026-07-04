@@ -11,8 +11,11 @@ import { z } from 'zod';
 const ScenarioTierSchema = z.enum(['simple', 'medium', 'complex', 'reasoning']);
 export type ScenarioTier = z.infer<typeof ScenarioTierSchema>;
 
-// LLM 协议：决定调用 OpenAI SDK 还是 Anthropic SDK
-const ProtocolSchema = z.enum(['openai', 'anthropic']);
+// LLM 协议：决定调用哪种客户端实现
+// - openai: OpenAI 兼容协议（OpenAI / DeepSeek / Qwen / Ollama 等共享）
+// - anthropic: Anthropic 原生协议
+// - gemini: Google Gemini 原生协议（contents/parts/candidates）
+const ProtocolSchema = z.enum(['openai', 'anthropic', 'gemini']);
 export type Protocol = z.infer<typeof ProtocolSchema>;
 
 // Token 预算执行模式：仅追踪 vs 强制执行
@@ -79,6 +82,37 @@ export const ProviderConfigSchema = z.object({
   models: z.array(ModelConfigSchema).default([]), // 该 provider 下的模型列表
 });
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
+
+// --- 新增 provider 便捷配置（Gemini / DeepSeek / Qwen / Ollama） ---
+// 与 providers 数组并存：providers 数组用于自定义任意 provider，
+// llmProviders 提供 4 个常见 provider 的快捷配置（apiKey/baseURL/defaultModel）
+// 客户端构造时优先使用 providers 数组中的配置，回退到 llmProviders，再回退到环境变量
+const LLMProvidersConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** Google Gemini 配置（原生协议） */
+  gemini: z.preprocess((v) => v ?? {}, z.object({
+    apiKey: z.string().default(''),      // 留空时回退到 GEMINI_API_KEY 环境变量
+    baseUrl: z.string().default('https://generativelanguage.googleapis.com/v1beta'),
+    defaultModel: z.string().default('gemini-2.5-flash'),
+  })),
+  /** DeepSeek 配置（OpenAI 兼容协议） */
+  deepseek: z.preprocess((v) => v ?? {}, z.object({
+    apiKey: z.string().default(''),      // 留空时回退到 DEEPSEEK_API_KEY 环境变量
+    baseUrl: z.string().default('https://api.deepseek.com/v1'),
+    defaultModel: z.string().default('deepseek-chat'),
+  })),
+  /** Alibaba Qwen / 通义千问配置（OpenAI 兼容协议，DashScope） */
+  qwen: z.preprocess((v) => v ?? {}, z.object({
+    apiKey: z.string().default(''),      // 留空时回退到 DASHSCOPE_API_KEY 环境变量
+    baseUrl: z.string().default('https://dashscope.aliyuncs.com/compatible-mode/v1'),
+    defaultModel: z.string().default('qwen-plus'),
+  })),
+  /** Ollama 本地模型配置（OpenAI 兼容协议，无需 API Key） */
+  ollama: z.preprocess((v) => v ?? {}, z.object({
+    baseUrl: z.string().default('http://localhost:11434/v1'),  // 回退到 OLLAMA_BASE_URL 环境变量
+    defaultModel: z.string().default('llama3.2'),
+  })),
+}));
+export type LLMProvidersConfig = z.infer<typeof LLMProvidersConfigSchema>;
 
 // --- 路由配置 ---
 
@@ -1867,6 +1901,30 @@ const DynamicWorkflowConfigSchema = z.preprocess((v) => v ?? {}, z.object({
 }));
 export type DynamicWorkflowConfig = z.infer<typeof DynamicWorkflowConfigSchema>;
 
+// --- 工具层配置（Phase 73：file-edit 增强，对齐 Aider 编辑体验） ---
+
+/**
+ * file_edit 工具配置
+ * - requireConfirmation：启用编辑确认流程（diff 预览 + 用户确认后再写入）
+ *   默认 false，向后兼容。启用后仍需 ToolExecutionContext.requestConfirmation 存在才会触发确认
+ *   （无回调时直接应用，避免 headless 场景下卡住）
+ */
+const FileEditConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 编辑前是否要求用户确认（diff 预览 + 确认） */
+  requireConfirmation: z.boolean().default(false),
+}));
+export type FileEditConfig = z.infer<typeof FileEditConfigSchema>;
+
+/**
+ * 工具层配置聚合
+ * 当前包含 fileEdit；后续可扩展更多工具的细粒度配置
+ */
+const ToolsConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** file_edit 工具配置 */
+  fileEdit: FileEditConfigSchema,
+}));
+export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;
+
 // --- 全局配置（完整 schema） ---
 // 顶层 AppConfig：所有配置的根节点
 // 注：Zod 4 严格化后，`.default({})` 不接受空对象字面量。
@@ -1875,6 +1933,8 @@ export const AppConfigSchema = z.object({
   version: z.number().int().default(1),                                // 配置 schema 版本
   general: z.preprocess((v) => v ?? {}, GeneralConfigSchema),
   providers: z.array(ProviderConfigSchema).default([]),                // 所有 LLM 提供商
+  // Gemini / DeepSeek / Qwen / Ollama 便捷配置（可选，留空时客户端回退到环境变量）
+  llmProviders: LLMProvidersConfigSchema.optional(),
   router: z.preprocess((v) => v ?? {}, RouterConfigSchema),            // 路由层配置
   checkpoint: z.preprocess((v) => v ?? {}, CheckpointConfigSchema),    // 增量 Checkpoint
   goalVerifier: z.preprocess((v) => v ?? {}, GoalVerifierConfigSchema), // 目标验证
@@ -2250,6 +2310,10 @@ export const AppConfigSchema = z.object({
     /** Plan 修订历史持久化目录（相对于工作目录，默认 '.routedev/plan-revisions/'） */
     revisionHistoryPath: z.string().default('.routedev/plan-revisions/'),
   })),
+  // Phase 73：工具层配置（当前包含 fileEdit.requireConfirmation）
+  // 由 app-init.ts 读取后通过 FileEditTool.setRequireConfirmation 注入
+  // 注：标记为 optional 以避免破坏 defaults.ts 等历史调用方（未提供时由读取方用 ?. + ?? 兜底）
+  tools: ToolsConfigSchema.optional(),
 });
 export type AppConfig = z.infer<typeof AppConfigSchema>;
 
