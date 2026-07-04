@@ -11,6 +11,7 @@ import type {
   ImpactResult,
   FileNode,
   IndexStatus,
+  CallPath,
 } from './schema.js';
 import {
   queryNodes,
@@ -134,10 +135,19 @@ export function explore(
     }
   }
 
-  // 调用路径
-  const callPaths = options?.includeCallPaths !== false
-    ? matched.slice(0, 5).map(n => ({ nodeIds: [n.id], symbolNames: [n.name] }))
-    : [];
+  // 调用路径：对每个 matched 节点取前 2 跳 callees 调用链（多跳路径，非单节点列表）
+  // 短板 3 修复：原实现只是单节点列表伪装成 callPaths，现已用真实多跳 BFS
+  const callPaths: CallPath[] = [];
+  if (options?.includeCallPaths !== false) {
+    for (const node of matched.slice(0, 5)) {
+      if (callPaths.length >= 20) break;
+      const chains = findCallChain(db, node.name, 'callees', 2);
+      for (const chain of chains) {
+        if (callPaths.length >= 20) break;
+        callPaths.push(chain);
+      }
+    }
+  }
 
   // 影响半径：匹配节点的最大调用者链深度
   const impactRadius = matched.length > 0 ? computeImpactRadius(db, matched[0].id) : 0;
@@ -223,6 +233,178 @@ export function findCallees(
   }
 
   return callees;
+}
+
+/**
+ * 查找两个符号之间的多跳调用路径（BFS，沿 CALLS 边）
+ *
+ * 短板 3：实现真正的 A→B→C 多跳调用路径，而非单节点列表
+ * Wave 1 已统一 CALLS 边 target 为节点 ID，BFS 可跨文件遍历
+ *
+ * @returns 找到返回 { nodeIds, symbolNames }；未找到返回 null
+ */
+export function findCallPath(
+  db: DB,
+  fromName: string,
+  toName: string,
+  maxDepth = 5,
+): CallPath | null {
+  const fromNodes = getNodeByName(db, fromName);
+  const toNodes = getNodeByName(db, toName);
+  if (fromNodes.length === 0 || toNodes.length === 0) return null;
+
+  const fromNode = fromNodes[0];
+  const toIds = new Set(toNodes.map(n => n.id));
+
+  // id → name 映射，回溯路径时直接查表，避免重复 SQL
+  const allNodes = getAllNodes(db);
+  const idToName = new Map<string, string>();
+  for (const n of allNodes) idToName.set(n.id, n.name);
+
+  // 起点 = 终点的边界
+  if (toIds.has(fromNode.id)) {
+    return { nodeIds: [fromNode.id], symbolNames: [fromNode.name] };
+  }
+
+  // BFS：从 fromNode 沿 CALLS 边遍历到 toNode
+  const visited = new Set<string>([fromNode.id]);
+  const parent = new Map<string, string | null>();
+  parent.set(fromNode.id, null);
+  const queue: Array<{ id: string; depth: number }> = [{ id: fromNode.id, depth: 0 }];
+
+  while (queue.length > 0) {
+    const { id, depth } = queue.shift()!;
+    if (depth >= maxDepth) continue;
+
+    // 沿 CALLS 边遍历（target 已统一为节点 ID）
+    const edges = queryEdges(
+      db,
+      'SELECT * FROM edges WHERE source = ? AND kind = ?',
+      [id, 'CALLS'],
+    );
+    for (const edge of edges) {
+      const nextId = edge.target;
+      if (visited.has(nextId)) continue;
+      // 仅走真实节点 ID（跳过仍是字符串名的边 target，容错旧数据）
+      if (!idToName.has(nextId)) continue;
+      visited.add(nextId);
+      parent.set(nextId, id);
+
+      if (toIds.has(nextId)) {
+        // 找到终点：回溯 parent 链构建路径
+        const nodeIds: string[] = [];
+        let cur: string | null = nextId;
+        while (cur !== null && cur !== undefined) {
+          nodeIds.unshift(cur);
+          cur = parent.get(cur) ?? null;
+        }
+        const symbolNames = nodeIds.map(id2 => idToName.get(id2) ?? id2);
+        return { nodeIds, symbolNames };
+      }
+
+      queue.push({ id: nextId, depth: depth + 1 });
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 查找某符号的多跳调用链（沿 CALLS 边 BFS，返回多条路径）
+ *
+ * 短板 3：用于 explore 生成真实多跳 callPaths
+ *
+ * @param direction 'callees' = 正向（它调用了谁）；'callers' = 反向（谁调用了它）
+ * @param maxDepth 路径最大跳数（默认 3，防爆炸）
+ * @returns CallPath[]，仅包含长度 ≥ 2 的路径
+ */
+export function findCallChain(
+  db: DB,
+  symbolName: string,
+  direction: 'callers' | 'callees',
+  maxDepth = 3,
+): CallPath[] {
+  const startNodes = getNodeByName(db, symbolName);
+  if (startNodes.length === 0) return [];
+
+  const allNodes = getAllNodes(db);
+  const idToName = new Map<string, string>();
+  for (const n of allNodes) idToName.set(n.id, n.name);
+
+  const MAX_PATHS = 20; // 路径数硬上限，防止爆炸
+  const results: CallPath[] = [];
+  const seenPathKeys = new Set<string>();
+
+  for (const startNode of startNodes) {
+    if (results.length >= MAX_PATHS) break;
+
+    const startPath: CallPath = {
+      nodeIds: [startNode.id],
+      symbolNames: [startNode.name],
+    };
+
+    // DFS 枚举每条路径（栈实现），用 visited Set 防环
+    const stack: Array<{ path: CallPath; depth: number; visited: Set<string> }> = [
+      { path: startPath, depth: 0, visited: new Set([startNode.id]) },
+    ];
+
+    while (stack.length > 0 && results.length < MAX_PATHS) {
+      const { path, depth, visited } = stack.pop()!;
+
+      // 深度达到上限：提交路径（仅长度 ≥ 2）
+      if (depth >= maxDepth) {
+        if (path.nodeIds.length >= 2) {
+          const key = path.nodeIds.join('|');
+          if (!seenPathKeys.has(key)) {
+            seenPathKeys.add(key);
+            results.push(path);
+          }
+        }
+        continue;
+      }
+
+      const lastId = path.nodeIds[path.nodeIds.length - 1];
+
+      // callees = 正向（source=lastId）；callers = 反向（target=lastId）
+      const edges = direction === 'callees'
+        ? queryEdges(db, 'SELECT * FROM edges WHERE source = ? AND kind = ?', [lastId, 'CALLS'])
+        : queryEdges(db, 'SELECT * FROM edges WHERE target = ? AND kind = ?', [lastId, 'CALLS']);
+
+      const nextIds: string[] = [];
+      for (const edge of edges) {
+        const nextId = direction === 'callees' ? edge.target : edge.source;
+        if (visited.has(nextId)) continue;
+        if (!idToName.has(nextId)) continue; // 仅走真实节点 ID，容错旧数据
+        nextIds.push(nextId);
+      }
+
+      if (nextIds.length === 0) {
+        // 叶子节点：提交路径（仅长度 ≥ 2，确保不是孤立单节点）
+        if (path.nodeIds.length >= 2) {
+          const key = path.nodeIds.join('|');
+          if (!seenPathKeys.has(key)) {
+            seenPathKeys.add(key);
+            results.push(path);
+          }
+        }
+        continue;
+      }
+
+      // 扩展：reverse 保证 DFS 顺序稳定（栈 LIFO）
+      for (let i = nextIds.length - 1; i >= 0; i--) {
+        const nextId = nextIds[i];
+        const newPath: CallPath = {
+          nodeIds: [...path.nodeIds, nextId],
+          symbolNames: [...path.symbolNames, idToName.get(nextId)!],
+        };
+        const newVisited = new Set(visited);
+        newVisited.add(nextId);
+        stack.push({ path: newPath, depth: depth + 1, visited: newVisited });
+      }
+    }
+  }
+
+  return results;
 }
 
 /** 影响分析：反向 BFS 收集所有受影响符号 */
