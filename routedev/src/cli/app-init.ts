@@ -1103,11 +1103,12 @@ export function createAppDependencies(
     // 使用变量路径让 TypeScript 无法静态解析（模块可能尚未创建）
     const codeMapModulePath = '../agent/middleware/code-map-context.js';
     import(codeMapModulePath)
-      .then((mod: { CodeMapContextMiddleware: new (cwd: string, workspace?: string) => { getHandler: () => import('../agent/middleware.js').MiddlewareHandler } }) => {
-        const codeMapMiddleware = new mod.CodeMapContextMiddleware(cwd, codegraphCfg.workspace);
+      .then((mod: { CodeMapContextMiddleware: new (cwd: string, budgetTokens?: number) => { getHandler: () => import('../agent/middleware.js').MiddlewareHandler } }) => {
+        const budgetTokens = config.codeMap?.budgetTokens ?? 2048;
+        const codeMapMiddleware = new mod.CodeMapContextMiddleware(cwd, budgetTokens);
         pluginSystem.middlewarePipeline.register('onSystemPrompt', codeMapMiddleware.getHandler());
         logger.info('CodeMapContextMiddleware registered', {
-          workspace: codegraphCfg.workspace,
+          budgetTokens,
           enabled: codegraphCfg.enabled,
         });
       })
