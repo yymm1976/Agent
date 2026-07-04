@@ -1,12 +1,4 @@
-// src/tools/builtin/edit-history.ts
-// 文件编辑历史栈：用于 /undo 命令撤销最近一次文件编辑
-// 对齐 Aider 的 /undo 体验：单次编辑级别的撤销（非 git commit 级别）
-//
-// 设计要点：
-//   - 进程内存级别（不持久化，重启清空）
-//   - 栈深度限制 20（防止内存爆炸）
-//   - 单例导出，/undo 命令与 file-edit 工具共享同一实例
-//   - 在 file-edit 工具执行前 push 原内容，/undo 弹栈恢复
+// edit-history.ts — 文件编辑历史栈，用于 /undo 命令撤销最近一次文件编辑（非工具，辅助类）
 
 /** 单条编辑历史条目 */
 export interface EditHistoryEntry {

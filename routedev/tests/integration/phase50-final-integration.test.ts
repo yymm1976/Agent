@@ -392,7 +392,7 @@ describe('Phase 50 Task 10 - 死代码清理后构建通过', () => {
     // E11 移除：experiment-runner.ts 已重写为活代码（不再是死代码）
     'src/hooks/market-manager.ts',
     'src/hooks/generator.ts',
-    'src/plugins/sdk.ts',
+    // src/plugins/sdk.ts 已重建（P3.8 插件 SDK）
     'src/cli/wizard.tsx',
     // barrel 文件
     'src/cite/index.ts',
@@ -401,7 +401,7 @@ describe('Phase 50 Task 10 - 死代码清理后构建通过', () => {
     'src/mcp/index.ts',
     'src/skills/index.ts',
     'src/agent/patterns/index.ts',
-    'src/evaluation/index.ts',
+    // src/evaluation/index.ts 已重建（P2.6 评估用例集）
   ];
 
   it('4.1 所有已删除的源文件和 barrel 文件不再存在', () => {

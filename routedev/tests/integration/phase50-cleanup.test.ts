@@ -57,7 +57,7 @@ describe('Phase 50 Task 8 - 已删除文件不再存在', () => {
     // E11 移除：experiment-runner.ts 已重写为简化活代码（不再是死代码）
     'src/hooks/market-manager.ts',
     'src/hooks/generator.ts',
-    'src/plugins/sdk.ts',
+    // src/plugins/sdk.ts 已重建（P3.8 插件 SDK）
     'src/cli/wizard.tsx',
   ];
 
@@ -69,7 +69,7 @@ describe('Phase 50 Task 8 - 已删除文件不再存在', () => {
     'src/mcp/index.ts',
     'src/skills/index.ts',
     'src/agent/patterns/index.ts',
-    'src/evaluation/index.ts',
+    // src/evaluation/index.ts 已重建（P2.6 评估用例集）
   ];
 
   // 8 个已删除的测试文件（任务清单第 5 项）
@@ -80,7 +80,7 @@ describe('Phase 50 Task 8 - 已删除文件不再存在', () => {
     'tests/hooks/generator.test.ts',
     'tests/utils/stall-detector.test.ts',
     'tests/utils/error-messages.test.ts',
-    'tests/plugins/sdk.test.ts',
+    // tests/plugins/sdk.test.ts 已重建（P3.8 插件 SDK 测试）
     'tests/cli/notification-audit.test.ts',
   ];
 
