@@ -11,6 +11,8 @@
 //   4. "升级为更严格"被允许（如 sandbox 降级→严格 才告警，反向放行）
 //   5. 无 config 开关也能独立运行：所有阈值与 pattern 通过 constructor opts 注入
 
+import { auditPanel } from '../../security/audit-panel.js';
+
 /**
  * 守卫决策结果
  */
@@ -132,6 +134,27 @@ export class ConfigGuard {
     // 标记首次 warn 已触发（即使 warnOnFirst=false，也记录状态用于诊断）
     if (decision.severity === 'warn') {
       this.firstTriggered = true;
+    }
+
+    // 向安全审计面板报告（仅 deny / warn 级别，避免 info 噪声）
+    if (decision.severity === 'deny') {
+      auditPanel.log({
+        source: 'config-guard',
+        level: 'error',
+        action: 'blocked',
+        target: filePath,
+        reason: decision.reason,
+        metadata: { ruleId: decision.ruleId },
+      });
+    } else if (decision.severity === 'warn') {
+      auditPanel.log({
+        source: 'config-guard',
+        level: 'warn',
+        action: 'warned',
+        target: filePath,
+        reason: decision.reason,
+        metadata: { ruleId: decision.ruleId },
+      });
     }
 
     return decision;

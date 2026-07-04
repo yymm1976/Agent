@@ -11,6 +11,7 @@ import type { SecurityConfig, PermissionProfile } from '../config/schema.js';
 import { parseCommand } from './command-parser.js';
 import { logger } from '../utils/logger.js';
 import { resolveSecurePath, checkBashSecurity, checkSSRF } from './security-enhanced.js';
+import { auditPanel } from '../security/audit-panel.js';
 
 // ============================================================
 // glob 匹配工具（轻量实现，不引入 minimatch 依赖）
@@ -258,9 +259,11 @@ export class SecurityChecker implements ISecurityChecker {
     // 覆盖中间目录 symlink 场景（原 lstatSync 仅检查最终路径组件，可被中间 symlink 绕过）
     const secureResult = resolveSecurePath(resolved, this.allowedDirs);
     if (!secureResult.allowed) {
+      const reason = secureResult.reason ?? `路径 "${filePath}" 不在项目目录范围内`;
+      auditPanel.log({ source: 'path-guard', level: 'warn', action: 'blocked', target: filePath, reason });
       return {
         allowed: false,
-        reason: secureResult.reason ?? `路径 "${filePath}" 不在项目目录范围内`,
+        reason,
         requiresConfirmation: false,
       };
     }
@@ -269,6 +272,7 @@ export class SecurityChecker implements ISecurityChecker {
     // 命中 deny 规则直接拒绝；命中 read 规则时写入操作被拒绝、读取需确认
     const profileResult = this.checkPermissionProfile(resolved, isWrite);
     if (!profileResult.allowed) {
+      auditPanel.log({ source: 'path-guard', level: 'warn', action: 'blocked', target: filePath, reason: profileResult.reason });
       return profileResult;
     }
 
@@ -282,9 +286,11 @@ export class SecurityChecker implements ISecurityChecker {
 
     if (isSensitive) {
       if (this.sensitiveFilePolicy === 'deny') {
+        const reason = `文件 "${fileName}" 是敏感文件，禁止访问`;
+        auditPanel.log({ source: 'path-guard', level: 'warn', action: 'blocked', target: filePath, reason });
         return {
           allowed: false,
-          reason: `文件 "${fileName}" 是敏感文件，禁止访问`,
+          reason,
           requiresConfirmation: false,
         };
       }
@@ -317,6 +323,7 @@ export class SecurityChecker implements ISecurityChecker {
     // 安全增强：先执行 7 层 Bash 安全检查（Unicode/回车注入/proc/危险命令等）
     const bashResult = checkBashSecurity(command);
     if (!bashResult.allowed) {
+      auditPanel.log({ source: 'path-guard', level: 'warn', action: 'blocked', target: command, reason: bashResult.reason });
       return {
         allowed: false,
         reason: bashResult.reason,
@@ -330,9 +337,11 @@ export class SecurityChecker implements ISecurityChecker {
     if (strictBashMode) {
       const injectionDetected = this.detectBashInjection(command);
       if (injectionDetected) {
+        const reason = '检测到 Bash 命令注入模式（strictBashMode 已启用，已阻断）';
+        auditPanel.log({ source: 'path-guard', level: 'warn', action: 'blocked', target: command, reason });
         return {
           allowed: false,
-          reason: '检测到 Bash 命令注入模式（strictBashMode 已启用，已阻断）',
+          reason,
           requiresConfirmation: false,
         };
       }
@@ -349,9 +358,11 @@ export class SecurityChecker implements ISecurityChecker {
     if (this.commandWhitelist.length > 0) {
       const allowed = commandsToCheck.every(cmd => this.commandWhitelist.some(wl => cmd.command.toLowerCase() === wl));
       if (!allowed) {
+        const reason = `命令 "${parsed.command}" 不在白名单中`;
+        auditPanel.log({ source: 'path-guard', level: 'warn', action: 'blocked', target: command, reason });
         return {
           allowed: false,
-          reason: `命令 "${parsed.command}" 不在白名单中`,
+          reason,
           requiresConfirmation: false,
         };
       }
@@ -372,9 +383,11 @@ export class SecurityChecker implements ISecurityChecker {
       return blParsed.args.every((arg, i) => cmd.args[i] === arg);
     }));
     if (blocked) {
+      const reason = `命令 "${parsed.command}" 在黑名单中`;
+      auditPanel.log({ source: 'path-guard', level: 'warn', action: 'blocked', target: command, reason });
       return {
         allowed: false,
-        reason: `命令 "${parsed.command}" 在黑名单中`,
+        reason,
         requiresConfirmation: false,
       };
     }
@@ -382,13 +395,16 @@ export class SecurityChecker implements ISecurityChecker {
     // 危险模式标记（不阻断，但标记为需确认）
     // 管道和命令替换可能绕过白名单/黑名单检查
     if (parsed.hasSubstitution || parsed.hasPipe) {
+      const reason = '命令含管道或命令替换，需确认';
+      auditPanel.log({ source: 'path-guard', level: 'info', action: 'warned', target: command, reason });
       return {
         allowed: true,
         requiresConfirmation: true,
-        reason: '命令含管道或命令替换，需确认',
+        reason,
       };
     }
 
+    void commandName;
     return { allowed: true, requiresConfirmation: false };
   }
 

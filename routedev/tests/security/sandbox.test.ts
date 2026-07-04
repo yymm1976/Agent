@@ -1,0 +1,348 @@
+// tests/security/sandbox.test.ts
+// CommandSandbox 单元测试
+//
+// 测试策略：
+//   - validateCommand：危险命令 / 白名单 / 黑名单 / 工作目录限制
+//   - execute：成功执行、超时 kill、输出超限 kill、命令被拒绝、env 隔离
+//   - 跨平台：使用 node 作为测试命令（在 PATH 中可找到，shell:false）
+
+import { describe, it, expect, beforeEach } from 'vitest';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import {
+  CommandSandbox,
+  type SandboxOptions,
+} from '../../src/security/sandbox.js';
+import { auditPanel } from '../../src/security/audit-panel.js';
+
+describe('CommandSandbox', () => {
+  beforeEach(() => {
+    // 每个测试前清空审计面板，避免事件累积影响断言
+    auditPanel.clear();
+  });
+
+  // ============================================================
+  // validateCommand — 静态校验
+  // ============================================================
+  describe('validateCommand', () => {
+    it('允许普通命令（无任何限制）', () => {
+      const result = CommandSandbox.validateCommand('node', {});
+      expect(result.allowed).toBe(true);
+    });
+
+    it('拒绝空命令', () => {
+      expect(CommandSandbox.validateCommand('', {}).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('   ', {}).allowed).toBe(false);
+    });
+
+    // ----------------------------------------------------------
+    // 危险命令模式
+    // ----------------------------------------------------------
+    it('拒绝 rm -rf /（危险模式）', () => {
+      const result = CommandSandbox.validateCommand('rm -rf /', {});
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('危险命令模式');
+    });
+
+    it('拒绝 rm -rf /*（危险模式）', () => {
+      const result = CommandSandbox.validateCommand('rm -rf /*', {});
+      expect(result.allowed).toBe(false);
+    });
+
+    it('拒绝 format C:（危险模式）', () => {
+      const result = CommandSandbox.validateCommand('format C:', {});
+      expect(result.allowed).toBe(false);
+    });
+
+    it('拒绝 mkfs.ext4 /dev/sda1（危险模式）', () => {
+      const result = CommandSandbox.validateCommand('mkfs.ext4 /dev/sda1', {});
+      expect(result.allowed).toBe(false);
+    });
+
+    it('拒绝 dd if=/dev/zero of=/dev/sda（危险模式）', () => {
+      const result = CommandSandbox.validateCommand('dd if=/dev/zero of=/dev/sda', {});
+      expect(result.allowed).toBe(false);
+    });
+
+    it('拒绝 shutdown / reboot / halt（危险模式）', () => {
+      expect(CommandSandbox.validateCommand('shutdown', {}).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('reboot now', {}).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('halt', {}).allowed).toBe(false);
+    });
+
+    it('拒绝 fork bomb', () => {
+      const result = CommandSandbox.validateCommand(':(){:|:&};:', {});
+      expect(result.allowed).toBe(false);
+    });
+
+    // ----------------------------------------------------------
+    // 白名单
+    // ----------------------------------------------------------
+    it('白名单非空时，命令必须在白名单中', () => {
+      const opts: SandboxOptions = { allowedCommands: ['node', 'npm'] };
+      expect(CommandSandbox.validateCommand('node', opts).allowed).toBe(true);
+      expect(CommandSandbox.validateCommand('npm', opts).allowed).toBe(true);
+      expect(CommandSandbox.validateCommand('python', opts).allowed).toBe(false);
+    });
+
+    it('白名单匹配 basename（/usr/bin/node 也算匹配 node）', () => {
+      const opts: SandboxOptions = { allowedCommands: ['node'] };
+      expect(CommandSandbox.validateCommand('/usr/bin/node', opts).allowed).toBe(true);
+      expect(CommandSandbox.validateCommand('C:\\Program Files\\nodejs\\node.exe', opts).allowed).toBe(true);
+    });
+
+    it('白名单为空数组时全部允许', () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      expect(CommandSandbox.validateCommand('anything', opts).allowed).toBe(true);
+    });
+
+    // ----------------------------------------------------------
+    // 黑名单
+    // ----------------------------------------------------------
+    it('黑名单命中时拒绝', () => {
+      const opts: SandboxOptions = { blockedCommands: ['rm', 'curl'] };
+      expect(CommandSandbox.validateCommand('rm', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('curl', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('node', opts).allowed).toBe(true);
+    });
+
+    it('白名单与黑名单同时设置：白名单优先', () => {
+      // node 在白名单且不在黑名单 → 允许
+      // curl 不在白名单 → 拒绝
+      // rm 在黑名单 → 拒绝（即使白名单未设置也拒绝）
+      const opts: SandboxOptions = {
+        allowedCommands: ['node', 'rm'],
+        blockedCommands: ['rm'],
+      };
+      expect(CommandSandbox.validateCommand('node', opts).allowed).toBe(true);
+      expect(CommandSandbox.validateCommand('rm', opts).allowed).toBe(false);
+    });
+
+    // ----------------------------------------------------------
+    // 工作目录限制
+    // ----------------------------------------------------------
+    it('workingDirectoryRestriction 设置时，cwd 必须在允许列表内', () => {
+      const opts: SandboxOptions = {
+        cwd: '/safe/dir',
+        workingDirectoryRestriction: ['/safe/dir', '/another/safe'],
+      };
+      expect(CommandSandbox.validateCommand('node', opts).allowed).toBe(true);
+    });
+
+    it('workingDirectoryRestriction 设置时，cwd 不在允许列表内应拒绝', () => {
+      const opts: SandboxOptions = {
+        cwd: '/etc',
+        workingDirectoryRestriction: ['/safe/dir'],
+      };
+      const result = CommandSandbox.validateCommand('node', opts);
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('工作目录');
+    });
+
+    it('workingDirectoryRestriction 允许子目录', () => {
+      const opts: SandboxOptions = {
+        cwd: '/safe/dir/subdir',
+        workingDirectoryRestriction: ['/safe/dir'],
+      };
+      expect(CommandSandbox.validateCommand('node', opts).allowed).toBe(true);
+    });
+
+    it('workingDirectoryRestriction 不允许父目录逃逸', () => {
+      const opts: SandboxOptions = {
+        cwd: '/etc/passwd',
+        workingDirectoryRestriction: ['/safe/dir'],
+      };
+      expect(CommandSandbox.validateCommand('node', opts).allowed).toBe(false);
+    });
+  });
+
+  // ============================================================
+  // execute — 实际执行
+  // ============================================================
+  describe('execute', () => {
+    // ----------------------------------------------------------
+    // 成功执行
+    // ----------------------------------------------------------
+    it('应成功执行 node -e 并收集 stdout', async () => {
+      const sandbox = new CommandSandbox({
+        timeout: 5000,
+        maxOutputBytes: 1024,
+      });
+      const result = await sandbox.execute('node', ['-e', "console.log('hello sandbox')"]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('hello sandbox');
+      expect(result.timedOut).toBe(false);
+      expect(result.outputTruncated).toBe(false);
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it('退出码应反映子进程退出状态', async () => {
+      const sandbox = new CommandSandbox({ timeout: 5000 });
+      const result = await sandbox.execute('node', ['-e', 'process.exit(7)']);
+      expect(result.exitCode).toBe(7);
+    });
+
+    it('命令不存在时 exitCode 为 null 且 stderr 有错误信息', async () => {
+      const sandbox = new CommandSandbox({ timeout: 5000 });
+      const result = await sandbox.execute('this-command-does-not-exist-xyz', []);
+      expect(result.exitCode).toBe(null);
+      expect(result.stderr.length).toBeGreaterThan(0);
+    });
+
+    // ----------------------------------------------------------
+    // 命令被拒绝
+    // ----------------------------------------------------------
+    it('命令被白名单拒绝时返回 exitCode=null 且 stderr 含原因', async () => {
+      const sandbox = new CommandSandbox({
+        timeout: 5000,
+        allowedCommands: ['npm'],
+      });
+      const result = await sandbox.execute('node', ['-v']);
+      expect(result.exitCode).toBe(null);
+      expect(result.stderr).toContain('不在白名单中');
+      expect(result.timedOut).toBe(false);
+    });
+
+    it('命令命中危险模式时返回 exitCode=null', async () => {
+      const sandbox = new CommandSandbox({ timeout: 5000 });
+      // 注意：实际不会执行 rm，因为 validateCommand 已拦截
+      const result = await sandbox.execute('rm', ['-rf', '/']);
+      expect(result.exitCode).toBe(null);
+      expect(result.stderr).toContain('危险命令模式');
+    });
+
+    // ----------------------------------------------------------
+    // 超时控制
+    // ----------------------------------------------------------
+    it('超时应 kill 进程并标记 timedOut', async () => {
+      const sandbox = new CommandSandbox({
+        timeout: 300, // 300ms 超时
+        maxOutputBytes: 1024 * 1024,
+      });
+      // node 进程 sleep 5 秒，应被超时 kill
+      const result = await sandbox.execute('node', ['-e', 'setTimeout(() => {}, 5000)']);
+
+      expect(result.timedOut).toBe(true);
+      expect(result.exitCode).toBe(null);
+      expect(result.durationMs).toBeGreaterThanOrEqual(280); // 至少等待了接近超时
+      expect(result.durationMs).toBeLessThan(2000); // 不应等到 5 秒
+    });
+
+    // ----------------------------------------------------------
+    // 输出超限
+    // ----------------------------------------------------------
+    it('stdout 超 maxOutputBytes 应 kill 进程并标记 outputTruncated', async () => {
+      const sandbox = new CommandSandbox({
+        timeout: 5000,
+        maxOutputBytes: 100, // 极小限制
+      });
+      // 输出 1000 个字符，远超 100 字节限制
+      const result = await sandbox.execute('node', ['-e', "process.stdout.write('x'.repeat(1000))"]);
+
+      expect(result.outputTruncated).toBe(true);
+      // stdout 应被截断
+      expect(result.stdout.length).toBeLessThanOrEqual(100);
+    });
+
+    // ----------------------------------------------------------
+    // 环境变量隔离
+    // ----------------------------------------------------------
+    it('应只传 env 中指定的变量 + PATH，不继承父进程环境', async () => {
+      // 设置一个独特的父进程环境变量，子进程不应能看到
+      const uniqueVar = `SANDBOX_TEST_VAR_${Date.now()}`;
+      process.env[uniqueVar] = 'should-not-leak';
+
+      try {
+        const sandbox = new CommandSandbox({
+          timeout: 5000,
+          env: { NODE_ENV: 'test' },
+        });
+        // 子进程尝试打印该变量，应为 undefined
+        const result = await sandbox.execute('node', [
+          '-e',
+          `console.log(typeof process.env.${uniqueVar})`,
+        ]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.trim()).toBe('undefined');
+      } finally {
+        delete process.env[uniqueVar];
+      }
+    });
+
+    it('env 中指定的变量应被子进程看到', async () => {
+      const sandbox = new CommandSandbox({
+        timeout: 5000,
+        env: { MY_TEST_VAR: 'hello-from-parent' },
+      });
+      const result = await sandbox.execute('node', [
+        '-e',
+        "console.log(process.env.MY_TEST_VAR)",
+      ]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe('hello-from-parent');
+    });
+
+    // ----------------------------------------------------------
+    // 工作目录
+    // ----------------------------------------------------------
+    it('应在指定 cwd 中执行命令', async () => {
+      const sandbox = new CommandSandbox({
+        timeout: 5000,
+        cwd: os.tmpdir(),
+      });
+      // 打印当前工作目录，应为 os.tmpdir()
+      const result = await sandbox.execute('node', ['-e', "console.log(process.cwd())"]);
+      expect(result.exitCode).toBe(0);
+      // 规范化比较（Windows 上 path.resolve 会处理大小写差异）
+      const expected = path.resolve(os.tmpdir());
+      const actual = path.resolve(result.stdout.trim());
+      expect(actual).toBe(expected);
+    });
+
+    it('cwd 在 workingDirectoryRestriction 之外时拒绝执行', async () => {
+      const sandbox = new CommandSandbox({
+        timeout: 5000,
+        cwd: os.tmpdir(),
+        workingDirectoryRestriction: ['/definitely/not/allowed'],
+      });
+      const result = await sandbox.execute('node', ['-v']);
+      expect(result.exitCode).toBe(null);
+      expect(result.stderr).toContain('工作目录');
+    });
+  });
+
+  // ============================================================
+  // 审计面板接入
+  // ============================================================
+  describe('auditPanel 接入', () => {
+    it('命令被拒绝时应记录 blocked 事件到 auditPanel', async () => {
+      const sandbox = new CommandSandbox({
+        timeout: 5000,
+        allowedCommands: ['npm'],
+      });
+      await sandbox.execute('node', ['-v']);
+
+      const events = auditPanel.getEvents({ source: 'sandbox', action: 'blocked' });
+      expect(events.length).toBe(1);
+      expect(events[0]!.target).toContain('node');
+    });
+
+    it('命令成功执行时应记录 allowed 事件到 auditPanel', async () => {
+      const sandbox = new CommandSandbox({ timeout: 5000 });
+      await sandbox.execute('node', ['-e', "console.log('ok')"]);
+
+      const events = auditPanel.getEvents({ source: 'sandbox', action: 'allowed' });
+      expect(events.length).toBe(1);
+    });
+
+    it('超时应记录 warned 事件到 auditPanel', async () => {
+      const sandbox = new CommandSandbox({ timeout: 200 });
+      await sandbox.execute('node', ['-e', 'setTimeout(() => {}, 5000)']);
+
+      const events = auditPanel.getEvents({ source: 'sandbox', action: 'warned' });
+      expect(events.length).toBe(1);
+      expect(events[0]!.reason).toContain('超时');
+    });
+  });
+});

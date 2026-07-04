@@ -12,6 +12,8 @@
 //   - 所有配置通过 constructor opts 注入，不 import 共享配置
 //   - 不引入外部依赖（Levenshtein 自实现）
 
+import { auditPanel } from '../../security/audit-panel.js';
+
 // ============================================================
 // 类型定义
 // ============================================================
@@ -283,6 +285,34 @@ export class McpSecurityScanner {
         severity: 'critical',
         description: `工具描述长度 ${description.length} 超过 ${CARPET_BOMBING_DESC_LENGTH}，且包含 ${poisoningMatches.length} 个注入模式匹配（阈值 ${CARPET_BOMBING_MATCH_THRESHOLD}）`,
         evidence: `length=${description.length}, matches=${poisoningMatches.length}`,
+      });
+    }
+
+    // 向安全审计面板报告（仅命中威胁时记录，避免干净工具产生噪声）
+    if (findings.length > 0) {
+      const shouldBlock = this.shouldBlock(findings);
+      const maxSeverity = findings.reduce(
+        (max, f) => Math.max(max, SEVERITY_ORDER[f.severity]),
+        0,
+      );
+      const level =
+        maxSeverity >= SEVERITY_ORDER['critical']
+          ? 'critical'
+          : maxSeverity >= SEVERITY_ORDER['high']
+            ? 'error'
+            : maxSeverity >= SEVERITY_ORDER['medium']
+              ? 'warn'
+              : 'info';
+      auditPanel.log({
+        source: 'mcp-scanner',
+        level,
+        action: shouldBlock ? 'blocked' : 'warned',
+        target: name,
+        reason: findings.map((f) => `${f.threatType}:${f.severity}`).join(','),
+        metadata: {
+          findingCount: findings.length,
+          threatTypes: findings.map((f) => f.threatType),
+        },
       });
     }
 
