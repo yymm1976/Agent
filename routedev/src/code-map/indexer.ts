@@ -12,7 +12,7 @@ import type {
   IndexStats,
   Language,
 } from './schema.js';
-import { EXTENSION_LANGUAGE_MAP } from './schema.js';
+import { EXTENSION_LANGUAGE_MAP, EDGE_WEIGHTS } from './schema.js';
 import { parseFile } from './parser.js';
 import { extractFromTree } from './extractor.js';
 import {
@@ -23,8 +23,14 @@ import {
   insertUnresolvedRefs,
   deleteFileNodes,
   deleteFileUnresolvedRefs,
+  deleteUnresolvedRef,
+  deleteEdge,
   getAllNodes,
   getAllEdges,
+  getAllUnresolvedRefs,
+  getNodeIdsByName,
+  edgeExists,
+  nodeExistsById,
   batchUpdateRankScores,
   getFileContentHash,
   setFileContentHash,
@@ -228,6 +234,11 @@ export async function fullIndex(
     if (result.skipped) skippedFiles++;
   }
 
+  // 跨文件 CALLS 边回填（在所有文件解析完成后、PageRank 之前）
+  resolveCrossFileCalls(db);
+  // EXTENDS/IMPLEMENTS/IMPORTS 边 target 统一为节点 ID（在 CALLS 回填之后、PageRank 之前）
+  resolveSymbolEdges(db);
+
   // 计算 PageRank
   updatePageRank(db);
 
@@ -273,6 +284,11 @@ export async function incrementalIndex(
     if (result.skipped) skippedFiles++;
   }
 
+  // 跨文件 CALLS 边回填（处理新增/变更文件产生的 unresolved_refs，并尝试解析上一轮跳过的多匹配）
+  resolveCrossFileCalls(db);
+  // EXTENDS/IMPLEMENTS/IMPORTS 边 target 统一为节点 ID
+  resolveSymbolEdges(db);
+
   // 计算 PageRank
   updatePageRank(db);
 
@@ -287,6 +303,151 @@ export async function incrementalIndex(
   };
 
   return { stats, db };
+}
+
+/**
+ * 跨文件 CALLS 边回填
+ *
+ * 从 unresolved_refs 表读取所有未解析的调用引用，按 callee 名字在 nodes 表中匹配定义节点：
+ * - 唯一匹配：插入 CALLS 边（source=source_node_id, target=匹配节点id, weight=EDGE_WEIGHTS.CALLS），
+ *   删除该 unresolved_refs 记录
+ * - 多个匹配：仅当最高 rank_score > 0 时（说明 PageRank 已计算过）才选取最高分节点回填，
+ *   否则跳过（保留 unresolved），等下一轮 resolve 时再处理
+ * - 零匹配：保留在 unresolved_refs 表（外部库/标准库，正常）
+ *
+ * 应在所有文件解析完成后、PageRank 计算之前执行。
+ */
+export function resolveCrossFileCalls(db: DB): { resolved: number; skipped: number } {
+  const refs = getAllUnresolvedRefs(db);
+  let resolved = 0;
+  let skipped = 0;
+
+  for (const ref of refs) {
+    const candidates = getNodeIdsByName(db, ref.calleeName);
+
+    if (candidates.length === 0) {
+      // 外部库/标准库：保留
+      skipped++;
+      continue;
+    }
+
+    let targetId: string | null = null;
+    if (candidates.length === 1) {
+      // 唯一匹配：直接回填
+      targetId = candidates[0].id;
+    } else {
+      // 多个匹配：仅当最高 rank_score > 0 时才选取最高分节点回填
+      // 首次 resolve 时 PageRank 还没算（所有 rank_score = 0），跳过保留 unresolved
+      const topRank = candidates.reduce((max, c) => Math.max(max, c.rankScore), 0);
+      if (topRank > 0) {
+        const sorted = [...candidates].sort((a, b) => b.rankScore - a.rankScore);
+        targetId = sorted[0].id;
+      } else {
+        skipped++;
+        continue;
+      }
+    }
+
+    if (targetId === null) {
+      skipped++;
+      continue;
+    }
+
+    // 避免重复插入
+    if (edgeExists(db, ref.sourceId, targetId, 'CALLS')) {
+      // 边已存在，仅清理 unresolved_refs
+      deleteUnresolvedRef(db, ref.sourceId, ref.calleeName, ref.line, ref.filePath);
+      resolved++;
+      continue;
+    }
+
+    insertEdge(db, {
+      id: `${ref.sourceId}->${targetId}:CALLS`,
+      source: ref.sourceId,
+      target: targetId,
+      kind: 'CALLS',
+      weight: EDGE_WEIGHTS.CALLS,
+    });
+    deleteUnresolvedRef(db, ref.sourceId, ref.calleeName, ref.line, ref.filePath);
+    resolved++;
+  }
+
+  return { resolved, skipped };
+}
+
+/**
+ * 符号边（EXTENDS/IMPLEMENTS/IMPORTS）target 类型统一为节点 ID
+ *
+ * 现状：CALLS 边 target 是节点 ID，EXTENDS/IMPLEMENTS/IMPORTS 边 target 是字符串名（类名/模块名），
+ * 混合存储破坏图遍历一致性。
+ *
+ * 修复（采用更简单方案）：对每条 EXTENDS/IMPLEMENTS/IMPORTS 边，按 target 字符串在 nodes 表
+ * 按 name 匹配：
+ * - 匹配到：删除旧边，以节点 ID 作为 target 重新插入
+ * - 未匹配：删除该边（外部库类型不参与图遍历，保留意义不大）
+ *
+ * 应在 resolveCrossFileCalls 之后、PageRank 计算之前执行。
+ */
+export function resolveSymbolEdges(db: DB): { resolved: number; deleted: number } {
+  const edges = getAllEdges(db);
+  const targetKinds = new Set(['EXTENDS', 'IMPLEMENTS', 'IMPORTS']);
+  let resolved = 0;
+  let deleted = 0;
+
+  for (const edge of edges) {
+    if (!targetKinds.has(edge.kind)) continue;
+
+    // 若 target 已经是节点 ID（之前已 resolve 过），跳过
+    if (nodeExistsById(db, edge.target)) {
+      resolved++;
+      continue;
+    }
+
+    const candidates = getNodeIdsByName(db, edge.target);
+
+    if (candidates.length === 0) {
+      // 未匹配：删除（外部库类型）
+      deleteEdge(db, edge.source, edge.target, edge.kind);
+      deleted++;
+      continue;
+    }
+
+    // 多个匹配时按 rank_score 取最高（IMPORTS 边的 target 是模块名，
+    // EXTENDS/IMPLEMENTS 的 target 是类/接口名，匹配多节点时取最高分）
+    let targetId: string;
+    if (candidates.length === 1) {
+      targetId = candidates[0].id;
+    } else {
+      const sorted = [...candidates].sort((a, b) => b.rankScore - a.rankScore);
+      targetId = sorted[0].id;
+    }
+
+    // 已是节点 ID（与匹配的节点 id 相同），跳过
+    if (targetId === edge.target) {
+      resolved++;
+      continue;
+    }
+
+    // 避免重复插入
+    if (edgeExists(db, edge.source, targetId, edge.kind)) {
+      deleteEdge(db, edge.source, edge.target, edge.kind);
+      resolved++;
+      continue;
+    }
+
+    // 删除旧边（target=字符串名），插入新边（target=节点 ID）
+    deleteEdge(db, edge.source, edge.target, edge.kind);
+    insertEdge(db, {
+      id: `${edge.source}->${targetId}:${edge.kind}`,
+      source: edge.source,
+      target: targetId,
+      kind: edge.kind,
+      weight: edge.weight,
+    });
+    resolved++;
+  }
+
+  return { resolved, deleted };
 }
 
 /** 更新 PageRank 分数（全量重算） */

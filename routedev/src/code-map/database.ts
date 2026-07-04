@@ -204,6 +204,12 @@ export function edgeExists(db: DB, source: string, target: string, kind: string)
   return row !== undefined;
 }
 
+/** 检查指定节点 ID 是否存在（用于判断边 target 是否已是节点 ID） */
+export function nodeExistsById(db: DB, id: string): boolean {
+  const row = db.prepare('SELECT 1 AS c FROM nodes WHERE id = ?').get(id) as { c: number } | undefined;
+  return row !== undefined;
+}
+
 /** 删除指定边（按 source + target + kind） */
 export function deleteEdge(db: DB, source: string, target: string, kind: string): void {
   db.prepare(

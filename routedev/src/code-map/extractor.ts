@@ -32,6 +32,27 @@ import {
   extractPyImportedNames,
   extractPyBases,
 } from './languages/python.js';
+import {
+  JAVA_CALL_TYPE,
+  getJavaNodeName,
+  extractJavaModifiers,
+  extractJavaExtends,
+  extractJavaImplements,
+  extractJavaImportSource,
+  extractJavaImportedNames,
+  extractJavaCallName,
+  extractJavaReturnType,
+  extractJavaFieldName,
+} from './languages/java.js';
+import {
+  GO_CALL_TYPE,
+  getGoNodeName,
+  extractGoTypeSpecs,
+  extractGoStructEmbeddings,
+  extractGoImportSources,
+  extractGoCallName,
+  extractGoReceiverType,
+} from './languages/go.js';
 
 /** 待解析的调用引用（callee 暂时只知名字，未匹配到定义节点） */
 export interface PendingReference {
@@ -579,6 +600,333 @@ function walkAndExtract(
     // call → 收集 pendingReference（在 extractFromTree 末尾解析为 CALLS 边）
     else if (nodeType === PY_CALL_TYPE) {
       const calleeName = extractPyCallName(node);
+      if (calleeName) {
+        const enclosingSymbol = findEnclosingSymbol(node, filePath, nodes);
+        if (enclosingSymbol) {
+          pendingReferences.push({
+            sourceId: enclosingSymbol.id,
+            calleeName,
+            line: node.startPosition.row + 1,
+            filePath,
+          });
+        }
+      }
+    }
+  } else if (language === 'java') {
+    // import_declaration
+    if (nodeType === 'import_declaration') {
+      const source = extractJavaImportSource(node);
+      const importedNames = extractJavaImportedNames(node);
+      const id = makeNodeId(filePath, node.startPosition.row, `import:${source ?? '?'}`);
+      nodes.push({
+        id,
+        name: `import:${source ?? '?'}`,
+        kind: 'import',
+        filePath,
+        startLine: node.startPosition.row,
+        endLine: node.endPosition.row,
+        sourceModule: source ?? undefined,
+        importedNames,
+      });
+      edges.push({
+        id: makeEdgeId(fileNodeId, id, 'CONTAINS'),
+        source: fileNodeId,
+        target: id,
+        kind: 'CONTAINS',
+        weight: EDGE_WEIGHTS.CONTAINS,
+      });
+      if (source) {
+        edges.push({
+          id: makeEdgeId(fileNodeId, source, 'IMPORTS'),
+          source: fileNodeId,
+          target: source,
+          kind: 'IMPORTS',
+          weight: EDGE_WEIGHTS.IMPORTS,
+        });
+      }
+    }
+    // class_declaration
+    else if (nodeType === 'class_declaration') {
+      const name = getJavaNodeName(node);
+      if (name) {
+        const id = makeNodeId(filePath, node.startPosition.row, name);
+        const { visibility, static: static_ } = extractJavaModifiers(node);
+        const extendsList = extractJavaExtends(node);
+        const implementsList = extractJavaImplements(node);
+        nodes.push({
+          id,
+          name,
+          kind: 'class',
+          filePath,
+          startLine: node.startPosition.row,
+          endLine: node.endPosition.row,
+          signature: extractSignature(node, 'class'),
+          visibility,
+          static: static_,
+          extends: extendsList,
+          implements: implementsList,
+        });
+        edges.push({
+          id: makeEdgeId(fileNodeId, id, 'CONTAINS'),
+          source: fileNodeId,
+          target: id,
+          kind: 'CONTAINS',
+          weight: EDGE_WEIGHTS.CONTAINS,
+        });
+        for (const ext of extendsList) {
+          edges.push({
+            id: makeEdgeId(id, ext, 'EXTENDS'),
+            source: id,
+            target: ext,
+            kind: 'EXTENDS',
+            weight: EDGE_WEIGHTS.EXTENDS,
+          });
+        }
+        for (const impl of implementsList) {
+          edges.push({
+            id: makeEdgeId(id, impl, 'IMPLEMENTS'),
+            source: id,
+            target: impl,
+            kind: 'IMPLEMENTS',
+            weight: EDGE_WEIGHTS.IMPLEMENTS,
+          });
+        }
+        // 递归处理 class_body（不增加 parentClass，Java method 节点 ID 自带类名前缀）
+        for (const child of node.children) {
+          if (child.type === 'class_body') {
+            for (const mb of child.children) {
+              walkAndExtract(mb, filePath, language, name, nodes, edges, fileNodeId, pendingReferences);
+            }
+          }
+        }
+        return;
+      }
+    }
+    // interface_declaration
+    else if (nodeType === 'interface_declaration') {
+      const name = getJavaNodeName(node);
+      if (name) {
+        const id = makeNodeId(filePath, node.startPosition.row, name);
+        const { visibility } = extractJavaModifiers(node);
+        nodes.push({
+          id,
+          name,
+          kind: 'interface',
+          filePath,
+          startLine: node.startPosition.row,
+          endLine: node.endPosition.row,
+          signature: extractSignature(node, 'interface'),
+          visibility,
+        });
+        edges.push({
+          id: makeEdgeId(fileNodeId, id, 'CONTAINS'),
+          source: fileNodeId,
+          target: id,
+          kind: 'CONTAINS',
+          weight: EDGE_WEIGHTS.CONTAINS,
+        });
+        // 递归处理 interface_body
+        for (const child of node.children) {
+          if (child.type === 'interface_body') {
+            for (const mb of child.children) {
+              walkAndExtract(mb, filePath, language, name, nodes, edges, fileNodeId, pendingReferences);
+            }
+          }
+        }
+        return;
+      }
+    }
+    // method_declaration
+    else if (nodeType === 'method_declaration' && parentClass) {
+      const name = getJavaNodeName(node);
+      if (name) {
+        const id = makeNodeId(filePath, node.startPosition.row, `${parentClass}.${name}`);
+        const { visibility, static: static_ } = extractJavaModifiers(node);
+        const returnType = extractJavaReturnType(node);
+        const signature = returnType ? `${returnType} ${name}(...)` : extractSignature(node, 'method');
+        nodes.push({
+          id,
+          name,
+          kind: 'method',
+          filePath,
+          startLine: node.startPosition.row,
+          endLine: node.endPosition.row,
+          signature,
+          visibility,
+          static: static_,
+          className: parentClass,
+        });
+        edges.push({
+          id: makeEdgeId(fileNodeId, id, 'CONTAINS'),
+          source: fileNodeId,
+          target: id,
+          kind: 'CONTAINS',
+          weight: EDGE_WEIGHTS.CONTAINS,
+        });
+      }
+    }
+    // field_declaration（仅 public 字段）
+    else if (nodeType === 'field_declaration' && parentClass) {
+      const { visibility } = extractJavaModifiers(node);
+      // 仅提取 public 字段（避免把私有字段塞进图里）
+      if (visibility === 'public') {
+        const name = extractJavaFieldName(node);
+        if (name) {
+          const id = makeNodeId(filePath, node.startPosition.row, `${parentClass}.${name}`);
+          nodes.push({
+            id,
+            name,
+            kind: 'variable',
+            filePath,
+            startLine: node.startPosition.row,
+            endLine: node.endPosition.row,
+            visibility,
+            className: parentClass,
+          });
+          edges.push({
+            id: makeEdgeId(fileNodeId, id, 'CONTAINS'),
+            source: fileNodeId,
+            target: id,
+            kind: 'CONTAINS',
+            weight: EDGE_WEIGHTS.CONTAINS,
+          });
+        }
+      }
+    }
+    // method_invocation → 收集 pendingReference
+    else if (nodeType === JAVA_CALL_TYPE) {
+      const calleeName = extractJavaCallName(node);
+      if (calleeName) {
+        const enclosingSymbol = findEnclosingSymbol(node, filePath, nodes);
+        if (enclosingSymbol) {
+          pendingReferences.push({
+            sourceId: enclosingSymbol.id,
+            calleeName,
+            line: node.startPosition.row + 1,
+            filePath,
+          });
+        }
+      }
+    }
+  } else if (language === 'go') {
+    // import_declaration
+    if (nodeType === 'import_declaration') {
+      const imports = extractGoImportSources(node);
+      for (const imp of imports) {
+        const id = makeNodeId(filePath, node.startPosition.row, `import:${imp.path}`);
+        nodes.push({
+          id,
+          name: `import:${imp.path}`,
+          kind: 'import',
+          filePath,
+          startLine: node.startPosition.row,
+          endLine: node.endPosition.row,
+          sourceModule: imp.path,
+          importedNames: imp.importedNames,
+        });
+        edges.push({
+          id: makeEdgeId(fileNodeId, id, 'CONTAINS'),
+          source: fileNodeId,
+          target: id,
+          kind: 'CONTAINS',
+          weight: EDGE_WEIGHTS.CONTAINS,
+        });
+        edges.push({
+          id: makeEdgeId(fileNodeId, imp.path, 'IMPORTS'),
+          source: fileNodeId,
+          target: imp.path,
+          kind: 'IMPORTS',
+          weight: EDGE_WEIGHTS.IMPORTS,
+        });
+      }
+    }
+    // function_declaration（top-level）
+    else if (nodeType === 'function_declaration') {
+      const name = getGoNodeName(node);
+      if (name) {
+        const id = makeNodeId(filePath, node.startPosition.row, name);
+        nodes.push({
+          id,
+          name,
+          kind: 'function',
+          filePath,
+          startLine: node.startPosition.row,
+          endLine: node.endPosition.row,
+          signature: extractSignature(node, 'function'),
+        });
+        edges.push({
+          id: makeEdgeId(fileNodeId, id, 'CONTAINS'),
+          source: fileNodeId,
+          target: id,
+          kind: 'CONTAINS',
+          weight: EDGE_WEIGHTS.CONTAINS,
+        });
+      }
+    }
+    // method_declaration
+    else if (nodeType === 'method_declaration') {
+      const name = getGoNodeName(node);
+      const receiverType = extractGoReceiverType(node);
+      if (name && receiverType) {
+        const id = makeNodeId(filePath, node.startPosition.row, `${receiverType}.${name}`);
+        nodes.push({
+          id,
+          name,
+          kind: 'method',
+          filePath,
+          startLine: node.startPosition.row,
+          endLine: node.endPosition.row,
+          signature: extractSignature(node, 'method'),
+          className: receiverType,
+        });
+        edges.push({
+          id: makeEdgeId(fileNodeId, id, 'CONTAINS'),
+          source: fileNodeId,
+          target: id,
+          kind: 'CONTAINS',
+          weight: EDGE_WEIGHTS.CONTAINS,
+        });
+      }
+    }
+    // type_declaration → 内部 type_spec 决定是 class（struct）还是 interface
+    else if (nodeType === 'type_declaration') {
+      const specs = extractGoTypeSpecs(node);
+      for (const spec of specs) {
+        const id = makeNodeId(filePath, node.startPosition.row, spec.name);
+        nodes.push({
+          id,
+          name: spec.name,
+          kind: spec.kind,
+          filePath,
+          startLine: node.startPosition.row,
+          endLine: node.endPosition.row,
+          signature: extractSignature(node, spec.kind),
+        });
+        edges.push({
+          id: makeEdgeId(fileNodeId, id, 'CONTAINS'),
+          source: fileNodeId,
+          target: id,
+          kind: 'CONTAINS',
+          weight: EDGE_WEIGHTS.CONTAINS,
+        });
+        // struct 嵌入字段 → EXTENDS 边
+        if (spec.kind === 'class') {
+          const embeddings = extractGoStructEmbeddings(spec.specNode);
+          for (const emb of embeddings) {
+            edges.push({
+              id: makeEdgeId(id, emb, 'EXTENDS'),
+              source: id,
+              target: emb,
+              kind: 'EXTENDS',
+              weight: EDGE_WEIGHTS.EXTENDS,
+            });
+          }
+        }
+      }
+    }
+    // call_expression → 收集 pendingReference
+    else if (nodeType === GO_CALL_TYPE) {
+      const calleeName = extractGoCallName(node);
       if (calleeName) {
         const enclosingSymbol = findEnclosingSymbol(node, filePath, nodes);
         if (enclosingSymbol) {
