@@ -486,8 +486,13 @@ export class FileEditTool implements ITool {
       }
 
       // 唯一匹配，执行替换（替换仍作用于 modified）
-      modified = modified.replace(oldString, newString);
-      appliedEdits.push({ oldString: oldString.slice(0, 60), replaced: true });
+      // 注意：前序 edit 可能已消耗此 oldString，需检查是否仍存在于 modified
+      if (!modified.includes(oldString)) {
+        appliedEdits.push({ oldString: oldString.slice(0, 60), replaced: false });
+      } else {
+        modified = modified.replace(oldString, newString);
+        appliedEdits.push({ oldString: oldString.slice(0, 60), replaced: true });
+      }
     }
 
     return { ok: true, modified, appliedEdits };

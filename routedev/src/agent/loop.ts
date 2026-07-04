@@ -741,6 +741,34 @@ export class ReActAgentLoop {
       }
     }
 
+    // [I-6] 模式管理器 system prompt 追加（P3.7）：modeManager + cliContextManager
+    // 使用变量路径动态 import，避免静态解析失败；fail-open 模式下不阻塞主流程
+    try {
+      const modeManagerModulePath = '../cli/commands/mode-manager.js';
+      const { modeManager } = await import(modeManagerModulePath);
+      const addendum = modeManager.getSystemPromptAddendum();
+      if (addendum) {
+        if (systemBlocks) {
+          systemBlocks = [...systemBlocks, { type: 'text', text: addendum }];
+        } else {
+          systemPrompt = (systemPrompt ?? '') + '\n' + addendum;
+        }
+      }
+    } catch { /* fail-open：modeManager 不可用时跳过 */ }
+    try {
+      const cliContextModulePath = '../cli/commands/context-manager.js';
+      const { cliContextManager } = await import(cliContextModulePath);
+      const includedFiles = cliContextManager.getContent();
+      if (includedFiles) {
+        const block = '\n\n<included_files>\n' + includedFiles + '\n</included_files>';
+        if (systemBlocks) {
+          systemBlocks = [...systemBlocks, { type: 'text', text: block }];
+        } else {
+          systemPrompt = (systemPrompt ?? '') + block;
+        }
+      }
+    } catch { /* fail-open：cliContextManager 不可用时跳过 */ }
+
     // 构建初始消息列表
     const messages: LLMMessage[] = [];
 
@@ -781,9 +809,20 @@ export class ReActAgentLoop {
     messages.push({ role: 'user', content: finalUserMessage });
 
     // 获取可用工具定义
-    const toolDefs = this.config.toolsEnabled
+    const rawToolDefs = this.config.toolsEnabled
       ? this.toolExecutor.getToolDefinitions()
       : [];
+    // [I-6] 工具列表按当前模式过滤（modeManager.getToolFilter），ask 模式仅允许只读工具
+    let toolDefs = rawToolDefs;
+    try {
+      const modeManagerModulePath = '../cli/commands/mode-manager.js';
+      const { modeManager } = await import(modeManagerModulePath);
+      const filter = modeManager.getToolFilter(modeManager.getMode());
+      if (filter.blocked.length > 0) {
+        const blocked = new Set(filter.blocked);
+        toolDefs = rawToolDefs.filter((t) => !blocked.has(t.name));
+      }
+    } catch { /* fail-open：modeManager 不可用时不做过滤 */ }
 
     let iteration = 0;
     let consecutiveErrors = 0;

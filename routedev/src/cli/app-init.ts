@@ -529,6 +529,30 @@ export function createAppDependencies(
   });
   contextManager.setCompactor(contextCompactor);
 
+  // [I-4] OpenTelemetry exporter（P2.5）：受 config.observability.enabled 守护，fail-open
+  // 使用变量路径让 TypeScript 无法静态解析，避免模块缺失时 typecheck 失败
+  if (config.observability?.enabled) {
+    const otelExporterModulePath = '../observability/otel-exporter.js';
+    import(otelExporterModulePath)
+      .then(({ OtelExporter }) => {
+        const otelIntegrationModulePath = '../observability/integration.js';
+        import(otelIntegrationModulePath)
+          .then(({ setActiveOtelExporter }) => {
+            const exporter = new OtelExporter({
+              enabled: true,
+              serviceName: config.observability!.serviceName || 'routedev',
+              endpoint: config.observability!.endpoint,
+              headers: config.observability!.headers,
+              exportIntervalMs: config.observability!.exportIntervalMs,
+            });
+            setActiveOtelExporter(exporter);
+            logger.info('OtelExporter enabled', { endpoint: config.observability!.endpoint });
+          })
+          .catch(() => { /* fail-open：integration 模块不可用时跳过 */ });
+      })
+      .catch(() => { /* fail-open：exporter 模块不可用时跳过 */ });
+  }
+
   // Phase 53 Task 8：前缀感知缓存（受 config.phase53Integration.prefixCache.enabled 守护，fail-open）
   // 使用变量路径让 TypeScript 无法静态解析，避免模块尚未生成时 typecheck 失败
   const phase53PrefixCacheCfg = config.phase53Integration?.prefixCache;
@@ -626,6 +650,14 @@ export function createAppDependencies(
   registry.register(new ListDirectoryTool());
   // P1-7：网页抓取工具
   registry.register(new WebFetchTool());
+  // [I-5] BrowserTool（P3.8）：动态 import 注册，避免静态解析失败
+  const browserToolModulePath = '../tools/builtin/browser.js';
+  import(browserToolModulePath)
+    .then(({ BrowserTool }) => {
+      registry.register(new BrowserTool());
+      logger.debug('BrowserTool registered');
+    })
+    .catch(() => { /* fail-open：browser 工具不可用时跳过 */ });
   // P1-5：任务列表工具
   const todoStore = new TodoStore();
   registry.register(new TodoWriteTool(todoStore));
@@ -677,6 +709,10 @@ export function createAppDependencies(
       });
     }
   }
+
+  // [I-1 补充] FileEditTool 注入 requireConfirmation 开关（Phase 73）
+  // 读取 config.tools.fileEdit.requireConfirmation（默认 false，向后兼容）
+  fileEditTool.setRequireConfirmation(config.tools?.fileEdit?.requireConfirmation ?? false);
 
   const mcpManager = new MCPClientManager(registry);
   // CONCERN 修复：传入 MCP 配置，使 connectTimeout 和 autoReconnect 生效
@@ -2761,6 +2797,19 @@ export function createAppDependencies(
         minAccessCount: msCfg.localMaintenance.minAccessCount,
       });
       const bm25Index = new BM25Index();
+      // [I-3] UnifiedMemoryStore 桥接 MemoryStore + KnowledgeGraph + CodebaseMemory（P0.2）
+      // 使用变量路径让 TypeScript 无法静态解析，避免模块缺失时 typecheck 失败
+      const unifiedMemoryModulePath = '../memory/unified-memory.js';
+      import(unifiedMemoryModulePath)
+        .then(({ UnifiedMemoryStoreImpl }) => {
+          const knowledgeGraph = contextManager?.getKnowledgeGraph?.() ?? null;
+          const unifiedMemory = new UnifiedMemoryStoreImpl(memoryStore, knowledgeGraph, codebaseMemory ?? null);
+          logger.info('UnifiedMemoryStore initialized', {
+            hasKnowledgeGraph: knowledgeGraph !== null,
+            hasCodebaseMemory: codebaseMemory != null,
+          });
+        })
+        .catch(() => { /* fail-open：unified-memory 模块不可用时跳过 */ });
       logger.info('Phase 65: Memory system refactor enabled', {
         store: msCfg.store.enabled,
         incrementalExtractor: msCfg.incrementalExtractor.enabled,

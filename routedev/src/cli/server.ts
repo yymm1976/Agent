@@ -33,6 +33,31 @@ export async function startServer(
       apiKey: p.apiKey,
     })),
   );
+  // [I-2] 消费 llmProviders 便捷配置（P1.3）：补充注册 Gemini/DeepSeek/Qwen/Ollama
+  if (config.llmProviders) {
+    const lp = config.llmProviders;
+    const extraProviders: Array<{ id: string; protocol: 'openai' | 'gemini'; baseUrl: string; apiKey: string; clientType?: 'gemini' | 'deepseek' | 'qwen' | 'ollama' }> = [];
+    if (lp.gemini?.apiKey) {
+      extraProviders.push({ id: 'gemini', protocol: 'gemini', clientType: 'gemini', baseUrl: lp.gemini.baseUrl, apiKey: lp.gemini.apiKey });
+    }
+    if (lp.deepseek?.apiKey) {
+      extraProviders.push({ id: 'deepseek', protocol: 'openai', clientType: 'deepseek', baseUrl: lp.deepseek.baseUrl, apiKey: lp.deepseek.apiKey });
+    }
+    if (lp.qwen?.apiKey) {
+      extraProviders.push({ id: 'qwen', protocol: 'openai', clientType: 'qwen', baseUrl: lp.qwen.baseUrl, apiKey: lp.qwen.apiKey });
+    }
+    if (lp.ollama) {
+      extraProviders.push({ id: 'ollama', protocol: 'openai', clientType: 'ollama', baseUrl: lp.ollama.baseUrl || 'http://localhost:11434/v1', apiKey: 'ollama' });
+    }
+    const { createLLMClient } = await import('../router/llm/index.js');
+    for (const p of extraProviders) {
+      if (!clientManager.get(p.id)) {
+        try {
+          clientManager.register(p.id, createLLMClient(p));
+        } catch { /* fail-open */ }
+      }
+    }
+  }
 
   // 3. 路由器 + 追踪器 + 分类器（Phase 0c：传入 providers 配置）
   const routerConfig = buildRouterConfig(config);
