@@ -6,11 +6,13 @@ import { parseTimelineEntries, renderTraceTimelineText } from '../components/Tra
 import { outputStyleToDisclosureLevel } from '../output-style.js';
 import { TrajectoryExporter } from '../../observability/trajectory-exporter.js';
 // Phase 48 Task 6：TrajectoryAggregator 不再自行 new，改由 TraceCollector.getTrajectoryAggregator() 共享
+// OTel exporter 集成：/trace otel 读取 active exporter 状态，/trace otel flush 手动导出
+import { getActiveOtelExporter } from '../../observability/integration.js';
 
 export const traceCommand: CommandDefinition = {
   name: 'trace',
   description: '查看 trace 与审计日志',
-  usage: '/trace [sessions|view [l1|l2|l3]|audit|export [sessionId]|summary]',
+  usage: '/trace [sessions|view [l1|l2|l3]|audit|export [sessionId]|summary|otel [flush]]',
   handler: async (args, ctx) => {
     const { trace, audit, tracker, commandBridge } = ctx;
     const sub = args.trim().toLowerCase().split(/\s+/)[0] || 'sessions';
@@ -114,8 +116,54 @@ export const traceCommand: CommandDefinition = {
         return { type: 'handled', messages: [text] };
       }
 
+      // OTel exporter 状态与手动 flush
+      case 'otel': {
+        const otelSub = args.split(/\s+/).slice(1).find(s => s.length > 0)?.toLowerCase();
+        const exporter = getActiveOtelExporter();
+
+        if (!exporter) {
+          return {
+            type: 'handled',
+            messages: ['OTel exporter 未启用（config.observability.enabled=false 或尚未接线）'],
+          };
+        }
+
+        // /trace otel flush —— 手动触发批量导出
+        if (otelSub === 'flush') {
+          await exporter.flush();
+          const st = exporter.getStatus();
+          return {
+            type: 'handled',
+            messages: [
+              [
+                'OTel exporter 手动 flush 完成',
+                `本次累计已导出 span: ${st.totalExportedSpans}`,
+                `最后导出时间: ${st.lastFlushAt ? new Date(st.lastFlushAt).toISOString() : '无'}`,
+                `最后错误: ${st.lastError ?? '无'}`,
+              ].join('\n'),
+            ],
+          };
+        }
+
+        // /trace otel —— 显示状态
+        const st = exporter.getStatus();
+        const lines = [
+          '===== OTel Exporter 状态 =====',
+          `启用: ${st.enabled ? '是' : '否'}`,
+          `endpoint: ${st.endpoint}`,
+          `serviceName: ${st.serviceName}`,
+          `缓冲区 span 数: ${st.bufferedSpans}`,
+          `累计已导出 span: ${st.totalExportedSpans}`,
+          `累计导出次数: ${st.totalExportCount}`,
+          `累计错误次数: ${st.totalErrorCount}`,
+          `最后导出时间: ${st.lastFlushAt ? new Date(st.lastFlushAt).toISOString() : '无'}`,
+          `最后错误: ${st.lastError ?? '无'}`,
+        ];
+        return { type: 'handled', messages: [lines.join('\n')] };
+      }
+
       default:
-        return { type: 'handled', messages: ['用法: /trace [sessions|view|audit|export|summary]'] };
+        return { type: 'handled', messages: ['用法: /trace [sessions|view|audit|export|summary|otel [flush]]'] };
     }
   },
 };

@@ -1925,6 +1925,27 @@ const ToolsConfigSchema = z.preprocess((v) => v ?? {}, z.object({
 }));
 export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;
 
+// --- 可观测性外部接入配置（OpenTelemetry exporter） ---
+
+/**
+ * 可观测性外部接入配置
+ * 启用后把 Agent 执行 span 通过 OTLP HTTP/JSON 导出到外部 collector（如 Jaeger / Tempo）
+ *
+ * - enabled：是否启用 OTel exporter（默认 false，向后兼容）
+ * - serviceName：服务名（默认 'routedev'，由 OtelExporter 兜底）
+ * - endpoint：OTLP HTTP/JSON endpoint，默认 http://localhost:4318/v1/traces
+ * - headers：自定义 headers（如认证 token）
+ * - exportIntervalMs：批量导出间隔（ms，默认 5000）
+ */
+const ObservabilityConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  serviceName: z.string().optional(),
+  endpoint: z.string().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  exportIntervalMs: z.number().optional(),
+}).optional();
+export type ObservabilityConfig = z.infer<typeof ObservabilityConfigSchema>;
+
 // --- 全局配置（完整 schema） ---
 // 顶层 AppConfig：所有配置的根节点
 // 注：Zod 4 严格化后，`.default({})` 不接受空对象字面量。
@@ -2314,6 +2335,9 @@ export const AppConfigSchema = z.object({
   // 由 app-init.ts 读取后通过 FileEditTool.setRequireConfirmation 注入
   // 注：标记为 optional 以避免破坏 defaults.ts 等历史调用方（未提供时由读取方用 ?. + ?? 兜底）
   tools: ToolsConfigSchema.optional(),
+  // 可观测性外部接入：OTel exporter（OTLP HTTP/JSON）
+  // 默认 optional——未配置时 app-init.ts 不创建 exporter，/trace otel 显示"未启用"
+  observability: ObservabilityConfigSchema,
 });
 export type AppConfig = z.infer<typeof AppConfigSchema>;
 
