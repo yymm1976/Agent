@@ -10,7 +10,6 @@ import { initParser, parseFile } from '../../src/code-map/parser.js';
 import { extractFromTree } from '../../src/code-map/extractor.js';
 import { computePageRank } from '../../src/code-map/ranker.js';
 import { distillContext } from '../../src/code-map/compression.js';
-import { renderCodeMap } from '../../src/code-map/renderer.js';
 import {
   initDatabase,
   insertFile,
@@ -389,31 +388,7 @@ describe('CodeMap Engine', () => {
     }
   });
 
-  // 23. renderer 输出 Aider 风格文本
-  it('renderer should output Aider-style text', () => {
-    const files = [{
-      path: 'src/auth.ts',
-      language: 'typescript' as const,
-      contentHash: 'abc',
-      lineCount: 10,
-      indexedAt: new Date().toISOString(),
-    }];
-    const nodes: CodeMapNode[] = [{
-      id: 'src/auth.ts:0:login',
-      name: 'login',
-      kind: 'function',
-      filePath: 'src/auth.ts',
-      startLine: 0,
-      endLine: 5,
-      signature: 'function login(user: string): void',
-      rankScore: 0.5,
-    }];
-    const result = renderCodeMap(files, nodes, { tokenBudget: 1000 });
-    expect(result.text).toContain('src/auth.ts:');
-    expect(result.text).toContain('⋮...');
-    expect(result.text).toContain('│function login');
-    expect(result.fileCount).toBe(1);
-  });
+  // 23. renderer 已移除（死代码），测试用例随之删除
 
   // 24. getStatus 返回正确统计
   it('getStatus should return correct stats', async () => {
