@@ -54,6 +54,14 @@ export interface CodebaseMemoryOptions {
   embedder?: Embedder | null;
   /** HybridRetriever 配置（默认启用语义检索，BM25 0.4 + 向量 0.6） */
   hybridRetrieverConfig?: HybridRetrieverConfig;
+  /**
+   * 工作目录路径，用于派生 BM25 索引持久化路径。
+   * 传入后启用 BM25 持久化模式，BM25 索引快照写入 {dbPath}/.routedev/memory/codebase-bm25.json。
+   * 不传则纯内存模式（BM25 不持久化，向后兼容）。
+   */
+  dbPath?: string;
+  /** 显式指定 BM25 索引持久化路径（优先级高于 dbPath 派生） */
+  bm25PersistPath?: string;
 }
 
 export class CodebaseMemory {
@@ -69,6 +77,8 @@ export class CodebaseMemory {
   // 懒构建的 HybridRetriever 实例，scan() 后置为脏需重建
   private hybridRetriever: HybridRetriever | null = null;
   private hybridRetrieverDirty = true;
+  /** BM25 索引持久化路径（null 表示纯内存模式，不持久化 BM25） */
+  private readonly bm25PersistPath: string | null;
 
   constructor(rootDir: string, options?: CodebaseMemoryOptions) {
     this.rootDir = rootDir;
@@ -86,8 +96,18 @@ export class CodebaseMemory {
       timeDecayHalfLifeDays: 30,
       topK: 50, // 取多一些再按 query limit 截断，保证相似度排序有效
     };
-    // 启动时加载已有索引，fail-open
-    this.loadFromFile().catch(() => {});
+    // BM25 持久化路径：优先显式 bm25PersistPath，其次从 dbPath 派生，否则 null（纯内存）
+    if (options?.bm25PersistPath) {
+      this.bm25PersistPath = options.bm25PersistPath;
+    } else if (options?.dbPath) {
+      this.bm25PersistPath = join(options.dbPath, '.routedev', 'memory', 'codebase-bm25.json');
+    } else {
+      this.bm25PersistPath = null;
+    }
+    // 启动时加载已有索引，再加载 BM25 快照作为兜底（entries 为空时才填充），fail-open
+    this.loadFromFile()
+      .then(() => this.loadBm25())
+      .catch(() => {});
   }
 
   /**
@@ -113,6 +133,8 @@ export class CodebaseMemory {
 
       // 持久化到 JSON，fail-open
       await this.flushToFile();
+      // 持久化 BM25 索引快照，fail-open
+      await this.flushBm25();
       logger.info('CodebaseMemory: scan complete', {
         rootDir: this.rootDir,
         entries: this.entries.size,
@@ -420,6 +442,90 @@ export class CodebaseMemory {
         persistPath: this.persistPath,
         error: err instanceof Error ? err.message : String(err),
       });
+    }
+  }
+
+  /**
+   * 显式落盘（同时持久化 entries 和 BM25 索引快照）
+   * 供外部在关键节点调用确保数据持久化，fail-open
+   */
+  async flush(): Promise<void> {
+    await this.flushToFile();
+    await this.flushBm25();
+  }
+
+  /** 是否启用 BM25 持久化模式 */
+  isBm25Persistent(): boolean {
+    return this.bm25PersistPath !== null;
+  }
+
+  /**
+   * 将 BM25 索引快照写入 JSON 文件，fail-open
+   * 快照内容：BM25Index 的输入文档集（id=filePath, content=filePath+summary）
+   * 跨会话恢复时可直接灌入 BM25Index，避免重新扫描
+   */
+  private async flushBm25(): Promise<void> {
+    if (!this.bm25PersistPath) return;
+    try {
+      await mkdir(dirname(this.bm25PersistPath), { recursive: true });
+      const docs = [...this.entries.values()].map((e) => ({
+        id: e.filePath,
+        content: `${e.filePath} ${e.summary}`,
+        lastScanned: e.lastScanned,
+      }));
+      const payload = {
+        version: 1,
+        generatedAt: Date.now(),
+        rootDir: this.rootDir,
+        docs,
+      };
+      await writeFile(this.bm25PersistPath, JSON.stringify(payload, null, 2), 'utf-8');
+      logger.debug('CodebaseMemory: BM25 snapshot flushed', {
+        bm25PersistPath: this.bm25PersistPath,
+        docs: docs.length,
+      });
+    } catch (err) {
+      logger.warn('CodebaseMemory: BM25 flush failed', {
+        bm25PersistPath: this.bm25PersistPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * 从 JSON 文件加载 BM25 索引快照，fail-open
+   * 仅当 entries 为空时作为兜底数据源填充 entries（避免覆盖较新的 scan 结果）
+   */
+  private async loadBm25(): Promise<void> {
+    if (!this.bm25PersistPath) return;
+    try {
+      const data = await readFile(this.bm25PersistPath, 'utf-8');
+      const payload = JSON.parse(data) as {
+        docs?: Array<{ id: string; content: string; lastScanned: number }>;
+      };
+      if (!payload.docs || !Array.isArray(payload.docs)) return;
+      // 仅在 entries 尚未加载时填充（loadFromFile 优先）
+      if (this.entries.size > 0) return;
+      for (const doc of payload.docs) {
+        if (doc && typeof doc.id === 'string') {
+          // 从 BM25 doc 还原 CodebaseEntry（summary 从 content 中截取 filePath 之后部分）
+          const summary = doc.content.startsWith(doc.id + ' ')
+            ? doc.content.slice(doc.id.length + 1)
+            : doc.content;
+          this.entries.set(doc.id, {
+            filePath: doc.id,
+            summary,
+            lastScanned: doc.lastScanned ?? 0,
+          });
+        }
+      }
+      this.hybridRetrieverDirty = true;
+      logger.info('CodebaseMemory: BM25 snapshot loaded', {
+        bm25PersistPath: this.bm25PersistPath,
+        entries: this.entries.size,
+      });
+    } catch {
+      // 文件不存在或损坏，静默跳过
     }
   }
 }
