@@ -96,6 +96,7 @@ import { UnifiedReviewer, createUnifiedReviewer } from '../agent/unified-reviewe
 import { CompletionGate, createCompletionGate } from '../agent/completion-gate.js';
 import { ReadTracker, createReadTracker } from '../tools/read-tracker.js';
 import { ToolResultSanitizer, createToolResultSanitizer } from '../tools/result-sanitizer.js';
+import { ToolOutputPipeline } from '../agent/context/tool-output-pipeline.js';
 import type { ScenarioClassifier } from '../router/classifier.js';
 import type { ModelRouter } from '../router/router.js';
 import type { TokenTracker } from '../router/tracker.js';
@@ -1659,6 +1660,19 @@ export function createAppDependencies(
   const resultSanitizer = createToolResultSanitizer(maxOutputChars);
   // Phase 32 Task 1.2：将 sanitizer 注入 agentLoop，所有工具结果在注入 LLM 上下文前都会经过净化
   agentLoop.setSanitizer(resultSanitizer);
+
+  // Phase 71 Task D3/D7：注入 ToolOutputPipeline（统一 Sanitizer / Concise Thinking / Budget Offload 三阶段）
+  // pipeline 未注入时 loop 走原 sanitizeToolResult 逻辑（零回归）；注入后收拢到一处编排
+  // 配置消费链：phase70Integration.toolOutputBudget.enabled + optimization.conciseThinking.enabled
+  const toolBudgetCfg = p70Cfg?.toolOutputBudget;
+  agentLoop.setToolOutputPipeline(new ToolOutputPipeline({
+    sanitizer: resultSanitizer,
+    conciseThinkingEnabled: config.optimization?.conciseThinking?.enabled === true,
+    budgetEnabled: toolBudgetCfg?.enabled === true,
+    offloadDir: offloadRootDir,
+    maxChars: toolBudgetCfg?.maxCharsPerOutput ?? 2000,
+    sessionId: offloadSessionId,
+  }));
   // Phase 32 Task 4.2：将 sanitizer 注入 MCPClientManager，检测 MCP 工具描述中的注入模式
   mcpManager.setSanitizer(resultSanitizer);
   // Phase 53 Task 5：McpSecurityScanner 注入（受 config.phase53Integration.mcpSecurityScan.enabled 守护）

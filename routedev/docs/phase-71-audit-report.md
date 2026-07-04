@@ -63,13 +63,13 @@ Task 总数：A1-A5（5）+ B1-B4（4）+ C1-C2（2）+ D1-D7（7）+ E1-E3（3�
 |------|------|--------|------|-------|------|---------|
 | D1 | ContextPacker 基础 | 前序已提交 | 已完成 | 0 | 0 | 0 |
 | D2 | ContextPacker 接入 | 前序已提交 | 已完成 | 0 | 0 | 0 |
-| D3 | setToolOutputPipeline | 前序已提交 | 已完成 | 0 | 1（已闭环） | 0 |
+| D3 | setToolOutputPipeline | 前序已提交 | 已完成 | 0 | 1（交叉审查补齐闭环） | 0 |
 | D4 | ContextPacker 启用 + tiktoken | 无独立 commit | 已完成 | 0 | 0 | 0 |
 | D5 | CodebaseMemory 升级为语义检索 | `b216b58` | 已完成 | 0 | 1 | 0 |
 | D6 | progressive-disclosure | 无独立 commit | 已完成 | 0 | 0 | 0 |
 | D7 | offload 文件清理机制 | `5b05e07` | 已完成 | 0 | 0 | 0 |
 
-**D3 RISK（已闭环）**：`setToolOutputPipeline` 在 D3 提交时无调用方注入（test-only 嫌疑）。D7 已修复，pipeline 已接入 `loop.ts`。本 RISK 在 Phase 71 内闭环，不计入跨 Phase RISK 清单。
+**D3 RISK（交叉审查补齐闭环）**：`setToolOutputPipeline` 在 D3 提交时无调用方注入（test-only 嫌疑）。D7 在 `loop.ts` 加了调用点（L638-641），但 `app-init.ts` 的实例化与注入在 D7 commit 时遗漏——pipeline 在生产环境永远为 `null`，`phase70Integration.toolOutputBudget.enabled` 沦为僵尸配置。Phase 71 交叉审查阶段发现此事实错误并补齐：在 `app-init.ts` L1664-1675 构造 `ToolOutputPipeline` 实例并调用 `setToolOutputPipeline`，复用 `resultSanitizer` + `offloadRootDir` + `offloadSessionId`，消费 `p70Cfg.toolOutputBudget` 配置。本 RISK 在 Phase 71 交叉审查阶段闭环，不计入跨 Phase RISK 清单。
 
 **D5 RISK**：`defaults.ts` 包含前序任务未提交改动。D5 commit `b216b58` 中 `defaults.ts` 的 diff 含 D1-D4 期间累积的配置字段，与"单 Task 单 commit"原则不符。属历史遗留，不影响功能。
 
@@ -118,9 +118,9 @@ Task 总数：A1-A5（5）+ B1-B4（4）+ C1-C2（2）+ D1-D7（7）+ E1-E3（3�
 
 依据 [subagent-audit-process.md §5.2](./subagent-audit-process.md#52-risk-升级为-fatal-的条件)，RISK 在连续 2 个 Phase 内未解决将升级为 FATAL。Phase 71 内的 7 项 RISK 在 Phase 73 之前必须闭环或显式说明延后理由，否则 Phase 73 交叉审查时自动升级。
 
-### 3.2 D3 跨 commit 拆分（已闭环，不计入跨 Phase RISK）
+### 3.2 D3 跨 commit 拆分（交叉审查补齐闭环，不计入跨 Phase RISK）
 
-D3 的 `setToolOutputPipeline` 在 D3 commit 时无调用方，属于"跨 commit 拆分"RISK。D7 commit `5b05e07` 已将 pipeline 接入 `loop.ts`，本 RISK 在 Phase 71 内闭环。后续 Phase 无需跟踪。
+D3 的 `setToolOutputPipeline` 在 D3 commit 时无调用方，属于"跨 commit 拆分"RISK。D7 commit `5b05e07` 在 `loop.ts` 加了调用点但遗漏了 `app-init.ts` 的实例化注入，导致 pipeline 在生产环境永远为 `null`。Phase 71 交叉审查阶段发现此事实错误并补齐 `app-init.ts` L1664-1675 的注入，本 RISK 在 Phase 71 内闭环。后续 Phase 无需跟踪。
 
 ---
 
