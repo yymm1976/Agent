@@ -427,4 +427,11 @@ export class CommandSandbox {
 
     return { allowed: true };
   }
+
+  /**
+   * 实例方法：校验命令是否允许执行（委托给静态方法，使用实例的 options）
+   */
+  validate(command: string): ValidationResult {
+    return CommandSandbox.validateCommand(command, this.options);
+  }
 }

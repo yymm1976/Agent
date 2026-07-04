@@ -9,6 +9,7 @@ import path from 'node:path';
 import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '../types.js';
 import { RetryPolicy, CircuitBreaker, resilientExecute } from '../../utils/retry.js';
 import { logger } from '../../utils/logger.js';
+import type { CommandSandbox } from '../../security/sandbox.js';
 
 const MAX_STDOUT = 100 * 1024;
 const MAX_STDERR = 50 * 1024;
@@ -30,6 +31,13 @@ export class ShellExecTool implements ITool {
   private circuit = new CircuitBreaker({ failureThreshold: 5, resetTimeoutMs: 30000 });
   // 重试策略：shell 命令通常有副作用，默认不重试（maxRetries=0），仅启用熔断
   private retry = new RetryPolicy({ maxRetries: 0 });
+  // 可选沙箱：注入后对命令做白/黑名单 + 危险模式前置校验
+  private sandbox: CommandSandbox | null = null;
+
+  /** 注入安全沙箱（用于命令前置校验：白/黑名单 + 危险模式检测） */
+  setSandbox(sandbox: CommandSandbox): void {
+    this.sandbox = sandbox;
+  }
 
   readonly definition: ToolDefinition = {
     name: 'shell_exec',
@@ -90,6 +98,20 @@ export class ShellExecTool implements ITool {
         error: `工作目录 "${args.workingDirectory}" 不在允许范围内`,
         durationMs: 0,
       };
+    }
+
+    // 沙箱前置校验：白/黑名单 + 危险模式检测
+    if (this.sandbox) {
+      const validation = this.sandbox.validate(command);
+      if (!validation.allowed) {
+        logger.warn('shell_exec blocked by sandbox', { command, reason: validation.reason });
+        return {
+          success: false,
+          output: '',
+          error: `命令被安全沙箱拦截: ${validation.reason ?? '未知原因'}`,
+          durationMs: 0,
+        };
+      }
     }
 
     // 用 resilientExecute 包装：熔断器保护 + 可选重试

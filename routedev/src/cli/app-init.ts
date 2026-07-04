@@ -185,6 +185,8 @@ import { CompactPromptEngine } from '../agent/memory/compact-prompt-engine.js';
 import { SessionMemoryStore } from '../agent/memory/session-memory-store.js';
 import { CodebaseMemory } from '../memory/codebase-memory.js';
 import { IntegrityManifest } from '../security/integrity-manifest.js';
+// [I-5] CommandSandbox：命令执行安全沙箱，注入 ShellExecTool 做白/黑名单 + 危险模式前置校验
+import { CommandSandbox } from '../security/sandbox.js';
 
 /**
  * CR-4b：组合式路由器实例类型
@@ -636,10 +638,13 @@ export function createAppDependencies(
   // Phase 53 Task 7：提取 fileEditTool / fileWriteTool 实例，供 ConfigGuard 注入
   const fileEditTool = new FileEditTool();
   const fileWriteTool = new FileWriteTool();
-  // 基础工具（原有）—— fileWriteTool 已提取为实例变量供 ConfigGuard 注入
-  [FileReadTool, FileSearchTool, ShellExecTool, GitOpTool, WebSearchTool, CodeSearchTool]
+  // [I-5] 提取 shellExecTool 实例，供 CommandSandbox 注入
+  const shellExecTool = new ShellExecTool();
+  // 基础工具（原有）—— fileWriteTool / shellExecTool 已提取为实例变量供后续注入
+  [FileReadTool, FileSearchTool, GitOpTool, WebSearchTool, CodeSearchTool]
     .forEach(T => registry.register(new T()));
   registry.register(fileWriteTool);
+  registry.register(shellExecTool);
   // Phase 34 Task 4：Repo Map 代码检索增强
   registry.register(new RepoMapTool());
   // 短板 2 修复：代码地图查询工具（find_callers/find_callees/impact_analysis/search_symbols）
@@ -713,6 +718,23 @@ export function createAppDependencies(
   // [I-1 补充] FileEditTool 注入 requireConfirmation 开关（Phase 73）
   // 读取 config.tools.fileEdit.requireConfirmation（默认 false，向后兼容）
   fileEditTool.setRequireConfirmation(config.tools?.fileEdit?.requireConfirmation ?? false);
+
+  // [I-5] CommandSandbox 注入 ShellExecTool
+  // 为 shell_exec 增加前置校验：危险命令模式拦截（rm -rf /、format、del /f 等）
+  // 默认不配置白/黑名单（仅危险模式检测），避免误拦正常构建命令
+  // fail-open：装配失败不阻塞主流程，ShellExecTool 仍可正常工作（仅缺少沙箱前置校验）
+  try {
+    const sandbox = new CommandSandbox({
+      timeout: 30_000,
+      maxOutputBytes: 1024 * 1024,
+    });
+    shellExecTool.setSandbox(sandbox);
+    logger.debug('CommandSandbox injected into ShellExecTool', { via: 'setSandbox' });
+  } catch (err) {
+    logger.warn('[I-5] CommandSandbox 装配失败，fail-open 跳过', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 
   const mcpManager = new MCPClientManager(registry);
   // CONCERN 修复：传入 MCP 配置，使 connectTimeout 和 autoReconnect 生效
