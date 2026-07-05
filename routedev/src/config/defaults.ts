@@ -194,11 +194,6 @@ export const DEFAULT_CONFIG: AppConfig = {
       skipIfConfident: true,
     },
   },
-  scheduler: {
-    enabled: true,
-    maxTasks: 20,
-    defaultTimezone: 'Asia/Shanghai',
-  },
   agent: {
     maxConcurrentSubAgents: 5,
   },
@@ -690,39 +685,7 @@ export const DEFAULT_CONFIG: AppConfig = {
       timeoutMs: 30000,
     },
   },
-  dynamicWorkflow: {
-    enabled: true,
-    synthesizeBarrier: {
-      enabled: true,
-      barrierTimeoutMs: 60000,
-      defaultStrategy: 'concat-dedup',
-      includeFailed: true,
-    },
-    adversarialVerification: {
-      enabled: true,
-      frequency: 'end-only',
-      n: 3,
-      forceCrossModel: false,
-    },
-    loopUntilDone: {
-      enabled: true,
-      maxRounds: 5,
-      stableRoundsRequired: 2,
-      minCompletionRatio: 0.85,
-    },
-    quarantine: {
-      enabled: true,
-      untrustedDeniedTools: ['file_write', 'file_edit', 'shell_exec', 'git_op'],
-      allowIntentForwarding: true,
-      contaminationTraceDepth: 10,
-    },
-    tournament: {
-      enabled: true,
-      candidateCount: 3,
-      temperature: 0.7,
-      singleElimination: true,
-    },
-  },
+  // Phase 62：动态工作流模式与隔离治理——已删除（ExecutionOrchestrator 死代码清理）
   stateExternalization: {
     enabled: true,
     kSentenceCompression: {
@@ -793,23 +756,12 @@ export const DEFAULT_CONFIG: AppConfig = {
       backend: 'sqlite' as const,
       embeddingProvider: 'bi-encoder' as const,
     },
-    incrementalExtractor: {
-      enabled: true,
-      mode: 'topic' as const,
-      modelId: 'deepseek-v4-flash',
-    },
     hybridRetriever: {
       enabled: true,
       bm25Weight: 0.4,
       embeddingWeight: 0.6,
       timeDecayHalfLifeDays: 30,
       topK: 10,
-    },
-    conservativeMerger: {
-      enabled: true,
-    },
-    rejectedAlternative: {
-      enabled: true,
     },
     localMaintenance: {
       enabled: true,
@@ -818,58 +770,8 @@ export const DEFAULT_CONFIG: AppConfig = {
       minAccessCount: 2,
     },
   },
-  // Phase 66：策略管道编号分段与治理（v4.6.5）
-  foundationProtocol: {
-    enabled: true,
-    checkpointPipeline: {
-      enabled: true,
-      enabledSegments: [100, 400, 500],
-      shortCircuit: true,
-    },
-    callOwner: {
-      enabled: true,
-      syncWaitMs: 10000,
-      persistPath: '.routedev/pending-approvals.jsonl',
-      defaultStrategyForToolApproval: 'off' as const,
-      defaultStrategyForIntentGuard: 'off' as const,
-    },
-    stateSnapshotChain: {
-      enabled: true,
-      arbiterSecretEnv: 'ROUTEDEV_ARBITER_SECRET',
-    },
-    reputationDeriver: {
-      enabled: true,
-      maxCacheAgeMs: 60000,
-    },
-  },
-  // Phase 67：推理质量诊断与SNR过滤（v4.6.6）
-  reasoningQualityDiagnostics: {
-    enabled: true,
-    miCrossScorer: {
-      enabled: true,
-      collapseThreshold: 1.5,
-      minPrompts: 2,
-      samplesPerPrompt: 4,
-    },
-    snrAwareFilter: {
-      enabled: true,
-      topP: 0.9,
-      minRVThreshold: 0.01,
-      batchRejectRatio: 0.7,
-    },
-    epistemicTokenProtector: {
-      enabled: true,
-      neighborhoodLines: 3,
-    },
-    epistemicIntegrityChecker: {
-      enabled: true,
-      overCompressionThreshold: 0.5,
-      minTokenCount: 5,
-    },
-    auditMetricsLogging: {
-      logEpistemicStats: true,
-    },
-  },
+  // Phase 66：策略管道编号分段与治理——已删除（ExecutionOrchestrator 死代码清理）
+  // Phase 67：推理质量诊断与SNR过滤——已删除（ExecutionOrchestrator 死代码清理）
   // Phase 68：检索/搜索/发现三分与知识图谱（v4.6.7）
   phase68Integration: {
     operationClassification: {
@@ -894,15 +796,7 @@ export const DEFAULT_CONFIG: AppConfig = {
       complexityPenalty: 0.01,
     },
   },
-  // Phase 69：Worktree 隔离执行与多代理并行编排（v4.7.0）
-  phase69Integration: {
-    worktree: {
-      enabled: false,
-      worktreeRoot: '.routedev/worktrees',
-      maxWorktrees: 5,
-      cleanupTimeoutMs: 30 * 60 * 1000,
-    },
-  },
+  // Phase 69：Worktree 隔离执行与多代理并行编排——已删除（ExecutionOrchestrator 死代码清理）
   // Phase 70：上下文压缩技术深度优化（v4.7.1）
   phase70Integration: {
     toolOutputBudget: {

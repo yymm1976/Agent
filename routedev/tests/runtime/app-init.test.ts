@@ -35,7 +35,6 @@ import { TokenProfiler } from '../../src/agent/token-profiler.js';
 import { TaskOrchestrator } from '../../src/agent/task-orchestrator.js';
 import { RequirementsGatherer } from '../../src/agent/requirements-gatherer.js';
 import { TaskComplexityAnalyzer } from '../../src/agent/complexity-analyzer.js';
-import { ExecutionOrchestrator } from '../../src/agent/execution-orchestrator.js';
 import { UnifiedReviewer } from '../../src/agent/unified-reviewer.js';
 import { CompletionGate } from '../../src/agent/completion-gate.js';
 import { ReadTracker } from '../../src/tools/read-tracker.js';
@@ -275,7 +274,6 @@ describe('createAppDependencies', () => {
       expect(deps.taskOrchestrator).toBeInstanceOf(TaskOrchestrator);
       expect(deps.requirementsGatherer).toBeInstanceOf(RequirementsGatherer);
       expect(deps.complexityAnalyzer).toBeInstanceOf(TaskComplexityAnalyzer);
-      expect(deps.executionOrchestrator).toBeInstanceOf(ExecutionOrchestrator);
       expect(deps.unifiedReviewer).toBeInstanceOf(UnifiedReviewer);
       expect(deps.completionGate).toBeInstanceOf(CompletionGate);
       expect(deps.readTracker).toBeInstanceOf(ReadTracker);
@@ -434,7 +432,7 @@ describe('createAppDependencies', () => {
       );
 
       // E1 删除：durableExecutor 字段已从 AppDependencies 移除（上位替代为 GoalPersistence）
-      expect(deps.executionOrchestrator).toBeInstanceOf(ExecutionOrchestrator);
+      // ExecutionOrchestrator 已删除（死代码清理）
       expect(deps.unifiedReviewer).toBeInstanceOf(UnifiedReviewer);
     });
   });
@@ -528,7 +526,7 @@ describe('createAppDependencies', () => {
         'goalParser', 'goalVerifier', 'hookRunner',
         'primaryClient', 'checkpointClient', 'profiler',
         'taskOrchestrator', 'requirementsGatherer', 'complexityAnalyzer',
-        'executionOrchestrator', 'unifiedReviewer', 'completionGate',
+        'unifiedReviewer', 'completionGate',
         'readTracker', 'resultSanitizer', 'sharedSystemPromptRef',
         // E9-B：新增 experimentManager 单例字段
         'experimentManager',

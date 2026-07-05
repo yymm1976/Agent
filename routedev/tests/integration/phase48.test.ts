@@ -4,14 +4,14 @@
 // 测试策略（源代码静态分析方式，与 Phase 47 Task 10 一致）：
 //   1. app-init.ts 中 permissionEngine 从 config.security.sandbox 读取并调用 setSandboxLevel（Task 1）
 //   2. app-init.ts 中调用 loadProjectDoc（Task 2）
-//   3. app-init.ts 中创建 ScheduleEngine 实例（Task 3）
+//   3. [已删除] app-init.ts 中创建 ScheduleEngine 实例（Task 3）—— ScheduleEngine 空转引擎已移除
 //   4. ProjectMemoryManager 有 setProjectDoc/getProjectDoc 方法（Task 2）
 //   5. spawn-agent.ts 有 resolveProfileForSubagent 函数（Task 4 AgentProfileManager 接入）
 //   6. trace-collector.ts 有 getTrajectoryAggregator 方法（Task 6）
 //   7. package.json scripts 包含 lint:descriptions（Task 5）
 //   8. src/cli/exec.ts 不存在（已清理，Task 5）
 //   9. SettingsPage.tsx 包含沙箱级选择器（SandboxLevel，Task 1 UI）
-//  10. service-context.ts ServiceContext 接口包含 scheduleEngine 字段（Task 3）
+//  10. [已删除] service-context.ts ServiceContext 接口包含 scheduleEngine 字段（Task 3）
 
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
@@ -105,33 +105,6 @@ describe('Phase 48 E2E - Task 2: app-init.ts 调用 loadProjectDoc', () => {
     expect(content).toContain('loadProjectDoc(cwd');
     // 注入到 projectMemory 供 system prompt 使用
     expect(content).toContain('projectMemory.setProjectDoc');
-  });
-});
-
-// ============================================================
-// 3. app-init.ts 中创建 ScheduleEngine 实例（Task 3）
-// M3 修复：测试名标注为"静态源码检查"，反映实际覆盖强度（非运行时行为测试）
-// ============================================================
-describe('Phase 48 Task 3: app-init.ts 静态源码检查（ScheduleEngine 接线）', () => {
-  it('app-init.ts 导入 ScheduleEngine 和 ScheduleStore', async () => {
-    const content = await readFile(APP_INIT_PATH);
-    expect(content).toMatch(/import.*ScheduleEngine.*from.*'\.\.\/scheduler\/engine\.js'/);
-    expect(content).toMatch(/import.*ScheduleStore.*from.*'\.\.\/scheduler\/store\.js'/);
-  });
-
-  it('app-init.ts 源码包含 ScheduleEngine 实例化与启动', async () => {
-    const content = await readFile(APP_INIT_PATH);
-    expect(content).toContain('new ScheduleEngine');
-    expect(content).toContain('scheduleEngine.start()');
-    // AppDependencies 接口包含 scheduleEngine 字段
-    expect(content).toContain('scheduleEngine?');
-  });
-
-  it('app-init.ts 源码包含 onTaskTrigger 回调', async () => {
-    const content = await readFile(APP_INIT_PATH);
-    expect(content).toContain('onTaskTrigger');
-    // fire-and-forget 异步回调
-    expect(content).toContain('agentLoop.run');
   });
 });
 
@@ -281,25 +254,6 @@ describe('Phase 48 E2E - Task 1 UI: SettingsPage 沙箱级选择器', () => {
 });
 
 // ============================================================
-// 10. service-context.ts ServiceContext 接口包含 scheduleEngine 字段（Task 3）
+// 10. service-context.ts ServiceContext 接口（Task 3）
+// 注：scheduleEngine 相关测试已随 ScheduleEngine 空转引擎删除一并移除
 // ============================================================
-describe('Phase 48 E2E - Task 3: ServiceContext 接口包含 scheduleEngine 字段', () => {
-  it('service-context.ts 包含 scheduleEngine 字段定义', async () => {
-    const content = await readFile(SERVICE_CONTEXT_PATH);
-    expect(content).toContain('scheduleEngine?');
-    expect(content).toMatch(/scheduleEngine\?:\s*import\('\.\.\/scheduler\/engine\.js'\)\.ScheduleEngine/);
-  });
-
-  it('ServiceContextDeps 接口也包含 scheduleEngine 字段', async () => {
-    const content = await readFile(SERVICE_CONTEXT_PATH);
-    // ServiceContextDeps 用于装配阶段传递
-    expect(content).toContain('ServiceContextDeps');
-    expect(content).toMatch(/scheduleEngine\?:\s*import\('\.\.\/scheduler\/engine\.js'\)\.ScheduleEngine/);
-  });
-
-  it('createServiceContext 透传 scheduleEngine 到 ServiceContext', async () => {
-    const content = await readFile(SERVICE_CONTEXT_PATH);
-    expect(content).toContain('deps.scheduleEngine');
-    expect(content).toContain('scheduleEngine: deps.scheduleEngine');
-  });
-});

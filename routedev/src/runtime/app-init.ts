@@ -102,7 +102,6 @@ import { getHookTemplates } from '../hooks/templates.js';
 import { TaskOrchestrator, createTaskOrchestrator } from '../agent/task-orchestrator.js';
 import { RequirementsGatherer, createRequirementsGatherer } from '../agent/requirements-gatherer.js';
 import { TaskComplexityAnalyzer, createTaskComplexityAnalyzer } from '../agent/complexity-analyzer.js';
-import { ExecutionOrchestrator, createExecutionOrchestrator } from '../agent/execution-orchestrator.js';
 import { UnifiedReviewer, createUnifiedReviewer } from '../agent/unified-reviewer.js';
 import { CompletionGate, createCompletionGate } from '../agent/completion-gate.js';
 import { ReadTracker, createReadTracker } from '../tools/read-tracker.js';
@@ -120,9 +119,6 @@ import { LoopDetectionMiddleware } from '../agent/middleware/loop-detection.js';
 import { MentionResolverMiddleware } from '../agent/middleware/mention-resolver.js';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
-// Phase 48 Task 6 修复：scheduler 模块静态 import（替代原 await import，避免非 async 函数中的 typecheck 错误）
-import { ScheduleStore } from '../scheduler/store.js';
-import { ScheduleEngine } from '../scheduler/engine.js';
 // Phase 52 Task 1/3/5/6/7/8/9/10：Phase 52 模块接入（按 config.phase52Integration 开关守护）
 import { SkillLifecycleManager } from '../skills/skill-lifecycle.js';
 import { createBoundedRecoveryManager } from '../agent/bounded-recovery.js';
@@ -147,47 +143,25 @@ import { HashEmbedder, createEmbedder } from '../router/embedder.js';
 import { RoutingOrchestrator } from '../router/orchestrator.js';
 import { ExecutionVerifier } from '../router/execution-verifier.js';
 import { RoutingRegretTracker } from '../router/regret-tracker.js';
-// Phase 62：动态工作流模式与隔离治理
-import { AdversarialVerifier } from '../agent/adversarial-verifier.js';
-import { RubricRegistry } from '../agent/rubric-registry.js';
-import { LoopUntilDoneGate } from '../agent/loop-until-done-gate.js';
-import { QuarantineManager } from '../tools/quarantine-profile.js';
-import { ActionAgentDispatcher } from '../agent/action-agent-dispatcher.js';
-import { TournamentSelector } from '../agent/tournament-selector.js';
-import { CrossModelReviewer } from '../agent/cross-model-reviewer.js';
+// Phase 62：动态工作流模式与隔离治理——已删除（ExecutionOrchestrator 死代码清理）
 // Phase 65：记忆系统重构
 import { MemoryStore } from '../memory/memory-store.js';
-import { IncrementalExtractor } from '../memory/incremental-extractor.js';
 import { HybridRetriever } from '../memory/hybrid-retriever.js';
-import { ConservativeMerger } from '../memory/conservative-merger.js';
-import { RejectedAlternativeStore } from '../memory/rejected-alternative-store.js';
 import { LocalMaintenancePolicy } from '../memory/local-maintenance.js';
-import { BM25Index } from '../memory/bm25-index.js';
-// Phase 66：策略管道与治理
-import { CheckpointPipeline } from '../policies/checkpoint-pipeline.js';
-import { CallOwnerCoordinator } from '../policies/call-owner-coordinator.js';
+// Phase 66：策略管道与治理——已删除（ExecutionOrchestrator 死代码清理）
 // Phase 42：PolicyEngine 接线（策略引擎静态 import，断裂在编译期暴露）
 import { PolicyEngine } from '../policies/policy-engine.js';
 import { createBuiltinIntentGuardPolicies } from '../policies/intent-guard.js';
 import { createBuiltinPlaybookPolicies } from '../policies/playbook.js';
 import { createBuiltinToolGuidePolicies } from '../policies/tool-guide.js';
 import { createBuiltinToolApprovalPolicies } from '../policies/tool-approval.js';
-import { StateSnapshotChain } from '../harness/state-snapshot-chain.js';
-import { ReputationDeriver } from '../memory/reputation-deriver.js';
-// Phase 67：推理质量诊断
-import { MICrossScorer } from '../evaluation/mi-cross-scorer.js';
-import { SNRAwareFilter } from '../agent/snr-aware-filter.js';
-import { EpistemicTokenProtector } from '../agent/epistemic-token-protector.js';
-import { EpistemicIntegrityChecker } from '../agent/epistemic-integrity-checker.js';
-import { QualityMetricsRecorder } from '../harness/quality-metrics-types.js';
+// Phase 67：推理质量诊断——已删除（ExecutionOrchestrator 死代码清理）
 // Phase 68：检索/搜索/发现三分与知识图谱
 import { ProvenanceGraph } from '../memory/provenance-graph.js';
 import { KanObstacleChecker } from '../skills/kan-obstacle-checker.js';
 import { QuantitativeGate } from '../agent/quantitative-gate.js';
 import { classifyOperation, buildRegimeTransition, type OperationSignal } from '../skills/operation-classifier.js';
-// Phase 69：Worktree 隔离执行与多代理并行编排
-import { WorktreeManager, DEFAULT_WORKTREE_CONFIG } from '../agent/multi/worktree-manager.js';
-import { AgentGroupResolver } from '../agent/multi/agent-group-resolver.js';
+// Phase 69：Worktree 隔离执行与多代理并行编排——已删除（ExecutionOrchestrator 死代码清理）
 // Phase 70：上下文压缩技术深度优化
 import { ToolOutputBudgetManager, DEFAULT_BUDGET_CONFIG } from '../agent/memory/tool-output-budget.js';
 import { MessageGrouper } from '../agent/memory/message-grouper.js';
@@ -275,8 +249,6 @@ export interface AppDependencies {
   requirementsGatherer: RequirementsGatherer;
   /** 任务复杂度分析器——规划阶段评估每步复杂度 */
   complexityAnalyzer: TaskComplexityAnalyzer;
-  /** 执行编排器——根据复杂度选择单 Agent 或多 Agent 路径 */
-  executionOrchestrator: ExecutionOrchestrator;
   /** 统一审查器——GoalVerifier + 代码审查双层验证 */
   unifiedReviewer: UnifiedReviewer;
   /** 独立代码验证门——typecheck/lint/tests 兜底 */
@@ -287,8 +259,6 @@ export interface AppDependencies {
   resultSanitizer: ToolResultSanitizer;
   /** Phase 31/32 P0 接线：共享 systemPrompt ref，App.tsx 同步更新此 ref */
   sharedSystemPromptRef: { current: string };
-  /** Phase 48 Task 3：调度引擎实例（scheduler.enabled !== false 时创建） */
-  scheduleEngine?: import('../scheduler/engine.js').ScheduleEngine;
   /** Phase 50 Task 1：Goal 流程核心模块实例（按 config.goalIntegration 渐进接入，未开启时为 null） */
   goalAuditor: GoalAuditor | null;
   goalPersistence: GoalPersistence | null;
@@ -322,41 +292,20 @@ export interface AppDependencies {
   routingOrchestrator?: RoutingOrchestrator;
   executionVerifier?: ExecutionVerifier;
   routingRegretTracker?: RoutingRegretTracker;
-  // Phase 62：动态工作流模式与隔离治理（可选，由 app-init.ts 在 dynamicWorkflow.enabled 时注入）
-  adversarialVerifier?: AdversarialVerifier;
-  rubricRegistry?: RubricRegistry;
-  loopUntilDoneGate?: LoopUntilDoneGate;
-  quarantineManager?: QuarantineManager;
-  actionAgentDispatcher?: ActionAgentDispatcher;
-  tournamentSelector?: TournamentSelector<unknown>;
+  // Phase 62：动态工作流模式与隔离治理——已删除（ExecutionOrchestrator 死代码清理）
   // Phase 65：记忆系统重构（可选，由 app-init.ts 在 memorySystem.enabled 时注入）
   memoryStore?: MemoryStore;
-  incrementalExtractor?: IncrementalExtractor;
   hybridRetriever?: HybridRetriever;
-  conservativeMerger?: ConservativeMerger;
-  rejectedAlternativeStore?: RejectedAlternativeStore;
   localMaintenance?: LocalMaintenancePolicy;
-  bm25Index?: BM25Index;
-  // Phase 66：策略管道与治理（可选，由 app-init.ts 在 foundationProtocol.enabled 时注入）
-  checkpointPipeline?: CheckpointPipeline;
-  callOwnerCoordinator?: CallOwnerCoordinator;
-  stateSnapshotChain?: StateSnapshotChain;
-  reputationDeriver?: ReputationDeriver;
-  // Phase 67：推理质量诊断（可选，由 app-init.ts 在 reasoningQualityDiagnostics.enabled 时注入）
-  miCrossScorer?: MICrossScorer;
-  snrAwareFilter?: SNRAwareFilter;
-  epistemicTokenProtector?: EpistemicTokenProtector;
-  epistemicIntegrityChecker?: EpistemicIntegrityChecker;
-  qualityMetricsRecorder?: QualityMetricsRecorder;
+  // Phase 66：策略管道与治理——已删除（ExecutionOrchestrator 死代码清理）
+  // Phase 67：推理质量诊断——已删除（ExecutionOrchestrator 死代码清理）
   // Phase 68：检索/搜索/发现三分与知识图谱（可选，由 phase68Integration.enabled 时注入）
   provenanceGraph?: ProvenanceGraph;
   kanObstacleChecker?: KanObstacleChecker;
   quantitativeGate?: QuantitativeGate;
   classifyOperation?: (signal: OperationSignal, sessionId: string) => ReturnType<typeof classifyOperation>;
   buildRegimeTransition?: typeof buildRegimeTransition;
-  // Phase 69：Worktree 隔离执行与多代理并行编排（可选）
-  worktreeManager?: WorktreeManager;
-  agentGroupResolver?: AgentGroupResolver;
+  // Phase 69：Worktree 隔离执行与多代理并行编排——已删除（ExecutionOrchestrator 死代码清理）
   // Phase 70：上下文压缩技术深度优化（可选）
   toolOutputBudgetManager?: ToolOutputBudgetManager;
   messageGrouper?: MessageGrouper;
@@ -378,7 +327,7 @@ export interface AppDependencies {
  * @param cwd 工作目录
  * @param classifier 场景分类器（Phase 32 Task 1：TaskOrchestrator 依赖）
  * @param modelRouter 模型路由器（Phase 32 Task 1：TaskOrchestrator 依赖）
- * @param tracker Token 追踪器（Phase 32 Task 1：ExecutionOrchestrator/UnifiedReviewer 依赖）
+ * @param tracker Token 追踪器（Phase 32 Task 1：UnifiedReviewer 依赖）
  */
 export function createAppDependencies(
   config: AppConfig,
@@ -1699,7 +1648,7 @@ export function createAppDependencies(
   // ===== Phase 32 Task 1：Phase 31 模块实例化（之前全部为死代码） =====
   // 接线顺序：先创建无依赖的工具类（ReadTracker/Sanitizer/CompletionGate），
   // 再创建依赖 classifier+router+clientManager 的 TaskOrchestrator，
-  // 最后创建依赖 agentLoop+tracker 的 ExecutionOrchestrator/UnifiedReviewer
+  // 最后创建依赖 agentLoop+tracker 的 UnifiedReviewer
 
   // 1. ReadTracker 已在工具链阶段创建（供 GuardedToolExecutorAdapter 使用）
 
@@ -1753,99 +1702,7 @@ export function createAppDependencies(
     gateRetry: safetyCfg?.gateRetry ?? 1,
   });
 
-  // Phase 62：动态工作流模式与隔离治理模块实例化（受 dynamicWorkflow.enabled 守护，默认 false）
-  // 所有模块可选注入，未启用时为 undefined，execution-orchestrator 降级到原有行为
-  const dwCfg = config.dynamicWorkflow;
-  let adversarialVerifier: AdversarialVerifier | undefined;
-  let rubricRegistry: RubricRegistry | undefined;
-  let loopUntilDoneGate: LoopUntilDoneGate | undefined;
-  let quarantineManager: QuarantineManager | undefined;
-  let actionAgentDispatcher: ActionAgentDispatcher | undefined;
-  let tournamentSelector: TournamentSelector<string> | undefined;
-  if (dwCfg?.enabled) {
-    // RubricRegistry——无依赖，内置 4 种 rubric（security-audit/refactor/new-feature/bug-fix）
-    rubricRegistry = new RubricRegistry();
-
-    // QuarantineManager——隔离未信任 Agent 的危险工具调用
-    if (dwCfg.quarantine?.enabled) {
-      const deniedTools = new Set(dwCfg.quarantine.untrustedDeniedTools ?? []);
-      quarantineManager = new QuarantineManager(deniedTools, dwCfg.quarantine.contaminationTraceDepth ?? 10);
-      // 注册受信任的主 Agent
-      quarantineManager.registerTrusted('trusted-primary');
-      // 注册未信任的 Worker Agent
-      quarantineManager.registerUntrusted('untrusted-worker');
-
-      // ActionAgentDispatcher——当隔离策略允许意图转发时创建
-      // trustedExecutor 使用 agentLoop 包装的简单执行器（fail-open，实际转发逻辑由 execution-orchestrator 控制）
-      if (dwCfg.quarantine.allowIntentForwarding) {
-        const trustedExecutor = async (intent: import('../agent/action-agent-dispatcher.js').DispatchIntent, _allowedTools: string[]) => {
-          logger.info('ActionAgentDispatcher: trusted executor 调用', { intentId: intent.intentId });
-          return `[forwarded by trusted agent] ${intent.description}`;
-        };
-        actionAgentDispatcher = new ActionAgentDispatcher(
-          quarantineManager,
-          {
-            trustedAgentId: 'trusted-primary',
-            untrustedAgentId: 'untrusted-worker',
-            intentForwardingEnabled: true,
-          },
-          trustedExecutor,
-        );
-      }
-    }
-
-    // AdversarialVerifier——需要 CrossModelReviewer + RubricRegistry
-    if (dwCfg.adversarialVerification?.enabled) {
-      const availableModels = config.providers.flatMap(p => p.models.map(m => m.id));
-      const crossModelReviewer = new CrossModelReviewer(primaryClient, currentModel, availableModels);
-      const rubricMap = new Map<string, import('../agent/adversarial-verifier.js').VerifierRubric>();
-      for (const taskType of rubricRegistry.listTaskTypes()) {
-        const rubric = rubricRegistry.get(taskType);
-        if (rubric) rubricMap.set(taskType, rubric);
-      }
-      adversarialVerifier = new AdversarialVerifier(crossModelReviewer, rubricMap, {
-        frequency: dwCfg.adversarialVerification.frequency,
-        n: dwCfg.adversarialVerification.n,
-        defaultRubric: {
-          id: 'default',
-          taskType: 'default',
-          checks: [
-            { description: '代码变更是否安全，无明显漏洞', severity: 'critical' },
-            { description: '逻辑是否正确，边界处理是否完善', severity: 'major' },
-            { description: '错误处理是否完善', severity: 'minor' },
-          ],
-        },
-        verifierModelId: dwCfg.adversarialVerification.verifierModelId,
-        forceCrossModel: dwCfg.adversarialVerification.forceCrossModel,
-      });
-    }
-
-    // LoopUntilDoneGate——需要 CompletionGate
-    if (dwCfg.loopUntilDone?.enabled) {
-      loopUntilDoneGate = new LoopUntilDoneGate(completionGate, {
-        maxRounds: dwCfg.loopUntilDone.maxRounds,
-        stableRoundsRequired: dwCfg.loopUntilDone.stableRoundsRequired,
-        minCompletionRatio: dwCfg.loopUntilDone.minCompletionRatio,
-        gateTimeoutMs: safetyCfg?.gateTimeout ?? 180000,
-      });
-    }
-
-    // TournamentSelector——需要 ILLMClient
-    if (dwCfg.tournament?.enabled) {
-      tournamentSelector = new TournamentSelector<string>(primaryClient, {
-        candidateCount: dwCfg.tournament.candidateCount,
-        singleElimination: dwCfg.tournament.singleElimination,
-        judgeModelId: dwCfg.tournament.judgeModelId,
-      });
-    }
-
-    logger.info('Phase 62: 动态工作流模式已启用', {
-      adversarialVerification: dwCfg.adversarialVerification?.enabled ?? false,
-      loopUntilDone: dwCfg.loopUntilDone?.enabled ?? false,
-      quarantine: dwCfg.quarantine?.enabled ?? false,
-      tournament: dwCfg.tournament?.enabled ?? false,
-    });
-  }
+  // Phase 62：动态工作流模式与隔离治理模块实例化——已删除（ExecutionOrchestrator 死代码清理）
 
   // 4. RequirementsGatherer + ComplexityAnalyzer——无状态，工厂创建即可
   const requirementsGatherer = createRequirementsGatherer();
@@ -1869,128 +1726,14 @@ export function createAppDependencies(
     return drained.map((m) => ({ content: m.content, mode: m.mode }));
   });
 
-  // 6. ExecutionOrchestrator + UnifiedReviewer——依赖 agentLoop + tracker
+  // 6. UnifiedReviewer——依赖 agentLoop + tracker
   //    tracker 可能在测试场景下未传入，此时传一个 noop tracker 的占位（生产路径必传）
   //    Phase 31/32 P0 接线：systemPrompt 改为 ref 模式，与 App.tsx systemPromptRef 共享
   //    App.tsx 在初始化后同步 sharedSystemPromptRef.current = systemPromptRef.current
   const sharedSystemPromptRef = { current: '' };
 
-  // Phase 66/67/69 模块——提前创建，注入 ExecutionOrchestrator
-  let p66CheckpointPipeline: CheckpointPipeline | undefined;
-  let p66CallOwnerCoordinator: CallOwnerCoordinator | undefined;
-  let p66StateSnapshotChain: StateSnapshotChain | undefined;
-  let p66ReputationDeriver: ReputationDeriver | undefined;
-  let p67MiCrossScorer: MICrossScorer | undefined;
-  let p67SnrAwareFilter: SNRAwareFilter | undefined;
-  let p67EpistemicIntegrityChecker: EpistemicIntegrityChecker | undefined;
-  let p67QualityMetricsRecorder: QualityMetricsRecorder | undefined;
-  let p69WorktreeManager: WorktreeManager | undefined;
-  let p69AgentGroupResolver: AgentGroupResolver | undefined;
+  // Phase 66/67/69 模块——已删除（ExecutionOrchestrator 死代码清理）
 
-  // Phase 66 实例化
-  const fpCfg = config.foundationProtocol;
-  if (fpCfg?.enabled) {
-    p66CheckpointPipeline = new CheckpointPipeline(
-      {
-        enabled: fpCfg.checkpointPipeline.enabled,
-        enabledSegments: fpCfg.checkpointPipeline.enabledSegments as any,
-        shortCircuit: fpCfg.checkpointPipeline.shortCircuit,
-      },
-      (policy: any, action: any) => true,
-    );
-    p66CallOwnerCoordinator = new CallOwnerCoordinator({
-      enabled: fpCfg.callOwner.enabled,
-      syncWaitMs: fpCfg.callOwner.syncWaitMs,
-      persistPath: fpCfg.callOwner.persistPath,
-    });
-    p66StateSnapshotChain = new StateSnapshotChain({
-      enabled: fpCfg.stateSnapshotChain.enabled,
-      arbiterSecretEnv: fpCfg.stateSnapshotChain.arbiterSecretEnv,
-    });
-    p66ReputationDeriver = new ReputationDeriver({
-      enabled: fpCfg.reputationDeriver.enabled,
-      maxCacheAgeMs: fpCfg.reputationDeriver.maxCacheAgeMs,
-    });
-  }
-
-  // Phase 67 实例化
-  const rqdCfg = config.reasoningQualityDiagnostics;
-  let p67EpistemicTokenProtector: EpistemicTokenProtector | undefined;
-  if (rqdCfg?.enabled) {
-    p67MiCrossScorer = new MICrossScorer({
-      enabled: rqdCfg.miCrossScorer.enabled,
-      collapseThreshold: rqdCfg.miCrossScorer.collapseThreshold,
-      minPrompts: rqdCfg.miCrossScorer.minPrompts,
-      samplesPerPrompt: rqdCfg.miCrossScorer.samplesPerPrompt,
-    });
-    p67SnrAwareFilter = new SNRAwareFilter({
-      enabled: rqdCfg.snrAwareFilter.enabled,
-      topP: rqdCfg.snrAwareFilter.topP,
-      minRVThreshold: rqdCfg.snrAwareFilter.minRVThreshold,
-      batchRejectRatio: rqdCfg.snrAwareFilter.batchRejectRatio,
-    });
-    p67EpistemicTokenProtector = new EpistemicTokenProtector({
-      enabled: rqdCfg.epistemicTokenProtector.enabled,
-      neighborhoodLines: rqdCfg.epistemicTokenProtector.neighborhoodLines,
-      customTokens: rqdCfg.epistemicTokenProtector.customTokens,
-    });
-    p67EpistemicIntegrityChecker = new EpistemicIntegrityChecker(
-      p67EpistemicTokenProtector,
-      {
-        enabled: rqdCfg.epistemicIntegrityChecker.enabled,
-        overCompressionThreshold: rqdCfg.epistemicIntegrityChecker.overCompressionThreshold,
-        minTokenCount: rqdCfg.epistemicIntegrityChecker.minTokenCount,
-      },
-    );
-    p67QualityMetricsRecorder = new QualityMetricsRecorder({
-      enabled: rqdCfg.auditMetricsLogging.logEpistemicStats,
-    });
-  }
-
-  // Phase 69 实例化
-  const p69Cfg = config.phase69Integration;
-  if (p69Cfg) {
-    if (p69Cfg.worktree?.enabled) {
-      p69WorktreeManager = new WorktreeManager(process.cwd(), {
-        ...DEFAULT_WORKTREE_CONFIG,
-        enabled: p69Cfg.worktree.enabled,
-        worktreeRoot: p69Cfg.worktree.worktreeRoot,
-        maxWorktrees: p69Cfg.worktree.maxWorktrees,
-        cleanupTimeoutMs: p69Cfg.worktree.cleanupTimeoutMs,
-      });
-    }
-    p69AgentGroupResolver = new AgentGroupResolver();
-  }
-
-  const executionOrchestrator = createExecutionOrchestrator({
-    agentLoop,
-    tracker: tracker as TokenTracker,
-    config,
-    systemPromptRef: sharedSystemPromptRef,
-    addSystemMessage: () => {}, // 由 App.tsx 通过 commandBridge.addSystemMessage 间接驱动
-    // Phase 62：动态工作流模块（可选，由 dynamicWorkflow.enabled 守护）
-    adversarialVerifier,
-    rubricRegistry,
-    loopUntilDoneGate,
-    quarantineManager,
-    actionAgentDispatcher,
-    tournamentSelector,
-    // Phase 66：策略管道与治理
-    checkpointPipeline: p66CheckpointPipeline,
-    callOwnerCoordinator: p66CallOwnerCoordinator,
-    stateSnapshotChain: p66StateSnapshotChain,
-    reputationDeriver: p66ReputationDeriver,
-    // Phase 67：推理质量诊断
-    miCrossScorer: p67MiCrossScorer,
-    snrAwareFilter: p67SnrAwareFilter,
-    epistemicIntegrityChecker: p67EpistemicIntegrityChecker,
-    qualityMetricsRecorder: p67QualityMetricsRecorder,
-    // Phase 69：Worktree 隔离执行与多代理并行编排
-    worktreeManager: p69WorktreeManager,
-    agentGroupResolver: p69AgentGroupResolver,
-    // LLM 客户端——供 SynthesizeBarrier judging 策略等内部模块使用
-    llmClient: primaryClient,
-  });
   const unifiedReviewer = createUnifiedReviewer({
     agentLoop,
     tracker: tracker as TokenTracker,
@@ -2136,47 +1879,6 @@ export function createAppDependencies(
           error: err instanceof Error ? err.message : String(err),
         });
       });
-  }
-
-  // Phase 48 Task 3：ScheduleEngine 实例化与启动
-  // Phase 48 Task 6 修复：原代码在非 async 函数中使用 `await import`，导致 typecheck 失败。
-  // 改为顶层静态 import（scheduler 模块无顶层副作用，安全）。
-  // 若未来 createAppDependencies 改为 async，可恢复 `await import` 写法以支持延迟加载。
-  let scheduleEngine: import('../scheduler/engine.js').ScheduleEngine | undefined;
-  if (config.scheduler?.enabled !== false) {
-    const scheduleStorePath = path.join(cwd, '.routedev', 'schedule-tasks.json');
-    const scheduleStore = new ScheduleStore(scheduleStorePath);
-    scheduleEngine = new ScheduleEngine({
-      store: scheduleStore,
-      onTaskTrigger: async (task) => {
-        logger.info('Schedule triggered', { taskId: task.id, name: task.name });
-        // 将定时任务目标注入 AgentLoop 执行
-        try {
-          const routeDecision = {
-            model: config.providers[0]?.models[0],
-            providerId: primaryProviderId,
-            fallbackUsed: false,
-            originalTier: config.providers[0]?.models[0]?.tier ?? 'medium',
-            degraded: false,
-          };
-          if (primaryClient && routeDecision.model) {
-            for await (const _event of agentLoop.run({
-              userMessage: task.goal,
-              llmClient: primaryClient,
-              routeDecision,
-              conversationHistory: [],
-              systemPrompt: `定时任务: ${task.name}`,
-            })) {
-              // 消费事件流
-            }
-          }
-        } catch (err) {
-          logger.error('Schedule task failed', { taskId: task.id, error: err instanceof Error ? err.message : String(err) });
-        }
-      },
-    });
-    scheduleEngine.start();
-    logger.info('ScheduleEngine started', { checkInterval: '60s' });
   }
 
   // ===== Phase 50 Task 5：Phase 48 模块接入确认 =====
@@ -2596,15 +2298,12 @@ export function createAppDependencies(
     taskOrchestrator,
     requirementsGatherer,
     complexityAnalyzer,
-    executionOrchestrator,
     unifiedReviewer,
     completionGate,
     readTracker,
     resultSanitizer,
-    // Phase 31/32 P0 接线：共享 systemPrompt ref，App.tsx 同步更新此 ref 让 ExecutionOrchestrator/UnifiedReviewer 获取最新系统提示词
+    // Phase 31/32 P0 接线：共享 systemPrompt ref，App.tsx 同步更新此 ref 让 UnifiedReviewer 获取最新系统提示词
     sharedSystemPromptRef,
-    // Phase 48 Task 3：调度引擎实例
-    scheduleEngine,
     // Phase 50 Task 1：goalIntegration 实例（App.tsx 传给 createGoalRunner）
     goalAuditor,
     goalPersistence,
@@ -2666,13 +2365,7 @@ export function createAppDependencies(
       });
       return { routingHistory, routingMemory, executionVerifier, routingRegretTracker, routingOrchestrator };
     })(),
-    // Phase 62：动态工作流模式与隔离治理模块
-    adversarialVerifier,
-    rubricRegistry,
-    loopUntilDoneGate,
-    quarantineManager,
-    actionAgentDispatcher,
-    tournamentSelector,
+    // Phase 62：动态工作流模式与隔离治理模块——已删除（ExecutionOrchestrator 死代码清理）
     // Phase 65：记忆系统重构
     ...(() => {
       const msCfg = config.memorySystem;
@@ -2683,11 +2376,6 @@ export function createAppDependencies(
         backend: msCfg.store.backend,
         embeddingProvider: msCfg.store.embeddingProvider,
       });
-      const incrementalExtractor = new IncrementalExtractor(memoryStore, {
-        enabled: msCfg.incrementalExtractor.enabled,
-        mode: msCfg.incrementalExtractor.mode,
-        modelId: msCfg.incrementalExtractor.modelId,
-      });
       const hybridRetriever = new HybridRetriever(memoryStore, null, {
         enabled: msCfg.hybridRetriever.enabled,
         bm25Weight: msCfg.hybridRetriever.bm25Weight,
@@ -2695,15 +2383,12 @@ export function createAppDependencies(
         timeDecayHalfLifeDays: msCfg.hybridRetriever.timeDecayHalfLifeDays,
         topK: msCfg.hybridRetriever.topK,
       });
-      const conservativeMerger = new ConservativeMerger(memoryStore);
-      const rejectedAlternativeStore = new RejectedAlternativeStore(memoryStore);
       const localMaintenance = new LocalMaintenancePolicy(memoryStore, {
         enabled: msCfg.localMaintenance.enabled,
         triggerThreshold: msCfg.localMaintenance.triggerThreshold,
         reorganizeRatio: msCfg.localMaintenance.reorganizeRatio,
         minAccessCount: msCfg.localMaintenance.minAccessCount,
       });
-      const bm25Index = new BM25Index();
       // [I-3] UnifiedMemoryStore 桥接 MemoryStore + KnowledgeGraph + CodebaseMemory（P0.2）
       // 使用变量路径让 TypeScript 无法静态解析，避免模块缺失时 typecheck 失败
       const unifiedMemoryModulePath = '../memory/unified-memory.js';
@@ -2719,24 +2404,13 @@ export function createAppDependencies(
         .catch(() => { /* fail-open：unified-memory 模块不可用时跳过 */ });
       logger.info('Phase 65: Memory system refactor enabled', {
         store: msCfg.store.enabled,
-        incrementalExtractor: msCfg.incrementalExtractor.enabled,
         hybridRetriever: msCfg.hybridRetriever.enabled,
-        conservativeMerger: msCfg.conservativeMerger.enabled,
-        rejectedAlternative: msCfg.rejectedAlternative.enabled,
         localMaintenance: msCfg.localMaintenance.enabled,
       });
-      return { memoryStore, incrementalExtractor, hybridRetriever, conservativeMerger, rejectedAlternativeStore, localMaintenance, bm25Index };
+      return { memoryStore, hybridRetriever, localMaintenance };
     })(),
-    // Phase 66：策略管道与治理（复用提前创建的实例）
-    ...(() => {
-      if (!fpCfg?.enabled) return {};
-      return { checkpointPipeline: p66CheckpointPipeline, callOwnerCoordinator: p66CallOwnerCoordinator, stateSnapshotChain: p66StateSnapshotChain, reputationDeriver: p66ReputationDeriver };
-    })(),
-    // Phase 67：推理质量诊断（复用提前创建的实例）
-    ...(() => {
-      if (!rqdCfg?.enabled) return {};
-      return { miCrossScorer: p67MiCrossScorer, snrAwareFilter: p67SnrAwareFilter, epistemicTokenProtector: p67EpistemicTokenProtector, epistemicIntegrityChecker: p67EpistemicIntegrityChecker, qualityMetricsRecorder: p67QualityMetricsRecorder };
-    })(),
+    // Phase 66：策略管道与治理——已删除（ExecutionOrchestrator 死代码清理）
+    // Phase 67：推理质量诊断——已删除（ExecutionOrchestrator 死代码清理）
     // Phase 68：检索/搜索/发现三分与知识图谱
     ...(() => {
       const p68Cfg = config.phase68Integration;
@@ -2793,14 +2467,7 @@ export function createAppDependencies(
 
       return result as Partial<AppDependencies>;
     })(),
-    // Phase 69：Worktree 隔离执行与多代理并行编排（复用提前创建的实例）
-    ...(() => {
-      if (!p69Cfg) return {};
-      const result: Record<string, unknown> = {};
-      if (p69WorktreeManager) result.worktreeManager = p69WorktreeManager;
-      if (p69AgentGroupResolver) result.agentGroupResolver = p69AgentGroupResolver;
-      return result as Partial<AppDependencies>;
-    })(),
+    // Phase 69：Worktree 隔离执行与多代理并行编排——已删除（ExecutionOrchestrator 死代码清理）
     // Phase 70：上下文压缩技术深度优化（引用提前创建的实例，与 ContextCompactor 共享）
     ...(() => {
       if (!p70Cfg) return {};

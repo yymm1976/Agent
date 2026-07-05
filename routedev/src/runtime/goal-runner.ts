@@ -177,7 +177,6 @@ export interface GoalRunnerDeps {
   // Phase 65：记忆系统（可选，由 app-init.ts 注入）
   memoryStore?: import('../memory/memory-store.js').MemoryStore;
   hybridRetriever?: import('../memory/hybrid-retriever.js').HybridRetriever;
-  conservativeMerger?: import('../memory/conservative-merger.js').ConservativeMerger;
   localMaintenance?: import('../memory/local-maintenance.js').LocalMaintenancePolicy;
   // Phase 68：知识图谱（可选，由 app-init.ts 注入）
   provenanceGraph?: import('../memory/provenance-graph.js').ProvenanceGraph;
@@ -238,7 +237,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     // Phase 61：ACRouter 闭环模型路由
     routingHistory, routingMemory, executionVerifier, routingRegretTracker, routingOrchestrator,
     // Phase 65：记忆系统
-    memoryStore, hybridRetriever, conservativeMerger, localMaintenance,
+    memoryStore, hybridRetriever, localMaintenance,
     // Phase 68：知识图谱
     provenanceGraph, kanObstacleChecker, quantitativeGate, classifyOperation,
   } = deps;

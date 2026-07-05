@@ -292,7 +292,7 @@ export class MemoryStore {
     this.initialized = false;
   }
 
-  // ===== 内部辅助方法（供其他模块使用：ConservativeMerger / LocalMaintenancePolicy 等） =====
+  // ===== 内部辅助方法（供其他模块使用：LocalMaintenancePolicy 等） =====
 
   /** 获取所有记忆条目 */
   getAll(): MemoryEntry[] {

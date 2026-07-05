@@ -1,10 +1,9 @@
-﻿// tests/integration/phase31-workflow.test.ts
+// tests/integration/phase31-workflow.test.ts
 // Phase 31 Task 7：端到端集成测试
 // 验证统一工作流编排的完整流程
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TaskOrchestrator, createTaskOrchestrator, MAX_STEERING_QUEUE_SIZE } from '../../src/agent/task-orchestrator.js';
-import { anyNeedsSubAgent } from '../../src/agent/execution-orchestrator.js';
 import { ReadTracker, createReadTracker } from '../../src/tools/read-tracker.js';
 import { ToolResultSanitizer, createToolResultSanitizer, INJECTION_PATTERNS } from '../../src/tools/result-sanitizer.js';
 import { CompletionGate, createCompletionGate } from '../../src/agent/completion-gate.js';
@@ -224,24 +223,8 @@ describe('Phase 31 端到端集成测试', () => {
   });
 
   // ============================================================
-  // 6. Token 熔断测试
+  // 6. Token 熔断测试——已删除（anyNeedsSubAgent 来自已删除的 execution-orchestrator.ts）
   // ============================================================
-  describe('Token 熔断', () => {
-    it('anyNeedsSubAgent 正确判断', () => {
-      const map = new Map([
-        [1, { stepId: 1, needsSubAgent: false } as any],
-        [2, { stepId: 2, needsSubAgent: true } as any],
-      ]);
-      expect(anyNeedsSubAgent(map)).toBe(true);
-    });
-
-    it('全部不需要子 Agent 时返回 false', () => {
-      const map = new Map([
-        [1, { stepId: 1, needsSubAgent: false } as any],
-      ]);
-      expect(anyNeedsSubAgent(map)).toBe(false);
-    });
-  });
 
   // ============================================================
   // 7. CompletionGate 独立验证测试

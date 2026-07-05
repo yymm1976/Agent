@@ -642,21 +642,8 @@ const OptimizationConfigSchema = z.object({
 });
 export type OptimizationConfig = z.infer<typeof OptimizationConfigSchema>;
 
-// --- 调度器配置（Phase 37 Task 2） ---
-
-/**
- * 调度器配置
- * 控制定时任务引擎的行为：是否启用、最大任务数、默认时区
- */
-export const SchedulerConfigSchema = z.object({
-  /** 是否启用调度器 */
-  enabled: z.boolean().default(true),
-  /** 最大任务数（1-100） */
-  maxTasks: z.number().int().min(1).max(100).default(20),
-  /** 默认时区 */
-  defaultTimezone: z.string().default('Asia/Shanghai'),
-});
-export type SchedulerConfig = z.infer<typeof SchedulerConfigSchema>;
+// --- 调度器配置（Phase 37 Task 2）---
+// SchedulerConfigSchema 已删除：ScheduleEngine 空转引擎已移除（死代码清理）
 
 // --- 后台行为配置（Phase 37 Task 2） ---
 
@@ -1834,44 +1821,7 @@ const ClosedLoopRoutingConfigSchema = z.preprocess((v) => v ?? {}, z.object({
 }));
 export type ClosedLoopRoutingConfig = z.infer<typeof ClosedLoopRoutingConfigSchema>;
 
-// --- Phase 62：动态工作流模式配置 ---
-
-const DynamicWorkflowConfigSchema = z.preprocess((v) => v ?? {}, z.object({
-  enabled: z.boolean().default(false),
-  synthesizeBarrier: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
-    barrierTimeoutMs: z.number().int().default(60000),
-    defaultStrategy: z.enum(['merge-fields', 'concat-dedup', 'judging']).default('concat-dedup'),
-    includeFailed: z.boolean().default(true),
-  })),
-  adversarialVerification: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
-    frequency: z.enum(['every-step', 'every-n-steps', 'end-only']).default('end-only'),
-    n: z.number().int().min(1).default(3),
-    forceCrossModel: z.boolean().default(false),
-    verifierModelId: z.string().optional(),
-  })),
-  loopUntilDone: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
-    maxRounds: z.number().int().min(1).max(20).default(5),
-    stableRoundsRequired: z.number().int().min(1).default(2),
-    minCompletionRatio: z.number().min(0).max(1).default(0.85),
-  })),
-  quarantine: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
-    untrustedDeniedTools: z.array(z.string()).default(['file_write', 'file_edit', 'shell_exec', 'git_op']),
-    allowIntentForwarding: z.boolean().default(true),
-    contaminationTraceDepth: z.number().int().default(10),
-  })),
-  tournament: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
-    candidateCount: z.number().int().min(2).max(5).default(3),
-    temperature: z.number().min(0).max(2).default(0.7),
-    singleElimination: z.boolean().default(true),
-    judgeModelId: z.string().optional(),
-  })),
-}));
-export type DynamicWorkflowConfig = z.infer<typeof DynamicWorkflowConfigSchema>;
+// --- Phase 62：动态工作流模式配置——已删除（ExecutionOrchestrator 死代码清理） ---
 
 // --- 工具层配置（Phase 73：file-edit 增强，对齐 Aider 编辑体验） ---
 
@@ -1942,7 +1892,6 @@ export const AppConfigSchema = z.object({
   adversarial: z.preprocess((v) => v ?? {}, AdversarialConfigSchema),    // 对抗性验证（Phase 21 Task 4）
   ui: z.preprocess((v) => v ?? {}, UIConfigSchema),                       // UI/UX 设置（Phase 25）
   optimization: z.preprocess((v) => v ?? {}, OptimizationConfigSchema),   // 优化配置（Phase 30）
-  scheduler: z.preprocess((v) => v ?? {}, SchedulerConfigSchema),         // 调度器配置（Phase 37 Task 2）
   agent: z.preprocess((v) => v ?? {}, AgentConfigSchema),                 // Agent 配置（Phase 38 Task 2）
   execution: z.preprocess((v) => v ?? {}, ExecutionConfigSchema),          // 执行配置（并发/熔断/检查点提示）
   middleware: z.preprocess((v) => v ?? {}, MiddlewareConfigSchema),        // 中间件配置（Phase 38 Task 1）
@@ -2025,8 +1974,7 @@ export const AppConfigSchema = z.object({
   phase53Integration: z.preprocess((v) => v ?? {}, Phase53IntegrationConfigSchema),
   // Phase 61：ACRouter 闭环模型路由
   closedLoopRouting: z.preprocess((v) => v ?? {}, ClosedLoopRoutingConfigSchema),
-  // Phase 62：动态工作流模式与隔离治理
-  dynamicWorkflow: DynamicWorkflowConfigSchema,
+  // Phase 62：动态工作流模式与隔离治理——已删除（ExecutionOrchestrator 死代码清理）
   // Phase 63：上下文状态外部化（Harness-1 论文落地）
   stateExternalization: z.preprocess((v) => v ?? {}, z.object({
     enabled: z.boolean().default(false),
@@ -2087,7 +2035,7 @@ export const AppConfigSchema = z.object({
       maxTokens: z.number().int().min(200).max(5000).default(1200),
     })),
   })),
-  // Phase 65：记忆系统四模块重构（v4.6.4）
+  // Phase 65：记忆系统重构（v4.6.4）
   memorySystem: z.preprocess((v) => v ?? {}, z.object({
     enabled: z.boolean().default(false),
     store: z.preprocess((v) => v ?? {}, z.object({
@@ -2096,23 +2044,12 @@ export const AppConfigSchema = z.object({
       backend: z.enum(['sqlite', 'file']).default('sqlite'),
       embeddingProvider: z.enum(['bi-encoder', 'hash', 'none']).default('hash'),
     })),
-    incrementalExtractor: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      mode: z.enum(['topic', 'none']).default('topic'),
-      modelId: z.string().default('deepseek-v4-flash'),
-    })),
     hybridRetriever: z.preprocess((v) => v ?? {}, z.object({
       enabled: z.boolean().default(false),
       bm25Weight: z.number().min(0).max(1).default(0.4),
       embeddingWeight: z.number().min(0).max(1).default(0.6),
       timeDecayHalfLifeDays: z.number().int().min(1).default(30),
       topK: z.number().int().min(1).max(50).default(10),
-    })),
-    conservativeMerger: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-    })),
-    rejectedAlternative: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
     })),
     localMaintenance: z.preprocess((v) => v ?? {}, z.object({
       enabled: z.boolean().default(false),
@@ -2121,59 +2058,8 @@ export const AppConfigSchema = z.object({
       minAccessCount: z.number().int().min(0).default(2),
     })),
   })),
-  // Phase 66：策略管道编号分段与治理（v4.6.5）
-  foundationProtocol: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
-    checkpointPipeline: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      enabledSegments: z.array(z.number().int()).default([100, 400, 500]),
-      shortCircuit: z.boolean().default(true),
-    })),
-    callOwner: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      syncWaitMs: z.number().int().min(1000).max(60000).default(10000),
-      persistPath: z.string().default('.routedev/pending-approvals.jsonl'),
-      defaultStrategyForToolApproval: z.enum(['off', 'always_pass', 'conditional', 'always_call']).default('off'),
-      defaultStrategyForIntentGuard: z.enum(['off', 'always_pass', 'conditional', 'always_call']).default('off'),
-    })),
-    stateSnapshotChain: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      arbiterSecretEnv: z.string().default('ROUTEDEV_ARBITER_SECRET'),
-    })),
-    reputationDeriver: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      maxCacheAgeMs: z.number().int().default(60000),
-    })),
-  })),
-  // Phase 67：推理质量诊断与SNR过滤（v4.6.6）
-  reasoningQualityDiagnostics: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
-    miCrossScorer: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      collapseThreshold: z.number().min(1).max(5).default(1.5),
-      minPrompts: z.number().int().min(1).default(2),
-      samplesPerPrompt: z.number().int().min(1).max(16).default(4),
-    })),
-    snrAwareFilter: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      topP: z.number().min(0.1).max(1).default(0.9),
-      minRVThreshold: z.number().min(0).default(0.01),
-      batchRejectRatio: z.number().min(0.5).max(1).default(0.7),
-    })),
-    epistemicTokenProtector: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      neighborhoodLines: z.number().int().min(1).max(10).default(3),
-      customTokens: z.array(z.string()).optional(),
-    })),
-    epistemicIntegrityChecker: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      overCompressionThreshold: z.number().min(0).max(1).default(0.5),
-      minTokenCount: z.number().int().min(1).default(5),
-    })),
-    auditMetricsLogging: z.preprocess((v) => v ?? {}, z.object({
-      logEpistemicStats: z.boolean().default(false),
-    })),
-  })),
+  // Phase 66：策略管道编号分段与治理——已删除（ExecutionOrchestrator 死代码清理）
+  // Phase 67：推理质量诊断与SNR过滤——已删除（ExecutionOrchestrator 死代码清理）
   // Phase 68：检索/搜索/发现三分与知识图谱（v4.6.7）
   phase68Integration: z.preprocess((v) => v ?? {}, z.object({
     operationClassification: z.preprocess((v) => v ?? {}, z.object({
@@ -2198,15 +2084,7 @@ export const AppConfigSchema = z.object({
       complexityPenalty: z.number().min(0).default(0.01),
     })),
   })),
-  // Phase 69：Worktree 隔离执行与多代理并行编排（v4.7.0）
-  phase69Integration: z.preprocess((v) => v ?? {}, z.object({
-    worktree: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      worktreeRoot: z.string().default('.routedev/worktrees'),
-      maxWorktrees: z.number().int().min(1).max(10).default(5),
-      cleanupTimeoutMs: z.number().int().min(60000).default(30 * 60 * 1000),
-    })),
-  })),
+  // Phase 69：Worktree 隔离执行与多代理并行编排——已删除（ExecutionOrchestrator 死代码清理）
   // Phase 70：上下文压缩技术深度优化（v4.7.1）
   phase70Integration: z.preprocess((v) => v ?? {}, z.object({
     toolOutputBudget: z.preprocess((v) => v ?? {}, z.object({

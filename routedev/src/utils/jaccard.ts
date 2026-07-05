@@ -1,7 +1,7 @@
 // src/utils/jaccard.ts
 // 公共 Jaccard 相似度工具函数
 //
-// 从 graph.ts 和 conservative-merger.ts 中抽取，消除重复实现
+// 从 graph.ts 中抽取，消除重复实现
 
 /**
  * 分词：按非字母数字字符切分，过滤空串，统一小写
