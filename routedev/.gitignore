@@ -30,3 +30,9 @@ tests_output*_err.txt
 # 临时文件
 tmp_*.mjs
 .routedev/
+_audit-output.txt
+_audit.ps1
+_import-paths.txt
+_importers.txt
+_unreferenced-src.txt
+imported.txt
