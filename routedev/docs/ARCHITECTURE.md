@@ -8,11 +8,11 @@ RouteDev 采用五层架构，自下而上依次为：
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  渠道层 (Channels)                                │
-│  Telegram / Slack / 企业微信 / Webhook            │
+│  Desktop 层 (Electron)                           │
+│  Renderer (React GUI) / Main / Preload           │
 ├─────────────────────────────────────────────────┤
-│  CLI 层 (CLI)                                     │
-│  App.tsx / 命令系统 / Ink 组件 / 向导             │
+│  运行时层 (Runtime)                               │
+│  app-init / goal-runner / notification / doctor  │
 ├─────────────────────────────────────────────────┤
 │  Agent 层 (Agent)                                 │
 │  ReAct Loop / Goal / Compose / Durable / Multi   │
@@ -52,17 +52,17 @@ RouteDev 采用五层架构，自下而上依次为：
 - **内置工具**：file_read / file_write / shell_exec / code_search / file_search / git_op / web_search / notes
 - **MCPClientManager**：MCP 协议工具发现与注册
 
-### 2.4 CLI 层 (`src/cli/`)
-- **App.tsx**：Ink + React 主应用入口
-- **CommandRegistry**：命令注册与分发
-- **组件**：ChatView / StatusBar / TracePanel / DiffView / ConfirmDialog / ResumePicker 等
-- **ServiceContext**：服务依赖注入容器
+### 2.4 Desktop 层 (`desktop/`)
+- **main/index.ts**：Electron 主进程，窗口管理 + IPC 注册
+- **main/engine-bridge.ts**：引擎桥接，desktop 与 `src/runtime/` 的唯一连接点，包含 `sendChat`（含 Trajectory 汇总 / CircuitBreaker / 微摘要）+ `executeCommand` + `/goal` 执行
+- **renderer/**：React GUI（SettingsPage / ChatPage / TokenPage / TracePage）
+- **preload/**：安全 IPC API 暴露
 
-### 2.5 渠道层 (`src/channels/`)
-- **ChannelManager**：多渠道统一管理
-- **ChannelMessageRouter**：消息路由
-- **WebhookServer**：Webhook 接收端点
-- **适配器**：Telegram / Slack / 企业微信
+### 2.5 运行时层 (`src/runtime/`)
+- **app-init**：服务装配与依赖注入入口
+- **goal-runner**：`/goal` 多步任务执行器
+- **notification**：通知调度
+- **doctor**：环境与配置健康检查
 
 ### 2.6 基础设施
 - **Config** (`src/config/`)：Zod Schema + YAML 加载 + 热重载
@@ -76,7 +76,7 @@ RouteDev 采用五层架构，自下而上依次为：
 
 ### 3.1 简单对话流
 ```
-用户输入 → ScenarioClassifier → ModelRouter → ReActAgentLoop → LLM → 响应渲染
+用户输入(desktop renderer) → IPC → engine-bridge.sendChat → ScenarioClassifier → ModelRouter → ReActAgentLoop → LLM → 响应渲染(desktop renderer)
 ```
 
 ### 3.2 /goal 多步任务流
@@ -87,11 +87,6 @@ RouteDev 采用五层架构，自下而上依次为：
 ### 3.3 Compose 管线流
 ```
 /compose → requirements(只读) → coding(读写) → testing(测试) → review(审查) → 完成
-```
-
-### 3.4 渠道消息流
-```
-Telegram消息 → TelegramAdapter → ChannelMessageRouter → Agent处理 → 响应 → TelegramAdapter回复
 ```
 
 ## 4. 安全模型
@@ -167,22 +162,12 @@ Phase 50 将 41 项"已开发待集成"的资产接入生产代码执行链路�
 | SkillFlowEngine | `app-init.ts` 创建实例 | `phase49Integration.skillFlowEnabled` |
 | DualLoopOrchestrator | `app-init.ts` 创建实例 | `phase49Integration.dualLoopEnabled` |
 | SkillQualityGate | `app-init.ts` 创建实例（未接入主流程，setter 不存在） | `phase49Integration.skillQualityGateEnabled` |
-| ContextUsagePanel | `app-init.ts` 创建实例 | `phase49Integration.contextUsagePanelEnabled` |
-| EvaluationFramework | `app-init.ts` 创建实例 | `phase49Integration.evaluationFrameworkEnabled` |
 
-注：RoutingFunnel 已在 Phase 59 删除（路由由 ModelRouter + ScenarioClassifier + PathRouter 承担）。
+注：RoutingFunnel 已在 Phase 59 删除（路由由 ModelRouter + ScenarioClassifier + PathRouter 承担）。ContextUsagePanel 与 EvaluationFramework 已在 Phase 72 删除（死代码清理，无消费方）。
 
 ### 6.5 React 组件接入（Task 7）
 
-| 组件 | 接入到 | 配置开关 | 默认值 |
-|------|--------|----------|--------|
-| BranchSwitcher | `App.tsx` 顶部分支切换 | `ui.components.branchSwitcher` | true |
-| ResumePicker | `/resume` 命令多快照时触发 | `ui.components.resumePicker` | true |
-| ProgressBar | `TaskMonitorPanel` 任务进度 | `ui.components.progressBar` | true |
-| TracePanel | `/trace view` 命令触发 | `ui.components.tracePanel` | false |
-| DisclosureLevel | `ChatView` 系统消息 >200 字符包裹 | `ui.components.disclosureLevel` | true |
-| DiffView | `/diff` 命令触发 | `ui.components.diffView` | true |
-| ConfigReloadUI | `App.tsx` 配置变更通知 | `ui.components.configReloadNotice` | true |
+> 已随终端 UI 退役（Phase 72）：原表中的 BranchSwitcher / ResumePicker / ProgressBar / TracePanel / DisclosureLevel / DiffView / ConfigReloadUI 均为 CLI Ink 组件，随 `src/cli/` 一并删除。Desktop renderer 提供等价的 React GUI 实现（见 2.4 Desktop 层）。
 
 ### 6.6 branch-operations 接入（Task 4）
 
@@ -202,7 +187,7 @@ Phase 56-60 是 RouteDev 的架构瘦身工程，删除 ~3000 行死代码与无
 ### 7.2 C 档收窄（Phase 57）
 
 将低频能力降级为可选：
-- `voice` 移至 `src/optional/voice/`，默认关闭
+- `voice` 移至 `src/optional/voice/`，默认关闭（Phase 72 已彻底删除）
 - `vision` 默认关闭，需显式 `vision.enabled: true`
 - `/dream` 改名为 `/consolidate-memory`（Phase 60 删除 deprecated alias）
 - `persona-templates.ts` 删除，硬编码人格改为 config 驱动（`persona.systemPromptAppend`）
@@ -227,3 +212,35 @@ Phase 56-60 是 RouteDev 的架构瘦身工程，删除 ~3000 行死代码与无
 - 核心模块边界测试补强：PathRouter（6 用例）+ CCRCache（5 用例）
 - 删除 `/dream` deprecated alias
 - 文档同步，版本发布 v4.5.4
+
+## 8. Phase 72 架构变更总览
+
+Phase 72 是 RouteDev 的前端收敛与死代码清算工程：终端 UI 退役，desktop 成为唯一前端；核心装配层独立为 `src/runtime/`；engine-bridge 桥接能力补齐；channels / voice / patterns / evaluation 等死模块彻底清除。
+
+### 8.1 终端 UI 退役
+
+- 删除 Ink + `App.tsx` + `components/` + `commands/`
+- `src/cli/` 整体重命名为 `src/runtime/`，剥离终端 UI 后保留 app-init / goal-runner / notification / doctor 等运行时装配
+- desktop Electron 成为唯一前端，所有交互经 `desktop/main/engine-bridge.ts` 进入运行时层
+
+### 8.2 cli/ → runtime/ 重命名
+
+- 核心装配层独立为 `src/runtime/`，与 `desktop/` 解耦
+- `desktop/main/engine-bridge.ts` 是 desktop 与 `src/runtime/` 的唯一连接点
+
+### 8.3 engine-bridge 补齐
+
+`engine-bridge.sendChat` 补齐三项能力：
+- **Trajectory 汇总**：聚合执行轨迹用于 trace 展示
+- **CircuitBreaker**：熔断保护，避免 LLM 调用连环失败拖垮主进程
+- **微摘要**：响应附带精简摘要，供 renderer 快速渲染
+
+### 8.4 死代码清理
+
+- `src/channels/` 整个子系统删除（ChannelManager / ChannelMessageRouter / WebhookServer / 各适配器）
+- `src/optional/voice/` 删除（Phase 57 收窄后的最终清算）
+- `patterns/` / `evaluation/` 等无消费方模块删除
+- `persona-engine` / `preference-manager` / `context-usage-panel` 等死模块删除
+- `errors.ts` 删除 3 个未使用错误类
+- `schema.ts` export 收敛，仅暴露外部消费的类型
+- `tournament` 选项移除

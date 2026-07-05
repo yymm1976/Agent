@@ -1,80 +1,47 @@
 # RouteDev — 代码库索引（CODEMAP）
 > 搜索代码前先读本文件定位目标模块，再进入具体文件。
-> 最后更新：2026-06-25（Phase 48 后）
+> 最后更新：2026-07-05（终端 UI 退役 + 死代码清理后）
 
 ## 目录总览
-- `src/index.tsx` — CLI 主入口，参数解析与启动
-- `src/cli/` — CLI 界面层（Ink UI + 命令系统 + 运行器 + 插件初始化 + 装配工厂）
+- `src/runtime/` — 核心运行时（装配工厂 + 目标执行器 + 通知 + 插件初始化 + shutdown）
 - `src/agent/` — Agent 引擎层（ReAct Loop + 目标分解 + 记忆 + 多 Agent + 工作模式 + 权限门控 + 需求澄清）
-- `src/channels/` — 渠道集成层（Webhook 服务器 + 适配器）
+- `src/agents/` — Agent Profile 模板与子 Agent 生命周期管理
+- `src/cite/` — 引用管理（manager + resolver + types）
+- `src/code-map/` — 代码地图（多语言 extractor + PageRank 排序 + 增量索引 + 查询器）
 - `src/config/` — 配置系统（YAML 加载 + Zod 校验 + 热重载）
+- `src/evaluation/` — 评估指标（4 个活模块：MI 交叉评分 / 饱和度 / 架构感知 / 缺陷本体）
 - `src/harness/` — 可观测性层（Trace + Audit + Checkpoint + 实验管理）
+- `src/hooks/` — 内置钩子注册（文件变更验证 + 会话生命周期日志）
+- `src/import/` — 外部生态导入（Anthropic Skills / Claude Plugin / Codex）
+- `src/macros/` — 宏命令系统
+- `src/mcp/` — Claude Bridge MCP
 - `src/memory/` — 项目记忆（.routedev/ 目录管理）
+- `src/observability/` — 轨迹导出与聚合分析
 - `src/plugins/` — 插件系统（types + registry + sdk + filesystem-discovery）
+- `src/policies/` — 策略引擎（call-owner 协调 + checkpoint 流水线 + intent-guard + 工具审批）
 - `src/prompts/` — Prompt 模板系统（三级优先级）
 - `src/router/` — 模型路由层（分类 + 路由 + LLM 客户端 + Token 追踪）
 - `src/scheduler/` — 定时调度层（cron 解析 + 任务引擎 + 持久化）（Phase 37 新增）
+- `src/security/` — 安全层（沙箱 + 完整性清单 + 审计面板）
+- `src/skills/` — Skill 系统（生命周期 + 路由 + 校验 + 市场管理）
 - `src/tools/` — 工具框架（注册表 + 执行器 + 权限引擎 + 内置工具 + MCP）
 - `src/utils/` — 通用工具（日志 + 路径 + 重试 + Token 估算）
 - `desktop/` — Electron 桌面应用（主进程 + preload + renderer + shared 类型）
 
 ## 模块详解
 
-### src/cli/ — CLI 界面层
-**职责：** 终端 UI 渲染、命令解析分发、聊天/目标执行编排、服务装配
+### src/runtime/ — 核心运行时
+**职责：** App 依赖装配工厂 + /goal 执行器 + 通知分级 + 插件初始化 + shutdown 清理链 + 环境健康检查
 **关键文件：**
-- `App.tsx` — 主应用组件，整合 ChatView + StatusBar + InputBox，管理消息状态（290 行）
-- `app-init.ts` — App 依赖装配工厂：createAppDependencies 集中创建所有服务实例（202 行）
-- `index.tsx` — CLI 主入口，参数解析 → 配置加载 → 渲染 App 或启动 serve（87 行）
-- `args.ts` — CLI 参数解析（零依赖，手动解析 process.argv）（116 行）
-- `chat-runner.ts` — 聊天运行器：分类路由 → 视觉处理 → Agent Loop → Token 统计（173 行）
-- `goal-runner.ts` — 目标分解与执行器：handleGoalCommand + executeGoalPlan（273 行）
-- `command-registry.ts` — 命令注册表，解耦命令解析与 App.tsx（63 行）
-- `service-context.ts` — 服务对象容器 + createServiceContext 单一装配入口（172 行）
-- `server.ts` — 服务器模式入口（`routedev serve`），不启动 Ink UI（98 行）
-- `splash.ts` — CLI 启动画面（39 行）
-- `plugin-init.ts` — 插件系统初始化辅助 + registerPermissionMiddleware（98 行）
-- `wizard.tsx` — 首次运行向导（5 步骤配置）（436 行）
-- `completion.ts` — readline Tab 补全：命令名 + 子命令（53 行）
-- `commands/index.ts` — 命令导出（按字母顺序）（23 行）
-- `commands/autonomy.ts` — 自治模式切换命令：/auto /semi /manual（33 行）
-- `commands/branch.ts` — 对话分支管理命令：/branch list|switch|edit（59 行）
-- `commands/build.ts` / `plan.ts` / `compose.ts` — 工作模式切换命令（Phase 20）
-- `commands/channels.ts` — 渠道管理命令（21 行）
-- `commands/checkpoint.ts` — 检查点管理命令：/checkpoint create|list（42 行）
-- `commands/clear.ts` — 清屏命令（7 行）
-- `commands/config.ts` — 配置命令（15 行）
-- `commands/cost.ts` — Token 用量与费用查看命令：/cost（31 行）
-- `commands/dream.ts` — 记忆整理命令：/dream（20 行）；Phase 38 增强：/dream 后调用 ingestToGraph 桥接知识图谱
-- `commands/goal.ts` — 目标分解与执行命令：/goal（17 行）
-- `commands/help.ts` — 帮助命令（38 行）
-- `commands/history.ts` — 对话历史摘要查看命令：/history（26 行）
-- `commands/init.ts` — 项目分析命令：/init（24 行）
-- `commands/memory.ts` — 记忆管理命令（57 行）；Phase 38 增强：/memory list/forget/feedback 子命令
-- `commands/pause.ts` — 中断当前执行命令：/pause（12 行）
-- `commands/plugin.ts` — 插件管理命令：/plugin list|enable|disable|info（75 行）
-- `commands/prompt.ts` — Prompt 模板命令（49 行）
-- `commands/quit.ts` — 退出程序命令：/quit（13 行）
-- `commands/rollback.ts` — 回滚到指定检查点命令：/rollback（44 行）
-- `commands/status.ts` — 系统状态命令：/status（42 行）
-- `commands/token.ts` — Token 分组件分析命令：/token（Phase 30，显示五组件占比）
-- `commands/trace.ts` — Trace 查看命令（44 行）
-- `commands/work-modes.ts` — 工作模式命令实现（45 行）
-- `commands/tech-debt.ts` — 技术债管理命令：/tech-debt add|list|resolve（Phase 36，别名 /td）（162 行）
-- `commands/clarify.ts` — 需求澄清命令：/clarify（Phase 37，触发 RequirementsClarifier 追问）
-- `commands/schedule.ts` — 定时任务命令：/schedule list|add|remove|pause|resume（Phase 37，别名 /cron）
-- `commands/experiment.ts` — 实验分支命令：/experiment start|run|diff|adopt|discard|list（Phase 37，基于 Git Worktree）
-- `commands/review.ts` — /review 对抗性审查命令：调用独立子代理对当前 diff 做审查（Phase 47 Task 5，subagentType=reviewer + isolated + 临时 read-only 沙箱兜底，陷阱 #137）
-- `components/ChatView.tsx` — 对话视图组件：显示消息列表，支持流式输出（60 行）
-- `components/InputBox.tsx` — 输入框组件：文本输入 + Enter 发送 + Tab 补全（59 行）
-- `components/StatusBar.tsx` — 状态栏组件：显示模型、场景等级、Token 消耗、工作模式（72 行）
-- `components/StepCard.tsx` — 步骤卡片组件：5 种状态（pending/running/done/skipped/failed）（58 行）
-- `components/StepEditor.tsx` — 交互式步骤编辑器：reducer 纯函数 + 13 种 Action（171 行）
-- `components/TracePanel.tsx` — 全链路 Trace 可视化：条形图 + 分页（297 行）
-- `components/ConfigReloadUI.tsx` — 配置热重载通知：热/冷更新分类（190 行）
-- `exec-runner.ts` — 非交互 exec 模式执行器：parseExecArgs 参数 → applyWorkMode 沙箱 + headless → runExec 总超时（Phase 47 Task 3，陷阱 #135，进度走 stderr / 结果走 stdout / --json 输出结构化 JSON）
-- `custom-commands.ts` — 自定义 Slash 命令加载器：从 .routedev/commands/ 加载 .md，frontmatter 解析 + 模板变量一次性替换（Phase 47 Task 7，陷阱 #139，fail-open + 与内置命令冲突时 warn 并忽略）
-**依赖：** agent/、router/、tools/、config/、harness/、channels/、memory/、prompts/、plugins/、utils/
+- `app-init.ts` — App 依赖装配工厂：createAppDependencies 集中创建所有服务实例
+- `goal-runner.ts` — /goal 执行器：handleGoalCommand + executeGoalPlan
+- `notification.ts` — 通知分级
+- `plugin-init.ts` — 插件系统初始化辅助 + registerPermissionMiddleware
+- `graceful-shutdown.ts` — shutdown 清理链
+- `doctor.ts` — 环境健康检查
+- `components/goal-progress.ts` — /goal 进度文本渲染
+- `components/progress-bar-text.ts` — 纯字符串进度条（从原 ProgressBar.tsx 抽出，去 Ink 依赖）
+**依赖：** agent/、router/、tools/、config/、harness/、memory/、prompts/、plugins/、utils/
 
 ### src/agent/ — Agent 引擎层
 **职责：** ReAct 循环、目标分解与验证、分支管理、记忆维护、多 Agent 协作、工作模式、权限门控
@@ -121,18 +88,6 @@
 - `requirements-clarifier.ts` — RequirementsClarifier：LLM 模糊度分析 + 追问生成 + 规则降级（Phase 37 Task 1）
 **依赖：** router/、tools/、harness/、utils/、config/
 
-### src/channels/ — 渠道集成层
-**职责：** HTTP Webhook 服务器 + 多渠道适配器（企业微信/Telegram/Slack）
-**关键文件：**
-- `server.ts` — WebhookServer：HTTP 服务器，监听渠道 webhook（239 行）
-- `manager.ts` — ChannelManager：渠道管理器（113 行）
-- `message-router.ts` — MessageRouter：渠道消息处理（classify→route→LLM→回复）（185 行）
-- `types.ts` — 渠道集成层类型定义（76 行）
-- `adapters/telegram.ts` — Telegram Bot Adapter（长轮询模式）（154 行）
-- `adapters/wechat-work.ts` — WeChatWorkAdapter：企业微信适配器（202 行）
-- `adapters/slack.ts` — SlackAdapter：HMAC-SHA256 签名验证 + 消息去重 + 10s 超时（342 行）
-**依赖：** router/、config/、utils/
-
 ### src/config/ — 配置系统
 **职责：** YAML 配置加载 + Zod Schema 校验 + 热重载
 **关键文件：**
@@ -141,6 +96,15 @@
 - `defaults.ts` — 默认配置值（显式可读备份）（93 行）
 - `watcher.ts` — 配置文件热重载（最终一致）（51 行）
 **依赖：** 无外部模块依赖（被所有模块引用）
+
+### src/evaluation/ — 评估指标
+**职责：** 保留 4 个活模块，覆盖 MI 交叉评分、饱和度监控、架构感知指标、过程缺陷本体（终端 UI 退役 + 死代码清理后，bfcl-tool-evaluator / evaluation-framework / online-monitor / runner / cases / index 等已删）
+**关键文件：**
+- `mi-cross-scorer.ts` — MI 交叉评分器（被 app-init.ts 实例化）
+- `saturation-monitor.ts` — 饱和度监控（类型契约）
+- `architecture-aware-metrics.ts` — 架构感知指标（类型契约）
+- `process-defect-ontology.ts` — 过程缺陷本体（类型契约）
+**依赖：** utils/、harness/
 
 ### src/harness/ — 可观测性层
 **职责：** Trace 收集、Audit 日志、Git 检查点、实验分支管理
@@ -252,9 +216,9 @@
 ### desktop/ — Electron 桌面应用（Phase 33 后）
 **职责：** 图形化桌面应用，提供完整 GUI 设置页面与对话界面，替代 CLI 交互
 **关键文件：**
-- `main/index.ts` — Electron 主进程入口，创建窗口 + 托盘 + IPC 注册
+- `main/index.ts` — Electron 主进程入口，创建窗口 + 托盘 + IPC 注册（终端 UI 退役后清理悬空 IPC handler，仅保留通过 RouteDevEngine 调用引擎的入口）
 - `main/config-store.ts` — 配置持久化（读写 config.yaml）
-- `main/engine-bridge.ts` — 主进程与 RouteDev 引擎桥接
+- `main/engine-bridge.ts` — 主进程与 RouteDev 引擎桥接（sendChat 补齐三项能力：Trajectory 汇总 + CircuitBreaker 模型熔断 + 微摘要推送）
 - `main/updater.ts` — 自动更新（electron-updater）
 - `preload/index.ts` — preload 脚本，暴露安全 IPC API 给 renderer
 - `renderer/src/App.tsx` — React 主应用组件
@@ -270,22 +234,26 @@
 **依赖：** src/（通过 main/engine-bridge 调用引擎）、electron、react、zustand、lucide-react、tailwindcss
 
 ## 测试目录
-测试与源码镜像组织，共 168 个测试文件（Phase 37 后）：
-- `tests/agent/` — Agent 引擎测试（branch/dream/init/multi/vision/memory 子目录 + 顶层 + loop-iserror/orchestrator-cycle/vision-phase29）
-- `tests/channels/` — 渠道集成测试（server/message-router/telegram/wechat-work/slack + 安全测试 + wechat-work-phase29/slack-phase29/manager-slack）
-- `tests/cli/` — CLI 界面测试（args/command-registry/completion/splash/wizard/service-context + components + commands）
+测试与源码镜像组织，约 300+ 个测试文件（终端 UI 退役 + 死代码清理后）：
+- `tests/agent/` — Agent 引擎测试（branch/context/deep-review/init/memory/middleware/multi/tools/vision/workflow 子目录 + 顶层）
+- `tests/agents/` — Agent Profile 与子 Agent 生命周期测试（profiles/activity-store/delegation-policy/gate-lifecycle/instance-harness/result-schemas/subagent-session）
+- `tests/cite/` — 引用管理测试
+- `tests/code-map/` — 代码地图测试（extractor/pagerank/cross-file-resolve/watcher）
 - `tests/config/` — 配置加载测试 + loader-env（Phase 29 env fail-fast）
+- `tests/evaluation/` — 评估指标测试（4 个活模块：mi-cross-scorer/saturation-monitor/architecture-aware-metrics/process-defect-ontology）
 - `tests/harness/` — 可观测性测试（audit-logger/checkpoint/trace-collector/tracing-executor + checkpoint-rollback）
-- `tests/integration/` — 集成测试（conversation-flow/goal-flow/channel-flow/performance-benchmark + phase31-workflow/phase39-47 系列 + phase47-task1~9 + phase47 端到端）
-- `tests/memory/` — 记忆测试（checkpoint-writer/context-manager/project-memory/compress-enhanced）
+- `tests/integration/` — 集成测试（conversation-flow/goal-flow/ipc-bridge/performance-benchmark + phase31-workflow/phase39-48 系列 + phase47-task1~9 + phase50/51/65-67）
+- `tests/memory/` — 记忆测试（checkpoint-writer/context-manager/project-memory/compress-enhanced + bm25/provenance/reputation/unified-memory）
 - `tests/phase32/` — Phase 32 接线验证测试（agent-eval/integration/safety-hardening）
 - `tests/phase33/` — Phase 33 设置页面纯函数测试（settings-helpers）
 - `tests/phase35/` — Phase 35 执行基础设施激活测试（durable-wiring/hook-activation/trajectory/worker-context-filter）
 - `tests/phase36/` — Phase 36 上下文智能增强测试（focus-aware-pruning/mcp-codebase-integration/minimalist-skill/knowledge-clustering）
 - `tests/phase37/` — Phase 37 智能交互自动化测试（requirements-clarifier/schedule-engine/background-behavior/experiment-worktree/selective-rollback/plugin-ecosystem）
 - `tests/plugins/` — 插件系统测试（registry/sdk/integration/plugin-command）
+- `tests/policies/` — 策略引擎测试（call-owner-coordinator/checkpoint-pipeline/policy-engine）
 - `tests/prompts/` — Prompt 模板测试
 - `tests/router/` — 路由层测试（classifier/config/llm/router/token-counter/tracker + classifier-fallback/llm-phase29/router-ismodelavailable）
+- `tests/runtime/` — 核心运行时测试（app-init/doctor/notification/goal-integration，4 个文件）
 - `tests/tools/` — 工具框架测试（adapter/advanced/builtin/mcp/permission-engine/registry/security/tool-response + command-parser/permission-engine-deny/security-command/shell-exec-env）
 - `tests/utils/` — 工具测试（retry/stall-detector/token-estimate）
 - `tests/scripts/` — 脚本测试（verify）

@@ -6,25 +6,25 @@
 - **语言：** TypeScript 6.x（strict 模式，ESM）
 - **运行时：** Node.js 20+
 - **包管理：** pnpm 11+（workspace 已启用）
-- **UI：** Ink 7.0.6 + React 19.2.7（终端渲染）
+- **UI：** Electron 33 + React 19.2.7（桌面 GUI）
 - **测试：** Vitest 4.x（`pnpm test`）
 - **构建：** tsup 8.x（`pnpm build`）
 - **类型检查：** `pnpm typecheck`（tsc --noEmit）
 - **LLM SDK：** @anthropic-ai/sdk、openai
-- **其他：** zod（配置校验）、simple-git、winston、yaml、chalk
+- **其他：** zod（配置校验）、simple-git、winston、yaml、node:sqlite（CCR 持久化）
 
 ## 关键入口
 | 入口 | 职责 |
 |------|------|
-| `src/index.tsx` | CLI 主入口，解析参数 → 加载配置 → 渲染 App 或启动 serve |
-| `src/cli/App.tsx` | Ink 主组件，管理消息状态与命令分发 |
-| `src/cli/chat-runner.ts` | 聊天输入处理（分类→路由→Agent Loop→统计） |
-| `src/cli/goal-runner.ts` | `/goal` 命令执行（分解+确认+执行+验证） |
-| `src/cli/command-registry.ts` | 命令注册表，所有 `/` 命令在此注册 |
-| `src/cli/service-context.ts` | 服务对象容器（config/router/tracker/agents 等），`createServiceContext()` 是 App 装配单一入口 |
-| `src/cli/app-init.ts` | App 依赖装配工厂 `createAppDependencies()`，集中创建所有服务实例 |
+| `desktop/main/index.ts` | Electron 主进程入口，创建窗口 + IPC 注册 |
+| `desktop/main/engine-bridge.ts` | 引擎桥接，desktop 与 src/runtime/ 的唯一连接点 |
+| `src/runtime/app-init.ts` | App 依赖装配工厂 `createAppDependencies()`，集中创建所有服务实例 |
+| `src/runtime/goal-runner.ts` | `/goal` 命令执行（分解+确认+执行+验证） |
+| `src/runtime/notification.ts` | 通知分级与路由降级文案 |
+| `src/runtime/plugin-init.ts` | 插件系统初始化 + 权限中间件注册 |
+| `src/runtime/graceful-shutdown.ts` | 注册式 shutdown 清理链 |
 | `CODEMAP.md` | 代码库索引，定位模块前先读此文件 |
-| `scripts/verify.ts` | Phase 17b 验收门脚本（`pnpm tsx scripts/verify.ts`） |
+| `scripts/verify.ts` | Phase 17b 验收门脚本 |
 
 ## 项目约定
 - **提交格式：** Conventional Commits（`feat:` / `fix:` / `refactor:` / `test:` / `docs:`）
@@ -43,7 +43,7 @@
 2. **命令解析必须走 `parseCommand()` tokenize**（#14）：`SecurityChecker.checkCommand()` 与 `PermissionEngine` 的 deny 规则**必须**用 `parseCommand()` 首 token 精确匹配，**禁止** `includes()`/正则子串匹配（会被 `rmrf.sh` 等绕过）
 3. **环境变量替换 fail-fast**（#16）：`replaceEnvVars()` 引用未设置的环境变量时**抛出 `ConfigValidationError`**，不再保留 `${VAR}` 占位符。配置中所有 `${VAR}` 必须在 `.env` 或系统环境变量中定义
 4. **Rollback 前置工作区检查**（#18）：`CheckpointManager.rollback()` 在 `git checkout` 前**必须**检查 `git status` 工作区是否干净，有未提交更改时**中止回滚**（强制回滚会丢失用户工作）
-5. **TaskOrchestrator 是 App.tsx 的新调度层**（#23）：所有非命令输入先经过它，由它判定 intent（quick_answer/development/explicit_goal/planning）并分发。`quick_answer` 短路直达 ChatRunner，`development` 走完整流水线
+5. **TaskOrchestrator 是 engine-bridge.ts 的调度层**（#23）：所有非命令输入先经过它，由它判定 intent（quick_answer/development/explicit_goal/planning）并分发。`quick_answer` 短路直达 `engine-bridge.sendChat`，`development` 走完整流水线
 6. **ReadTracker 追踪的是绝对路径**（#27）：`file_read` 和 `file_write` 传入的路径必须 `normalize` 后比对。新建文件不受 read-before-write 限制（通过 `fs.access()` 检查存在性）
 7. **HookRunner 在 app-init.ts 中必须传入 TraceCollector**（#45）：`new HookRunner()` 后必须调用 `setTraceCollector(trace)`，否则钩子执行不产生 span 记录。`DurableExecutor` 也必须传入同一 `hookRunner` 实例
 8. **Tool/Skill 的 description 写法决定 80% 匹配效果**（#54）：description 必须写给模型看（包含触发场景、适用条件），不是简短标题。实测同一工具描述写法差异可达 30 个百分点准确率
@@ -56,11 +56,11 @@
 
 - **#133** AGENTS.md 瘦身后必须保留 Top 10 核心陷阱在正文，完整索引迁移至 SKILL.md
 - **#134** description lint 不能阻断开发流程（过渡期 warning，不返回 error）
-- **#135** routedev exec 必须设总超时（默认 5 分钟），headless 下 always-ask 自动 deny
+- **#135** ~~routedev exec 必须设总超时（默认 5 分钟），headless 下 always-ask 自动 deny~~ — **已废弃（CLI 退役，exec-runner.ts 已删除）**
 - **#136** 沙箱级判断必须在审批级之前（deny 优先于 never-ask）
 - **#137** /review 子代理必须用 read-only 沙箱（工具白名单不是确定性兜底）
 - **#138** Checkpoint 语义化摘要的 LLM 调用必须设超时（3 秒）与降级（返回原始 description）
-- **#139** 自定义命令的模板变量替换必须一次性（不递归，$1 中的 {{...}} 不展开）
+- **#139** ~~自定义命令的模板变量替换必须一次性（不递归，$1 中的 {{...}} 不展开）~~ — **已废弃（CLI 退役，custom-commands.ts 已删除）**
 - **#140** AGENTS.override.md 的语义是「跳过」而非「合并」（存在 override 时跳过 base）
 - **#141** GitHub Action 的 config 必须用 Base64 传输（避免 YAML 多行字符串转义问题）
 - **#142** 沙箱级切换需要刷新工具可用性缓存（避免残留的 deny/allow 状态）
