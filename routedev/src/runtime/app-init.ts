@@ -166,6 +166,12 @@ import { BM25Index } from '../memory/bm25-index.js';
 // Phase 66：策略管道与治理
 import { CheckpointPipeline } from '../policies/checkpoint-pipeline.js';
 import { CallOwnerCoordinator } from '../policies/call-owner-coordinator.js';
+// Phase 42：PolicyEngine 接线（策略引擎静态 import，断裂在编译期暴露）
+import { PolicyEngine } from '../policies/policy-engine.js';
+import { createBuiltinIntentGuardPolicies } from '../policies/intent-guard.js';
+import { createBuiltinPlaybookPolicies } from '../policies/playbook.js';
+import { createBuiltinToolGuidePolicies } from '../policies/tool-guide.js';
+import { createBuiltinToolApprovalPolicies } from '../policies/tool-approval.js';
 import { StateSnapshotChain } from '../harness/state-snapshot-chain.js';
 import { ReputationDeriver } from '../memory/reputation-deriver.js';
 // Phase 67：推理质量诊断
@@ -1387,89 +1393,57 @@ export function createAppDependencies(
 
   // ===== Phase 42：PolicyEngine 接线（策略引擎） =====
   // Intent Guard + Playbook + Tool Guide + Tool Approval
-  // 注：policies/policy-engine.ts 由其他子代理创建，使用变量路径动态 import 避免 typecheck 失败
+  // 模块通过静态 import 加载，接线断裂在编译期暴露；运行时仍 try-catch 防止注册逻辑异常阻塞主流程
   const policiesCfg = config.policies;
   const phase53PolicyCfg = config.phase53Integration?.policyEngine;
   if (policiesCfg?.enabled !== false) {
-    const policyModulePath = '../policies/policy-engine.js';
-    import(policyModulePath)
-      .then((mod: { PolicyEngine: new () => { addPolicy: (p: unknown) => void; evaluateInput: (i: string) => unknown[]; evaluateToolCall: (t: string, a: unknown) => unknown[]; setDefaultPolicy?: (p: 'deny' | 'allow') => void } }) => {
-        const engine = new mod.PolicyEngine();
-        // Phase 53 Task 3：设置默认策略（fail-closed 控制）
-        // phase53Integration.policyEngine.enabled=false 时 setPolicyEngine 不被调用，loop 不接入策略引擎
-        // phase53Integration.policyEngine.enabled=true 时按 defaultPolicy 设置（默认 'deny'）
-        if (phase53PolicyCfg?.enabled && typeof engine.setDefaultPolicy === 'function') {
-          engine.setDefaultPolicy(phase53PolicyCfg.defaultPolicy ?? 'deny');
+    try {
+      const engine = new PolicyEngine();
+      // Phase 53 Task 3：设置默认策略（fail-closed 控制）
+      // phase53Integration.policyEngine.enabled=false 时 setPolicyEngine 不被调用，loop 不接入策略引擎
+      // phase53Integration.policyEngine.enabled=true 时按 defaultPolicy 设置（默认 'deny'）
+      if (phase53PolicyCfg?.enabled && typeof engine.setDefaultPolicy === 'function') {
+        engine.setDefaultPolicy(phase53PolicyCfg.defaultPolicy ?? 'deny');
+      }
+      // 根据配置添加内置策略（Intent Guard / Playbook / Tool Guide / Tool Approval）
+      if (policiesCfg.intentGuard !== false) {
+        for (const p of createBuiltinIntentGuardPolicies()) {
+          engine.addPolicy(p);
         }
-        // 根据配置添加内置策略（Intent Guard / Playbook / Tool Guide / Tool Approval）
-        // 各策略模块由其他子代理创建，使用变量路径让 TypeScript 无法静态解析（fail-open）
-        if (policiesCfg.intentGuard !== false) {
-          const guardPath = '../policies/intent-guard.js';
-          import(guardPath)
-            .then((guardMod: { createBuiltinIntentGuardPolicies?: () => unknown[] }) => {
-              if (typeof guardMod.createBuiltinIntentGuardPolicies === 'function') {
-                for (const p of guardMod.createBuiltinIntentGuardPolicies()) {
-                  engine.addPolicy(p);
-                }
-              }
-            })
-            .catch(() => { /* fail-open */ });
+      }
+      if (policiesCfg.playbook !== false) {
+        for (const p of createBuiltinPlaybookPolicies()) {
+          engine.addPolicy(p);
         }
-        if (policiesCfg.playbook !== false) {
-          const playbookPath = '../policies/playbook.js';
-          import(playbookPath)
-            .then((pbMod: { createBuiltinPlaybookPolicies?: () => unknown[] }) => {
-              if (typeof pbMod.createBuiltinPlaybookPolicies === 'function') {
-                for (const p of pbMod.createBuiltinPlaybookPolicies()) {
-                  engine.addPolicy(p);
-                }
-              }
-            })
-            .catch(() => { /* fail-open */ });
+      }
+      if (policiesCfg.toolGuide !== false) {
+        for (const p of createBuiltinToolGuidePolicies()) {
+          engine.addPolicy(p);
         }
-        if (policiesCfg.toolGuide !== false) {
-          const toolGuidePath = '../policies/tool-guide.js';
-          import(toolGuidePath)
-            .then((tgMod: { createBuiltinToolGuidePolicies?: () => unknown[] }) => {
-              if (typeof tgMod.createBuiltinToolGuidePolicies === 'function') {
-                for (const p of tgMod.createBuiltinToolGuidePolicies()) {
-                  engine.addPolicy(p);
-                }
-              }
-            })
-            .catch(() => { /* fail-open */ });
+      }
+      if (policiesCfg.toolApproval !== false) {
+        for (const p of createBuiltinToolApprovalPolicies(policiesCfg.approvalMode)) {
+          engine.addPolicy(p);
         }
-        if (policiesCfg.toolApproval !== false) {
-          const toolApprovalPath = '../policies/tool-approval.js';
-          import(toolApprovalPath)
-            .then((taMod: { createBuiltinToolApprovalPolicies?: (mode: string) => unknown[] }) => {
-              if (typeof taMod.createBuiltinToolApprovalPolicies === 'function') {
-                for (const p of taMod.createBuiltinToolApprovalPolicies(policiesCfg.approvalMode)) {
-                  engine.addPolicy(p);
-                }
-              }
-            })
-            .catch(() => { /* fail-open */ });
-        }
-        // 注册到 AgentLoop 的输入/工具调用链（feature-detect：方法可能由其他子代理添加）
-        const loop = agentLoop as unknown as { setPolicyEngine?: (e: unknown) => void };
-        if (typeof loop.setPolicyEngine === 'function') {
-          loop.setPolicyEngine(engine);
-        }
-        logger.info('PolicyEngine registered', {
-          intentGuard: policiesCfg.intentGuard,
-          playbook: policiesCfg.playbook,
-          toolGuide: policiesCfg.toolGuide,
-          toolApproval: policiesCfg.toolApproval,
-          approvalMode: policiesCfg.approvalMode,
-        });
-      })
-      .catch((err: unknown) => {
-        // fail-open：策略引擎不可用时跳过，不影响主流程
-        logger.debug('PolicyEngine not available yet', {
-          error: err instanceof Error ? err.message : String(err),
-        });
+      }
+      // 注册到 AgentLoop 的输入/工具调用链（feature-detect：方法可能由其他子代理添加）
+      const loop = agentLoop as unknown as { setPolicyEngine?: (e: unknown) => void };
+      if (typeof loop.setPolicyEngine === 'function') {
+        loop.setPolicyEngine(engine);
+      }
+      logger.info('PolicyEngine registered', {
+        intentGuard: policiesCfg.intentGuard,
+        playbook: policiesCfg.playbook,
+        toolGuide: policiesCfg.toolGuide,
+        toolApproval: policiesCfg.toolApproval,
+        approvalMode: policiesCfg.approvalMode,
       });
+    } catch (err: unknown) {
+      // 运行时异常（如策略构造/注册失败）记录但不阻塞主流程；模块缺失已在编译期暴露
+      logger.warn('PolicyEngine registration failed, skip policy engine', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // ===== Skills 系统（Phase 37：按需加载 Markdown Skill） =====

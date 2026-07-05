@@ -9,7 +9,6 @@ import os from 'node:os';
 import { initParser, parseFile } from '../../src/code-map/parser.js';
 import { extractFromTree } from '../../src/code-map/extractor.js';
 import { computePageRank } from '../../src/code-map/ranker.js';
-import { distillContext } from '../../src/code-map/compression.js';
 import {
   initDatabase,
   insertFile,
@@ -337,18 +336,6 @@ describe('CodeMap Engine', () => {
     const result = analyzeImpact(db, 'a', 3);
     expect(result.totalCount).toBeGreaterThanOrEqual(3);
     expect(result.impactedFiles).toContain('test.ts');
-  });
-
-  // 20. RepoDistill 预算分配不超过预算
-  it('distillContext should not exceed budget', () => {
-    const nodes = [
-      { id: '1', rankScore: 0.5, signature: 'function foo()', source: 'function foo() { return 1; }' },
-      { id: '2', rankScore: 0.3, signature: 'function bar()', source: 'function bar() { return 2; }' },
-      { id: '3', rankScore: 0.2, signature: 'function baz()', source: 'function baz() { return 3; }' },
-    ];
-    const result = distillContext(nodes, 20); // very small budget
-    expect(result.estimatedTokens).toBeLessThanOrEqual(20);
-    expect(result.truncated).toBeGreaterThan(0);
   });
 
   // 21. 删除文件后节点级联删除

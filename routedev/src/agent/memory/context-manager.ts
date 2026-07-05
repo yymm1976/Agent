@@ -726,7 +726,7 @@ export class ContextManager {
     return memories.filter(m => m.score >= this.memoryConfig.injectThreshold);
   }
 
-  /** 获取内部知识图谱（用于测试和 DreamConsolidator 共享） */
+  /** 获取内部知识图谱（用于测试共享） */
   getKnowledgeGraph(): KnowledgeGraph {
     return this.knowledgeGraph;
   }

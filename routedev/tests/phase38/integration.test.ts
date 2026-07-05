@@ -42,10 +42,6 @@ import { KnowledgeGraph } from '../../src/agent/memory/graph.js';
 import type { GraphNode, GraphEdge } from '../../src/agent/memory/graph.js';
 import { ContextManager } from '../../src/agent/memory/context-manager.js';
 import { CheckpointWriter } from '../../src/agent/memory/checkpoint-writer.js';
-// Phase 57：原 dream-to-graph 改名 consolidation，去拟人化措辞
-import { consolidateToGraph } from '../../src/agent/memory/consolidation.js';
-import type { ConsolidationResult } from '../../src/agent/memory/consolidation.js';
-import type { CheckpointData } from '../../src/agent/memory/types.js';
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -499,60 +495,5 @@ describe('集成测试 3：知识图谱完整生命周期', () => {
     expect(activeNodes.length).toBe(1);
     // 验证新节点是 k2 的修正版
     expect(activeNodes[0].content).toBe('React 组件设计模式已更新');
-  });
-
-  it('3.3 consolidateToGraph 直接调用验证完整归纳流程', () => {
-    const graph = new KnowledgeGraph();
-    // 预置一个已有节点，测试合并逻辑
-    graph.addNode(makeNode('existing', '决策: 采用 TypeScript 严格模式\n理由: 提升类型安全', {
-      type: 'decision',
-      validatedCount: 2,
-    }));
-
-    const checkpoint: CheckpointData = {
-      currentIntent: '',
-      nextAction: '',
-      workingConstraints: [],
-      taskTree: { description: '', status: 'pending', children: [] },
-      currentWorkingFiles: [],
-      involvedFiles: [],
-      crossTaskDiscoveries: ['跨任务发现：React 19 支持 Server Components'],
-      errorsAndFixes: [
-        { error: '内存泄漏', fix: '清理 useEffect 副作用', resolved: true },
-      ],
-      runtimeState: {},
-      designDecisions: [
-        { decision: '采用 TypeScript 严格模式', reason: '提升类型安全' },
-      ],
-      miscNotes: [],
-    };
-
-    // Phase 57：ConsolidationResult 仅含 consolidated 字段（原 DreamResult 已简化）
-    const consolidationResult: ConsolidationResult = {
-      consolidated: checkpoint,
-    };
-
-    const result = consolidateToGraph(consolidationResult, graph);
-
-    // 应创建新节点（crossTaskDiscoveries + errorsAndFixes）
-    expect(result.created).toBeGreaterThan(0);
-    // designDecisions 与已有节点相似 → 合并
-    expect(result.merged).toBeGreaterThanOrEqual(0);
-    // 归档统计（可能为 0，因为没有过时节点）
-    expect(result.archived).toBeGreaterThanOrEqual(0);
-
-    // 验证图谱中有新节点
-    const nodes = graph.listNodes();
-    expect(nodes.length).toBeGreaterThan(1);
-
-    // 验证 React 发现被注入
-    const reactNode = nodes.find(n => n.content.includes('React 19'));
-    expect(reactNode).toBeTruthy();
-    expect(reactNode!.type).toBe('fact');
-
-    // 验证已修复的错误被注入为 fact
-    const errorNode = nodes.find(n => n.content.includes('内存泄漏'));
-    expect(errorNode).toBeTruthy();
-    expect(errorNode!.type).toBe('fact');
   });
 });

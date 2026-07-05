@@ -1,5 +1,5 @@
 {
-  "totalExports": 1530,
+  "totalExports": 1540,
   "deadExports": [
     {
       "file": "src/agent/action-agent-dispatcher.ts",
@@ -92,6 +92,11 @@
       "type": "interface"
     },
     {
+      "file": "src/agent/context/system-prompt-builder.ts",
+      "name": "DynamicContext",
+      "type": "interface"
+    },
+    {
       "file": "src/agent/context/token-aware-slicer.ts",
       "name": "SliceOptions",
       "type": "interface"
@@ -112,6 +117,11 @@
       "type": "interface"
     },
     {
+      "file": "src/agent/context/user-profile-loader.ts",
+      "name": "UserProfile",
+      "type": "interface"
+    },
+    {
       "file": "src/agent/context/virtual-fs.ts",
       "name": "VNode",
       "type": "interface"
@@ -129,36 +139,6 @@
     {
       "file": "src/agent/context-compaction.ts",
       "name": "StateExternalizationConfig",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/context-usage-panel.ts",
-      "name": "ContextUsageInfo",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/curated-set.ts",
-      "name": "CuratedChunk",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/curated-set.ts",
-      "name": "ImportanceTag",
-      "type": "type"
-    },
-    {
-      "file": "src/agent/deep-review/aggregator.ts",
-      "name": "AggregateResult",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/deep-review/orchestrator.ts",
-      "name": "DeepReviewOrchestratorDeps",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/deep-review/orchestrator.ts",
-      "name": "ReviewParams",
       "type": "interface"
     },
     {
@@ -195,21 +175,6 @@
       "file": "src/agent/epistemic-integrity-checker.ts",
       "name": "EpistemicIntegrityResult",
       "type": "interface"
-    },
-    {
-      "file": "src/agent/epistemic-preserving-summarizer.ts",
-      "name": "SummaryMessage",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/epistemic-preserving-summarizer.ts",
-      "name": "SummaryResult",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/epistemic-preserving-summarizer.ts",
-      "name": "LLMCallFn",
-      "type": "type"
     },
     {
       "file": "src/agent/epistemic-token-protector.ts",
@@ -277,6 +242,31 @@
       "type": "type"
     },
     {
+      "file": "src/agent/memory/compressors/code-ast-summary.ts",
+      "name": "CodeAstSummaryResult",
+      "type": "interface"
+    },
+    {
+      "file": "src/agent/memory/compressors/json-sampler.ts",
+      "name": "JsonSamplerConfig",
+      "type": "interface"
+    },
+    {
+      "file": "src/agent/memory/compressors/json-sampler.ts",
+      "name": "JsonSamplerResult",
+      "type": "interface"
+    },
+    {
+      "file": "src/agent/memory/content-router.ts",
+      "name": "RouteCompressResult",
+      "type": "interface"
+    },
+    {
+      "file": "src/agent/memory/content-router.ts",
+      "name": "CompressStrategy",
+      "type": "type"
+    },
+    {
       "file": "src/agent/memory/context-manager.ts",
       "name": "RebootTest",
       "type": "interface"
@@ -307,6 +297,11 @@
       "type": "interface"
     },
     {
+      "file": "src/agent/micro-summary.ts",
+      "name": "MicroSummary",
+      "type": "interface"
+    },
+    {
       "file": "src/agent/middleware/loop-detection.ts",
       "name": "LoopDetectionOptions",
       "type": "interface"
@@ -314,21 +309,6 @@
     {
       "file": "src/agent/multi/agent-group-resolver.ts",
       "name": "AgentGroup",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/multi/cli-adapter.ts",
-      "name": "CLIAdapterConfig",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/multi/cli-adapter.ts",
-      "name": "CLISession",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/multi/cli-adapter.ts",
-      "name": "CLIAdapter",
       "type": "interface"
     },
     {
@@ -352,19 +332,19 @@
       "type": "interface"
     },
     {
-      "file": "src/agent/multi/result-comparator.ts",
-      "name": "ComparisonResult",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/multi/result-comparator.ts",
-      "name": "ResultComparatorConfig",
+      "file": "src/agent/multi/score-card.ts",
+      "name": "ProcessDefect",
       "type": "interface"
     },
     {
       "file": "src/agent/multi/score-card.ts",
-      "name": "ScoreCardCollector",
-      "type": "class"
+      "name": "ScoreCard",
+      "type": "interface"
+    },
+    {
+      "file": "src/agent/multi/score-card.ts",
+      "name": "DefectCategory",
+      "type": "type"
     },
     {
       "file": "src/agent/multi/synthesize-barrier.ts",
@@ -374,6 +354,11 @@
     {
       "file": "src/agent/multi/synthesize-barrier.ts",
       "name": "SynthesizeOutput",
+      "type": "interface"
+    },
+    {
+      "file": "src/agent/multi/types.ts",
+      "name": "ParallelOutcome",
       "type": "interface"
     },
     {
@@ -393,11 +378,6 @@
     },
     {
       "file": "src/agent/omission-checker.ts",
-      "name": "OmissionSeverity",
-      "type": "type"
-    },
-    {
-      "file": "src/agent/omission-checker.ts",
       "name": "OmissionCategory",
       "type": "type"
     },
@@ -414,36 +394,6 @@
     {
       "file": "src/agent/path-router.ts",
       "name": "ExecutionRoute",
-      "type": "type"
-    },
-    {
-      "file": "src/agent/patterns/coverage-check.ts",
-      "name": "PatternCoverageReport",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/patterns/prompt-chain.ts",
-      "name": "ChainStepResult",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/patterns/prompt-chain.ts",
-      "name": "ExecuteStepCallback",
-      "type": "type"
-    },
-    {
-      "file": "src/agent/patterns/reflection.ts",
-      "name": "ReviewCallback",
-      "type": "type"
-    },
-    {
-      "file": "src/agent/patterns/reflection.ts",
-      "name": "ReviseCallback",
-      "type": "type"
-    },
-    {
-      "file": "src/agent/persona-engine.ts",
-      "name": "PersonaTone",
       "type": "type"
     },
     {
@@ -470,21 +420,6 @@
       "file": "src/agent/quantitative-gate.ts",
       "name": "QuantitativeGateConfig",
       "type": "interface"
-    },
-    {
-      "file": "src/agent/requirements-clarifier.ts",
-      "name": "AMBIGUOUS_WORDS",
-      "type": "reexport"
-    },
-    {
-      "file": "src/agent/requirements-clarifier.ts",
-      "name": "VAGUE_ACTION_WORDS",
-      "type": "reexport"
-    },
-    {
-      "file": "src/agent/requirements-clarifier.ts",
-      "name": "VAGUE_QUANTIFIERS",
-      "type": "reexport"
     },
     {
       "file": "src/agent/snr-aware-filter.ts",
@@ -522,14 +457,9 @@
       "type": "interface"
     },
     {
-      "file": "src/agent/verification-records.ts",
-      "name": "VerificationRecord",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/verification-records.ts",
-      "name": "VerificationRecordsConfig",
-      "type": "interface"
+      "file": "src/agent/work-modes.ts",
+      "name": "WorkMode",
+      "type": "type"
     },
     {
       "file": "src/agent/workflow/dag-engine.ts",
@@ -552,9 +482,34 @@
       "type": "type"
     },
     {
-      "file": "src/agents/instance-harness.ts",
-      "name": "AgentHarness",
-      "type": "interface"
+      "file": "src/agents/profiles/builtin-templates.ts",
+      "name": "PLANNER_PROFILE",
+      "type": "const"
+    },
+    {
+      "file": "src/agents/profiles/builtin-templates.ts",
+      "name": "VERIFIER_PROFILE",
+      "type": "const"
+    },
+    {
+      "file": "src/agents/profiles/builtin-templates.ts",
+      "name": "SYNTHESIZER_PROFILE",
+      "type": "const"
+    },
+    {
+      "file": "src/agents/result-schemas.ts",
+      "name": "PlannerResultSchema",
+      "type": "const"
+    },
+    {
+      "file": "src/agents/result-schemas.ts",
+      "name": "VerifierResultSchema",
+      "type": "const"
+    },
+    {
+      "file": "src/agents/result-schemas.ts",
+      "name": "SynthesizerResultSchema",
+      "type": "const"
     },
     {
       "file": "src/agents/result-schemas.ts",
@@ -577,39 +532,19 @@
       "type": "type"
     },
     {
-      "file": "src/channels/manager.ts",
-      "name": "ChannelManagerOptions",
-      "type": "interface"
+      "file": "src/agents/result-schemas.ts",
+      "name": "PlannerResult",
+      "type": "type"
     },
     {
-      "file": "src/channels/message-router.ts",
-      "name": "MessageRouterConfig",
-      "type": "interface"
+      "file": "src/agents/result-schemas.ts",
+      "name": "VerifierResult",
+      "type": "type"
     },
     {
-      "file": "src/channels/message-router.ts",
-      "name": "UserContext",
-      "type": "interface"
-    },
-    {
-      "file": "src/channels/message-router.ts",
-      "name": "MessageRouterDeps",
-      "type": "interface"
-    },
-    {
-      "file": "src/channels/types.ts",
-      "name": "ChannelSender",
-      "type": "interface"
-    },
-    {
-      "file": "src/channels/types.ts",
-      "name": "ChannelReceiver",
-      "type": "interface"
-    },
-    {
-      "file": "src/channels/types.ts",
-      "name": "ChannelAttachment",
-      "type": "interface"
+      "file": "src/agents/result-schemas.ts",
+      "name": "SynthesizerResult",
+      "type": "type"
     },
     {
       "file": "src/cite/types.ts",
@@ -617,159 +552,29 @@
       "type": "type"
     },
     {
-      "file": "src/cli/chat-runner.ts",
-      "name": "ChatRunnerDeps",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/commands/config.ts",
-      "name": "validateConfigCommand",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/BranchSwitcher.tsx",
-      "name": "BranchSwitcherProps",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/components/ConfigReloadUI.tsx",
-      "name": "ConfigReloadNoticeProps",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/components/ConfirmDialog.tsx",
-      "name": "ConfirmDialogProps",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/components/DiffView.tsx",
-      "name": "DiffLine",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/components/DiffView.tsx",
-      "name": "ParsedDiff",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/components/DiffView.tsx",
-      "name": "DiffViewProps",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/components/DiffView.tsx",
-      "name": "DiffLineType",
-      "type": "type"
-    },
-    {
-      "file": "src/cli/components/DiffView.tsx",
-      "name": "DiffViewMode",
-      "type": "type"
-    },
-    {
-      "file": "src/cli/components/DisclosureLevel.tsx",
-      "name": "DisclosureProps",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/components/goal-progress.ts",
-      "name": "GOAL_STATUS_LABEL",
+      "file": "src/code-map/artifact.ts",
+      "name": "ARTIFACT_REL_PATH",
       "type": "const"
     },
     {
-      "file": "src/cli/components/ProgressBar.tsx",
-      "name": "ProgressBarProps",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/components/ResumePicker.tsx",
-      "name": "formatSnapshotTime",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/ResumePicker.tsx",
-      "name": "formatSnapshotLine",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/ResumePicker.tsx",
-      "name": "ResumePickerProps",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/components/StepCard.tsx",
-      "name": "StepCardProps",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/components/StepEditor.tsx",
-      "name": "StepEditorProps",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/components/StepEditor.tsx",
-      "name": "StepEditorState",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/components/StepEditor.tsx",
-      "name": "StepEditorAction",
-      "type": "type"
-    },
-    {
-      "file": "src/cli/components/TracePanel.tsx",
-      "name": "TraceCategory",
-      "type": "type"
-    },
-    {
-      "file": "src/cli/design-system.ts",
-      "name": "MessageStyle",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/doctor.ts",
-      "name": "DoctorConfig",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/doctor.ts",
-      "name": "DoctorProbeContext",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/doctor.ts",
-      "name": "ProbeStatus",
-      "type": "type"
-    },
-    {
-      "file": "src/cli/goal-runner.ts",
-      "name": "GoalRunnerDeps",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/notification.ts",
-      "name": "NotificationOptions",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/notification.ts",
-      "name": "NotificationLevel",
-      "type": "type"
-    },
-    {
-      "file": "src/cli/output-style.ts",
-      "name": "OUTPUT_STYLE_CYCLE",
+      "file": "src/code-map/artifact.ts",
+      "name": "RUNTIME_DB_REL_PATH",
       "type": "const"
     },
     {
-      "file": "src/cli/splash.ts",
-      "name": "SplashInfo",
-      "type": "interface"
+      "file": "src/code-map/camel-split-tokenizer.ts",
+      "name": "camelSplit",
+      "type": "function"
     },
     {
       "file": "src/code-map/database.ts",
       "name": "getUnresolvedRefsByCallee",
       "type": "function"
+    },
+    {
+      "file": "src/code-map/database.ts",
+      "name": "FtsSearchHit",
+      "type": "interface"
     },
     {
       "file": "src/code-map/extractor.ts",
@@ -797,9 +602,19 @@
       "type": "function"
     },
     {
-      "file": "src/code-map/parser.ts",
-      "name": "getLanguageByPath",
-      "type": "function"
+      "file": "src/code-map/languages/go.ts",
+      "name": "GO_SYMBOL_NODE_TYPES",
+      "type": "const"
+    },
+    {
+      "file": "src/code-map/languages/go.ts",
+      "name": "GoTypeSpecResult",
+      "type": "interface"
+    },
+    {
+      "file": "src/code-map/languages/java.ts",
+      "name": "JAVA_SYMBOL_NODE_TYPES",
+      "type": "const"
     },
     {
       "file": "src/code-map/parser.ts",
@@ -813,7 +628,7 @@
     },
     {
       "file": "src/code-map/querier.ts",
-      "name": "findCallees",
+      "name": "searchBySymbolName",
       "type": "function"
     },
     {
@@ -822,69 +637,29 @@
       "type": "interface"
     },
     {
-      "file": "src/code-map/schema.ts",
-      "name": "CallPath",
+      "file": "src/code-map/type-resolver.ts",
+      "name": "resolveImportSource",
+      "type": "function"
+    },
+    {
+      "file": "src/code-map/type-resolver.ts",
+      "name": "FileImportInfo",
       "type": "interface"
+    },
+    {
+      "file": "src/code-map/type-resolver.ts",
+      "name": "FileImportMap",
+      "type": "type"
+    },
+    {
+      "file": "src/code-map/type-resolver.ts",
+      "name": "ExportedSymbolMap",
+      "type": "type"
     },
     {
       "file": "src/config/loader.ts",
       "name": "loadMergedConfig",
       "type": "function"
-    },
-    {
-      "file": "src/config/presets.ts",
-      "name": "PRESET_DESCRIPTIONS",
-      "type": "const"
-    },
-    {
-      "file": "src/config/presets.ts",
-      "name": "PresetDescription",
-      "type": "interface"
-    },
-    {
-      "file": "src/config/presets.ts",
-      "name": "ConfigPreset",
-      "type": "type"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "ModelConfigSchema",
-      "type": "const"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "ProviderConfigSchema",
-      "type": "const"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "AdversarialConfigSchema",
-      "type": "const"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "AutonomyConfigSchema",
-      "type": "const"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "PolicyEngineConfigSchema",
-      "type": "const"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "AuditChainConfigSchema",
-      "type": "const"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "PrefixCacheConfigSchema",
-      "type": "const"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "CircuitBreakerConfigSchema",
-      "type": "const"
     },
     {
       "file": "src/config/schema.ts",
@@ -909,6 +684,11 @@
     {
       "file": "src/config/schema.ts",
       "name": "ModelCapability",
+      "type": "type"
+    },
+    {
+      "file": "src/config/schema.ts",
+      "name": "LLMProvidersConfig",
       "type": "type"
     },
     {
@@ -963,11 +743,6 @@
     },
     {
       "file": "src/config/schema.ts",
-      "name": "MCPServerEntryConfig",
-      "type": "type"
-    },
-    {
-      "file": "src/config/schema.ts",
       "name": "PromptConfigType",
       "type": "type"
     },
@@ -979,6 +754,11 @@
     {
       "file": "src/config/schema.ts",
       "name": "TokenTrackingConfig",
+      "type": "type"
+    },
+    {
+      "file": "src/config/schema.ts",
+      "name": "WorkflowConfig",
       "type": "type"
     },
     {
@@ -1029,11 +809,6 @@
     {
       "file": "src/config/schema.ts",
       "name": "AgentConfig",
-      "type": "type"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "FilesystemPermissionRule",
       "type": "type"
     },
     {
@@ -1183,22 +958,7 @@
     },
     {
       "file": "src/config/schema.ts",
-      "name": "DelegationPolicyConfig",
-      "type": "type"
-    },
-    {
-      "file": "src/config/schema.ts",
       "name": "ActivityPanelConfig",
-      "type": "type"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "InstanceHarnessConfig",
-      "type": "type"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "ConfigLayeringConfig",
       "type": "type"
     },
     {
@@ -1208,17 +968,7 @@
     },
     {
       "file": "src/config/schema.ts",
-      "name": "ResultSchemaConfig",
-      "type": "type"
-    },
-    {
-      "file": "src/config/schema.ts",
       "name": "ModelDisplayConfig",
-      "type": "type"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "Phase52IntegrationConfig",
       "type": "type"
     },
     {
@@ -1273,11 +1023,6 @@
     },
     {
       "file": "src/config/schema.ts",
-      "name": "Phase53IntegrationConfig",
-      "type": "type"
-    },
-    {
-      "file": "src/config/schema.ts",
       "name": "ClosedLoopRoutingConfig",
       "type": "type"
     },
@@ -1288,58 +1033,28 @@
     },
     {
       "file": "src/config/schema.ts",
+      "name": "FileEditConfig",
+      "type": "type"
+    },
+    {
+      "file": "src/config/schema.ts",
+      "name": "ToolsConfig",
+      "type": "type"
+    },
+    {
+      "file": "src/config/schema.ts",
+      "name": "ObservabilityConfig",
+      "type": "type"
+    },
+    {
+      "file": "src/config/schema.ts",
       "name": "PlanConfig",
-      "type": "type"
-    },
-    {
-      "file": "src/evaluation/evaluation-framework.ts",
-      "name": "RubricItem",
-      "type": "interface"
-    },
-    {
-      "file": "src/evaluation/evaluation-framework.ts",
-      "name": "RubricScore",
-      "type": "interface"
-    },
-    {
-      "file": "src/evaluation/evaluation-framework.ts",
-      "name": "CaseResult",
-      "type": "interface"
-    },
-    {
-      "file": "src/evaluation/evaluation-framework.ts",
-      "name": "EvaluationSetConfig",
-      "type": "interface"
-    },
-    {
-      "file": "src/evaluation/evaluation-framework.ts",
-      "name": "EvaluationScenario",
-      "type": "type"
-    },
-    {
-      "file": "src/evaluation/evaluation-framework.ts",
-      "name": "EvaluationTarget",
-      "type": "type"
-    },
-    {
-      "file": "src/evaluation/evaluation-framework.ts",
-      "name": "ExecuteTargetCallback",
-      "type": "type"
-    },
-    {
-      "file": "src/evaluation/evaluation-framework.ts",
-      "name": "JudgeCallback",
       "type": "type"
     },
     {
       "file": "src/evaluation/mi-cross-scorer.ts",
       "name": "MIProxySnapshot",
       "type": "interface"
-    },
-    {
-      "file": "src/evaluation/process-defect-ontology.ts",
-      "name": "DEFECT_DESCRIPTIONS",
-      "type": "const"
     },
     {
       "file": "src/harness/audit-logger.ts",
@@ -1432,14 +1147,44 @@
       "type": "type"
     },
     {
-      "file": "src/hooks/templates.ts",
-      "name": "getHookTemplateById",
+      "file": "src/hooks/hook-events.ts",
+      "name": "isValidHookEventType",
       "type": "function"
     },
     {
-      "file": "src/hooks/templates.ts",
-      "name": "HookTemplate",
+      "file": "src/hooks/hook-events.ts",
+      "name": "getHookEventMetadata",
+      "type": "function"
+    },
+    {
+      "file": "src/hooks/hook-events.ts",
+      "name": "listEventsByCategory",
+      "type": "function"
+    },
+    {
+      "file": "src/hooks/hook-events.ts",
+      "name": "ALL_HOOK_EVENTS",
+      "type": "const"
+    },
+    {
+      "file": "src/hooks/hook-events.ts",
+      "name": "HOOK_EVENT_METADATA",
+      "type": "const"
+    },
+    {
+      "file": "src/hooks/hook-events.ts",
+      "name": "LEGACY_HOOK_EVENT_MAP",
+      "type": "const"
+    },
+    {
+      "file": "src/hooks/hook-events.ts",
+      "name": "HookEventMetadata",
       "type": "interface"
+    },
+    {
+      "file": "src/hooks/hook-events.ts",
+      "name": "HookEventCategory",
+      "type": "type"
     },
     {
       "file": "src/import/anthropic-skills-loader.ts",
@@ -1602,23 +1347,48 @@
       "type": "interface"
     },
     {
+      "file": "src/memory/unified-memory.ts",
+      "name": "RetrieveOptions",
+      "type": "interface"
+    },
+    {
+      "file": "src/memory/unified-memory.ts",
+      "name": "UnifiedMemoryStore",
+      "type": "interface"
+    },
+    {
+      "file": "src/memory/unified-memory.ts",
+      "name": "MemorySource",
+      "type": "type"
+    },
+    {
+      "file": "src/observability/analytics-queue.ts",
+      "name": "detachAnalyticsSink",
+      "type": "function"
+    },
+    {
+      "file": "src/observability/analytics-queue.ts",
+      "name": "getAnalyticsQueueStatus",
+      "type": "function"
+    },
+    {
+      "file": "src/observability/otel-exporter.ts",
+      "name": "OtelConfig",
+      "type": "interface"
+    },
+    {
+      "file": "src/observability/otel-exporter.ts",
+      "name": "OtelExporterStatus",
+      "type": "interface"
+    },
+    {
       "file": "src/observability/trajectory-aggregator.ts",
       "name": "AggregatedMetrics",
       "type": "interface"
     },
     {
-      "file": "src/optional/voice/voice-manager.ts",
-      "name": "VoiceConfig",
-      "type": "interface"
-    },
-    {
       "file": "src/plugins/filesystem-discovery.ts",
       "name": "ExtensionMetadata",
-      "type": "interface"
-    },
-    {
-      "file": "src/plugins/filesystem-discovery.ts",
-      "name": "SkillStatus",
       "type": "interface"
     },
     {
@@ -1637,9 +1407,49 @@
       "type": "type"
     },
     {
+      "file": "src/plugins/sdk.ts",
+      "name": "Logger",
+      "type": "interface"
+    },
+    {
+      "file": "src/plugins/sdk.ts",
+      "name": "ToolRegistryInterface",
+      "type": "interface"
+    },
+    {
+      "file": "src/plugins/sdk.ts",
+      "name": "CommandRegistryInterface",
+      "type": "interface"
+    },
+    {
+      "file": "src/plugins/sdk.ts",
+      "name": "HookRegistryInterface",
+      "type": "interface"
+    },
+    {
+      "file": "src/plugins/sdk.ts",
+      "name": "MiddlewareRegistryInterface",
+      "type": "interface"
+    },
+    {
+      "file": "src/plugins/types.ts",
+      "name": "ThemeColors",
+      "type": "interface"
+    },
+    {
+      "file": "src/plugins/types.ts",
+      "name": "ThemePlugin",
+      "type": "interface"
+    },
+    {
       "file": "src/policies/call-owner-coordinator.ts",
       "name": "PendingApproval",
       "type": "interface"
+    },
+    {
+      "file": "src/policies/call-owner-coordinator.ts",
+      "name": "CallOwnerStrategy",
+      "type": "type"
     },
     {
       "file": "src/policies/call-owner-coordinator.ts",
@@ -1822,6 +1632,136 @@
       "type": "type"
     },
     {
+      "file": "src/runtime/components/goal-progress.ts",
+      "name": "estimateEta",
+      "type": "function"
+    },
+    {
+      "file": "src/runtime/components/goal-progress.ts",
+      "name": "countCompleted",
+      "type": "function"
+    },
+    {
+      "file": "src/runtime/components/goal-progress.ts",
+      "name": "GOAL_STATUS_ICON",
+      "type": "const"
+    },
+    {
+      "file": "src/runtime/components/goal-progress.ts",
+      "name": "GOAL_STATUS_LABEL",
+      "type": "const"
+    },
+    {
+      "file": "src/runtime/doctor.ts",
+      "name": "DoctorConfig",
+      "type": "interface"
+    },
+    {
+      "file": "src/runtime/doctor.ts",
+      "name": "DoctorProbeContext",
+      "type": "interface"
+    },
+    {
+      "file": "src/runtime/doctor.ts",
+      "name": "ProbeStatus",
+      "type": "type"
+    },
+    {
+      "file": "src/runtime/goal-runner.ts",
+      "name": "GoalRunnerDeps",
+      "type": "interface"
+    },
+    {
+      "file": "src/runtime/graceful-shutdown.ts",
+      "name": "unregisterShutdownHook",
+      "type": "function"
+    },
+    {
+      "file": "src/runtime/graceful-shutdown.ts",
+      "name": "triggerShutdown",
+      "type": "function"
+    },
+    {
+      "file": "src/runtime/graceful-shutdown.ts",
+      "name": "shutdown",
+      "type": "function"
+    },
+    {
+      "file": "src/runtime/graceful-shutdown.ts",
+      "name": "setShutdownTimeoutMs",
+      "type": "function"
+    },
+    {
+      "file": "src/runtime/graceful-shutdown.ts",
+      "name": "setShutdownExitCode",
+      "type": "function"
+    },
+    {
+      "file": "src/runtime/graceful-shutdown.ts",
+      "name": "listShutdownHooks",
+      "type": "function"
+    },
+    {
+      "file": "src/runtime/graceful-shutdown.ts",
+      "name": "isShuttingDown",
+      "type": "function"
+    },
+    {
+      "file": "src/runtime/graceful-shutdown.ts",
+      "name": "ShutdownPriority",
+      "type": "type"
+    },
+    {
+      "file": "src/runtime/graceful-shutdown.ts",
+      "name": "ShutdownHookFn",
+      "type": "type"
+    },
+    {
+      "file": "src/runtime/graceful-shutdown.ts",
+      "name": "ShutdownReason",
+      "type": "type"
+    },
+    {
+      "file": "src/runtime/notification.ts",
+      "name": "NotificationOptions",
+      "type": "interface"
+    },
+    {
+      "file": "src/runtime/notification.ts",
+      "name": "NotificationLevel",
+      "type": "type"
+    },
+    {
+      "file": "src/runtime/plugin-init.ts",
+      "name": "initPluginSystem",
+      "type": "function"
+    },
+    {
+      "file": "src/runtime/plugin-init.ts",
+      "name": "registerPermissionMiddleware",
+      "type": "function"
+    },
+    {
+      "file": "src/security/audit-panel.ts",
+      "name": "SecurityEvent",
+      "type": "interface"
+    },
+    {
+      "file": "src/security/audit-panel.ts",
+      "name": "SecurityEventFilter",
+      "type": "interface"
+    },
+    {
+      "file": "src/security/audit-panel.ts",
+      "name": "SecuritySummary",
+      "type": "interface"
+    },
+    {
+      "file": "src/security/audit-panel.ts",
+      "name": "SecurityEventLevel",
+      "type": "type"
+    },
+    {
       "file": "src/security/integrity-manifest.ts",
       "name": "IntegrityRecord",
       "type": "interface"
@@ -1829,6 +1769,41 @@
     {
       "file": "src/security/integrity-manifest.ts",
       "name": "VerifyResult",
+      "type": "interface"
+    },
+    {
+      "file": "src/security/sandbox.ts",
+      "name": "SandboxResult",
+      "type": "interface"
+    },
+    {
+      "file": "src/security/sandbox.ts",
+      "name": "CommandValidationResult",
+      "type": "interface"
+    },
+    {
+      "file": "src/skills/bundled-skill-extractor.ts",
+      "name": "isSafeRelativePath",
+      "type": "function"
+    },
+    {
+      "file": "src/skills/bundled-skill-extractor.ts",
+      "name": "extractBundledSkill",
+      "type": "function"
+    },
+    {
+      "file": "src/skills/bundled-skill-extractor.ts",
+      "name": "cleanupExtractedFiles",
+      "type": "function"
+    },
+    {
+      "file": "src/skills/bundled-skill-extractor.ts",
+      "name": "ExtractEntry",
+      "type": "interface"
+    },
+    {
+      "file": "src/skills/bundled-skill-extractor.ts",
+      "name": "ExtractResult",
       "type": "interface"
     },
     {
@@ -1887,14 +1862,44 @@
       "type": "type"
     },
     {
+      "file": "src/skills/progressive-disclosure.ts",
+      "name": "DisclosureLevel",
+      "type": "type"
+    },
+    {
       "file": "src/skills/sad-decomposer.ts",
       "name": "SADResult",
+      "type": "interface"
+    },
+    {
+      "file": "src/skills/skill-md-parser.ts",
+      "name": "SkillArgumentDef",
+      "type": "interface"
+    },
+    {
+      "file": "src/tools/builtin/browser.ts",
+      "name": "BrowserToolArgs",
       "type": "interface"
     },
     {
       "file": "src/tools/builtin/config-guard.ts",
       "name": "GuardDecision",
       "type": "interface"
+    },
+    {
+      "file": "src/tools/builtin/edit-history.ts",
+      "name": "EditHistory",
+      "type": "class"
+    },
+    {
+      "file": "src/tools/builtin/edit-history.ts",
+      "name": "EditHistoryEntry",
+      "type": "interface"
+    },
+    {
+      "file": "src/tools/builtin/file-read.ts",
+      "name": "fileReadTool",
+      "type": "const"
     },
     {
       "file": "src/tools/builtin/spawn-agent.ts",
@@ -1904,6 +1909,11 @@
     {
       "file": "src/tools/builtin/spawn-agent.ts",
       "name": "extractDetachedSessionAnswer",
+      "type": "function"
+    },
+    {
+      "file": "src/tools/builtin/spawn-agent.ts",
+      "name": "buildForkedMessages",
       "type": "function"
     },
     {
@@ -1957,9 +1967,244 @@
       "type": "reexport"
     },
     {
+      "file": "src/tools/types.ts",
+      "name": "StructuredToolResult",
+      "type": "interface"
+    },
+    {
+      "file": "src/tools/types.ts",
+      "name": "ToolDef",
+      "type": "interface"
+    },
+    {
+      "file": "src/tools/types.ts",
+      "name": "ToolStatus",
+      "type": "type"
+    },
+    {
+      "file": "src/tools/types.ts",
+      "name": "ToolErrorCode",
+      "type": "type"
+    },
+    {
       "file": "src/utils/provider-validator.ts",
       "name": "ProviderValidationResult",
       "type": "interface"
+    },
+    {
+      "file": "src/utils/retry.ts",
+      "name": "isForegroundQuerySource",
+      "type": "function"
+    },
+    {
+      "file": "src/utils/retry.ts",
+      "name": "FOREGROUND_RETRY_SOURCES",
+      "type": "const"
+    },
+    {
+      "file": "src/utils/retry.ts",
+      "name": "QuerySourceRetryOptions",
+      "type": "interface"
+    },
+    {
+      "file": "src/utils/retry.ts",
+      "name": "QuerySource",
+      "type": "type"
+    },
+    {
+      "file": "desktop/main/engine-bridge.ts",
+      "name": "EngineBridgeOptions",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/components/DiscoveryPage.tsx",
+      "name": "DiscoveryPageProps",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/components/DiscoveryPage.tsx",
+      "name": "ProjectType",
+      "type": "type"
+    },
+    {
+      "file": "desktop/renderer/src/components/ToolCallCard.tsx",
+      "name": "getToolIcon",
+      "type": "function"
+    },
+    {
+      "file": "desktop/renderer/src/components/ToolCallCard.tsx",
+      "name": "getPathFromArgs",
+      "type": "function"
+    },
+    {
+      "file": "desktop/renderer/src/components/ToolCallCard.tsx",
+      "name": "getToolActionSummary",
+      "type": "function"
+    },
+    {
+      "file": "desktop/renderer/src/components/ToolCallCard.tsx",
+      "name": "ToolCallDetail",
+      "type": "function"
+    },
+    {
+      "file": "desktop/renderer/src/components/ToolCallCard.tsx",
+      "name": "ToolCallGroup",
+      "type": "function"
+    },
+    {
+      "file": "desktop/renderer/src/components/ToolCallCard.tsx",
+      "name": "ToolCallStatus",
+      "type": "type"
+    },
+    {
+      "file": "desktop/renderer/src/components/ui/alert.tsx",
+      "name": "AlertProps",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/components/ui/button.tsx",
+      "name": "ButtonProps",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/components/ui/card.tsx",
+      "name": "CardProps",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/components/ui/dialog.tsx",
+      "name": "ConfirmDialogProps",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/components/ui/dialog.tsx",
+      "name": "AlertBannerProps",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/components/ui/input.tsx",
+      "name": "InputProps",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/components/ui/label.tsx",
+      "name": "LabelProps",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/components/ui/select.tsx",
+      "name": "SelectProps",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/components/ui/select.tsx",
+      "name": "SelectItemProps",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/components/ui/separator.tsx",
+      "name": "SeparatorProps",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/components/ui/switch.tsx",
+      "name": "SwitchProps",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/components/ui/textarea.tsx",
+      "name": "TextareaProps",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/hooks/useKeyboardShortcuts.ts",
+      "name": "ShortcutCallbacks",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/pages/settings-helpers.ts",
+      "name": "ChannelOptionField",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/store/useProjectsStore.ts",
+      "name": "Conversation",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/store/useProjectsStore.ts",
+      "name": "Project",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/store/useProjectsStore.ts",
+      "name": "ArchivedConversation",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/store/useRouteDevStore.ts",
+      "name": "RouteDevState",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/renderer/src/store/useRouteDevStore.ts",
+      "name": "MessageRole",
+      "type": "type"
+    },
+    {
+      "file": "desktop/renderer/src/store/useRouteDevStore.ts",
+      "name": "ToolCallStatus",
+      "type": "type"
+    },
+    {
+      "file": "desktop/shared/ipc-types.ts",
+      "name": "ChatHistoryMessage",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/shared/ipc-types.ts",
+      "name": "SkillCreatePayload",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/shared/ipc-types.ts",
+      "name": "SkillOpResult",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/shared/ipc-types.ts",
+      "name": "SkillRouteResult",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/shared/ipc-types.ts",
+      "name": "MCPToolsResult",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/shared/ipc-types.ts",
+      "name": "PlanEditResponsePayload",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/shared/ipc-types.ts",
+      "name": "AgentProfileRole",
+      "type": "type"
+    },
+    {
+      "file": "desktop/shared/ipc-types.ts",
+      "name": "AgentProfileOutputFormat",
+      "type": "type"
+    },
+    {
+      "file": "desktop/shared/ipc-types.ts",
+      "name": "AgentProfileChallengeSeverity",
+      "type": "type"
+    },
+    {
+      "file": "desktop/shared/ipc-types.ts",
+      "name": "HookCreatePayload",
+      "type": "type"
     }
   ],
   "testOnlyExports": [
@@ -2039,6 +2284,11 @@
       "type": "function"
     },
     {
+      "file": "src/agent/context/context-discipline-prompt.ts",
+      "name": "buildContextDisciplinePrompt",
+      "type": "function"
+    },
+    {
       "file": "src/agent/context/offload-cleaner.ts",
       "name": "cleanSessionOffload",
       "type": "function"
@@ -2049,33 +2299,13 @@
       "type": "function"
     },
     {
-      "file": "src/agent/context-usage-panel.ts",
-      "name": "estimateTokensSimple",
+      "file": "src/agent/context/system-prompt-builder.ts",
+      "name": "buildSystemPrompt",
       "type": "function"
     },
     {
-      "file": "src/agent/context-usage-panel.ts",
-      "name": "ContextUsagePanel",
-      "type": "class"
-    },
-    {
-      "file": "src/agent/context-usage-panel.ts",
-      "name": "ContextUsageParams",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/curated-set.ts",
-      "name": "CuratedSetConfig",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/deep-review/aggregator.ts",
-      "name": "dedupeIssues",
-      "type": "function"
-    },
-    {
-      "file": "src/agent/deep-review/aggregator.ts",
-      "name": "arbitrate",
+      "file": "src/agent/context/user-profile-loader.ts",
+      "name": "loadUserProfile",
       "type": "function"
     },
     {
@@ -2091,21 +2321,6 @@
     {
       "file": "src/agent/epistemic-integrity-checker.ts",
       "name": "EpistemicIntegrityCheckerConfig",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/epistemic-preserving-summarizer.ts",
-      "name": "DEFAULT_EPISTEMIC_PRESERVING_SUMMARIZER_CONFIG",
-      "type": "const"
-    },
-    {
-      "file": "src/agent/epistemic-preserving-summarizer.ts",
-      "name": "EPISTEMIC_PRESERVING_SYSTEM_PROMPT",
-      "type": "const"
-    },
-    {
-      "file": "src/agent/epistemic-preserving-summarizer.ts",
-      "name": "EpistemicPreservingSummarizerConfig",
       "type": "interface"
     },
     {
@@ -2144,6 +2359,11 @@
       "type": "interface"
     },
     {
+      "file": "src/agent/goal-persistence.ts",
+      "name": "PersistedGoal",
+      "type": "interface"
+    },
+    {
       "file": "src/agent/hooks.ts",
       "name": "createHookRunner",
       "type": "function"
@@ -2177,6 +2397,11 @@
       "file": "src/agent/memory/auto-compact-guardian.ts",
       "name": "AutoCompactConfig",
       "type": "interface"
+    },
+    {
+      "file": "src/agent/memory/consolidation.ts",
+      "name": "consolidateToGraph",
+      "type": "function"
     },
     {
       "file": "src/agent/memory/consolidation.ts",
@@ -2264,6 +2489,11 @@
       "type": "interface"
     },
     {
+      "file": "src/agent/omission-checker.ts",
+      "name": "OmissionChecker",
+      "type": "class"
+    },
+    {
       "file": "src/agent/parallel-experiment.ts",
       "name": "ParallelExperimentManager",
       "type": "class"
@@ -2289,64 +2519,9 @@
       "type": "interface"
     },
     {
-      "file": "src/agent/patterns/coverage-check.ts",
-      "name": "checkPatternCoverage",
-      "type": "function"
-    },
-    {
-      "file": "src/agent/patterns/prompt-chain.ts",
-      "name": "ChainStep",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/patterns/prompt-chain.ts",
-      "name": "ChainEvent",
-      "type": "type"
-    },
-    {
-      "file": "src/agent/patterns/reflection.ts",
-      "name": "ReflectionParams",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/patterns/reflection.ts",
-      "name": "ReviewResult",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/patterns/reflection.ts",
-      "name": "ReflectionEvent",
-      "type": "type"
-    },
-    {
-      "file": "src/agent/persona-engine.ts",
-      "name": "PersonaEngine",
-      "type": "class"
-    },
-    {
-      "file": "src/agent/persona-engine.ts",
-      "name": "UserInteractionSignals",
-      "type": "interface"
-    },
-    {
       "file": "src/agent/plan-attestation.ts",
       "name": "computePlanHash",
       "type": "function"
-    },
-    {
-      "file": "src/agent/preference-manager.ts",
-      "name": "PreferenceManager",
-      "type": "class"
-    },
-    {
-      "file": "src/agent/prompts.ts",
-      "name": "SYSTEM_PROMPT_TEMPLATE_ID",
-      "type": "const"
-    },
-    {
-      "file": "src/agent/prompts.ts",
-      "name": "DEFAULT_SYSTEM_PROMPT_EN",
-      "type": "const"
     },
     {
       "file": "src/agent/quantitative-gate.ts",
@@ -2362,11 +2537,6 @@
       "file": "src/agent/quantitative-gate.ts",
       "name": "GateDecision",
       "type": "type"
-    },
-    {
-      "file": "src/agent/rejected-alternative-store.ts",
-      "name": "RejectedAlternative",
-      "type": "interface"
     },
     {
       "file": "src/agent/reviewer-tier-evaluator.ts",
@@ -2402,6 +2572,11 @@
       "file": "src/agent/task-orchestrator.ts",
       "name": "PLANNING_KEYWORDS",
       "type": "reexport"
+    },
+    {
+      "file": "src/agent/token-profiler.ts",
+      "name": "formatTokenProfileText",
+      "type": "function"
     },
     {
       "file": "src/agent/unified-reviewer.ts",
@@ -2457,36 +2632,6 @@
       "file": "src/agents/delegation-policy.ts",
       "name": "DelegationMode",
       "type": "type"
-    },
-    {
-      "file": "src/agents/instance-harness.ts",
-      "name": "createSessionStorageKey",
-      "type": "function"
-    },
-    {
-      "file": "src/agents/instance-harness.ts",
-      "name": "parseSessionStorageKey",
-      "type": "function"
-    },
-    {
-      "file": "src/agents/instance-harness.ts",
-      "name": "createDefaultInstance",
-      "type": "function"
-    },
-    {
-      "file": "src/agents/instance-harness.ts",
-      "name": "createHarness",
-      "type": "function"
-    },
-    {
-      "file": "src/agents/instance-harness.ts",
-      "name": "HarnessScope",
-      "type": "class"
-    },
-    {
-      "file": "src/agents/instance-harness.ts",
-      "name": "AgentInstance",
-      "type": "interface"
     },
     {
       "file": "src/agents/profiles/builtin-templates.ts",
@@ -2584,281 +2729,6 @@
       "type": "interface"
     },
     {
-      "file": "src/cli/command-registry.ts",
-      "name": "createCommandRegistry",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/commands/permissions.ts",
-      "name": "renderPermissionsOutput",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/commands/review.ts",
-      "name": "buildReviewPrompt",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/commands/review.ts",
-      "name": "parseReviewResult",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/completion.ts",
-      "name": "COMMAND_COMPLETIONS",
-      "type": "const"
-    },
-    {
-      "file": "src/cli/components/BranchSwitcher.tsx",
-      "name": "formatRelativeTime",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/ConfigReloadUI.tsx",
-      "name": "classifyConfigChange",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/ConfigReloadUI.tsx",
-      "name": "diffConfigs",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/ConfigReloadUI.tsx",
-      "name": "mergeChanges",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/ConfirmDialog.tsx",
-      "name": "riskLabel",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/ConfirmDialog.tsx",
-      "name": "riskColor",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/ConfirmDialog.tsx",
-      "name": "formatRemainingSeconds",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/DiffView.tsx",
-      "name": "countDiffLines",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/DiffView.tsx",
-      "name": "buildPatchFromHunks",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/DiffView.tsx",
-      "name": "buildPatchFromDecisions",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/DiffView.tsx",
-      "name": "DiffHunk",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/components/DiffView.tsx",
-      "name": "HunkDecision",
-      "type": "type"
-    },
-    {
-      "file": "src/cli/components/DisclosureLevel.tsx",
-      "name": "renderDisclosureText",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/goal-progress.ts",
-      "name": "estimateEta",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/goal-progress.ts",
-      "name": "countCompleted",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/goal-progress.ts",
-      "name": "GOAL_STATUS_ICON",
-      "type": "const"
-    },
-    {
-      "file": "src/cli/components/StatusBar.tsx",
-      "name": "getColorWithTheme",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/StatusBar.tsx",
-      "name": "getTierColorWithTheme",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/StatusBar.tsx",
-      "name": "formatTokenCount",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/StepCard.tsx",
-      "name": "truncateDescription",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/StepCard.tsx",
-      "name": "STATUS_ICON",
-      "type": "const"
-    },
-    {
-      "file": "src/cli/components/StepCard.tsx",
-      "name": "STATUS_COLOR",
-      "type": "const"
-    },
-    {
-      "file": "src/cli/components/StepEditor.tsx",
-      "name": "createInitialState",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/StepEditor.tsx",
-      "name": "reduce",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/TracePanel.tsx",
-      "name": "formatTimelineBar",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/components/TracePanel.tsx",
-      "name": "computeSummary",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/custom-commands.ts",
-      "name": "parseMarkdown",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/custom-commands.ts",
-      "name": "renderTemplate",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/design-system.ts",
-      "name": "MESSAGE_STYLES",
-      "type": "const"
-    },
-    {
-      "file": "src/cli/design-system.ts",
-      "name": "TYPOGRAPHY",
-      "type": "const"
-    },
-    {
-      "file": "src/cli/design-system.ts",
-      "name": "TIER_LABELS",
-      "type": "const"
-    },
-    {
-      "file": "src/cli/doctor.ts",
-      "name": "ProbeResult",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/exec-runner.ts",
-      "name": "applyWorkMode",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/exec-runner.ts",
-      "name": "applyToolWhitelist",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/exec-runner.ts",
-      "name": "runExec",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/exec-runner.ts",
-      "name": "EXEC_EXIT_CODE",
-      "type": "const"
-    },
-    {
-      "file": "src/cli/exec-runner.ts",
-      "name": "ExecResult",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/exec-runner.ts",
-      "name": "ExecuteFn",
-      "type": "type"
-    },
-    {
-      "file": "src/cli/notification.ts",
-      "name": "formatNotification",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/notification.ts",
-      "name": "notify",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/notification.ts",
-      "name": "BELL_CHAR",
-      "type": "const"
-    },
-    {
-      "file": "src/cli/output-style.ts",
-      "name": "disclosureLevelToOutputStyle",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/output-style.ts",
-      "name": "shouldShowThinking",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/output-style.ts",
-      "name": "shouldShowToolDetails",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/output-style.ts",
-      "name": "shouldShowProgress",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/output-style.ts",
-      "name": "shouldShowAnimation",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/output-style.ts",
-      "name": "shouldShowTimer",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/output-style.ts",
-      "name": "isHighDensity",
-      "type": "function"
-    },
-    {
-      "file": "src/cli/service-context.ts",
-      "name": "ServiceContextDeps",
-      "type": "interface"
-    },
-    {
-      "file": "src/cli/tool-verb.ts",
-      "name": "TOOL_RUNNING_PREFIX",
-      "type": "const"
-    },
-    {
       "file": "src/code-map/compression.ts",
       "name": "distillContext",
       "type": "function"
@@ -2884,18 +2754,33 @@
       "type": "function"
     },
     {
+      "file": "src/code-map/indexer.ts",
+      "name": "fullIndex",
+      "type": "function"
+    },
+    {
+      "file": "src/code-map/indexer.ts",
+      "name": "resolveCrossFileCalls",
+      "type": "function"
+    },
+    {
+      "file": "src/code-map/indexer.ts",
+      "name": "resolveSymbolEdges",
+      "type": "function"
+    },
+    {
       "file": "src/code-map/parser.ts",
       "name": "initParser",
       "type": "function"
     },
     {
       "file": "src/code-map/querier.ts",
-      "name": "findCallers",
+      "name": "findCallPath",
       "type": "function"
     },
     {
       "file": "src/code-map/querier.ts",
-      "name": "analyzeImpact",
+      "name": "findCallChain",
       "type": "function"
     },
     {
@@ -2906,11 +2791,6 @@
     {
       "file": "src/code-map/querier.ts",
       "name": "getStatus",
-      "type": "function"
-    },
-    {
-      "file": "src/code-map/renderer.ts",
-      "name": "renderCodeMap",
       "type": "function"
     },
     {
@@ -2939,46 +2819,6 @@
       "type": "function"
     },
     {
-      "file": "src/config/presets.ts",
-      "name": "getPresetConfig",
-      "type": "function"
-    },
-    {
-      "file": "src/config/presets.ts",
-      "name": "applyPreset",
-      "type": "function"
-    },
-    {
-      "file": "src/config/presets.ts",
-      "name": "listPresets",
-      "type": "function"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "SandboxLevelSchema",
-      "type": "const"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "ApprovalLevelSchema",
-      "type": "const"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "ToolCategorySchema",
-      "type": "const"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "SecurityConfigSchema",
-      "type": "const"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "UIComponentsSchema",
-      "type": "const"
-    },
-    {
       "file": "src/config/schema.ts",
       "name": "MCPServerEntrySchema",
       "type": "const"
@@ -3004,46 +2844,6 @@
       "type": "const"
     },
     {
-      "file": "src/config/schema.ts",
-      "name": "BoundedRecoveryConfigSchema",
-      "type": "const"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "ApprovalLevel",
-      "type": "type"
-    },
-    {
-      "file": "src/config/schema.ts",
-      "name": "ToolCategory",
-      "type": "type"
-    },
-    {
-      "file": "src/evaluation/evaluation-framework.ts",
-      "name": "EVALUATION_SETS",
-      "type": "const"
-    },
-    {
-      "file": "src/evaluation/evaluation-framework.ts",
-      "name": "EvaluationFramework",
-      "type": "class"
-    },
-    {
-      "file": "src/evaluation/evaluation-framework.ts",
-      "name": "EvaluationCase",
-      "type": "interface"
-    },
-    {
-      "file": "src/evaluation/evaluation-framework.ts",
-      "name": "EvaluationReport",
-      "type": "interface"
-    },
-    {
-      "file": "src/evaluation/evaluation-framework.ts",
-      "name": "JudgeResult",
-      "type": "interface"
-    },
-    {
       "file": "src/evaluation/mi-cross-scorer.ts",
       "name": "DEFAULT_MI_CROSS_SCORER_CONFIG",
       "type": "const"
@@ -3057,41 +2857,6 @@
       "file": "src/evaluation/mi-cross-scorer.ts",
       "name": "MICrossScorerConfig",
       "type": "interface"
-    },
-    {
-      "file": "src/evaluation/online-monitor.ts",
-      "name": "OnlineMonitor",
-      "type": "class"
-    },
-    {
-      "file": "src/evaluation/online-monitor.ts",
-      "name": "Alert",
-      "type": "interface"
-    },
-    {
-      "file": "src/evaluation/process-defect-ontology.ts",
-      "name": "classifyDefect",
-      "type": "function"
-    },
-    {
-      "file": "src/evaluation/process-defect-ontology.ts",
-      "name": "calibrateRisk",
-      "type": "function"
-    },
-    {
-      "file": "src/evaluation/process-defect-ontology.ts",
-      "name": "computeControlPreservation",
-      "type": "function"
-    },
-    {
-      "file": "src/evaluation/process-defect-ontology.ts",
-      "name": "computeProcessGrade",
-      "type": "function"
-    },
-    {
-      "file": "src/evaluation/process-defect-ontology.ts",
-      "name": "DefectCategory",
-      "type": "type"
     },
     {
       "file": "src/harness/quality-metrics-types.ts",
@@ -3117,11 +2882,6 @@
       "file": "src/hooks/adapter.ts",
       "name": "executeShellCommand",
       "type": "function"
-    },
-    {
-      "file": "src/hooks/registry.ts",
-      "name": "HookConfigRegistry",
-      "type": "class"
     },
     {
       "file": "src/import/anthropic-skills-loader.ts",
@@ -3209,8 +2969,38 @@
       "type": "type"
     },
     {
-      "file": "src/optional/voice/voice-manager.ts",
-      "name": "VoiceManager",
+      "file": "src/memory/unified-memory.ts",
+      "name": "UnifiedMemoryStoreImpl",
+      "type": "class"
+    },
+    {
+      "file": "src/observability/integration.ts",
+      "name": "setActiveOtelExporter",
+      "type": "function"
+    },
+    {
+      "file": "src/observability/integration.ts",
+      "name": "getActiveOtelExporter",
+      "type": "function"
+    },
+    {
+      "file": "src/observability/integration.ts",
+      "name": "getActiveOtelBridge",
+      "type": "function"
+    },
+    {
+      "file": "src/observability/integration.ts",
+      "name": "TrajectoryOtelBridge",
+      "type": "class"
+    },
+    {
+      "file": "src/observability/integration.ts",
+      "name": "TrajectoryEvent",
+      "type": "interface"
+    },
+    {
+      "file": "src/observability/trajectory-exporter.ts",
+      "name": "TrajectoryExporter",
       "type": "class"
     },
     {
@@ -3234,8 +3024,13 @@
       "type": "interface"
     },
     {
-      "file": "src/policies/call-owner-mixin.ts",
-      "name": "CallOwnerMixin",
+      "file": "src/plugins/sdk-loader.ts",
+      "name": "createDefaultPluginContext",
+      "type": "function"
+    },
+    {
+      "file": "src/plugins/sdk-loader.ts",
+      "name": "PluginLoader",
       "type": "class"
     },
     {
@@ -3289,6 +3084,46 @@
       "type": "interface"
     },
     {
+      "file": "src/runtime/doctor.ts",
+      "name": "Doctor",
+      "type": "class"
+    },
+    {
+      "file": "src/runtime/doctor.ts",
+      "name": "ProbeResult",
+      "type": "interface"
+    },
+    {
+      "file": "src/runtime/notification.ts",
+      "name": "formatNotification",
+      "type": "function"
+    },
+    {
+      "file": "src/runtime/notification.ts",
+      "name": "notify",
+      "type": "function"
+    },
+    {
+      "file": "src/runtime/notification.ts",
+      "name": "BELL_CHAR",
+      "type": "const"
+    },
+    {
+      "file": "src/scheduler/cron-parser.ts",
+      "name": "validateCron",
+      "type": "function"
+    },
+    {
+      "file": "src/security/audit-panel.ts",
+      "name": "SecurityAuditPanel",
+      "type": "class"
+    },
+    {
+      "file": "src/security/sandbox.ts",
+      "name": "SandboxOptions",
+      "type": "interface"
+    },
+    {
       "file": "src/skills/compositional-router.ts",
       "name": "topologicalSort",
       "type": "function"
@@ -3302,11 +3137,6 @@
       "file": "src/skills/kan-obstacle-checker.ts",
       "name": "InputDependency",
       "type": "interface"
-    },
-    {
-      "file": "src/skills/market-manager.ts",
-      "name": "SkillMarketManager",
-      "type": "class"
     },
     {
       "file": "src/skills/operation-classifier.ts",
@@ -3334,6 +3164,11 @@
       "type": "const"
     },
     {
+      "file": "src/tools/builtin/browser.ts",
+      "name": "BrowserTool",
+      "type": "class"
+    },
+    {
       "file": "src/tools/builtin/spawn-agent.ts",
       "name": "SUBAGENT_TOOL_WHITELIST",
       "type": "const"
@@ -3346,6 +3181,26 @@
     {
       "file": "src/tools/builtin/spawn-agent.ts",
       "name": "SpawnResult",
+      "type": "interface"
+    },
+    {
+      "file": "src/tools/permission-engine.ts",
+      "name": "DEFAULT_DENY_RULES",
+      "type": "const"
+    },
+    {
+      "file": "src/tools/permission-engine.ts",
+      "name": "DEFAULT_CONFIRM_RULES",
+      "type": "const"
+    },
+    {
+      "file": "src/tools/permission-engine.ts",
+      "name": "DEFAULT_AUTO_RULES",
+      "type": "const"
+    },
+    {
+      "file": "src/tools/permission-engine.ts",
+      "name": "PermissionRule",
       "type": "interface"
     },
     {
@@ -3374,6 +3229,11 @@
       "type": "reexport"
     },
     {
+      "file": "src/tools/trust-gradient.ts",
+      "name": "TrustLevel",
+      "type": "type"
+    },
+    {
       "file": "src/utils/errors.ts",
       "name": "isRouteDevError",
       "type": "function"
@@ -3399,24 +3259,37 @@
       "type": "class"
     },
     {
-      "file": "src/utils/errors.ts",
-      "name": "PermissionDeniedError",
-      "type": "class"
+      "file": "src/utils/provider-validator.ts",
+      "name": "validateProviders",
+      "type": "function"
     },
     {
-      "file": "src/utils/errors.ts",
-      "name": "SecurityViolationError",
-      "type": "class"
+      "file": "src/utils/provider-validator.ts",
+      "name": "formatValidationMessages",
+      "type": "function"
+    },
+    {
+      "file": "desktop/main/mcp-catalog.ts",
+      "name": "getCategories",
+      "type": "function"
+    },
+    {
+      "file": "desktop/renderer/src/pages/settings-helpers.ts",
+      "name": "parseKeyValuePairs",
+      "type": "function"
+    },
+    {
+      "file": "desktop/renderer/src/pages/settings-helpers.ts",
+      "name": "keyValueToText",
+      "type": "function"
     }
   ],
   "entryFiles": [
-    "src/channels/server.ts",
-    "src/cli/app-init.ts",
-    "src/cli/App.tsx",
-    "src/cli/args.ts",
-    "src/cli/commands/index.ts",
-    "src/cli/server.ts",
-    "src/index.tsx",
-    "src/router/llm/index.ts"
+    "src/router/llm/index.ts",
+    "src/runtime/app-init.ts",
+    "desktop/main/index.ts",
+    "desktop/preload/index.ts",
+    "desktop/renderer/src/App.tsx",
+    "desktop/renderer/src/main.tsx"
   ]
 }

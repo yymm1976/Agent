@@ -692,9 +692,8 @@ export class ReActAgentLoop {
       onModelSuccess,
       onModelFailure,
     } = params;
-    // Phase 71 Task D1：systemPrompt 已由 system-prompt-builder.ts 静态拼装（chat-runner.ts 接入）
     // 此处的 middleware onSystemPrompt / conciseThinking / recallInjector 是运行时动态追加，
-    // 不纳入静态 builder（因 middleware 可运行时修改，systemBlocks 需独立处理）
+    // systemBlocks 需独立处理（middleware 可运行时修改）
     // Phase 38 Task 1：systemPrompt 改为 let，允许 onSystemPrompt 中间件修改
     let systemPrompt = params.systemPrompt;
     // Phase 55：systemBlocks（结构化 blocks，支持 per-block cache_control）

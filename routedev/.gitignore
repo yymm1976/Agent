@@ -15,6 +15,7 @@ build/
 release/
 release-v*/
 release2/
+release3/
 # Electron 打包输出
 *.exe
 *.dmg

@@ -6,9 +6,6 @@
 import { describe, it, expect } from 'vitest';
 import { KnowledgeGraph } from '../../src/agent/memory/graph.js';
 import type { GraphNode, GraphEdge } from '../../src/agent/memory/graph.js';
-import { consolidateToGraph } from '../../src/agent/memory/consolidation.js';
-import type { ConsolidationResult } from '../../src/agent/memory/consolidation.js';
-import type { CheckpointData } from '../../src/agent/memory/types.js';
 
 // ============================================================
 // 测试辅助
@@ -40,31 +37,6 @@ function makeEdge(source: string, target: string, opts: Partial<GraphEdge> = {})
     target,
     type: opts.type ?? 'relates_to',
     weight: opts.weight ?? 1,
-  };
-}
-
-/** 构造一个最小的 CheckpointData */
-function makeCheckpoint(overrides: Partial<CheckpointData> = {}): CheckpointData {
-  return {
-    currentIntent: '测试意图',
-    nextAction: '测试动作',
-    workingConstraints: [],
-    taskTree: { description: '测试任务', status: 'in_progress', children: [] },
-    currentWorkingFiles: [],
-    involvedFiles: [],
-    crossTaskDiscoveries: [],
-    errorsAndFixes: [],
-    runtimeState: {},
-    designDecisions: [],
-    miscNotes: [],
-    ...overrides,
-  };
-}
-
-/** 构造一个最小的 ConsolidationResult（Phase 57：原 DreamResult 改名） */
-function makeConsolidationResult(checkpoint: CheckpointData): ConsolidationResult {
-  return {
-    consolidated: checkpoint,
   };
 }
 
@@ -281,83 +253,6 @@ describe('Phase 36 Task 4：KnowledgeGraph 模式聚类与置信度', () => {
 
       const archived = g.archiveStaleNodes(30);
       expect(archived).toBe(0);
-    });
-  });
-
-  describe('consolidateToGraph 记忆整理注入', () => {
-    it('应从 ConsolidationResult 提取设计决策并创建 decision 节点', () => {
-      const g = new KnowledgeGraph();
-      const checkpoint = makeCheckpoint({
-        designDecisions: [
-          { decision: '使用 JWT 做认证', reason: '无状态、易扩展' },
-        ],
-      });
-      const result_ = makeConsolidationResult(checkpoint);
-
-      const result = consolidateToGraph(result_, g);
-      expect(result.created).toBeGreaterThanOrEqual(1);
-
-      const decisions = g.listNodes({ type: 'decision' });
-      expect(decisions.length).toBeGreaterThanOrEqual(1);
-      expect(decisions[0].content).toContain('JWT');
-      expect(decisions[0].content).toContain('无状态');
-    });
-
-    it('应从 ConsolidationResult 提取跨任务发现并创建 fact 节点', () => {
-      const g = new KnowledgeGraph();
-      const checkpoint = makeCheckpoint({
-        crossTaskDiscoveries: ['filterContext 和 declareFocus 共享关键词提取逻辑'],
-      });
-      const result_ = makeConsolidationResult(checkpoint);
-
-      const result = consolidateToGraph(result_, g);
-      expect(result.created).toBeGreaterThanOrEqual(1);
-
-      const facts = g.listNodes({ type: 'fact' });
-      expect(facts.length).toBeGreaterThanOrEqual(1);
-      expect(facts[0].content).toContain('filterContext');
-    });
-
-    it('应从 ConsolidationResult 提取已修复的错误并创建 fact 节点', () => {
-      const g = new KnowledgeGraph();
-      const checkpoint = makeCheckpoint({
-        errorsAndFixes: [
-          { error: '类型推断失败', fix: '显式标注返回类型', resolved: true },
-        ],
-      });
-      const result_ = makeConsolidationResult(checkpoint);
-
-      consolidateToGraph(result_, g);
-      const facts = g.listNodes({ type: 'fact' });
-      const errorFact = facts.find(f => f.content.includes('类型推断'));
-      expect(errorFact).toBeDefined();
-      expect(errorFact!.content).toContain('显式标注');
-    });
-
-    it('未解决的错误不应被提取', () => {
-      const g = new KnowledgeGraph();
-      const checkpoint = makeCheckpoint({
-        errorsAndFixes: [
-          { error: '未修复的 bug', fix: '待定', resolved: false },
-        ],
-      });
-      const result_ = makeConsolidationResult(checkpoint);
-
-      consolidateToGraph(result_, g);
-      const facts = g.listNodes({ type: 'fact' });
-      const unresolved = facts.find(f => f.content.includes('未修复'));
-      expect(unresolved).toBeUndefined();
-    });
-
-    it('无 consolidated checkpoint 时应返回空统计', () => {
-      const g = new KnowledgeGraph();
-      const empty: ConsolidationResult = {
-        consolidated: undefined as unknown as CheckpointData,
-      };
-      const result = consolidateToGraph(empty, g);
-      expect(result.created).toBe(0);
-      expect(result.merged).toBe(0);
-      expect(result.superseded).toBe(0);
     });
   });
 });
