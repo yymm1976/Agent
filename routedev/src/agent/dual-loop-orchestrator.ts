@@ -64,12 +64,9 @@ import type {
   ReviewerPolicyConfig,
   BoundedRecoveryConfig,
 } from '../config/schema.js';
-// Phase 52 消费方接入（I-2）：仅引入类型，避免运行时循环依赖
-// 实际实例由 app-init.ts 创建并通过 setter 注入；run() 中的消费逻辑由本文件实现
-import type {
-  ArchitectureAwareMetricsCollector,
-  TrajectoryInput,
-} from '../evaluation/architecture-aware-metrics.js';
+// Phase 59：ArchitectureAwareMetricsCollector / TrajectoryInput import 已删除（死链清理）
+// - setMetricsCollector 无外部调用方，metricsCollector 字段仅在死分支中被读取
+// - 源文件 src/evaluation/architecture-aware-metrics.ts 保留
 
 /** 陷阱 #141：maxReruns 默认 2 而非 3，避免 Token 爆炸 */
 export const DEFAULT_MAX_RERUNS = 2;
@@ -133,9 +130,7 @@ export class DualLoopOrchestrator {
   private boundedRecoveryConfig?: BoundedRecoveryConfig;
   // Phase 52 Task 3：有界恢复管理器（仅在 boundedRecoveryConfig.enabled=true 时使用）
   private recoveryManager?: BoundedRecoveryManager;
-  // Phase 52 消费方接入（I-2）：实例由 app-init.ts 创建并通过 setter 注入
-  // 未注入时 run() 中的相关分支自动跳过（向后兼容）；调用失败时降级为 warn 日志，不中断主流程
-  private metricsCollector?: ArchitectureAwareMetricsCollector;
+  // Phase 59：metricsCollector 字段已删除（死链清理，setter 无外部调用方）
   // Phase 55 Task 7：内循环 Agent（占位，Task 9 完整接入 inner/outer 循环逻辑）
   private innerAgent?: ReActAgentLoop;
 
@@ -183,23 +178,7 @@ export class DualLoopOrchestrator {
     }
   }
 
-  /**
-   * 注入架构感知指标采集器（Phase 52 Task 6，I-2 消费方接入）
-   *
-   * 由 app-init.ts 在创建 ArchitectureAwareMetricsCollector 后调用。
-   * 未注入时 run() 中的指标采集分支自动跳过（向后兼容）。
-   *
-   * 注入后,runDualLoop 会在每次内循环完成后调用 extractFromTrajectory 采集指标,
-   * 输入 TrajectoryInput 从本轮 toolCallNames / goal.plan.steps.length / 重跑标记构造;
-   * router/memory/skill_flow 三个组件事件当前未在内循环中采集,置空数组(对应指标走默认值)。
-   * 调用失败时降级为 warn 日志,不中断主流程。
-   */
-  setMetricsCollector(collector: ArchitectureAwareMetricsCollector): void {
-    this.metricsCollector = collector;
-    logger.debug('DualLoopOrchestrator: metrics collector injected', {
-      sensitivity: collector.getAnomalySensitivity(),
-    });
-  }
+  // Phase 59：setMetricsCollector 方法已删除（死链清理，无外部调用方）
 
   /**
    * Phase 55 Task 7：注入内循环 Agent
@@ -361,59 +340,8 @@ export class DualLoopOrchestrator {
         }
       }
 
-      // ===== Phase 52 Task 6（I-2 消费方接入）：内循环完成后采集架构感知指标 =====
-      // 向后兼容：未注入 metricsCollector 时跳过
-      // 失败不中断主流程：try/catch 降级为 warn 日志
-      if (this.metricsCollector) {
-        try {
-          logger.info('DualLoopOrchestrator: 采集架构感知指标', {
-            iteration,
-            sensitivity: this.metricsCollector.getAnomalySensitivity(),
-            toolCalls: toolCallNames.length,
-            modifiedFiles: innerResult.modifiedFiles.length,
-          });
-          // 真实调用：从本轮内循环事件构造 TrajectoryInput
-          //   - toolCalls：从本轮 toolCallNames 推断（success/latencyMs/isError 在内循环未采集，置默认值）
-          //   - plannerSteps：本轮的 plan 步骤数
-          //   - dualLoopEvents：当前是否为重跑（rerun=true 时表示发生过打回）
-          //   - routerDecisions / memoryAccesses / skillFlowEvents：内循环未采集，置空数组
-          const trajectory: TrajectoryInput = {
-            routerDecisions: [],
-            plannerSteps: [
-              {
-                stepId,
-                planningMs: 0,
-                stepCount: goal.plan.steps.length,
-              },
-            ],
-            memoryAccesses: [],
-            toolCalls: toolCallNames.map(name => ({
-              toolName: name,
-              success: true,
-              latencyMs: 0,
-              isError: false,
-            })),
-            skillFlowEvents: [],
-            dualLoopEvents: [
-              {
-                rerun: rerunCount > 0,
-                appealed: false,
-                blocked: false,
-              },
-            ],
-          };
-          const metrics = this.metricsCollector.extractFromTrajectory(trajectory);
-          const anomalousComponents = this.metricsCollector.identifyAnomalies(metrics);
-          logger.debug('Architecture metrics collected', {
-            components: metrics.length,
-            anomalousComponents: anomalousComponents.length,
-          });
-        } catch (err) {
-          logger.warn('DualLoopOrchestrator: 指标采集失败', {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
+      // Phase 59：metricsCollector 死分支已删除（setter 无外部调用方，字段永为 undefined）
+      // - 源文件 src/evaluation/architecture-aware-metrics.ts 保留
 
       // ===== 外循环：独立验证 =====
       yield { type: 'outer-loop-start', iteration };

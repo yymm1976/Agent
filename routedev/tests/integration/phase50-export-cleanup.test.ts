@@ -36,7 +36,7 @@ const CLEANED_SAMPLES: Array<{ file: string; symbols: string[] }> = [
   { file: 'src/agent/memory/context-manager.ts', symbols: ['CompressionCallback', 'CompressEnhancedOptions'] },
   // src/agent/multi/
   { file: 'src/agent/multi/orchestrator-strategy.ts', symbols: ['OrchestrationStrategy', 'OrchestratorConfig'] },
-  { file: 'src/agent/multi/score-card.ts', symbols: ['UserFeedback', 'AggregateStats'] },
+  // 注：score-card.ts 已整体删除（死代码清理：纯死文件，所有 export 无生产引用）
   // src/agents/
   { file: 'src/agents/delegation-gate.ts', symbols: ['ActiveSubAgent', 'GateResult'] },
   { file: 'src/agents/profiles/types.ts', symbols: ['AgentOutputFormat', 'ChallengeSeverity'] },

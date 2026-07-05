@@ -21,7 +21,6 @@
 - `src/policies/` — 策略引擎（call-owner 协调 + checkpoint 流水线 + intent-guard + 工具审批）
 - `src/prompts/` — Prompt 模板系统（三级优先级）
 - `src/router/` — 模型路由层（分类 + 路由 + LLM 客户端 + Token 追踪）
-- `src/scheduler/` — 定时调度层（cron 解析 + 任务引擎 + 持久化）（Phase 37 新增）
 - `src/security/` — 安全层（沙箱 + 完整性清单 + 审计面板）
 - `src/skills/` — Skill 系统（生命周期 + 路由 + 校验 + 市场管理）
 - `src/tools/` — 工具框架（注册表 + 执行器 + 权限引擎 + 内置工具 + MCP）
@@ -166,15 +165,6 @@
 - `llm/base.ts` — LLM 客户端基类：超时、错误标准化、重试（180 行）
 - `llm/openai.ts` — OpenAI 协议客户端：非流式/流式/工具调用（311 行）
 - `llm/anthropic.ts` — Anthropic 协议客户端：非流式/流式/工具调用（305 行）
-**依赖：** config/、utils/
-
-### src/scheduler/ — 定时调度层（Phase 37 新增）
-**职责：** cron 表达式解析、定时任务调度、任务持久化
-**关键文件：**
-- `cron-parser.ts` — 自研 5 字段 cron 解析器（支持星号/数字/列表/范围/步进，不引入 node-cron）
-- `types.ts` — ScheduledTask/TaskStatus/TaskExecutionRecord 类型定义
-- `store.ts` — ScheduleStore：JSON 文件持久化（原子写入）
-- `engine.ts` — ScheduleEngine：setInterval 调度 + fire-and-forget 触发 + 事件回调
 **依赖：** config/、utils/
 
 ### src/tools/ — 工具框架

@@ -72,7 +72,6 @@ import { ContextCompactor } from '../agent/context-compaction.js';
 import { estimateTokens } from '../utils/token-estimate.js';
 import { VisionAssistant } from '../agent/vision.js';
 import { BranchManager } from '../agent/branch.js';
-import { InitAnalyzer } from '../agent/init-analyzer.js';
 import { Blackboard } from '../agent/multi/blackboard.js';
 import { Orchestrator, type OrchestrationIntegrationOptions } from '../agent/multi/orchestrator.js';
 // Phase 50 Task 1：Goal 流程核心模块（按 config.goalIntegration 渐进接入）
@@ -169,7 +168,6 @@ import { ActionChainDetector } from '../agent/memory/action-chain-detector.js';
 import { AutoCompactGuardian, DEFAULT_GUARDIAN_CONFIG } from '../agent/memory/auto-compact-guardian.js';
 import { CompactPromptEngine } from '../agent/memory/compact-prompt-engine.js';
 import { SessionMemoryStore } from '../agent/memory/session-memory-store.js';
-import { CodebaseMemory } from '../memory/codebase-memory.js';
 import { IntegrityManifest } from '../security/integrity-manifest.js';
 // [I-5] CommandSandbox：命令执行安全沙箱，注入 ShellExecTool 做白/黑名单 + 危险模式前置校验
 import { CommandSandbox } from '../security/sandbox.js';
@@ -225,7 +223,7 @@ export interface AppDependencies {
   // 辅助 Agent
   visionAssistant: VisionAssistant | undefined;
   branchManager: BranchManager;
-  initAnalyzer: InitAnalyzer | null;
+  // Phase 59：initAnalyzer 接口字段已删除（僵尸字段，全 src/ + desktop/ 无消费方）
   // 基础设施
   prompts: PromptTemplateManager;
   blackboard: Blackboard;
@@ -313,8 +311,7 @@ export interface AppDependencies {
   autoCompactGuardian?: AutoCompactGuardian;
   compactPromptEngine?: CompactPromptEngine;
   sessionMemoryStore?: SessionMemoryStore;
-  /** 代码库语义索引（config.memory.codebaseMemoryEnabled=true 时创建） */
-  codebaseMemory?: CodebaseMemory;
+  // Phase 59：codebaseMemory 接口字段已删除（僵尸字段，deps.codebaseMemory 全 src/ + desktop/ 无消费方）
 }
 
 /**
@@ -446,19 +443,9 @@ export function createAppDependencies(
     return { store, persistentPath };
   })();
 
-  // CodebaseMemory：扫描项目根目录建立语义索引，跨会话复用
-  const codebaseMemory = (() => {
-    const memCfg = config.memory;
-    const enabled = memCfg?.codebaseMemoryEnabled ?? true;
-    if (!enabled) return undefined;
-    const maxFiles = memCfg?.codebaseMemoryMaxFiles ?? 500;
-    const memory = new CodebaseMemory(cwd, { maxFiles });
-    // 后台异步扫描，不阻塞主流程
-    memory.scan().catch((err) => {
-      logger.warn('CodebaseMemory: initial scan failed', { error: err instanceof Error ? err.message : String(err) });
-    });
-    return memory;
-  })();
+  // Phase 59：codebaseMemory 实例化已删除（僵尸字段，无外部消费方）
+  // - 源文件 src/memory/codebase-memory.ts 保留
+  // - UnifiedMemoryStoreImpl 注入点改为 null（unified-memory.ts L207 在 codebaseMemory=null 时 return []，行为兼容）
 
   const contextCompactor = new ContextCompactor({
     targetTokens: Math.floor((currentModelConfig?.contextWindow ?? 128000) * 0.6),
@@ -487,6 +474,9 @@ export function createAppDependencies(
     autoCompactGuardian: p70AutoCompactGuardian,
     compactPromptEngine: p70CompactPromptEngine,
     sessionMemoryStore: p70SessionMemoryStore,
+    // Phase 63：状态外部化配置 wiring——defaults.ts 已定义默认值，但此前未透传到 CompactionConfig
+    // 不传则 context-compaction.ts initStateExternalizationModules 在 `!se` 处直接 return，三个子模块永不激活
+    stateExternalization: config.stateExternalization,
   });
   contextManager.setCompactor(contextCompactor);
 
@@ -541,9 +531,7 @@ export function createAppDependencies(
     ? new VisionAssistant(config.providers, (id: string) => clientManager.get(id))
     : undefined;
   const branchManager = new BranchManager();
-  const initAnalyzer = primaryClient
-    ? new InitAnalyzer({ llmClient: primaryClient, modelId: config.router.classifierModel, rootPath: cwd })
-    : null;
+  // Phase 59：initAnalyzer 实例化已删除（僵尸字段，无消费方；源文件 src/agent/init-analyzer.ts 保留）
   // ===== 基础设施 =====
   const prompts = new PromptTemplateManager({ projectOverrides: true });
   const blackboard = new Blackboard();
@@ -2282,7 +2270,6 @@ export function createAppDependencies(
     contextManager,
     visionAssistant,
     branchManager,
-    initAnalyzer,
     prompts,
     blackboard,
     trace,
@@ -2390,15 +2377,16 @@ export function createAppDependencies(
         minAccessCount: msCfg.localMaintenance.minAccessCount,
       });
       // [I-3] UnifiedMemoryStore 桥接 MemoryStore + KnowledgeGraph + CodebaseMemory（P0.2）
+      // Phase 59：codebaseMemory 僵尸字段已删，注入点改为 null（unified-memory.ts 内部对 null 已兼容）
       // 使用变量路径让 TypeScript 无法静态解析，避免模块缺失时 typecheck 失败
       const unifiedMemoryModulePath = '../memory/unified-memory.js';
       import(unifiedMemoryModulePath)
         .then(({ UnifiedMemoryStoreImpl }) => {
           const knowledgeGraph = contextManager?.getKnowledgeGraph?.() ?? null;
-          const unifiedMemory = new UnifiedMemoryStoreImpl(memoryStore, knowledgeGraph, codebaseMemory ?? null);
+          const unifiedMemory = new UnifiedMemoryStoreImpl(memoryStore, knowledgeGraph, null);
           logger.info('UnifiedMemoryStore initialized', {
             hasKnowledgeGraph: knowledgeGraph !== null,
-            hasCodebaseMemory: codebaseMemory != null,
+            hasCodebaseMemory: false,
           });
         })
         .catch(() => { /* fail-open：unified-memory 模块不可用时跳过 */ });
@@ -2498,9 +2486,7 @@ export function createAppDependencies(
         result.sessionMemoryStore = p70SessionMemoryStore;
       }
 
-      if (codebaseMemory) {
-        result.codebaseMemory = codebaseMemory;
-      }
+      // Phase 59：codebaseMemory 字段已从 AppDependencies 接口删除，此处不再注入
 
       if (Object.keys(result).length > 0) {
         logger.info('Phase 70: Context compaction modules enabled', {
@@ -2513,7 +2499,6 @@ export function createAppDependencies(
           sessionMemoryStore: !!result.sessionMemoryStore,
           sessionMemoryPersistPath: p70SessionMemoryPersistentPath,
           sessionMemoryMaxMemories: p70Cfg?.sessionMemory?.maxMemories,
-          codebaseMemory: !!result.codebaseMemory,
         });
       }
 

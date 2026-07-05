@@ -1,26 +1,6 @@
 {
-  "totalExports": 1540,
+  "totalExports": 1411,
   "deadExports": [
-    {
-      "file": "src/agent/action-agent-dispatcher.ts",
-      "name": "DispatchResult",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/action-agent-dispatcher.ts",
-      "name": "ActionAgentDispatcherConfig",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/action-agent-dispatcher.ts",
-      "name": "ActionExecutorFn",
-      "type": "type"
-    },
-    {
-      "file": "src/agent/adversarial-verifier.ts",
-      "name": "VerificationOutcome",
-      "type": "interface"
-    },
     {
       "file": "src/agent/bounded-recovery.ts",
       "name": "StepArtifactType",
@@ -77,24 +57,9 @@
       "type": "interface"
     },
     {
-      "file": "src/agent/context/context-discipline-prompt.ts",
-      "name": "ContextDisciplineOptions",
-      "type": "interface"
-    },
-    {
       "file": "src/agent/context/mention-parser.ts",
       "name": "MentionType",
       "type": "type"
-    },
-    {
-      "file": "src/agent/context/system-prompt-builder.ts",
-      "name": "SystemPromptParts",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/context/system-prompt-builder.ts",
-      "name": "DynamicContext",
-      "type": "interface"
     },
     {
       "file": "src/agent/context/token-aware-slicer.ts",
@@ -114,11 +79,6 @@
     {
       "file": "src/agent/context/tool-output-pipeline.ts",
       "name": "ToolOutputResult",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/context/user-profile-loader.ts",
-      "name": "UserProfile",
       "type": "interface"
     },
     {
@@ -172,26 +132,6 @@
       "type": "interface"
     },
     {
-      "file": "src/agent/epistemic-integrity-checker.ts",
-      "name": "EpistemicIntegrityResult",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/epistemic-token-protector.ts",
-      "name": "EpistemicTokenHit",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/epistemic-token-protector.ts",
-      "name": "ProtectedLineRange",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/execution-orchestrator.ts",
-      "name": "ExecutionOrchestrationResult",
-      "type": "interface"
-    },
-    {
       "file": "src/agent/goal-audit.ts",
       "name": "AuditResult",
       "type": "interface"
@@ -229,11 +169,6 @@
     {
       "file": "src/agent/ksentence-compressor.ts",
       "name": "KSentenceConfig",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/loop-until-done-gate.ts",
-      "name": "LoopUntilDoneResult",
       "type": "interface"
     },
     {
@@ -297,6 +232,16 @@
       "type": "interface"
     },
     {
+      "file": "src/agent/memory/types.ts",
+      "name": "ErrorAndFix",
+      "type": "interface"
+    },
+    {
+      "file": "src/agent/memory/types.ts",
+      "name": "DesignDecision",
+      "type": "interface"
+    },
+    {
       "file": "src/agent/micro-summary.ts",
       "name": "MicroSummary",
       "type": "interface"
@@ -304,11 +249,6 @@
     {
       "file": "src/agent/middleware/loop-detection.ts",
       "name": "LoopDetectionOptions",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/multi/agent-group-resolver.ts",
-      "name": "AgentGroup",
       "type": "interface"
     },
     {
@@ -347,23 +287,8 @@
       "type": "type"
     },
     {
-      "file": "src/agent/multi/synthesize-barrier.ts",
-      "name": "SynthesizeOptions",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/multi/synthesize-barrier.ts",
-      "name": "SynthesizeOutput",
-      "type": "interface"
-    },
-    {
       "file": "src/agent/multi/types.ts",
       "name": "ParallelOutcome",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/multi/worktree-manager.ts",
-      "name": "WorktreeInfo",
       "type": "interface"
     },
     {
@@ -422,11 +347,6 @@
       "type": "interface"
     },
     {
-      "file": "src/agent/snr-aware-filter.ts",
-      "name": "TopPFilterResult",
-      "type": "interface"
-    },
-    {
       "file": "src/agent/state-migration.ts",
       "name": "StateMigrationInput",
       "type": "interface"
@@ -434,21 +354,6 @@
     {
       "file": "src/agent/state-migration.ts",
       "name": "StateMigrationResult",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/tournament-selector.ts",
-      "name": "PairwiseJudgement",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/tournament-selector.ts",
-      "name": "TournamentResult",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/tournament-selector.ts",
-      "name": "TournamentConfig",
       "type": "interface"
     },
     {
@@ -783,11 +688,6 @@
     },
     {
       "file": "src/config/schema.ts",
-      "name": "SchedulerConfig",
-      "type": "type"
-    },
-    {
-      "file": "src/config/schema.ts",
       "name": "BackgroundBehaviorConfig",
       "type": "type"
     },
@@ -1028,11 +928,6 @@
     },
     {
       "file": "src/config/schema.ts",
-      "name": "DynamicWorkflowConfig",
-      "type": "type"
-    },
-    {
-      "file": "src/config/schema.ts",
       "name": "FileEditConfig",
       "type": "type"
     },
@@ -1050,11 +945,6 @@
       "file": "src/config/schema.ts",
       "name": "PlanConfig",
       "type": "type"
-    },
-    {
-      "file": "src/evaluation/mi-cross-scorer.ts",
-      "name": "MIProxySnapshot",
-      "type": "interface"
     },
     {
       "file": "src/harness/audit-logger.ts",
@@ -1115,26 +1005,6 @@
       "file": "src/harness/experiment-manager.ts",
       "name": "AdoptOptions",
       "type": "interface"
-    },
-    {
-      "file": "src/harness/quality-metrics-types.ts",
-      "name": "QualityMetricsMetadata",
-      "type": "interface"
-    },
-    {
-      "file": "src/harness/quality-metrics-types.ts",
-      "name": "QualityMetricsRecorderConfig",
-      "type": "interface"
-    },
-    {
-      "file": "src/harness/state-snapshot-chain.ts",
-      "name": "StateSnapshotRecord",
-      "type": "interface"
-    },
-    {
-      "file": "src/harness/state-snapshot-chain.ts",
-      "name": "StateMachineType",
-      "type": "type"
     },
     {
       "file": "src/harness/trace-types.ts",
@@ -1282,24 +1152,9 @@
       "type": "interface"
     },
     {
-      "file": "src/memory/conservative-merger.ts",
-      "name": "WriteWithVersionResult",
-      "type": "interface"
-    },
-    {
       "file": "src/memory/hybrid-retriever.ts",
       "name": "ScoredMemoryEntry",
       "type": "type"
-    },
-    {
-      "file": "src/memory/incremental-extractor.ts",
-      "name": "IncrementalExtractorConfig",
-      "type": "interface"
-    },
-    {
-      "file": "src/memory/incremental-extractor.ts",
-      "name": "ExtractResult",
-      "type": "interface"
     },
     {
       "file": "src/memory/local-maintenance.ts",
@@ -1324,26 +1179,6 @@
     {
       "file": "src/memory/provenance-graph.ts",
       "name": "ProvenanceEdge",
-      "type": "interface"
-    },
-    {
-      "file": "src/memory/rejected-alternative-store.ts",
-      "name": "RejectionIssue",
-      "type": "interface"
-    },
-    {
-      "file": "src/memory/rejected-alternative-store.ts",
-      "name": "RecordRejectionParams",
-      "type": "interface"
-    },
-    {
-      "file": "src/memory/rejected-alternative-store.ts",
-      "name": "ScoredRejectedAlternative",
-      "type": "type"
-    },
-    {
-      "file": "src/memory/reputation-deriver.ts",
-      "name": "DerivedReputation",
       "type": "interface"
     },
     {
@@ -1407,31 +1242,6 @@
       "type": "type"
     },
     {
-      "file": "src/plugins/sdk.ts",
-      "name": "Logger",
-      "type": "interface"
-    },
-    {
-      "file": "src/plugins/sdk.ts",
-      "name": "ToolRegistryInterface",
-      "type": "interface"
-    },
-    {
-      "file": "src/plugins/sdk.ts",
-      "name": "CommandRegistryInterface",
-      "type": "interface"
-    },
-    {
-      "file": "src/plugins/sdk.ts",
-      "name": "HookRegistryInterface",
-      "type": "interface"
-    },
-    {
-      "file": "src/plugins/sdk.ts",
-      "name": "MiddlewareRegistryInterface",
-      "type": "interface"
-    },
-    {
       "file": "src/plugins/types.ts",
       "name": "ThemeColors",
       "type": "interface"
@@ -1442,44 +1252,9 @@
       "type": "interface"
     },
     {
-      "file": "src/policies/call-owner-coordinator.ts",
-      "name": "PendingApproval",
-      "type": "interface"
-    },
-    {
-      "file": "src/policies/call-owner-coordinator.ts",
-      "name": "CallOwnerStrategy",
-      "type": "type"
-    },
-    {
-      "file": "src/policies/call-owner-coordinator.ts",
-      "name": "ApprovalState",
-      "type": "type"
-    },
-    {
-      "file": "src/policies/checkpoint-pipeline.ts",
-      "name": "SegmentEvalResult",
-      "type": "interface"
-    },
-    {
-      "file": "src/policies/checkpoint-pipeline.ts",
-      "name": "PipelineEvalResult",
-      "type": "interface"
-    },
-    {
-      "file": "src/policies/intent-guard.ts",
-      "name": "createBuiltinIntentGuardPolicies",
-      "type": "function"
-    },
-    {
       "file": "src/policies/intent-guard.ts",
       "name": "IntentGuard",
       "type": "class"
-    },
-    {
-      "file": "src/policies/playbook.ts",
-      "name": "createBuiltinPlaybookPolicies",
-      "type": "function"
     },
     {
       "file": "src/policies/playbook.ts",
@@ -1518,18 +1293,8 @@
     },
     {
       "file": "src/policies/tool-approval.ts",
-      "name": "createBuiltinToolApprovalPolicies",
-      "type": "function"
-    },
-    {
-      "file": "src/policies/tool-approval.ts",
       "name": "ToolApproval",
       "type": "class"
-    },
-    {
-      "file": "src/policies/tool-guide.ts",
-      "name": "createBuiltinToolGuidePolicies",
-      "type": "function"
     },
     {
       "file": "src/policies/tool-guide.ts",
@@ -1937,16 +1702,6 @@
       "type": "interface"
     },
     {
-      "file": "src/tools/quarantine-profile.ts",
-      "name": "QuarantineProfile",
-      "type": "interface"
-    },
-    {
-      "file": "src/tools/quarantine-profile.ts",
-      "name": "ContaminationEvent",
-      "type": "interface"
-    },
-    {
       "file": "src/tools/repo-map.ts",
       "name": "FileDependency",
       "type": "interface"
@@ -1987,9 +1742,9 @@
       "type": "type"
     },
     {
-      "file": "src/utils/provider-validator.ts",
-      "name": "ProviderValidationResult",
-      "type": "interface"
+      "file": "src/utils/jaccard.ts",
+      "name": "textJaccardSimilarity",
+      "type": "function"
     },
     {
       "file": "src/utils/retry.ts",
@@ -2209,11 +1964,6 @@
   ],
   "testOnlyExports": [
     {
-      "file": "src/agent/adversarial-verifier.ts",
-      "name": "AdversarialVerifierConfig",
-      "type": "interface"
-    },
-    {
       "file": "src/agent/bounded-recovery.ts",
       "name": "RecoveryScope",
       "type": "interface"
@@ -2247,6 +1997,11 @@
       "file": "src/agent/circuit-breaker.ts",
       "name": "CircuitState",
       "type": "type"
+    },
+    {
+      "file": "src/agent/completion-gate.ts",
+      "name": "GateCheck",
+      "type": "interface"
     },
     {
       "file": "src/agent/completion-gate.ts",
@@ -2284,11 +2039,6 @@
       "type": "function"
     },
     {
-      "file": "src/agent/context/context-discipline-prompt.ts",
-      "name": "buildContextDisciplinePrompt",
-      "type": "function"
-    },
-    {
       "file": "src/agent/context/offload-cleaner.ts",
       "name": "cleanSessionOffload",
       "type": "function"
@@ -2299,54 +2049,9 @@
       "type": "function"
     },
     {
-      "file": "src/agent/context/system-prompt-builder.ts",
-      "name": "buildSystemPrompt",
-      "type": "function"
-    },
-    {
-      "file": "src/agent/context/user-profile-loader.ts",
-      "name": "loadUserProfile",
-      "type": "function"
-    },
-    {
       "file": "src/agent/dual-loop-orchestrator.ts",
       "name": "DEFAULT_MAX_RERUNS",
       "type": "const"
-    },
-    {
-      "file": "src/agent/epistemic-integrity-checker.ts",
-      "name": "DEFAULT_EPISTEMIC_INTEGRITY_CHECKER_CONFIG",
-      "type": "const"
-    },
-    {
-      "file": "src/agent/epistemic-integrity-checker.ts",
-      "name": "EpistemicIntegrityCheckerConfig",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/epistemic-token-protector.ts",
-      "name": "EPISTEMIC_TOKENS",
-      "type": "const"
-    },
-    {
-      "file": "src/agent/epistemic-token-protector.ts",
-      "name": "DEFAULT_EPISTEMIC_TOKEN_PROTECTOR_CONFIG",
-      "type": "const"
-    },
-    {
-      "file": "src/agent/epistemic-token-protector.ts",
-      "name": "EpistemicTokenProtectorConfig",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/execution-orchestrator.ts",
-      "name": "anyNeedsSubAgent",
-      "type": "function"
-    },
-    {
-      "file": "src/agent/execution-orchestrator.ts",
-      "name": "ExecutionOrchestratorDeps",
-      "type": "interface"
     },
     {
       "file": "src/agent/goal-audit.ts",
@@ -2384,28 +2089,8 @@
       "type": "const"
     },
     {
-      "file": "src/agent/loop-until-done-gate.ts",
-      "name": "LoopUntilDoneConfig",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/loop-until-done-gate.ts",
-      "name": "LoopCheckSnapshot",
-      "type": "interface"
-    },
-    {
       "file": "src/agent/memory/auto-compact-guardian.ts",
       "name": "AutoCompactConfig",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/memory/consolidation.ts",
-      "name": "consolidateToGraph",
-      "type": "function"
-    },
-    {
-      "file": "src/agent/memory/consolidation.ts",
-      "name": "ConsolidationResult",
       "type": "interface"
     },
     {
@@ -2484,11 +2169,6 @@
       "type": "type"
     },
     {
-      "file": "src/agent/multi/worktree-manager.ts",
-      "name": "WorktreeManagerConfig",
-      "type": "interface"
-    },
-    {
       "file": "src/agent/omission-checker.ts",
       "name": "OmissionChecker",
       "type": "class"
@@ -2542,26 +2222,6 @@
       "file": "src/agent/reviewer-tier-evaluator.ts",
       "name": "selectCrossModelReviewer",
       "type": "function"
-    },
-    {
-      "file": "src/agent/rubric-registry.ts",
-      "name": "BUILTIN_RUBRICS",
-      "type": "const"
-    },
-    {
-      "file": "src/agent/snr-aware-filter.ts",
-      "name": "DEFAULT_SNR_AWARE_FILTER_CONFIG",
-      "type": "const"
-    },
-    {
-      "file": "src/agent/snr-aware-filter.ts",
-      "name": "WorkerTaskWithRV",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/snr-aware-filter.ts",
-      "name": "SNRAwareFilterConfig",
-      "type": "interface"
     },
     {
       "file": "src/agent/task-orchestrator.ts",
@@ -2729,11 +2389,6 @@
       "type": "interface"
     },
     {
-      "file": "src/code-map/compression.ts",
-      "name": "distillContext",
-      "type": "function"
-    },
-    {
       "file": "src/code-map/database.ts",
       "name": "close",
       "type": "function"
@@ -2830,11 +2485,6 @@
     },
     {
       "file": "src/config/schema.ts",
-      "name": "SchedulerConfigSchema",
-      "type": "const"
-    },
-    {
-      "file": "src/config/schema.ts",
       "name": "BackgroundBehaviorConfigSchema",
       "type": "const"
     },
@@ -2842,31 +2492,6 @@
       "file": "src/config/schema.ts",
       "name": "ErrorDisplaySchema",
       "type": "const"
-    },
-    {
-      "file": "src/evaluation/mi-cross-scorer.ts",
-      "name": "DEFAULT_MI_CROSS_SCORER_CONFIG",
-      "type": "const"
-    },
-    {
-      "file": "src/evaluation/mi-cross-scorer.ts",
-      "name": "ReasoningScore",
-      "type": "interface"
-    },
-    {
-      "file": "src/evaluation/mi-cross-scorer.ts",
-      "name": "MICrossScorerConfig",
-      "type": "interface"
-    },
-    {
-      "file": "src/harness/quality-metrics-types.ts",
-      "name": "DEFAULT_QUALITY_METRICS_RECORDER_CONFIG",
-      "type": "const"
-    },
-    {
-      "file": "src/harness/quality-metrics-types.ts",
-      "name": "MetricsAuditRecord",
-      "type": "interface"
     },
     {
       "file": "src/hooks/adapter.ts",
@@ -2936,11 +2561,6 @@
     {
       "file": "src/memory/bm25-index.ts",
       "name": "tokenize",
-      "type": "function"
-    },
-    {
-      "file": "src/memory/eval-metrics.ts",
-      "name": "temporalUpdateRobustness",
       "type": "function"
     },
     {
@@ -3024,21 +2644,6 @@
       "type": "interface"
     },
     {
-      "file": "src/plugins/sdk-loader.ts",
-      "name": "createDefaultPluginContext",
-      "type": "function"
-    },
-    {
-      "file": "src/plugins/sdk-loader.ts",
-      "name": "PluginLoader",
-      "type": "class"
-    },
-    {
-      "file": "src/policies/checkpoint-pipeline.ts",
-      "name": "CheckpointSegment",
-      "type": "type"
-    },
-    {
       "file": "src/router/embedder.ts",
       "name": "l2Normalize",
       "type": "function"
@@ -3107,11 +2712,6 @@
       "file": "src/runtime/notification.ts",
       "name": "BELL_CHAR",
       "type": "const"
-    },
-    {
-      "file": "src/scheduler/cron-parser.ts",
-      "name": "validateCron",
-      "type": "function"
     },
     {
       "file": "src/security/audit-panel.ts",
@@ -3204,11 +2804,6 @@
       "type": "interface"
     },
     {
-      "file": "src/tools/quarantine-profile.ts",
-      "name": "QUARANTINE_DEFAULT_DENIED_TOOLS",
-      "type": "const"
-    },
-    {
       "file": "src/tools/repo-map.ts",
       "name": "extractSignatures",
       "type": "function"
@@ -3257,16 +2852,6 @@
       "file": "src/utils/errors.ts",
       "name": "ToolExecutionError",
       "type": "class"
-    },
-    {
-      "file": "src/utils/provider-validator.ts",
-      "name": "validateProviders",
-      "type": "function"
-    },
-    {
-      "file": "src/utils/provider-validator.ts",
-      "name": "formatValidationMessages",
-      "type": "function"
     },
     {
       "file": "desktop/main/mcp-catalog.ts",
