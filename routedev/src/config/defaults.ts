@@ -498,12 +498,10 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   // Phase 50 Task 6：Phase 49 模块接入确认开关（默认全部 false，实验性）
   // Phase 59：routingFunnelEnabled 已删除（批次1，routing-funnel.ts Phase 50 已删，僵尸配置）
+  // Phase 59：skillFlowEnabled/contextUsagePanelEnabled/evaluationFrameworkEnabled 已删除（对应模块已删，开关无效）
   phase49Integration: {
-    skillFlowEnabled: false,
     dualLoopEnabled: true,
     qualityGateEnabled: true,
-    contextUsagePanelEnabled: false,
-    evaluationFrameworkEnabled: false,
   },
   // Phase 51：外部开源借鉴落地配置（默认全部 false，保守启用）
   reviewerPolicy: {
@@ -570,14 +568,6 @@ export const DEFAULT_CONFIG: AppConfig = {
     thinkingLevelLabels: {},
     splitThinkingLabel: true,
     thinkingLabelStyle: 'badge',
-  },
-  // Phase 52 Task 3：有界局部恢复配置（顶层字段，默认 enabled=true，Phase 55 启用）
-  // 注：schema.ts 注释说明 Task 1 后续可将其重构进 phase52Integration 聚合结构
-  boundedRecovery: {
-    enabled: true,
-    maxBacktrack: 3,
-    artifactBinding: true,
-    validateConsistency: true,
   },
   // Phase 52：MUSE-Autoskill 集成（聚合所有 Phase 52 Task 配置，默认全部关闭）
   // Phase 59：processEvaluation/archAwareMetrics/saturationMonitor 已删除（批次1 无价值学术指标）
@@ -876,10 +866,6 @@ export const DEFAULT_CONFIG: AppConfig = {
       overCompressionThreshold: 0.5,
       minTokenCount: 5,
     },
-    epistemicPreservingSummarizer: {
-      enabled: true,
-      maxTokens: 500,
-    },
     auditMetricsLogging: {
       logEpistemicStats: true,
     },
@@ -894,12 +880,6 @@ export const DEFAULT_CONFIG: AppConfig = {
       enabled: false,
       persistPath: '.routedev/provenance.jsonl',
       maxArtifacts: 10000,
-    },
-    rejectedAlternativeStore: {
-      enabled: false,
-      persistPath: '.routedev/rejected-alternatives.jsonl',
-      maxRecords: 5000,
-      defaultQueryLimit: 5,
     },
     kanObstacleChecker: {
       enabled: false,
@@ -921,23 +901,6 @@ export const DEFAULT_CONFIG: AppConfig = {
       worktreeRoot: '.routedev/worktrees',
       maxWorktrees: 5,
       cleanupTimeoutMs: 30 * 60 * 1000,
-    },
-    parallelExecution: {
-      enabled: false,
-      maxConcurrency: 3,
-      workerTimeoutMs: 10 * 60 * 1000,
-    },
-    resultComparator: {
-      autoSelect: false,
-      weights: { brevity: 0.3, errorCount: 0.4, testPassRate: 0.3 },
-    },
-    cliAdapters: {
-      enabled: false,
-      claudeCode: {
-        command: 'claude',
-        defaultArgs: [],
-        spawnTimeoutMs: 30000,
-      },
     },
   },
   // Phase 70：上下文压缩技术深度优化（v4.7.1）
@@ -974,7 +937,6 @@ export const DEFAULT_CONFIG: AppConfig = {
     },
     sessionMemory: {
       enabled: false, // P2: 待 Task B3/B4 接入
-      persistPath: '.routedev/session-memory.json',
       maxMemories: 100,
     },
   },

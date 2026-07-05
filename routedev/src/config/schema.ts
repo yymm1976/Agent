@@ -1419,23 +1419,17 @@ export type Phase48IntegrationConfig = z.infer<typeof Phase48IntegrationConfigSc
 
 /**
  * Phase 49 模块接入确认配置（Phase 50 Task 6）
- * 聚合 DualLoop/QualityGate/ContextUsagePanel/EvaluationFramework 等模块
+ * 聚合 DualLoop/QualityGate 等模块
  * 默认全部 false——这些模块为实验性功能，需显式开启
  *
  * Phase 59：routingFunnelEnabled 已删除（批次1，routing-funnel.ts Phase 50 已删，僵尸配置）
- * Phase 59：skillFlowEnabled/contextUsagePanelEnabled/evaluationFrameworkEnabled 保留（批次3 补设置页入口）
+ * Phase 59：skillFlowEnabled/contextUsagePanelEnabled/evaluationFrameworkEnabled 已删除（对应模块已删，开关无效）
  */
 const Phase49IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
-  /** SkillFlow 引擎接入（Skill 执行时可选调用） */
-  skillFlowEnabled: z.boolean().default(false),
   /** 双循环编排器接入（/goal 执行时可选调用） */
   dualLoopEnabled: z.boolean().default(true),
   /** Skill 质量门接入（Skill 生成时可选调用） */
   qualityGateEnabled: z.boolean().default(true),
-  /** 上下文占用率面板接入（context-compaction 调用） */
-  contextUsagePanelEnabled: z.boolean().default(false),
-  /** 评估集框架接入（Skill 生成或 /goal 完成时可选调用） */
-  evaluationFrameworkEnabled: z.boolean().default(false),
 }));
 export type Phase49IntegrationConfig = z.infer<typeof Phase49IntegrationConfigSchema>;
 
@@ -2017,9 +2011,6 @@ export const AppConfigSchema = z.object({
   phase48Integration: Phase48IntegrationConfigSchema,
   // Phase 50 Task 6：Phase 49 模块接入确认开关（默认全部 false，实验性）
   phase49Integration: Phase49IntegrationConfigSchema,
-  // Phase 52 Task 3：有界局部恢复配置（默认 enabled=false，由接入层控制）
-  // 注：Task 1 后续可将其重构进 phase52Integration 聚合结构
-  boundedRecovery: z.preprocess((v) => v ?? {}, BoundedRecoveryConfigSchema),
   // Phase 52：MUSE-Autoskill 集成（聚合所有 Phase 52 Task 的配置）
   phase52Integration: z.preprocess((v) => v ?? {}, Phase52IntegrationConfigSchema),
   // Phase 51 配置
@@ -2179,10 +2170,6 @@ export const AppConfigSchema = z.object({
       overCompressionThreshold: z.number().min(0).max(1).default(0.5),
       minTokenCount: z.number().int().min(1).default(5),
     })),
-    epistemicPreservingSummarizer: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      maxTokens: z.number().int().min(100).max(2000).default(500),
-    })),
     auditMetricsLogging: z.preprocess((v) => v ?? {}, z.object({
       logEpistemicStats: z.boolean().default(false),
     })),
@@ -2197,12 +2184,6 @@ export const AppConfigSchema = z.object({
       enabled: z.boolean().default(false),
       persistPath: z.string().default('.routedev/provenance.jsonl'),
       maxArtifacts: z.number().int().min(100).default(10000),
-    })),
-    rejectedAlternativeStore: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      persistPath: z.string().default('.routedev/rejected-alternatives.jsonl'),
-      maxRecords: z.number().int().min(100).default(5000),
-      defaultQueryLimit: z.number().int().min(1).max(50).default(5),
     })),
     kanObstacleChecker: z.preprocess((v) => v ?? {}, z.object({
       enabled: z.boolean().default(false),
@@ -2224,27 +2205,6 @@ export const AppConfigSchema = z.object({
       worktreeRoot: z.string().default('.routedev/worktrees'),
       maxWorktrees: z.number().int().min(1).max(10).default(5),
       cleanupTimeoutMs: z.number().int().min(60000).default(30 * 60 * 1000),
-    })),
-    parallelExecution: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      maxConcurrency: z.number().int().min(1).max(10).default(3),
-      workerTimeoutMs: z.number().int().min(60000).default(10 * 60 * 1000),
-    })),
-    resultComparator: z.preprocess((v) => v ?? {}, z.object({
-      autoSelect: z.boolean().default(false),
-      weights: z.preprocess((v) => v ?? {}, z.object({
-        brevity: z.number().min(0).max(1).default(0.3),
-        errorCount: z.number().min(0).max(1).default(0.4),
-        testPassRate: z.number().min(0).max(1).default(0.3),
-      })),
-    })),
-    cliAdapters: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      claudeCode: z.preprocess((v) => v ?? {}, z.object({
-        command: z.string().default('claude'),
-        defaultArgs: z.array(z.string()).default([]),
-        spawnTimeoutMs: z.number().int().default(30000),
-      })),
     })),
   })),
   // Phase 70：上下文压缩技术深度优化（v4.7.1）
@@ -2280,7 +2240,6 @@ export const AppConfigSchema = z.object({
     })),
     sessionMemory: z.preprocess((v) => v ?? {}, z.object({
       enabled: z.boolean().default(false),
-      persistPath: z.string().default('.routedev/session-memory.json'),
       maxMemories: z.number().int().min(10).default(100),
     })),
   })),

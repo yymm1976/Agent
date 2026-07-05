@@ -181,7 +181,6 @@ export interface GoalRunnerDeps {
   localMaintenance?: import('../memory/local-maintenance.js').LocalMaintenancePolicy;
   // Phase 68：知识图谱（可选，由 app-init.ts 注入）
   provenanceGraph?: import('../memory/provenance-graph.js').ProvenanceGraph;
-  agentRejectedAlternativeStore?: import('../agent/rejected-alternative-store.js').RejectedAlternativeStore;
   kanObstacleChecker?: import('../skills/kan-obstacle-checker.js').KanObstacleChecker;
   quantitativeGate?: import('../agent/quantitative-gate.js').QuantitativeGate;
   classifyOperation?: (signal: import('../skills/operation-classifier.js').OperationSignal, sessionId: string) => import('../skills/operation-classifier.js').OperationClassification;
@@ -241,7 +240,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     // Phase 65：记忆系统
     memoryStore, hybridRetriever, conservativeMerger, localMaintenance,
     // Phase 68：知识图谱
-    provenanceGraph, agentRejectedAlternativeStore, kanObstacleChecker, quantitativeGate, classifyOperation,
+    provenanceGraph, kanObstacleChecker, quantitativeGate, classifyOperation,
   } = deps;
 
   // Phase 54：emit 辅助函数——安全调用 onGoalEvent（CLI 端未注入时为 no-op）

@@ -2,8 +2,8 @@
 // Phase 71 Task F1：死代码检测脚本（纪律层核心）
 //
 // 设计目标：
-//   1. 扫描 src/ 下所有 .ts/.tsx 文件，提取 export 项（函数/类/常量/接口/类型/枚举）
-//   2. 对每个 export，扫描 src/ + tests/ 查找是否有其他文件 import 它
+//   1. 扫描 src/ + desktop/ 下所有 .ts/.tsx 文件，提取 export 项（函数/类/常量/接口/类型/枚举）
+//   2. 对每个 export，扫描 src/ + desktop/ + tests/ 查找是否有其他文件 import 它
 //   3. 入口文件白名单：app-init.ts、index.ts、main.tsx、App.tsx、server.ts 等
 //      的 export 不算死代码（可能被外部消费）
 //   4. test-only 标记：只在 tests/ 中被 import 的 export 标记为 warning，不计入 dead
@@ -13,7 +13,7 @@
 // 输出：dead-code-report.json + 控制台摘要
 //
 // 与 audit-dead-code.ts 的差异：
-//   - 范围：仅扫 src/（不扫 desktop/）
+//   - 范围：扫描 src/ + desktop/（覆盖 Electron 主进程与渲染进程）
 //   - 入口白名单：明确跳过入口文件 export
 //   - test-only 区分：避免把"仅测试消费"误判为 dead
 //   - fail-open：扫描异常不阻塞流程
@@ -77,8 +77,8 @@ export interface DeadCodeReport {
 // 常量
 // ============================================================
 
-/** 待扫描的源码目录（相对项目根） */
-const SCAN_DIR = 'src';
+/** 待扫描的源码目录（相对项目根，含 src 主逻辑与 desktop Electron 进程） */
+const SCAN_DIRS = ['src', 'desktop'];
 
 /** 跳过的子目录名 */
 const SKIP_DIRS = new Set([
@@ -268,10 +268,10 @@ export function findSymbolConsumption(
  * @param rootPath 项目根路径（默认为脚本所在目录的上一级）
  */
 export function detectDeadCode(rootPath: string = projectRoot): DeadCodeReport {
-  const srcDir = path.join(rootPath, SCAN_DIR);
   const testsDir = path.join(rootPath, 'tests');
 
-  const srcFiles = collectTsFiles(srcDir);
+  // 扫描 src/ + desktop/ 下所有源码文件（既作为 export 来源，也作为 import 消费方）
+  const srcFiles = SCAN_DIRS.flatMap(d => collectTsFiles(path.join(rootPath, d)));
   const testFiles = collectTsFiles(testsDir);
 
   // 收集所有 export + 入口文件清单

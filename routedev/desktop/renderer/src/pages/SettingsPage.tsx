@@ -2331,20 +2331,9 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
           <Card>
             <CardHeader>
               <CardTitle>Phase 49 模块接入</CardTitle>
-              <CardDescription>控制 Phase 49 五个实验性模块的接入开关（默认关闭，需显式开启）</CardDescription>
+              <CardDescription>控制 Phase 49 实验性模块的接入开关（默认关闭，需显式开启）</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label htmlFor="p49-skillflow">Skill 流引擎</Label>
-                  <p className="text-xs text-rd-textMuted">SkillFlow：Skill 执行时可选调用的流式引擎。</p>
-                </div>
-                <Switch
-                  id="p49-skillflow"
-                  checked={draft.phase49Integration?.skillFlowEnabled ?? false}
-                  onCheckedChange={(checked) => updatePhase49Integration({ skillFlowEnabled: checked })}
-                />
-              </div>
               <div className="flex items-center justify-between">
                 <div>
                   <Label htmlFor="p49-quality">Skill 质量门</Label>
@@ -2354,28 +2343,6 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
                   id="p49-quality"
                   checked={draft.phase49Integration?.qualityGateEnabled ?? true}
                   onCheckedChange={(checked) => updatePhase49Integration({ qualityGateEnabled: checked })}
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label htmlFor="p49-context">上下文占用率面板</Label>
-                  <p className="text-xs text-rd-textMuted">ContextUsagePanel：在 context-compaction 时调用，可视化上下文占用。</p>
-                </div>
-                <Switch
-                  id="p49-context"
-                  checked={draft.phase49Integration?.contextUsagePanelEnabled ?? false}
-                  onCheckedChange={(checked) => updatePhase49Integration({ contextUsagePanelEnabled: checked })}
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label htmlFor="p49-eval">评估集框架</Label>
-                  <p className="text-xs text-rd-textMuted">EvaluationFramework：Skill 生成或 /goal 完成时可选调用的评估框架。</p>
-                </div>
-                <Switch
-                  id="p49-eval"
-                  checked={draft.phase49Integration?.evaluationFrameworkEnabled ?? false}
-                  onCheckedChange={(checked) => updatePhase49Integration({ evaluationFrameworkEnabled: checked })}
                 />
               </div>
             </CardContent>

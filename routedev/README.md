@@ -1,6 +1,6 @@
 # RouteDev
 
-按任务复杂度自动路由模型的 CLI 开发助手。支持多 LLM Provider、ReAct Agent Loop、MCP 工具集成、目标分解与验证、多渠道接入（企业微信/Telegram/Slack）、统一工作流编排（Phase 31）。
+按任务复杂度自动路由模型的桌面端开发助手。支持多 LLM Provider、ReAct Agent Loop、MCP 工具集成、目标分解与验证、统一工作流编排（Phase 31）。
 
 ## 快速开始
 
@@ -12,20 +12,13 @@ pnpm build
 pnpm start
 ```
 
-服务器模式（渠道集成）：
-
-```powershell
-pnpm start -- serve
-```
-
 ## 项目结构
 
 ```
 routedev/
 ├── src/
 │   ├── agent/         # Agent 引擎（ReAct Loop + 目标分解 + 记忆 + 多 Agent + 工作模式 + 统一工作流编排）
-│   ├── channels/      # 渠道集成（Webhook 服务器 + 企业微信/Telegram/Slack 适配器）
-│   ├── cli/           # CLI 界面（Ink UI + 命令系统 + 运行器 + 插件初始化）
+│   ├── runtime/       # 运行时（app-init + doctor + goal-runner + graceful-shutdown + 插件初始化）
 │   ├── config/        # 配置系统（YAML 加载 + Zod 校验 + 热重载）
 │   ├── harness/       # 可观测性（Trace + Audit + Checkpoint）
 │   ├── memory/        # 项目记忆（.routedev/ 目录管理）
@@ -33,8 +26,8 @@ routedev/
 │   ├── prompts/       # Prompt 模板系统（三级优先级）
 │   ├── router/        # 模型路由（分类 + 路由 + LLM 客户端 + Token 追踪）
 │   ├── tools/         # 工具框架（注册表 + 执行器 + 权限引擎 + 内置工具 + MCP + 安全防护）
-│   ├── utils/         # 通用工具（日志 + 路径 + 重试 + Token 估算）
-│   └── index.tsx      # CLI 主入口
+│   └── utils/         # 通用工具（日志 + 路径 + 重试 + Token 估算）
+├── desktop/           # Electron 桌面端（main 主进程 + preload + renderer 渲染进程）
 ├── tests/             # 单元测试 + 集成测试
 ├── scripts/verify.ts  # 验收门脚本
 └── config.example.yaml

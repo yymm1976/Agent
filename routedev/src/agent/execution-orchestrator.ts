@@ -41,14 +41,10 @@ import type { ReputationDeriver } from '../memory/reputation-deriver.js';
 import type { MICrossScorer } from '../evaluation/mi-cross-scorer.js';
 import type { SNRAwareFilter } from './snr-aware-filter.js';
 import type { EpistemicIntegrityChecker } from './epistemic-integrity-checker.js';
-import type { EpistemicPreservingSummarizer } from './epistemic-preserving-summarizer.js';
 import type { QualityMetricsRecorder } from '../harness/quality-metrics-types.js';
 // Phase 69：Worktree 隔离执行与多代理并行编排
 import type { WorktreeManager } from './multi/worktree-manager.js';
-import type { ParallelOutcome } from './multi/types.js';
-import type { ResultComparator } from './multi/result-comparator.js';
 import type { AgentGroupResolver } from './multi/agent-group-resolver.js';
-import type { CLIAdapterRegistry } from './multi/cli-adapter.js';
 
 /**
  * 执行编排器依赖
@@ -96,19 +92,13 @@ export interface ExecutionOrchestratorDeps {
   snrAwareFilter?: SNRAwareFilter;
   /** 认知完整性检查器——执行后检查认知完整性 */
   epistemicIntegrityChecker?: EpistemicIntegrityChecker;
-  /** 认知保留摘要器——压缩时保留认知内容 */
-  epistemicPreservingSummarizer?: EpistemicPreservingSummarizer;
   /** 质量指标记录器——记录质量指标供审计 */
   qualityMetricsRecorder?: QualityMetricsRecorder;
   // Phase 69：Worktree 隔离执行与多代理并行编排
   /** Worktree 管理器——为隔离 worker 创建 worktree */
   worktreeManager?: WorktreeManager;
-  /** 结果比较器——比较和排序 worker 结果 */
-  resultComparator?: ResultComparator;
   /** 代理组解析器——解析 @group 地址 */
   agentGroupResolver?: AgentGroupResolver;
-  /** CLI 适配器注册表——管理 CLI 适配器会话 */
-  cliAdapterRegistry?: CLIAdapterRegistry;
   /** LLM 客户端——供 SynthesizeBarrier judging 策略等内部模块使用 */
   llmClient?: ILLMClient;
 }
@@ -971,28 +961,6 @@ export class ExecutionOrchestrator {
         }
       }
 
-      // Phase 69：ResultComparator——比较和排序 worker 结果
-      if (this.deps.resultComparator && workerResults.length > 1) {
-        try {
-          const outcomes: ParallelOutcome[] = workerResults.map(wr => ({
-            success: wr.success,
-            workerId: `worker-${wr.stepId}-${wr.role}`,
-            result: wr.success ? wr.conclusion : undefined,
-            error: wr.success ? undefined : wr.conclusion,
-          }));
-          const comparison = this.deps.resultComparator.compare(outcomes);
-          logger.info('Phase 69: ResultComparator 结果比较', {
-            winnerId: comparison.winnerId,
-            reason: comparison.reason,
-            needsHumanReview: comparison.needsHumanReview,
-          });
-        } catch (err) {
-          logger.warn('Phase 69: ResultComparator 比较失败（fail-open）', {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-
       // Phase 69：WorktreeManager——清理已完成的 worktree
       if (this.deps.worktreeManager && activeWorktrees.length > 0) {
         try {
@@ -1079,38 +1047,6 @@ export class ExecutionOrchestrator {
         }
       } catch (err) {
         logger.warn('Phase 62: LoopUntilDoneGate.run 失败（fail-open）', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    // Phase 67：EpistemicPreservingSummarizer——执行完成后检查认知保留
-    if (this.deps.epistemicPreservingSummarizer && this.deps.config?.reasoningQualityDiagnostics?.epistemicPreservingSummarizer?.enabled) {
-      try {
-        const successfulResults = results.filter(r => r.success);
-        if (successfulResults.length > 0) {
-          logger.info('Phase 67: EpistemicPreservingSummarizer 就绪', {
-            successfulSteps: successfulResults.length,
-            maxTokens: this.deps.config.reasoningQualityDiagnostics.epistemicPreservingSummarizer.maxTokens,
-          });
-        }
-      } catch (err) {
-        logger.warn('Phase 67: EpistemicPreservingSummarizer 检查失败（fail-open）', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    // Phase 69：CLIAdapterRegistry——清理已注册的适配器会话
-    if (this.deps.cliAdapterRegistry) {
-      try {
-        const adapters = this.deps.cliAdapterRegistry.list();
-        logger.info('Phase 69: CLIAdapterRegistry 适配器状态', {
-          registeredAdapters: adapters.length,
-          adapterNames: adapters.map(a => a.name),
-        });
-      } catch (err) {
-        logger.warn('Phase 69: CLIAdapterRegistry 检查失败（fail-open）', {
           error: err instanceof Error ? err.message : String(err),
         });
       }

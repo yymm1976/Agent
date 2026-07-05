@@ -9,8 +9,6 @@ import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { ChatPage } from './pages/ChatPage.js';
 import { NewTaskPage } from './pages/NewTaskPage.js';
 import { SettingsPage } from './pages/SettingsPage.js';
-import { TokenPage } from './pages/TokenPage.js';
-import { TracePage } from './pages/TracePage.js';
 import { SetupWizard } from './components/SetupWizard.js';
 import { StatusBanner } from './components/StatusBanner.js';
 import { DiscoveryPage, type RecentConversation, type SuggestedTask, generateSuggestedTasks } from './components/DiscoveryPage.js';
@@ -20,7 +18,7 @@ import { useTheme } from './hooks/useTheme.js';
 import { initIPCListeners, loadInitialConfig, useRouteDevStore } from './store/useRouteDevStore.js';
 import { useProjectsStore } from './store/useProjectsStore.js';
 
-type PageId = 'chat' | 'newtask' | 'settings' | 'token' | 'trace';
+type PageId = 'chat' | 'newtask' | 'settings';
 
 export default function App() {
   const [page, setPage] = useState<PageId>('chat');
@@ -259,8 +257,6 @@ export default function App() {
                 onCancel={() => setPage('chat')}
               />
             )}
-            {page === 'token' && <TokenPage {...routeDev} />}
-            {page === 'trace' && <TracePage {...routeDev} />}
           </Layout>
           {settingsOpen && (
             <div className={`${settingsClosing ? 'rd-modal-backdrop-exit' : 'rd-modal-backdrop-enter'} fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6`}>

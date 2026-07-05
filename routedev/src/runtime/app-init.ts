@@ -173,19 +173,15 @@ import { MICrossScorer } from '../evaluation/mi-cross-scorer.js';
 import { SNRAwareFilter } from '../agent/snr-aware-filter.js';
 import { EpistemicTokenProtector } from '../agent/epistemic-token-protector.js';
 import { EpistemicIntegrityChecker } from '../agent/epistemic-integrity-checker.js';
-import { EpistemicPreservingSummarizer } from '../agent/epistemic-preserving-summarizer.js';
 import { QualityMetricsRecorder } from '../harness/quality-metrics-types.js';
 // Phase 68：检索/搜索/发现三分与知识图谱
 import { ProvenanceGraph } from '../memory/provenance-graph.js';
-import { RejectedAlternativeStore as AgentRejectedAlternativeStore } from '../agent/rejected-alternative-store.js';
 import { KanObstacleChecker } from '../skills/kan-obstacle-checker.js';
 import { QuantitativeGate } from '../agent/quantitative-gate.js';
 import { classifyOperation, buildRegimeTransition, type OperationSignal } from '../skills/operation-classifier.js';
 // Phase 69：Worktree 隔离执行与多代理并行编排
 import { WorktreeManager, DEFAULT_WORKTREE_CONFIG } from '../agent/multi/worktree-manager.js';
-import { ResultComparator, DEFAULT_COMPARATOR_CONFIG } from '../agent/multi/result-comparator.js';
 import { AgentGroupResolver } from '../agent/multi/agent-group-resolver.js';
-import { ClaudeCodeAdapter, CLIAdapterRegistry, DEFAULT_CLAUDE_CODE_CONFIG } from '../agent/multi/cli-adapter.js';
 // Phase 70：上下文压缩技术深度优化
 import { ToolOutputBudgetManager, DEFAULT_BUDGET_CONFIG } from '../agent/memory/tool-output-budget.js';
 import { MessageGrouper } from '../agent/memory/message-grouper.js';
@@ -345,20 +341,16 @@ export interface AppDependencies {
   snrAwareFilter?: SNRAwareFilter;
   epistemicTokenProtector?: EpistemicTokenProtector;
   epistemicIntegrityChecker?: EpistemicIntegrityChecker;
-  epistemicPreservingSummarizer?: EpistemicPreservingSummarizer;
   qualityMetricsRecorder?: QualityMetricsRecorder;
   // Phase 68：检索/搜索/发现三分与知识图谱（可选，由 phase68Integration.enabled 时注入）
   provenanceGraph?: ProvenanceGraph;
-  agentRejectedAlternativeStore?: AgentRejectedAlternativeStore;
   kanObstacleChecker?: KanObstacleChecker;
   quantitativeGate?: QuantitativeGate;
   classifyOperation?: (signal: OperationSignal, sessionId: string) => ReturnType<typeof classifyOperation>;
   buildRegimeTransition?: typeof buildRegimeTransition;
   // Phase 69：Worktree 隔离执行与多代理并行编排（可选）
   worktreeManager?: WorktreeManager;
-  resultComparator?: ResultComparator;
   agentGroupResolver?: AgentGroupResolver;
-  cliAdapterRegistry?: CLIAdapterRegistry;
   // Phase 70：上下文压缩技术深度优化（可选）
   toolOutputBudgetManager?: ToolOutputBudgetManager;
   messageGrouper?: MessageGrouper;
@@ -474,16 +466,17 @@ export function createAppDependencies(
   const p70CompactPromptEngine = p70Cfg?.compactPrompt?.enabled
     ? new CompactPromptEngine(p70Cfg.compactPrompt.defaultDirection)
     : undefined;
-  const p70SessionMemoryStore = (() => {
-    // 跨会话持久化记忆：优先读 config.memory（Phase 45 记忆配置段）
-    // 兼容 phase70Integration.sessionMemory.enabled 作为 fallback 开关
+  // 跨会话持久化记忆：优先读 config.memory（Phase 45 记忆配置段）
+  // 兼容 phase70Integration.sessionMemory.enabled 作为 fallback 开关
+  // persistentPath 由 config.memory.sessionMemoryPath 解析得到，不写死
+  // 同时返回 persistentPath 供后续日志输出实际持久化路径
+  const { store: p70SessionMemoryStore, persistentPath: p70SessionMemoryPersistentPath } = (() => {
     const memCfg = config.memory;
     const persistentEnabled = memCfg?.sessionMemoryPersistent ?? true;
     const p70Enabled = p70Cfg?.sessionMemory?.enabled ?? false;
-    if (!p70Enabled && !persistentEnabled) return undefined;
+    if (!p70Enabled && !persistentEnabled) return { store: undefined, persistentPath: undefined };
 
     const maxMemories = p70Cfg?.sessionMemory?.maxMemories ?? 100;
-    // persistentPath 由 config.memory.sessionMemoryPath 解析得到，不写死
     const persistentPath = persistentEnabled
       ? path.resolve(cwd, memCfg?.sessionMemoryPath ?? '.routedev/session-memory.jsonl')
       : undefined;
@@ -495,7 +488,7 @@ export function createAppDependencies(
       const handleClose = () => { store.close().catch(() => {}); };
       registerShutdownHook(100, 'session-memory', handleClose);
     }
-    return store;
+    return { store, persistentPath };
   })();
 
   // CodebaseMemory：扫描项目根目录建立语义索引，跨会话复用
@@ -1916,12 +1909,9 @@ export function createAppDependencies(
   let p67MiCrossScorer: MICrossScorer | undefined;
   let p67SnrAwareFilter: SNRAwareFilter | undefined;
   let p67EpistemicIntegrityChecker: EpistemicIntegrityChecker | undefined;
-  let p67EpistemicPreservingSummarizer: EpistemicPreservingSummarizer | undefined;
   let p67QualityMetricsRecorder: QualityMetricsRecorder | undefined;
   let p69WorktreeManager: WorktreeManager | undefined;
-  let p69ResultComparator: ResultComparator | undefined;
   let p69AgentGroupResolver: AgentGroupResolver | undefined;
-  let p69CliAdapterRegistry: CLIAdapterRegistry | undefined;
 
   // Phase 66 实例化
   const fpCfg = config.foundationProtocol;
@@ -1978,13 +1968,6 @@ export function createAppDependencies(
         minTokenCount: rqdCfg.epistemicIntegrityChecker.minTokenCount,
       },
     );
-    p67EpistemicPreservingSummarizer = new EpistemicPreservingSummarizer(
-      p67EpistemicTokenProtector,
-      {
-        enabled: rqdCfg.epistemicPreservingSummarizer.enabled,
-        maxTokens: rqdCfg.epistemicPreservingSummarizer.maxTokens,
-      },
-    );
     p67QualityMetricsRecorder = new QualityMetricsRecorder({
       enabled: rqdCfg.auditMetricsLogging.logEpistemicStats,
     });
@@ -2002,29 +1985,7 @@ export function createAppDependencies(
         cleanupTimeoutMs: p69Cfg.worktree.cleanupTimeoutMs,
       });
     }
-    if (p69Cfg.resultComparator) {
-      p69ResultComparator = new ResultComparator({
-        ...DEFAULT_COMPARATOR_CONFIG,
-        autoSelect: p69Cfg.resultComparator.autoSelect,
-        weights: {
-          ...DEFAULT_COMPARATOR_CONFIG.weights,
-          brevity: p69Cfg.resultComparator.weights.brevity,
-          errorCount: p69Cfg.resultComparator.weights.errorCount,
-          testPassRate: p69Cfg.resultComparator.weights.testPassRate,
-        },
-      });
-    }
     p69AgentGroupResolver = new AgentGroupResolver();
-    if (p69Cfg.cliAdapters?.enabled) {
-      p69CliAdapterRegistry = new CLIAdapterRegistry();
-      const claudeCodeAdapter = new ClaudeCodeAdapter({
-        ...DEFAULT_CLAUDE_CODE_CONFIG,
-        command: p69Cfg.cliAdapters.claudeCode.command,
-        defaultArgs: p69Cfg.cliAdapters.claudeCode.defaultArgs,
-        spawnTimeoutMs: p69Cfg.cliAdapters.claudeCode.spawnTimeoutMs,
-      });
-      p69CliAdapterRegistry.register(claudeCodeAdapter);
-    }
   }
 
   const executionOrchestrator = createExecutionOrchestrator({
@@ -2049,13 +2010,10 @@ export function createAppDependencies(
     miCrossScorer: p67MiCrossScorer,
     snrAwareFilter: p67SnrAwareFilter,
     epistemicIntegrityChecker: p67EpistemicIntegrityChecker,
-    epistemicPreservingSummarizer: p67EpistemicPreservingSummarizer,
     qualityMetricsRecorder: p67QualityMetricsRecorder,
     // Phase 69：Worktree 隔离执行与多代理并行编排
     worktreeManager: p69WorktreeManager,
-    resultComparator: p69ResultComparator,
     agentGroupResolver: p69AgentGroupResolver,
-    cliAdapterRegistry: p69CliAdapterRegistry,
     // LLM 客户端——供 SynthesizeBarrier judging 策略等内部模块使用
     llmClient: primaryClient,
   });
@@ -2803,7 +2761,7 @@ export function createAppDependencies(
     // Phase 67：推理质量诊断（复用提前创建的实例）
     ...(() => {
       if (!rqdCfg?.enabled) return {};
-      return { miCrossScorer: p67MiCrossScorer, snrAwareFilter: p67SnrAwareFilter, epistemicTokenProtector: p67EpistemicTokenProtector, epistemicIntegrityChecker: p67EpistemicIntegrityChecker, epistemicPreservingSummarizer: p67EpistemicPreservingSummarizer, qualityMetricsRecorder: p67QualityMetricsRecorder };
+      return { miCrossScorer: p67MiCrossScorer, snrAwareFilter: p67SnrAwareFilter, epistemicTokenProtector: p67EpistemicTokenProtector, epistemicIntegrityChecker: p67EpistemicIntegrityChecker, qualityMetricsRecorder: p67QualityMetricsRecorder };
     })(),
     // Phase 68：检索/搜索/发现三分与知识图谱
     ...(() => {
@@ -2818,16 +2776,6 @@ export function createAppDependencies(
           provenanceGraph.loadFromFile(p68Cfg.provenanceGraph.persistPath).catch(() => {});
         }
         result.provenanceGraph = provenanceGraph;
-      }
-
-      if (p68Cfg.rejectedAlternativeStore?.enabled) {
-        const agentRejectedAlternativeStore = new AgentRejectedAlternativeStore(
-          p68Cfg.rejectedAlternativeStore.maxRecords,
-        );
-        if (p68Cfg.rejectedAlternativeStore.persistPath) {
-          agentRejectedAlternativeStore.loadFromFile(p68Cfg.rejectedAlternativeStore.persistPath).catch(() => {});
-        }
-        result.agentRejectedAlternativeStore = agentRejectedAlternativeStore;
       }
 
       if (p68Cfg.kanObstacleChecker?.enabled && result.provenanceGraph) {
@@ -2862,9 +2810,6 @@ export function createAppDependencies(
         logger.info('Phase 68: Knowledge graph modules enabled', {
           provenanceGraph: !!result.provenanceGraph,
           provenanceGraphPersistPath: p68Cfg.provenanceGraph?.persistPath,
-          agentRejectedAlternativeStore: !!result.agentRejectedAlternativeStore,
-          rejectedPersistPath: p68Cfg.rejectedAlternativeStore?.persistPath,
-          defaultQueryLimit: p68Cfg.rejectedAlternativeStore?.defaultQueryLimit,
           kanObstacleChecker: !!result.kanObstacleChecker,
           quantitativeGate: !!result.quantitativeGate,
           operationClassification: !!result.classifyOperation,
@@ -2879,9 +2824,7 @@ export function createAppDependencies(
       if (!p69Cfg) return {};
       const result: Record<string, unknown> = {};
       if (p69WorktreeManager) result.worktreeManager = p69WorktreeManager;
-      if (p69ResultComparator) result.resultComparator = p69ResultComparator;
       if (p69AgentGroupResolver) result.agentGroupResolver = p69AgentGroupResolver;
-      if (p69CliAdapterRegistry) result.cliAdapterRegistry = p69CliAdapterRegistry;
       return result as Partial<AppDependencies>;
     })(),
     // Phase 70：上下文压缩技术深度优化（引用提前创建的实例，与 ContextCompactor 共享）
@@ -2927,7 +2870,7 @@ export function createAppDependencies(
           compactPromptEngine: !!result.compactPromptEngine,
           compactPromptDirection: p70Cfg?.compactPrompt?.defaultDirection,
           sessionMemoryStore: !!result.sessionMemoryStore,
-          sessionMemoryPersistPath: p70Cfg?.sessionMemory?.persistPath,
+          sessionMemoryPersistPath: p70SessionMemoryPersistentPath,
           sessionMemoryMaxMemories: p70Cfg?.sessionMemory?.maxMemories,
           codebaseMemory: !!result.codebaseMemory,
         });

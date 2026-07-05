@@ -11,8 +11,7 @@
 //   2. SNRAwareFilter 默认配置（topP=0.9, minRVThreshold=0.01, batchRejectRatio=0.7）
 //   3. EpistemicTokenProtector 默认配置（neighborhoodLines=3）
 //   4. EpistemicIntegrityChecker 默认配置（overCompressionThreshold=0.5, minTokenCount=5）
-//   5. EpistemicPreservingSummarizer 默认配置（maxTokens=500）
-//   6. collapseThreshold 范围校验（手动验证 < 1 或 > 5 时应拒绝）
+//   5. collapseThreshold 范围校验（手动验证 < 1 或 > 5 时应拒绝）
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -35,11 +34,6 @@ import {
   DEFAULT_EPISTEMIC_INTEGRITY_CHECKER_CONFIG,
   type EpistemicIntegrityCheckerConfig,
 } from '../../src/agent/epistemic-integrity-checker.js';
-import {
-  EpistemicPreservingSummarizer,
-  DEFAULT_EPISTEMIC_PRESERVING_SUMMARIZER_CONFIG,
-  type EpistemicPreservingSummarizerConfig,
-} from '../../src/agent/epistemic-preserving-summarizer.js';
 import {
   QualityMetricsRecorder,
   DEFAULT_QUALITY_METRICS_RECORDER_CONFIG,
@@ -130,26 +124,10 @@ describe('Reasoning Quality Config (Phase 67 Task 7)', () => {
   });
 
   // ============================================================
-  // 测试 5：EpistemicPreservingSummarizer 默认配置
-  // ============================================================
-  it('5. EpistemicPreservingSummarizer 默认配置应符合规范', () => {
-    expect(DEFAULT_EPISTEMIC_PRESERVING_SUMMARIZER_CONFIG.enabled).toBe(false);
-    expect(DEFAULT_EPISTEMIC_PRESERVING_SUMMARIZER_CONFIG.maxTokens).toBe(500);
-
-    // 验证使用默认配置构造实例不抛异常
-    const protector = new EpistemicTokenProtector({ enabled: true, neighborhoodLines: 3 });
-    const summarizer = new EpistemicPreservingSummarizer(
-      protector,
-      DEFAULT_EPISTEMIC_PRESERVING_SUMMARIZER_CONFIG,
-    );
-    expect(summarizer).toBeInstanceOf(EpistemicPreservingSummarizer);
-  });
-
-  // ============================================================
-  // 测试 6：collapseThreshold 范围校验（手动验证 < 1 或 > 5 时应拒绝）
+  // 测试 5：collapseThreshold 范围校验（手动验证 < 1 或 > 5 时应拒绝）
   // ============================================================
   describe('collapseThreshold 范围校验', () => {
-    it('6.1 collapseThreshold < 1 时应拒绝（过敏感）', () => {
+    it('5.1 collapseThreshold < 1 时应拒绝（过敏感）', () => {
       // 0.5 < 1 → 拒绝
       const result = validateCollapseThreshold(0.5);
       expect(result.valid).toBe(false);
@@ -162,7 +140,7 @@ describe('Reasoning Quality Config (Phase 67 Task 7)', () => {
       expect(validateCollapseThreshold(1.0).valid).toBe(true);
     });
 
-    it('6.2 collapseThreshold > 5 时应拒绝（过宽松）', () => {
+    it('5.2 collapseThreshold > 5 时应拒绝（过宽松）', () => {
       // 6 > 5 → 拒绝
       const result = validateCollapseThreshold(6);
       expect(result.valid).toBe(false);
@@ -175,7 +153,7 @@ describe('Reasoning Quality Config (Phase 67 Task 7)', () => {
       expect(validateCollapseThreshold(5.0).valid).toBe(true);
     });
 
-    it('6.3 collapseThreshold 在 [1, 5] 范围内应接受', () => {
+    it('5.3 collapseThreshold 在 [1, 5] 范围内应接受', () => {
       // 1.5（默认值）应接受
       expect(validateCollapseThreshold(1.5).valid).toBe(true);
       // 2.0 应接受
@@ -186,7 +164,7 @@ describe('Reasoning Quality Config (Phase 67 Task 7)', () => {
       expect(validateCollapseThreshold(5.0).valid).toBe(true);
     });
 
-    it('6.4 默认 collapseThreshold=1.5 应在合法范围内', () => {
+    it('5.4 默认 collapseThreshold=1.5 应在合法范围内', () => {
       const defaultThreshold = DEFAULT_MI_CROSS_SCORER_CONFIG.collapseThreshold;
       const result = validateCollapseThreshold(defaultThreshold);
       expect(result.valid).toBe(true);
@@ -194,9 +172,9 @@ describe('Reasoning Quality Config (Phase 67 Task 7)', () => {
   });
 
   // ============================================================
-  // 额外测试 7：QualityMetricsRecorder 默认配置
+  // 额外测试 6：QualityMetricsRecorder 默认配置
   // ============================================================
-  it('7. QualityMetricsRecorder 默认配置应符合规范', () => {
+  it('6. QualityMetricsRecorder 默认配置应符合规范', () => {
     expect(DEFAULT_QUALITY_METRICS_RECORDER_CONFIG.enabled).toBe(false);
 
     // 验证使用默认配置构造实例不抛异常
@@ -205,9 +183,9 @@ describe('Reasoning Quality Config (Phase 67 Task 7)', () => {
   });
 
   // ============================================================
-  // 额外测试 8：自定义配置可覆盖默认值
+  // 额外测试 7：自定义配置可覆盖默认值
   // ============================================================
-  it('8. 自定义配置应能覆盖默认值', () => {
+  it('7. 自定义配置应能覆盖默认值', () => {
     const customMIConfig: MICrossScorerConfig = {
       enabled: true,
       collapseThreshold: 2.5,
@@ -241,12 +219,5 @@ describe('Reasoning Quality Config (Phase 67 Task 7)', () => {
     };
     const checker = new EpistemicIntegrityChecker(protector, customCheckerConfig);
     expect(checker).toBeInstanceOf(EpistemicIntegrityChecker);
-
-    const customSummarizerConfig: EpistemicPreservingSummarizerConfig = {
-      enabled: true,
-      maxTokens: 1000,
-    };
-    const summarizer = new EpistemicPreservingSummarizer(protector, customSummarizerConfig);
-    expect(summarizer).toBeInstanceOf(EpistemicPreservingSummarizer);
   });
 });
