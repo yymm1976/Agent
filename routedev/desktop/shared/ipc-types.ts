@@ -493,9 +493,14 @@ export interface RouteDevAPI {
     rollback: (checkpointId: string) => Promise<{ success: boolean; error?: string }>;
   };
   // Phase 54：计划编辑（StepEditor）响应 API——渲染层确认/取消后回传主进程
+  // Phase 71：新增 plan 修订历史读取 + 遗漏点检查
   plan: {
     /** 用户完成计划编辑后调用（steps=null 表示取消） */
     respondEdit: (payload: PlanEditResponsePayload) => void;
+    /** 读取指定 goal 的 plan 修订历史（fail-open，无历史返回空数组） */
+    getRevisions: (goalId: string) => Promise<{ ok: boolean; revisions?: unknown[] }>;
+    /** 触发 plan 遗漏点检查（LLM 调用，结果异步返回） */
+    checkOmissions: (goalId: string) => Promise<{ ok: boolean; result?: unknown; error?: string }>;
   };
   // Phase 48 Task 4 接线修复：Agent Profile 管理 API
   profile: {

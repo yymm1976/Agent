@@ -74,6 +74,27 @@ export class FileEditTool implements ITool {
     this.requireConfirmation = value;
   }
 
+  /**
+   * P0-3：可观测输入回填——把 args.path 规范化为绝对路径
+   *
+   * 在权限校验和 hook 匹配前调用，确保 ConfigGuard / hook 白名单基于绝对路径匹配，
+   * 杜绝通过 `~/foo` / `./foo` / `../foo` 等相对路径绕过白名单。
+   * 同时缓存规范化后的绝对路径，避免 execute 内重复计算。
+   */
+  backfillObservableInput(
+    args: Record<string, unknown>,
+    context: ToolExecutionContext,
+  ): Record<string, unknown> {
+    if (typeof args.path !== 'string') return args;
+    // 已是绝对路径直接用；否则相对 workingDirectory 解析
+    const raw = args.path;
+    const abs = path.isAbsolute(raw) ? raw : path.resolve(context.workingDirectory, raw);
+    // normalize 处理 .. / . / 重复分隔符
+    const normalized = path.normalize(abs);
+    if (normalized === raw) return args;
+    return { ...args, path: normalized };
+  }
+
   readonly definition: ToolDefinition = {
     name: 'file_edit',
     description:
@@ -124,6 +145,18 @@ export class FileEditTool implements ITool {
         newContent: {
           type: 'string',
           description: 'edit_lines 模式：替换后的新内容',
+        },
+        expectedMtimeMs: {
+          type: 'number',
+          description:
+            'Phase 72 Task C2：乐观锁基线 mtimeMs（由 file_read 的 metadata.mtimeMs 提供）。'
+            + '若提供且与当前文件 mtimeMs 不匹配，返回 CONFLICT 错误，提示重新读取。',
+        },
+        expectedSizeBytes: {
+          type: 'number',
+          description:
+            'Phase 72 Task C2：乐观锁基线 sizeBytes（由 file_read 的 metadata.sizeBytes 提供）。'
+            + '若提供且与当前文件 sizeBytes 不匹配，返回 CONFLICT 错误。',
         },
       },
       required: ['path'],
@@ -228,6 +261,64 @@ export class FileEditTool implements ITool {
         };
       }
 
+      // Phase 72 Task C2：Read→Edit 乐观锁校验
+      // 与 P0-16 stale-check 互补：
+      //   - P0-16 stale-check 检测"编辑操作期间"文件被外部修改（操作内竞态）
+      //   - C2 乐观锁检测"Read 到 Edit 之间"文件已被修改（调用方持有的快照过时）
+      // 调用方通过 file_read.metadata 获取 mtimeMs/sizeBytes，传入 expectedMtimeMs/expectedSizeBytes
+      // 若任一不匹配，直接返回 CONFLICT，避免基于过时快照的编辑覆盖他人变更
+      const expectedMtimeMs = args.expectedMtimeMs as number | undefined;
+      const expectedSizeBytes = args.expectedSizeBytes as number | undefined;
+      if (typeof expectedMtimeMs === 'number' && expectedMtimeMs !== preStats.mtimeMs) {
+        return {
+          success: false,
+          output: '',
+          error: `乐观锁失败：文件 mtimeMs 已变化（期望 ${expectedMtimeMs}，实际 ${preStats.mtimeMs}）。请重新读取文件后再编辑。`,
+          durationMs: 0,
+          metadata: {
+            filePath,
+            action,
+            optimisticLock: 'mtime_mismatch',
+            expectedMtimeMs,
+            currentMtimeMs: preStats.mtimeMs,
+          },
+          structured: {
+            status: 'error',
+            error: {
+              code: 'CONFLICT',
+              message: '文件已被修改，请重新读取',
+            },
+          },
+        };
+      }
+      if (typeof expectedSizeBytes === 'number' && expectedSizeBytes !== preStats.size) {
+        return {
+          success: false,
+          output: '',
+          error: `乐观锁失败：文件 sizeBytes 已变化（期望 ${expectedSizeBytes}，实际 ${preStats.size}）。请重新读取文件后再编辑。`,
+          durationMs: 0,
+          metadata: {
+            filePath,
+            action,
+            optimisticLock: 'size_mismatch',
+            expectedSizeBytes,
+            currentSizeBytes: preStats.size,
+          },
+          structured: {
+            status: 'error',
+            error: {
+              code: 'CONFLICT',
+              message: '文件已被修改，请重新读取',
+            },
+          },
+        };
+      }
+
+      // P0-16：第一层 stale-check —— 捕获读取时的 mtimeMs，作为后续比对基线
+      // Windows 上 mtime 精度可能不足（秒级），故仅作快速路径筛选；
+      // 真正的冲突判定在写入前的第二层用内容比对兜底
+      const baselineMtimeMs = preStats.mtimeMs;
+
       // 读取原文件内容
       const original = await fs.readFile(filePath, 'utf-8');
 
@@ -323,7 +414,44 @@ export class FileEditTool implements ITool {
       // 注：确认通过后再 push，避免用户取消后栈中残留无效条目
       editHistory.push(filePath, original);
 
-      // 写回文件
+      // P0-16：第二层 stale-check —— 写入前重新检测文件是否被外部进程修改
+      // 借鉴 Claude Code FileEditTool：validateInput + call 双层检查，临界区内不 yield
+      //   - 第一层 mtime 快速比对：若 mtime 未变，进入快速路径直接写
+      //   - 若 mtime 变化（Windows mtime 误报或真实修改），fallback 到内容比对
+      //   - 内容比对失败 = 真实冲突，拒绝写入并提示用户重新 Read 后再 Edit
+      // 临界区约定：自此次 stat 起到 writeFile 完成前不再 await 其他 I/O，缩小竞态窗口
+      const preWriteStats = await fs.stat(filePath);
+      if (preWriteStats.mtimeMs !== baselineMtimeMs) {
+        // mtime 变化，做内容兜底比对（Windows 兼容）
+        const currentContent = await fs.readFile(filePath, 'utf-8');
+        if (currentContent !== original) {
+          // 真实冲突：文件已被外部修改，本工具基于过时快照的编辑会覆盖他人变更
+          // Phase 72 Task C1：附加 structured 三态字段（CONFLICT），便于上游自动修复路由
+          return {
+            success: false,
+            output: '',
+            error: '文件在编辑期间被外部进程修改（stale-check 失败）。请重新读取文件后再编辑，避免覆盖他人变更。',
+            durationMs: 0,
+            metadata: {
+              filePath,
+              action,
+              staleCheck: 'conflict',
+              baselineMtimeMs,
+              currentMtimeMs: preWriteStats.mtimeMs,
+            },
+            structured: {
+              status: 'error',
+              error: {
+                code: 'CONFLICT',
+                message: '文件已被修改，请重新读取',
+              },
+            },
+          };
+        }
+        // mtime 变化但内容相同（Windows mtime 误报），继续写入
+      }
+
+      // 写回文件（临界区终点）
       await fs.writeFile(filePath, modified, 'utf-8');
 
       const stats = await fs.stat(filePath);

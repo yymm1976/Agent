@@ -20,8 +20,9 @@ export * from './config.js';
 // Phase 57：/consolidate-memory（原 /dream 改名，去拟人化）；Phase 60：dream alias 已删除
 export * from './consolidate-memory.js';
 export * from './cost.js';
-// Phase 72：/deep-review 并行多 reviewer 对抗性审查
-export * from './deep-review.js';
+// Phase 72：/deep-review 改为懒加载（P0-6）
+// 不再 eager export，由 App.tsx registerLazy 动态 import
+// export * from './deep-review.js';
 export * from './diff.js';
 export * from './doctor.js';
 // Phase 49 Task 5.4：/eval 内置评估用例集（smoke 10 / regression 30 / all / list）

@@ -5,6 +5,7 @@
 import { PluginRegistry, type PluginRegistryOptions } from '../plugins/registry.js';
 import { AgentMiddlewarePipeline } from '../agent/middleware.js';
 import { ToolRegistry } from '../tools/registry.js';
+import type { IToolRegistry } from '../tools/types.js';
 import type { PermissionEngine } from '../tools/permission-engine.js';
 import type { AutonomyMode } from '../config/schema.js';
 import { logger } from '../utils/logger.js';
@@ -68,23 +69,56 @@ interface PluginManifestWithDir {
  * deny 规则不可绕过；confirm 规则通过 commandBridge 请求用户确认。
  * 使用 _registered 标记防止重复注册。
  *
+ * P0-3 改造（2026-07-05）：在 permissionEngine.check 之前调用
+ * `tool.backfillObservableInput?.(args, ctx)`，把相对路径/~/符号链接展开为
+ * 绝对路径并规范化，确保 ConfigGuard / CommandSandbox / hook 白名单始终基于
+ * 绝对路径匹配，杜绝通过 `~/foo` / `./foo` / `..` 等绕过白名单。
+ *
  * @param pipeline 中间件管线
  * @param permissionEngine 权限引擎
  * @param autonomyModeRef 自主度模式 ref（读取当前值）
  * @param commandBridgeRef 命令桥 ref（用于请求确认）
+ * @param toolRegistry 可选：工具注册表，用于查找 tool 实例并调用其 backfillObservableInput
  */
 export function registerPermissionMiddleware(
   pipeline: AgentMiddlewarePipeline,
   permissionEngine: PermissionEngine,
   autonomyModeRef: { current: AutonomyMode },
   commandBridgeRef: { current: { requestConfirm: (p: string) => Promise<boolean> } | null },
+  toolRegistry?: IToolRegistry,
 ): void {
   if ((permissionEngine as { _registered?: boolean })._registered) return;
   (permissionEngine as { _registered?: boolean })._registered = true;
   pipeline.register('onActing', async (ctx, next) => {
+    // P0-3：权限校验前回填可观测输入（绝对路径展开），防 hook 绕过
+    let effectiveArgs = ctx.toolArgs ?? {};
+    if (toolRegistry && ctx.toolName) {
+      const tool = toolRegistry.get(ctx.toolName);
+      if (tool?.backfillObservableInput) {
+        try {
+          // 构造最小 ToolExecutionContext：仅 workingDirectory 用于 path.resolve
+          // 其他字段对 backfillObservableInput 不影响（它只关心路径字段）
+          const minimalCtx = {
+            workingDirectory: process.cwd(),
+            allowedDirectories: [process.cwd()],
+            environment: {},
+            timeoutMs: 0,
+          };
+          effectiveArgs = tool.backfillObservableInput(effectiveArgs, minimalCtx);
+          // 把回填后的 args 写回 ctx，确保后续工具执行也使用绝对路径
+          ctx.toolArgs = effectiveArgs;
+        } catch (err) {
+          // fail-open：回填失败不阻塞执行，但记录日志
+          logger.warn('backfillObservableInput threw, falling back to original args', {
+            toolName: ctx.toolName,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
     const result = permissionEngine.check(
       ctx.toolName ?? '',
-      ctx.toolArgs ?? {},
+      effectiveArgs,
       autonomyModeRef.current,
     );
     if (result.decision === 'deny') {

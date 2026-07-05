@@ -11,6 +11,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { logger } from '../utils/logger.js';
+// P0-7：接入 SkillMdParser 消费 whenToUse/allowedTools/arguments 等新字段
+import { SkillMdParser } from '../skills/skill-md-parser.js';
+import type { SkillMetadata } from '../skills/skill-md-parser.js';
 
 const SAFE_SKILL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
@@ -85,6 +88,19 @@ export interface SkillDefinition {
   content: string;
   /** 来源路径 */
   sourcePath: string;
+  /**
+   * P0-7：扩展字段（由 SkillMdParser 解析 SKILL.md frontmatter 得到）
+   * - whenToUse：注入 system prompt，告知 LLM 何时使用此 Skill
+   * - allowedTools：过滤 ToolRegistry，限制 Skill 可调用的工具集
+   * - arguments：参数定义，供 PromptCommand 参数替换使用
+   * - argumentHint：参数提示（如 "<query>"），用于命令补全
+   * - paths：Skill 关心的文件/目录路径（用于上下文标注）
+   */
+  whenToUse?: string;
+  allowedTools?: string[];
+  arguments?: SkillMetadata['arguments'];
+  argumentHint?: string;
+  paths?: string[];
 }
 
 /** Skill 运行时状态（含启用/禁用标记） */
@@ -476,7 +492,34 @@ export class FilesystemDiscovery {
     name: string,
     sourcePath: string,
   ): SkillDefinition {
-    // 解析 YAML frontmatter（简易版）
+    // P0-7：改用 SkillMdParser 消费 whenToUse/allowedTools/arguments 等新字段
+    // 旧简易正则解析保留为 fallback（SkillMdParser 失败时使用）
+    try {
+      const parsed = SkillMdParser.parse(content);
+      const meta = parsed.metadata;
+      // routingKeywords 优先取 tags（与旧 keywords 字段语义一致）
+      const routingKeywords = meta.tags.length > 0 ? meta.tags : [];
+      return {
+        name,
+        description: meta.description || name,
+        routingKeywords,
+        content: parsed.content,
+        sourcePath,
+        // P0-7：透传新字段
+        whenToUse: meta.whenToUse,
+        allowedTools: meta.allowedTools,
+        arguments: meta.arguments,
+        argumentHint: meta.argumentHint,
+        paths: meta.paths,
+      };
+    } catch (err) {
+      logger.warn('SkillMdParser.parse failed, fallback to simple regex', {
+        skill: name,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // Fallback：旧简易正则解析（保留向后兼容）
     const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/);
     let description = '';
     let routingKeywords: string[] = [];

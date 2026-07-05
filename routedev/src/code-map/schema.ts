@@ -150,6 +150,9 @@ export interface CallPath {
   symbolNames: string[];
 }
 
+/** 风险等级（Phase 72 Task D3） */
+export type RiskLevel = 'high' | 'medium' | 'low';
+
 /** 影响分析结果 */
 export interface ImpactResult {
   /** 起始节点/文件 */
@@ -162,6 +165,11 @@ export interface ImpactResult {
   maxDepth: number;
   /** 总数 */
   totalCount: number;
+  /**
+   * 每个受影响节点的风险等级（与 impactedNodes 一一对应）
+   * Phase 72 Task D3：high（调用方 >10 或 entry point 或跨包）/ medium（3-10 或同包跨文件）/ low（<3 或仅同文件）
+   */
+  riskLevels?: RiskLevel[];
 }
 
 /** 文件树节点 */

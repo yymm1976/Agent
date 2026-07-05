@@ -79,7 +79,10 @@ export class OpenAIClient extends BaseLLMClient {
       const requestOptions = options.timeoutMs
         ? { timeout: options.timeoutMs }
         : undefined;
-      const response = await this.client.chat.completions.create(params, requestOptions) as ChatCompletion;
+      // P0-10：用 withRetry 包装实际 API 调用，启用 querySource-aware 差异化重试
+      const response = await this.withRetry(() =>
+        this.client!.chat.completions.create(params, requestOptions) as Promise<ChatCompletion>,
+      );
 
       const usage = this.extractUsage(response);
       const toolCalls = this.extractToolCalls(response.choices[0]?.message);

@@ -40,8 +40,11 @@ import { logger } from '../utils/logger.js';
 import { estimateTokens } from '../utils/token-estimate.js';
 // Phase 30 P1-1：goal 路径补 profiler.persistSession，需 path 解析输出目录
 import * as path from 'node:path';
+import { mkdirSync, appendFileSync } from 'node:fs';
 import { renderGoalProgressText, renderGoalCompletionSummary, formatDuration } from './components/goal-progress.js';
 import { notifyRoutingFallback } from './notification.js';
+// Phase 71：Plan diff + 遗漏点分析——保存 plan 修订历史
+import { toDiffPlanStep } from '../agent/plan-diff.js';
 // Phase 54 Task 1/4：多 Agent 编排 + 统一审查器接入
 import type { Orchestrator } from '../agent/multi/orchestrator.js';
 import type { WorkerExecutor } from '../agent/multi/worker-executor.js';
@@ -256,6 +259,40 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
   // Electron 端由 engine-bridge 注入 depsGoalId；CLI 端用 nextId 生成临时 id
   const gid = depsGoalId ?? nextId();
 
+  /**
+   * Phase 71：保存 plan 修订历史到 JSONL 文件
+   * 路径来自 config.plan.revisionHistoryPath（默认 '.routedev/plan-revisions/'），
+   * 文件名 <goalId>.jsonl，每行一个 revision（before/after/timestamp）
+   * fail-open：写入失败只记日志，不阻塞 goal 流程
+   */
+  function savePlanRevision(
+    beforeSteps: GoalStep[],
+    afterSteps: GoalStep[],
+    reason: string,
+  ): void {
+    try {
+      const revisionDir = config.plan?.revisionHistoryPath ?? '.routedev/plan-revisions/';
+      const absDir = path.isAbsolute(revisionDir)
+        ? revisionDir
+        : path.resolve(process.cwd(), revisionDir);
+      mkdirSync(absDir, { recursive: true });
+      const filePath = path.join(absDir, `${gid}.jsonl`);
+      const revision = {
+        revisedAt: Date.now(),
+        reason,
+        before: beforeSteps.map(s => toDiffPlanStep(s)),
+        after: afterSteps.map(s => toDiffPlanStep(s)),
+      };
+      appendFileSync(filePath, JSON.stringify(revision) + '\n', 'utf-8');
+      logger.debug('[goal-runner] plan 修订历史已保存', { filePath, reason, beforeCount: beforeSteps.length, afterCount: afterSteps.length });
+    } catch (err) {
+      logger.warn('[goal-runner] 保存 plan 修订历史失败（fail-open）', {
+        error: err instanceof Error ? err.message : String(err),
+        reason,
+      });
+    }
+  }
+
   // Phase 54 Task 4：缓存最近一次 runCompletionGate 的 typecheck/lint/tests 结果
   // 供 verifyPlan 中 GoalAuditor.audit 的 completion_gate 层使用（修复原接入缺陷：未传客观验证结果）
   let lastGateChecks: { typecheck: boolean; lint: boolean; tests: boolean } | null = null;
@@ -435,6 +472,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       if (plan.attestation) {
         archiveCurrentPlan(plan, 'user_edit');
       }
+      // Phase 71：保存修订历史（before=修订前 steps，after=用户编辑后 steps）
+      savePlanRevision(plan.steps, editedSteps, 'user_edit');
       plan.steps = editedSteps;
     } else {
       // Phase 54 Task 5：auto 模式跳过确认时给出提示
@@ -1088,6 +1127,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
         });
         if (suggestion) {
           const migration = (stateMigration ?? new StateMigration()).migrate({ plan, suggestion });
+          // Phase 71：保存修订历史（before=迁移前 steps，after=迁移后 steps）
+          savePlanRevision(plan.steps, migration.plan.steps, 'dynamic_level_switch');
           plan.steps = migration.plan.steps;
           plan.difficultyAssessment = migration.plan.difficultyAssessment;
           // 还有 pending 步骤才需要重跑

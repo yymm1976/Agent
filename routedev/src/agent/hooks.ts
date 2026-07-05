@@ -10,6 +10,15 @@
 
 import { logger } from '../utils/logger.js';
 import type { TraceCollector } from '../harness/trace-collector.js';
+// P0-15：集成新事件分类法（27 种事件 + legacyToNewEvent 映射）
+// 触发旧事件时同步触发新事件，让新事件处理器也能接收生命周期信号
+import {
+  legacyToNewEvent,
+  type HookEventType,
+  type HookPayload,
+  type HookHandler as NewHookHandler,
+  type HookResult as NewHookResult,
+} from '../hooks/hook-events.js';
 
 // ============================================================
 // 类型定义
@@ -130,6 +139,25 @@ export interface HookDefinition {
   name?: string;
 }
 
+/**
+ * P0-15：新事件分类法的钩子定义
+ *
+ * 与 HookDefinition 区别：
+ *   - event 使用 HookEventType（27 种新事件）而非 HookEvent（9 种旧事件）
+ *   - handler 使用 HookHandler（接收 HookPayload）而非 (context: HookContext)
+ *   - 通过 registerNew 注册，由 fire() 在触发旧事件时自动桥接触发
+ */
+export interface NewHookDefinition {
+  /** 新事件类型（27 种之一） */
+  event: HookEventType;
+  /** 处理器（接收结构化 HookPayload） */
+  handler: NewHookHandler;
+  /** 优先级（数值越小越先执行，默认 100） */
+  priority?: number;
+  /** 可读名称（用于日志和注销） */
+  name?: string;
+}
+
 // ============================================================
 // HookRunner
 // ============================================================
@@ -148,6 +176,8 @@ export interface HookDefinition {
 export class HookRunner {
   /** 按事件分组的钩子列表 */
   private hooks: Map<HookEvent, HookDefinition[]> = new Map();
+  /** P0-15：新事件分类法的钩子列表（按 HookEventType 分组） */
+  private newHooks: Map<HookEventType, NewHookDefinition[]> = new Map();
   /** 可选的 TraceCollector，用于记录钩子执行 span */
   private trace: TraceCollector | null = null;
 
@@ -175,6 +205,25 @@ export class HookRunner {
   }
 
   /**
+   * P0-15：注册新事件分类法的钩子
+   *
+   * 新钩子接收结构化 HookPayload，返回 { action: 'continue' | 'cancel' | 'modify' }。
+   * 触发时机：当 fire() 被调用且 legacyToNewEvent(legacyEvent) 命中时，
+   * 旧钩子执行完毕后，自动将 HookContext 转换为 HookPayload 并触发对应新钩子。
+   *
+   * @param hook 新事件钩子定义
+   */
+  registerNew(hook: NewHookDefinition): void {
+    const event = hook.event;
+    if (!this.newHooks.has(event)) {
+      this.newHooks.set(event, []);
+    }
+    const list = this.newHooks.get(event)!;
+    list.push(hook);
+    list.sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100));
+  }
+
+  /**
    * 注销钩子（按 name 匹配）
    * @param name 钩子名称
    * @returns 注销的钩子数量
@@ -190,6 +239,17 @@ export class HookRunner {
         return true;
       });
       this.hooks.set(event, filtered);
+    }
+    // P0-15：同时在新事件钩子列表中注销
+    for (const [event, list] of this.newHooks) {
+      const filtered = list.filter(h => {
+        if (h.name === name) {
+          count++;
+          return false;
+        }
+        return true;
+      });
+      this.newHooks.set(event, filtered);
     }
     return count;
   }
@@ -309,6 +369,106 @@ export class HookRunner {
       finalResult.reason = lastDenyReason;
     }
 
+    // P0-15：新事件分类法桥接——触发旧事件后，同步触发映射的新事件
+    // 让注册到新 27 种事件类型的处理器也能接收生命周期信号
+    // 映射关系见 LEGACY_HOOK_EVENT_MAP（如 'pre-tool-call' → 'PreToolUse'）
+    const newEventType = legacyToNewEvent(event);
+    if (newEventType) {
+      const newResult = await this.fireNew(newEventType, context);
+      // 新事件返回 cancel 时，将最终结果升级为 abort（取消事件 = 中止动作）
+      if (newResult.action === 'cancel' && severity['abort'] > severity[finalResult.action]) {
+        finalResult = {
+          action: 'abort',
+          message: newResult.reason ?? `被新事件 ${newEventType} 取消`,
+        };
+      }
+    }
+
+    return finalResult;
+  }
+
+  /**
+   * P0-15：触发新事件分类法的钩子
+   *
+   * 将 HookContext 转换为 HookPayload，按 priority 升序执行所有注册到该新事件的钩子。
+   * 新钩子返回 { action: 'continue' | 'cancel' | 'modify' }：
+   *   - continue：继续事件流（默认）
+   *   - cancel：取消事件（仅 cancelable 事件有效，由 fire() 转换为 abort）
+   *   - modify：修改事件数据（仅 mutable 事件有效，当前实现暂不回写到 context）
+   *
+   * fail-open：单个新钩子崩溃不阻塞后续钩子。
+   */
+  private async fireNew(event: HookEventType, context: HookContext): Promise<NewHookResult> {
+    const list = this.newHooks.get(event) ?? [];
+    if (list.length === 0) {
+      return { action: 'continue' };
+    }
+
+    // 将旧 HookContext 转换为新 HookPayload
+    const payload: HookPayload = {
+      type: event,
+      timestamp: Date.now(),
+      data: {
+        stepId: context.stepId,
+        projectPath: context.projectPath,
+        toolName: context.toolName,
+        toolArgs: context.toolArgs,
+        toolResult: context.toolResult,
+        toolDuration: context.toolDuration,
+        error: context.error,
+        stepResult: context.stepResult,
+      },
+      agentId: context.agentId,
+    };
+
+    let finalResult: NewHookResult = { action: 'continue' };
+
+    for (const hook of list) {
+      const hookName = hook.name ?? '(anonymous)';
+      const spanId = this.trace?.startSpan({
+        name: `hook:${event}:${hookName}`,
+        type: 'hook',
+      }) ?? -1;
+
+      try {
+        const result = await hook.handler(payload);
+        if (spanId >= 0) {
+          this.trace?.endSpan(spanId);
+        }
+
+        // cancel 短路：不再执行后续新钩子
+        if (result.action === 'cancel') {
+          logger.info('New hook cancelled event, skipping remaining new hooks', {
+            event,
+            hookName,
+            reason: result.reason,
+          });
+          finalResult = result;
+          break;
+        }
+
+        // modify：记录最新修改（当前实现不回写到 context，仅保留日志）
+        if (result.action === 'modify') {
+          payload.data = { ...payload.data, ...result.newData };
+          logger.debug('New hook modified event data', {
+            event,
+            hookName,
+            modifiedKeys: Object.keys(result.newData),
+          });
+        }
+      } catch (err) {
+        if (spanId >= 0) {
+          this.trace?.endSpan(spanId);
+        }
+        // fail-open：新钩子崩溃不影响其他钩子和主流程
+        logger.warn('New hook handler threw error, continuing', {
+          event,
+          hookName,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     return finalResult;
   }
 
@@ -330,10 +490,11 @@ export class HookRunner {
   }
 
   /**
-   * 清除所有钩子
+   * 清除所有钩子（含 P0-15 新事件钩子）
    */
   clear(): void {
     this.hooks.clear();
+    this.newHooks.clear();
   }
 
   /**
@@ -341,6 +502,13 @@ export class HookRunner {
    */
   count(event: HookEvent): number {
     return this.hooks.get(event)?.length ?? 0;
+  }
+
+  /**
+   * P0-15：获取某新事件的钩子数量
+   */
+  countNew(event: HookEventType): number {
+    return this.newHooks.get(event)?.length ?? 0;
   }
 }
 

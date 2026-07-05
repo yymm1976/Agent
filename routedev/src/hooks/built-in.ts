@@ -20,8 +20,11 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import type { HookDefinition, HookContext, HookResult } from '../agent/hooks.js';
+// P0-15：导入新事件分类法类型，用于注册结构化事件钩子
+import type { NewHookDefinition } from '../agent/hooks.js';
 import type { AuditLogger } from '../harness/audit-logger.js';
 import { logger } from '../utils/logger.js';
+import { logEvent } from '../observability/analytics-queue.js';
 
 /** 内置钩子优先级：低于默认 100，让用户插件钩子排在后面 */
 const BUILTIN_HOOK_PRIORITY = 50;
@@ -175,7 +178,10 @@ function createSessionEndHook(audit: AuditLogger): HookDefinition {
  * @param modelId 当前模型 ID（写入 session_start 审计记录）
  */
 export function registerBuiltinHooks(
-  hookRunner: { register: (hook: HookDefinition) => void },
+  hookRunner: {
+    register: (hook: HookDefinition) => void;
+    registerNew?: (hook: NewHookDefinition) => void;
+  },
   audit: AuditLogger,
   cwd: string,
   modelId: string,
@@ -187,8 +193,33 @@ export function registerBuiltinHooks(
   hookRunner.register(createSessionStartHook(audit, cwd, modelId));
   hookRunner.register(createSessionEndHook(audit));
 
+  // P0-15：新事件分类法钩子——PostToolUse 事件接入 analytics 队列
+  // 触发时机：fire('post-tool-call', ctx) 执行后，自动桥接触发 PostToolUse 新事件
+  // 作用：把工具调用耗时/工具名写入 analytics 队列，消除 P0-11 logEvent 零调用 + P0-15 registerNew 零调用
+  if (typeof hookRunner.registerNew === 'function') {
+    hookRunner.registerNew({
+      event: 'PostToolUse',
+      name: 'builtin:analytics-post-tool-use',
+      priority: BUILTIN_HOOK_PRIORITY,
+      handler: (payload) => {
+        try {
+          const data = payload.data ?? {};
+          logEvent('hook_post_tool_use', {
+            toolName: String(data.toolName ?? ''),
+            durationMs: Number(data.toolDuration ?? 0),
+            agentId: payload.agentId ?? '',
+          });
+        } catch {
+          // fail-open：analytics 失败不影响 hook 流
+        }
+        return { action: 'continue' };
+      },
+    });
+  }
+
   logger.info('Built-in hooks registered', {
     count: 3,
+    newEventHooks: typeof hookRunner.registerNew === 'function' ? 1 : 0,
     hooks: [
       'builtin:post-file-change-validate',
       'builtin:session-start-logger',

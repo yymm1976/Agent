@@ -9,6 +9,9 @@ import { GeminiClient } from './gemini-client.js';
 import { DeepSeekClient } from './deepseek-client.js';
 import { QwenClient } from './qwen-client.js';
 import { OllamaClient } from './ollama-client.js';
+// P0-10：需要 BaseLLMClient 用于 instanceof 判断和 setRetryPolicy 注入
+import { BaseLLMClient } from './base.js';
+import { QuerySourceAwareRetryPolicy } from '../../utils/retry.js';
 import { logger } from '../../utils/logger.js';
 import type { Protocol } from '../../config/schema.js';
 
@@ -162,7 +165,29 @@ export class LLMClientManager {
         });
       }
     }
+    // P0-10：为所有客户端注入默认 querySource-aware 重试策略（foreground 主对话）
+    // 后台任务（摘要/压缩/子Agent）可通过 setRetryPolicy 覆盖为对应 querySource
+    this.applyDefaultRetryPolicy();
     logger.info('LLM clients initialized', { count: this.clients.size });
+  }
+
+  /**
+   * P0-10：为所有 BaseLLMClient 实例注入默认 foreground 重试策略
+   *
+   * 默认 querySource='repl_main_thread'（用户主对话，foreground 全力重试）
+   * 调用方可在需要后台任务时通过 client.setRetryPolicy() 覆盖为 background 类（如 'summary'/'title'）
+   */
+  private applyDefaultRetryPolicy(): void {
+    for (const [, client] of this.clients) {
+      if (client instanceof BaseLLMClient) {
+        const policy = new QuerySourceAwareRetryPolicy({
+          querySource: 'repl_main_thread',
+          maxRetries: 5,
+          maxDelayMs: 16000,
+        });
+        client.setRetryPolicy(policy);
+      }
+    }
   }
 
   /**

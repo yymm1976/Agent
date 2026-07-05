@@ -8,7 +8,7 @@ import path from 'node:path';
 import fsp from 'node:fs/promises';
 import type { MiddlewareContext, MiddlewareHandler } from '../middleware.js';
 import { incrementalScan, type RepoMapFileEntry } from '../../tools/repo-map.js';
-import { fullIndex, incrementalIndex } from '../../code-map/indexer.js';
+import { incrementalIndex, loadOrBuildIndex } from '../../code-map/indexer.js';
 import { explore } from '../../code-map/querier.js';
 import {
   getIndexStatus,
@@ -92,15 +92,15 @@ export class CodeMapContextMiddleware {
       return this.db;
     }
 
-    // 首次：fullIndex
+    // 首次：loadOrBuildIndex（Phase 72 Task D1：artifact 优先，秒级启动；失败降级 regex）
     try {
-      const { db } = await fullIndex(this.rootDir, { maxFiles: 5000 });
+      const { db } = await loadOrBuildIndex(this.rootDir, { maxFiles: 5000 });
       this.db = db;
       this.indexedOnce = true;
       this.lastRefreshAt = now;
 
       const status = getIndexStatus(db);
-      logger.info('tree-sitter fullIndex 完成', {
+      logger.info('tree-sitter 索引就绪（loadOrBuildIndex）', {
         rootDir: this.rootDir,
         fileCount: status.fileCount,
         nodeCount: status.nodeCount,
@@ -108,7 +108,7 @@ export class CodeMapContextMiddleware {
       // Phase 71 Task A3：首次索引后异步刷新 git seed 缓存（fail-open，不阻塞）
       this.refreshGitSeeds(db);
     } catch (err) {
-      logger.warn('tree-sitter fullIndex 失败，降级到 regex', {
+      logger.warn('tree-sitter loadOrBuildIndex 失败，降级到 regex', {
         error: err instanceof Error ? err.message : String(err),
       });
       this.engineFailed = true;

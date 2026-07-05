@@ -28,6 +28,9 @@ import { useProjectsStore } from '../store/useProjectsStore.js';
 import { useRouteDevStore } from '../store/useRouteDevStore.js';
 import { GoalExecutionCard } from '../components/GoalExecutionCard.js';
 import { StepEditor } from '../components/StepEditor.js';
+// Phase 71：plan 修订类型与遗漏点检查结果类型（与 GoalExecutionCard 内部使用的类型对齐）
+import type { PlanStep } from '../../../../src/agent/plan-diff.js';
+import type { OmissionResult } from '../../../../src/agent/omission-checker.js';
 
 interface ChatPageProps {
   messages: ChatMessage[];
@@ -466,10 +469,38 @@ function GoalMessageBubble({ goalId }: { goalId: string }) {
   const execution = useRouteDevStore(state =>
     state.goalExecutions.find(g => g.goalId === goalId),
   );
+  // Phase 71：加载 plan 修订历史 + 提供遗漏点检查回调
+  // PlanRevision 与 GoalExecutionCard 内部 interface PlanRevision 结构一致
+  type LocalPlanRevision = { before: PlanStep[]; after: PlanStep[]; revisedAt: number };
+  const [planRevisions, setPlanRevisions] = useState<LocalPlanRevision[]>([]);
+  useEffect(() => {
+    // 异步加载修订历史，fail-open（无历史则空数组）
+    let cancelled = false;
+    window.routedev?.plan?.getRevisions?.(goalId).then((res: { ok: boolean; revisions?: unknown[] }) => {
+      if (cancelled || !res?.ok || !Array.isArray(res.revisions)) return;
+      // 服务端返回 JSON 解析结果，结构信任 + cast（fail-open：非法结构会被 GoalExecutionCard 忽略）
+      setPlanRevisions(res.revisions as LocalPlanRevision[]);
+    }).catch(() => { /* fail-open */ });
+    return () => { cancelled = true; };
+  }, [goalId]);
+
+  const handleCheckOmissions = useCallback(async (): Promise<OmissionResult> => {
+    const res = await window.routedev?.plan?.checkOmissions?.(goalId);
+    if (!res?.ok) return { omissions: [], summary: '检查失败' };
+    // 服务端返回 OmissionResult 形状（结构信任 + cast）
+    return (res.result ?? { omissions: [], summary: '检查未执行' }) as OmissionResult;
+  }, [goalId]);
+
   if (!execution) {
     return <div className="text-xs text-rd-textMuted px-1 py-2">目标执行中…</div>;
   }
-  return <GoalExecutionCard execution={execution} />;
+  return (
+    <GoalExecutionCard
+      execution={execution}
+      planRevisions={planRevisions.length > 0 ? planRevisions : undefined}
+      onCheckOmissions={handleCheckOmissions}
+    />
+  );
 }
 
 function MessageBubble({

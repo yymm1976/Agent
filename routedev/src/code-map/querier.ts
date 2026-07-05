@@ -12,6 +12,7 @@ import type {
   FileNode,
   IndexStatus,
   CallPath,
+  RiskLevel,
 } from './schema.js';
 import {
   queryNodes,
@@ -22,11 +23,13 @@ import {
   getAllEdges,
   getIndexStatus,
   batchUpdateRankScores,
+  searchNodesByFts,
   type DB,
 } from './database.js';
 import { computePersonalizedPageRank, incrementalPageRank, type RankedEdge } from './ranker.js';
 import { getSeedNodeIdsFromCache } from './git-integration.js';
 import { getChangedFilesSinceRank, clearChangedFilesSinceRank } from './indexer.js';
+import { buildFtsMatchQuery } from './camel-split-tokenizer.js';
 
 /** 查询选项 */
 interface QueryOptions {
@@ -38,6 +41,39 @@ interface QueryOptions {
   includeCallPaths?: boolean;
   /** 文件过滤提示 */
   fileHint?: string;
+}
+
+/**
+ * Phase 72 Task D2：BM25 符号搜索
+ *
+ * 借鉴 codebase-memory-mcp 的 cbm_camel_split 分词器，用 FTS5 BM25 替代精确匹配
+ * - camelCase / snake_case 感知：getFileStructure / get_file_structure 都能匹配 "file structure"
+ * - BM25 相关性排序：高频词权重低，稀有词权重高
+ *
+ * @param query 用户输入的符号名（可以是 camelCase / snake_case / 空格分隔）
+ * @param limit 最大返回数（默认 20）
+ * @returns 按 BM25 相关性排序的节点列表（分数越低越相关，已转 rankScore 供统一消费）
+ */
+export function searchBySymbolName(db: DB, query: string, limit = 20): CodeMapNode[] {
+  const matchQuery = buildFtsMatchQuery(query);
+  if (!matchQuery) return [];
+
+  const hits = searchNodesByFts(db, matchQuery, limit);
+  if (hits.length === 0) return [];
+
+  // 按 node_id 批量取完整节点
+  const nodeIds = hits.map(h => h.nodeId);
+  const placeholders = nodeIds.map(() => '?').join(',');
+  const nodes = queryNodes(db, `SELECT * FROM nodes WHERE id IN (${placeholders})`, nodeIds);
+
+  // 用 BM25 分数排序（分数越低越相关；转换为 rankScore 供下游统一排序逻辑复用）
+  // BM25 score 可能为负（FTS5 实现细节），取负数让"分数越低越相关"变成"rankScore 越高越相关"
+  const scoreMap = new Map<string, number>();
+  for (const h of hits) scoreMap.set(h.nodeId, -h.bm25Score);
+
+  return nodes
+    .map(n => ({ ...n, rankScore: scoreMap.get(n.id) ?? 0 }))
+    .sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0));
 }
 
 /** 关键词搜索符号 */
@@ -62,11 +98,20 @@ export function explore(
 
   // 搜索节点：name 或 signature 匹配关键词
   const allNodes = getAllNodes(db);
-  const filtered = allNodes.filter(node => {
+  let filtered = allNodes.filter(node => {
     const nameLower = node.name.toLowerCase();
     const sigLower = (node.signature ?? '').toLowerCase();
     return keywords.some(kw => nameLower.includes(kw) || sigLower.includes(kw));
   });
+
+  // Phase 72 Task D2：includes 匹配为空时，用 FTS5 BM25 作为 fallback
+  // 场景：用户输入 "file structure" 想找 getFileStructure，includes 子串匹配不到 camelCase
+  if (filtered.length === 0) {
+    const ftsHits = searchBySymbolName(db, query, maxResults);
+    if (ftsHits.length > 0) {
+      filtered = ftsHits;
+    }
+  }
 
   // Phase 71 Task A5：content hash 变更检测 → 增量 PageRank
   // 有变更时走 incrementalPageRank（仅重算受影响节点 + 一阶邻居），无变更时走 PPR
@@ -409,6 +454,48 @@ export function findCallChain(
   return results;
 }
 
+/**
+ * Phase 72 Task D3：风险分级
+ *
+ * 借鉴 codebase-memory-mcp 的 detect_changes 风险分类思路
+ * - high：调用方 > 10 或 是 entry point（exported / main / index / run / start）或 跨包
+ * - medium：调用方 3-10 或 同包内跨文件
+ * - low：调用方 < 3 或 仅同文件内
+ *
+ * 决策：不扩展 CodeMapNode 类型新增 isEntryPoint / crossPackage 字段，
+ * 而是用现有字段推断（exported / name / filePath 顶层目录），避免 schema 改动传导到 extractor
+ *
+ * 注意：本函数为启发式推断，精度有限：
+ *   - isEntryPoint 用 exported + 入口符号名集合猜测，可能漏判非 exported 的真入口
+ *     （如 HTTP handler、CLI subcommand），也可能误判 exported 的内部工具函数
+ *   - crossPackage 用 filePath 顶层目录推断包边界，对 monorepo 子包结构准确，
+ *     但对单包多层目录项目可能误判跨包
+ * 未来可扩展 schema 显式存储 isEntryPoint / crossPackage，由 extractor 在索引阶段精确标注
+ */
+function classifyRisk(
+  node: CodeMapNode,
+  callerCount: number,
+  callerFilePaths: string[],
+): RiskLevel {
+  // isEntryPoint 推断：exported 函数 + 常见入口符号名
+  const entryPointNames = new Set(['main', 'index', 'run', 'start', 'bootstrap', 'init']);
+  const isEntryPoint = node.exported === true || entryPointNames.has(node.name.toLowerCase());
+
+  // crossPackage 推断：任一 caller 的顶层目录与 node 不同
+  // 例：node 在 src/code-map/，caller 在 src/agent/ → 跨包
+  const nodeTopDir = node.filePath.split('/')[0] ?? '';
+  const crossPackage = callerFilePaths.some(fp => (fp.split('/')[0] ?? '') !== nodeTopDir);
+
+  if (callerCount > 10 || isEntryPoint || crossPackage) return 'high';
+  if (callerCount >= 3) return 'medium';
+  // < 3 调用方：检查是否同文件
+  const sameFileOnly = callerFilePaths.length === 0 || callerFilePaths.every(fp => fp === node.filePath);
+  return sameFileOnly ? 'low' : 'medium';
+}
+
+/** 风险等级排序权重（用于降序排列） */
+const RISK_ORDER: Record<RiskLevel, number> = { high: 3, medium: 2, low: 1 };
+
 /** 影响分析：反向 BFS 收集所有受影响符号 */
 export function analyzeImpact(
   db: DB,
@@ -438,8 +525,10 @@ export function analyzeImpact(
     };
   }
 
-  // 构建 target → sources 反向边映射
+  // 构建 target → sources 反向边映射（同时记录 source 的 filePath 用于 crossPackage 判断）
   const reverseEdges = new Map<string, string[]>();
+  // node id → 调用方 filePath 列表（用于风险分级）
+  const nodeCallerFiles = new Map<string, string[]>();
   for (const edge of allEdges) {
     if (edge.kind !== 'CALLS' && edge.kind !== 'IMPORTS' && edge.kind !== 'EXTENDS' && edge.kind !== 'IMPLEMENTS') continue;
     const sources = reverseEdges.get(edge.target) ?? [];
@@ -484,12 +573,43 @@ export function analyzeImpact(
     }
   }
 
+  // Phase 72 Task D3：计算每个受影响节点的风险等级
+  // 预构建 node id → callers filePath 列表（仅 impacted 内节点的 CALLS 反向边）
+  const impactedIdSet = new Set(impacted.map(n => n.id));
+  for (const node of impacted) {
+    const lookupKeys = [node.id, node.name];
+    const callerFiles: string[] = [];
+    for (const key of lookupKeys) {
+      const sources = reverseEdges.get(key) ?? [];
+      for (const sourceId of sources) {
+        // 仅统计 impacted 集合内的 callers（受影响的调用方），避免引入无关节点
+        if (impactedIdSet.has(sourceId)) {
+          const caller = allNodes.find(n => n.id === sourceId);
+          if (caller) callerFiles.push(caller.filePath);
+        }
+      }
+    }
+    nodeCallerFiles.set(node.id, callerFiles);
+  }
+
+  // 为每个 impacted 节点计算 risk
+  const riskPairs: Array<{ node: CodeMapNode; risk: RiskLevel }> = impacted.map(node => {
+    const callerFiles = nodeCallerFiles.get(node.id) ?? [];
+    // 去重 caller filePath（同一文件多个 caller 只算一次跨包判断，但 callerCount 用原始数）
+    const callerCount = callerFiles.length;
+    return { node, risk: classifyRisk(node, callerCount, callerFiles) };
+  });
+
+  // 按 risk 降序排列（high → medium → low）
+  riskPairs.sort((a, b) => RISK_ORDER[b.risk] - RISK_ORDER[a.risk]);
+
   return {
     root: fileOrSymbol,
-    impactedNodes: impacted,
+    impactedNodes: riskPairs.map(p => p.node),
     impactedFiles: Array.from(impactedFiles),
     maxDepth,
-    totalCount: impacted.length,
+    totalCount: riskPairs.length,
+    riskLevels: riskPairs.map(p => p.risk),
   };
 }
 

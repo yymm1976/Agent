@@ -644,6 +644,14 @@ const OptimizationConfigSchema = z.object({
   conciseThinking: z.object({
     enabled: z.boolean().default(false),
   }).default({ enabled: false }),
+  /**
+   * Phase 72 Task B2：内容路由压缩（按内容类型分派）
+   * 启用后 ToolOutputPipeline 会在 Sanitizer 之后调用 ContentRouter：
+   *   - JSON 走统计采样、代码走 AST/正则摘要、散文走 ksentence、<200 token 直通
+   */
+  contentRouting: z.object({
+    enabled: z.boolean().default(false),
+  }).default({ enabled: false }),
   /** 统一工作流编排（Phase 31 Task 1） */
   workflow: z.preprocess((v) => v ?? {}, WorkflowConfigSchema),
   /** 生产安全防护（Phase 31 Task 6） */

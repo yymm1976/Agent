@@ -1,8 +1,14 @@
 // src/cli/tool-verb.ts
 // Phase 34 Task 3：动作动词体系与工具执行反馈
 // 统一工具调用的“执行中/已完成/失败”三种状态的文案，使用过去时动词降低焦虑
+//
+// P0-12 改造（2026-07-05）：verbose 模式下用 formatNestedBlock 包裹完整结果
+//   - 嵌套 ⎿ 前缀表达工具结果是 Agent 消息的子结果
+//   - 借鉴 Claude Code MessageResponse 的视觉语法
 
 import type { OutputStyle } from '../config/schema.js';
+// P0-12：嵌套消息格式化
+import { formatNestedBlock } from './nested-message-format.js';
 
 /** 工具反馈状态 */
 type ToolFeedbackState = 'running' | 'completed' | 'failed';
@@ -196,6 +202,9 @@ function extractCountFromResult(result: string): string {
 
 /**
  * 构造结果后缀（控制信息密度）
+ *
+ * P0-12 改造：verbose 模式下用 formatNestedBlock 包裹完整结果
+ * 表现为 ⎿ 前缀的嵌套块，视觉上表达"工具结果是 Agent 消息的子结果"
  */
 function buildResultSuffix(
   result: string | undefined,
@@ -215,7 +224,10 @@ function buildResultSuffix(
     const preview = firstLine.length > 60 ? firstLine.slice(0, 60) + '...' : firstLine;
     return ` — ${preview}`;
   }
-  // verbose 模式下由调用方单独展示完整结果，这里不加后缀
+  // P0-12：verbose 模式下用嵌套块展示完整结果（⎿ 前缀）
+  if (outputStyle === 'verbose') {
+    return '\n' + formatNestedBlock(result, 1);
+  }
   return '';
 }
 

@@ -3,7 +3,7 @@
 
 import { estimateTokens } from '../../utils/token-estimate.js';
 import { logger } from '../../utils/logger.js';
-import type { ParallelOutcome } from './parallel-executor.js';
+import type { ParallelOutcome } from './types.js';
 
 export interface ComparisonResult {
   winnerId: string;

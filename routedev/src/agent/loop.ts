@@ -633,11 +633,19 @@ export class ReActAgentLoop {
    * 净化工具结果——如果设置了 sanitizer 则调用，否则原样返回
    * 在 4 个工具结果注入点（并行/串行 × 结果/拒绝）统一调用
    * 任务3：简洁思考约束启用时，额外调用 trimToolResult 裁剪过长工具返回
+   *
+   * Phase 72 Task B2：改为 async 以支持 ContentRouter 内部的 AST 提取（async WASM 调用）
+   * toolArgs 可选，传入时供 ContentRouter 提取 filePath 做 AST 提取
    */
-  private sanitizeToolResult(toolName: string, result: string): string {
+  private async sanitizeToolResult(
+    toolName: string,
+    result: string,
+    toolArgs?: Record<string, unknown>,
+  ): Promise<string> {
     // Phase 71 Task D3：优先走 ToolOutputPipeline（收拢 Sanitizer / Concise Thinking / Budget Offload）
     if (this.toolOutputPipeline) {
-      return this.toolOutputPipeline.process(toolName, result).output;
+      const r = await this.toolOutputPipeline.process(toolName, result, toolArgs);
+      return r.output;
     }
     // 回退：pipeline 未注入时走原逻辑（零回归保护）
     let processed = result;
@@ -1028,7 +1036,7 @@ export class ReActAgentLoop {
               }
 
               if (!approved) {
-                const toolResult = this.sanitizeToolResult(toolCall.name, `[用户拒绝了此工具调用] ${toolCall.name}`);
+                const toolResult = await this.sanitizeToolResult(toolCall.name, `[用户拒绝了此工具调用] ${toolCall.name}`);
                 yield {
                   type: 'tool_call_result',
                   toolName: toolCall.name,
@@ -1061,10 +1069,10 @@ export class ReActAgentLoop {
                 let askUserIsError: boolean;
                 if (askUserPreHook.action === 'deny') {
                   const denyReason = askUserPreHook.reason ?? '工具调用被钩子拒绝';
-                  askUserResult = this.sanitizeToolResult(toolCall.name, `[工具被拒绝] ${denyReason}`);
+                  askUserResult = await this.sanitizeToolResult(toolCall.name, `[工具被拒绝] ${denyReason}`);
                   askUserIsError = true;
                 } else {
-                  askUserResult = this.sanitizeToolResult(toolCall.name, JSON.stringify(confirmPayload ?? {}, null, 2));
+                  askUserResult = await this.sanitizeToolResult(toolCall.name, JSON.stringify(confirmPayload ?? {}, null, 2));
                   askUserIsError = false;
                 }
                 // I16 修复：触发 post-tool-call 钩子
@@ -1130,7 +1138,7 @@ export class ReActAgentLoop {
                 }
                 if (mwCtx.metadata.permissionDenied) {
                   const denyReason = String(mwCtx.metadata.permissionDenied);
-                  const toolResult = this.sanitizeToolResult(toolCall.name, `[被拦截] ${denyReason}`);
+                  const toolResult = await this.sanitizeToolResult(toolCall.name, `[被拦截] ${denyReason}`);
                   yield {
                     type: 'tool_call_result',
                     toolName: toolCall.name,
@@ -1165,7 +1173,7 @@ export class ReActAgentLoop {
                   stepId: toolCall.id,
                   reason: denyReason,
                 });
-                const toolResult = this.sanitizeToolResult(toolCall.name, `[工具被拒绝] ${denyReason}`);
+                const toolResult = await this.sanitizeToolResult(toolCall.name, `[工具被拒绝] ${denyReason}`);
                 yield {
                   type: 'tool_call_result',
                   toolName: toolCall.name,
@@ -1214,7 +1222,8 @@ export class ReActAgentLoop {
                 const tc = approvedCalls[i];
                 const execResult = execResults[i] as { output: string; isError: boolean };
                 // Phase 32 Task 1.2：净化工具结果（注入检测 + 智能截断 + 敏感字段脱敏）
-                const toolResult = this.sanitizeToolResult(tc.name, execResult.output);
+                // Phase 72 Task B2：传入 toolArgs 供 ContentRouter 提取 filePath 做 AST 提取
+                const toolResult = await this.sanitizeToolResult(tc.name, execResult.output, tc.arguments);
                 const isError = execResult.isError;
                 const toolDuration = Date.now() - toolStartTimes[i];
 
@@ -1290,7 +1299,7 @@ export class ReActAgentLoop {
 
               if (!approved) {
                 // 用户拒绝：注入拒绝信息作为工具结果
-                const toolResult = this.sanitizeToolResult(toolCall.name, `[用户拒绝了此工具调用] ${toolCall.name}`);
+                const toolResult = await this.sanitizeToolResult(toolCall.name, `[用户拒绝了此工具调用] ${toolCall.name}`);
                 yield {
                   type: 'tool_call_result',
                   toolName: toolCall.name,
@@ -1311,7 +1320,7 @@ export class ReActAgentLoop {
               }
 
               if (toolCall.name === 'ask_user') {
-                const toolResult = this.sanitizeToolResult(toolCall.name, JSON.stringify(confirmPayload ?? {}, null, 2));
+                const toolResult = await this.sanitizeToolResult(toolCall.name, JSON.stringify(confirmPayload ?? {}, null, 2));
                 yield {
                   type: 'tool_call_result',
                   toolName: toolCall.name,
@@ -1368,7 +1377,7 @@ export class ReActAgentLoop {
                 // 中间件设置了 permissionDenied → 不执行工具，返回错误结果
                 if (mwCtx.metadata.permissionDenied) {
                   const denyReason = String(mwCtx.metadata.permissionDenied);
-                  const toolResult = this.sanitizeToolResult(toolCall.name, `[被拦截] ${denyReason}`);
+                  const toolResult = await this.sanitizeToolResult(toolCall.name, `[被拦截] ${denyReason}`);
                   yield {
                     type: 'tool_call_result',
                     toolName: toolCall.name,
@@ -1410,7 +1419,7 @@ export class ReActAgentLoop {
                   stepId: toolCall.id,
                   reason: denyReason,
                 });
-                toolResult = this.sanitizeToolResult(toolCall.name, `[工具被拒绝] ${denyReason}`);
+                toolResult = await this.sanitizeToolResult(toolCall.name, `[工具被拒绝] ${denyReason}`);
                 yield {
                   type: 'tool_call_result',
                   toolName: toolCall.name,
@@ -1451,7 +1460,8 @@ export class ReActAgentLoop {
               const toolDuration = Date.now() - toolStartTime;
 
               // Phase 32 Task 1.2：净化工具结果（注入检测 + 智能截断 + 敏感字段脱敏）
-              toolResult = this.sanitizeToolResult(toolCall.name, toolResult);
+              // Phase 72 Task B2：传入 toolArgs 供 ContentRouter 提取 filePath 做 AST 提取
+              toolResult = await this.sanitizeToolResult(toolCall.name, toolResult, toolCall.arguments);
 
               // C6 修复：触发 post-tool-call 钩子
               await this.fireHookSafe('post-tool-call', {
@@ -1513,6 +1523,10 @@ export class ReActAgentLoop {
               }
               // 检查并输出告警
               const alerts = this.budgetMonitor.check();
+              // Phase 72 Task B4：告警时附带 availableBudget（扣除 system prompt 预留），
+              // 让运维知悉剩余可用上下文预算，决策是否触发上下文压缩 / 工具输出 offload
+              const availableBudget = this.budgetMonitor.getAvailableBudget();
+              const reserveRatio = this.budgetMonitor.getReserveRatio();
               for (const a of alerts) {
                 logger.warn('BudgetMonitor alert', {
                   type: a.type,
@@ -1520,6 +1534,8 @@ export class ReActAgentLoop {
                   message: a.message,
                   current: a.current,
                   threshold: a.threshold,
+                  availableBudget,
+                  reserveRatio,
                 });
               }
             } catch (budgetErr) {

@@ -12,6 +12,8 @@ import type {
 import { LLMError } from '../types.js';
 import { logger } from '../../utils/logger.js';
 import type { Protocol } from '../../config/schema.js';
+// P0-10：接入 QuerySourceAwareRetryPolicy（前台/后台任务差异化重试）
+import type { QuerySourceAwareRetryPolicy } from '../../utils/retry.js';
 
 /** 默认超时时间（30 秒） */
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -30,6 +32,12 @@ export abstract class BaseLLMClient implements ILLMClient {
   protected readonly baseUrl: string;
   protected readonly apiKey: string;
   protected readonly defaultTimeoutMs: number;
+  /**
+   * P0-10：可选的 querySource-aware 重试策略
+   * 由 LLMClientManager 在构造客户端时注入（依据客户端用途标记 querySource）
+   * 未注入时 withRetry 直接执行 fn，不影响现有行为
+   */
+  private retryPolicy: QuerySourceAwareRetryPolicy | null = null;
 
   constructor(config: {
     providerId: string;
@@ -41,6 +49,27 @@ export abstract class BaseLLMClient implements ILLMClient {
     this.baseUrl = config.baseUrl;
     this.apiKey = config.apiKey;
     this.defaultTimeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  /**
+   * P0-10：注入 querySource-aware 重试策略
+   * 由 LLMClientManager 根据客户端用途（主对话/摘要/后台压缩/子Agent等）注入
+   */
+  setRetryPolicy(policy: QuerySourceAwareRetryPolicy): void {
+    this.retryPolicy = policy;
+  }
+
+  /**
+   * P0-10：带 querySource-aware 重试的执行包装器
+   * 子类在 complete() 中调用 this.withRetry(() => apiCall()) 即可获得差异化重试
+   * - foreground 任务（主对话/子Agent）：全力重试（默认 5 次，最大 16s 延迟）
+   * - background 任务（摘要/压缩）：保守重试（默认 0 次），529 直接 bail
+   */
+  protected async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.retryPolicy) {
+      return this.retryPolicy.execute(fn);
+    }
+    return fn();
   }
 
   /** 检查客户端是否就绪 */

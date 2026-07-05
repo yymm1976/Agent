@@ -44,6 +44,12 @@ export interface BudgetMonitorOptions {
   tokenWarnRatio?: number;
   /** 工具循环阈值（默认 5，最近 N 次相同工具触发 tool_loop） */
   toolLoopThreshold?: number;
+  /**
+   * Phase 72 Task B4：system prompt 预留比例（默认 0.2）
+   * 计算可用预算时 available = total * (1 - reserveRatio)，预留部分只给 system prompt 用
+   * 取值范围 [0, 1)，超出范围将 clamp 到 [0, 0.5]
+   */
+  reserveRatio?: number;
 }
 
 /**
@@ -69,6 +75,11 @@ export class BudgetMonitor {
   private readonly tokenWarnRatio: number;
   /** 已触发告警集合（用于去重） */
   private firedAlerts: Set<string> = new Set();
+  /**
+   * Phase 72 Task B4：system prompt 预留比例
+   * 计算可用预算时 available = total * (1 - reserveRatio)，预留部分只给 system prompt 用
+   */
+  private readonly reserveRatio: number;
 
   constructor(opts: BudgetMonitorOptions) {
     if (!opts || typeof opts.tokenLimit !== 'number' || opts.tokenLimit <= 0) {
@@ -78,6 +89,27 @@ export class BudgetMonitor {
     this.costLimit = opts.costLimit;
     this.tokenWarnRatio = opts.tokenWarnRatio ?? 0.75;
     this.toolLoopThreshold = opts.toolLoopThreshold ?? 5;
+    // Phase 72 Task B4：reserveRatio clamp 到 [0, 0.5]，默认 0.2
+    const rawRatio = opts.reserveRatio ?? 0.2;
+    this.reserveRatio = Math.max(0, Math.min(0.5, rawRatio));
+  }
+
+  /**
+   * Phase 72 Task B4：获取 system prompt 预留比例
+   * @returns 当前 reserveRatio（已 clamp）
+   */
+  getReserveRatio(): number {
+    return this.reserveRatio;
+  }
+
+  /**
+   * Phase 72 Task B4：计算可用预算（扣除 system prompt 预留）
+   * available = tokenLimit * (1 - reserveRatio)
+   * @returns 可用 token 数（非负整数）
+   */
+  getAvailableBudget(): number {
+    const avail = Math.floor(this.tokenLimit * (1 - this.reserveRatio));
+    return Math.max(0, avail);
   }
 
   /**

@@ -11,6 +11,7 @@ import type {
   IndexStatus,
 } from './schema.js';
 import type { PendingReference } from './extractor.js';
+import { camelSplitToFTS } from './camel-split-tokenizer.js';
 
 export type DB = DatabaseSync;
 
@@ -65,6 +66,7 @@ export function initDatabase(dbPath: string): DB {
       callee_name TEXT NOT NULL,
       line INTEGER NOT NULL,
       file_path TEXT NOT NULL,
+      import_source TEXT,
       FOREIGN KEY (source_node_id) REFERENCES nodes(id)
     );
 
@@ -76,6 +78,32 @@ export function initDatabase(dbPath: string): DB {
     CREATE INDEX IF NOT EXISTS idx_edges_kind ON edges(kind);
     CREATE INDEX IF NOT EXISTS idx_unresolved_callee ON unresolved_refs(callee_name);
   `);
+
+  // Phase 72 Task D2：FTS5 BM25 符号搜索表
+  // 决策：node:sqlite 不支持注册 JS 自定义分词器（验证：no such tokenizer: javascript）
+  // 降级方案：写入时用 camelSplitToFTS 预分词为空格分隔字符串，用内置 unicode61 tokenizer
+  // 字段说明：
+  //   - node_id：关联 nodes.id（不参与 FTS 匹配，仅用于 JOIN 取完整节点）
+  //   - name_tokens：符号名分词后的字符串（如 "get file structure"）
+  //   - qualified_tokens：限定名分词（className.name 或 filePath 拆分），提高类内方法搜索精度
+  // 独立存储（不用外部内容表），删除时通过 deleteNodeFtsByFile 手动维护，逻辑更直观
+  // tokenize 选 unicode61：node:sqlite 不支持 JS 自定义分词器，改用 unicode61 + 写入时 camelSplitToFTS 预分词
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
+      node_id UNINDEXED,
+      name_tokens,
+      qualified_tokens,
+      tokenize='unicode61 remove_diacritics 1'
+    );
+  `);
+
+  // Phase 72 Task D4：旧 DB 兼容——为 unresolved_refs 补 import_source 列
+  // 旧 DB 的表不含此列，ALTER TABLE ADD COLUMN 补上；列已存在时忽略错误
+  try {
+    db.exec('ALTER TABLE unresolved_refs ADD COLUMN import_source TEXT');
+  } catch {
+    // 列已存在或表不存在，忽略
+  }
 
   return db;
 }
@@ -129,14 +157,14 @@ export function insertEdge(db: DB, edge: CodeMapEdge): void {
 export function insertUnresolvedRefs(db: DB, refs: PendingReference[]): void {
   if (refs.length === 0) return;
   const stmt = db.prepare(`
-    INSERT INTO unresolved_refs (source_node_id, callee_name, line, file_path)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO unresolved_refs (source_node_id, callee_name, line, file_path, import_source)
+    VALUES (?, ?, ?, ?, ?)
   `);
   const begin = db.prepare('BEGIN');
   begin.run();
   try {
     for (const ref of refs) {
-      stmt.run(ref.sourceId, ref.calleeName, ref.line, ref.filePath);
+      stmt.run(ref.sourceId, ref.calleeName, ref.line, ref.filePath, ref.importSource ?? null);
     }
     db.prepare('COMMIT').run();
   } catch (e) {
@@ -148,26 +176,28 @@ export function insertUnresolvedRefs(db: DB, refs: PendingReference[]): void {
 /** 按 callee 名字查询未解析引用（供后续索引补全使用） */
 export function getUnresolvedRefsByCallee(db: DB, calleeName: string): PendingReference[] {
   const rows = db.prepare(
-    'SELECT source_node_id AS sourceId, callee_name AS calleeName, line, file_path AS filePath FROM unresolved_refs WHERE callee_name = ?',
+    'SELECT source_node_id AS sourceId, callee_name AS calleeName, line, file_path AS filePath, import_source AS importSource FROM unresolved_refs WHERE callee_name = ?',
   ).all(calleeName) as Array<Record<string, unknown>>;
   return rows.map(row => ({
     sourceId: row.sourceId as string,
     calleeName: row.calleeName as string,
     line: row.line as number,
     filePath: row.filePath as string,
+    importSource: (row.importSource as string | null) ?? undefined,
   }));
 }
 
 /** 读取所有未解析调用引用（供 resolveCrossFileSteps 跨文件回填使用） */
 export function getAllUnresolvedRefs(db: DB): PendingReference[] {
   const rows = db.prepare(
-    'SELECT source_node_id AS sourceId, callee_name AS calleeName, line, file_path AS filePath FROM unresolved_refs',
+    'SELECT source_node_id AS sourceId, callee_name AS calleeName, line, file_path AS filePath, import_source AS importSource FROM unresolved_refs',
   ).all() as Array<Record<string, unknown>>;
   return rows.map(row => ({
     sourceId: row.sourceId as string,
     calleeName: row.calleeName as string,
     line: row.line as number,
     filePath: row.filePath as string,
+    importSource: (row.importSource as string | null) ?? undefined,
   }));
 }
 
@@ -250,6 +280,74 @@ export function queryEdges(db: DB, sql: string, params: unknown[] = []): CodeMap
 /** 按名称查询节点 */
 export function getNodeByName(db: DB, name: string): CodeMapNode[] {
   return queryNodes(db, 'SELECT * FROM nodes WHERE name = ?', [name]);
+}
+
+// ===== Phase 72 Task D2：FTS5 BM25 符号搜索 =====
+
+/**
+ * 写入节点的 FTS5 索引行
+ * 在 insertNode 之后调用，保持 nodes_fts 与 nodes 表同步
+ */
+export function insertNodeFts(db: DB, node: CodeMapNode): void {
+  // 构造限定名：className.name（方法）或 name（其他）
+  const qualifiedName = node.className ? `${node.className}.${node.name}` : node.name;
+  db.prepare(`
+    INSERT INTO nodes_fts (node_id, name_tokens, qualified_tokens)
+    VALUES (?, ?, ?)
+  `).run(
+    node.id,
+    camelSplitToFTS(node.name),
+    camelSplitToFTS(qualifiedName),
+  );
+}
+
+/**
+ * 按文件路径删除该文件所有节点的 FTS5 索引行
+ * 在 deleteFileNodes 之前调用，避免 FTS 残留指向已删除节点的引用
+ */
+export function deleteNodeFtsByFile(db: DB, filePath: string): void {
+  // FTS5 不支持 JOIN，需先查 node_id 列表再删除
+  const rows = db.prepare(
+    'SELECT id FROM nodes WHERE file_path = ?',
+  ).all(filePath) as Array<{ id: string }>;
+  if (rows.length === 0) return;
+  const stmt = db.prepare('DELETE FROM nodes_fts WHERE node_id = ?');
+  const begin = db.prepare('BEGIN');
+  begin.run();
+  try {
+    for (const row of rows) {
+      stmt.run(row.id);
+    }
+    db.prepare('COMMIT').run();
+  } catch (e) {
+    db.prepare('ROLLBACK').run();
+    throw e;
+  }
+}
+
+/** FTS5 搜索结果项（node_id + BM25 分数，分数越低越相关） */
+export interface FtsSearchHit {
+  nodeId: string;
+  bm25Score: number;
+}
+
+/**
+ * 用 FTS5 BM25 搜索符号
+ *
+ * @param matchQuery FTS5 MATCH 表达式（调用方应用 buildFtsMatchQuery 构造）
+ * @param limit 最大返回数
+ * @returns 按 BM25 相关性排序的命中列表（分数越低越相关）
+ */
+export function searchNodesByFts(db: DB, matchQuery: string, limit = 20): FtsSearchHit[] {
+  if (!matchQuery) return [];
+  const rows = db.prepare(`
+    SELECT node_id AS nodeId, bm25(nodes_fts) AS score
+    FROM nodes_fts
+    WHERE nodes_fts MATCH ?
+    ORDER BY score ASC
+    LIMIT ?
+  `).all(matchQuery, limit) as Array<{ nodeId: string; score: number }>;
+  return rows.map(r => ({ nodeId: r.nodeId, bm25Score: r.score }));
 }
 
 /** 获取节点的调用者（谁调用了此节点） */

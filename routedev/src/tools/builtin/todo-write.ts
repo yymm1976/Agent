@@ -124,11 +124,24 @@ export class TodoWriteTool implements ITool {
               durationMs: 0,
             };
           }
+          // P0-5：验证 nudge —— 关闭 3+ 任务且无验证类项时，在结果末尾追加条件性 nudge
+          // 借鉴 Claude Code TodoWriteTool：相比 system prompt 写死规则，工具结果内 nudge 更精准、token 更省
+          let nudge = '';
+          if (updates.status === 'completed') {
+            const snap = this.store.getSnapshot();
+            const hasVerifyTask = snap.items.some(t =>
+              t.status !== 'completed' && /verify|验证|审查|review|测试|test/i.test(t.content)
+            );
+            if (snap.completed >= 3 && !hasVerifyTask) {
+              nudge = '\n\n[提示] 已完成 ' + snap.completed + ' 个任务但未发现验证/审查类待办项。'
+                + '建议 spawn 一个 reviewer 子 Agent 或添加 /verify 待办，确保已交付内容经过独立验证。';
+            }
+          }
           return {
             success: true,
-            output: `已更新待办项 [${item.id}]: 状态=${item.status}, 优先级=${item.priority}, 内容=${item.content}`,
+            output: `已更新待办项 [${item.id}]: 状态=${item.status}, 优先级=${item.priority}, 内容=${item.content}` + nudge,
             durationMs: 0,
-            metadata: { item },
+            metadata: { item, nudge: nudge || undefined },
           };
         }
 

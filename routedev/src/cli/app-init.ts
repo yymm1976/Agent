@@ -58,6 +58,16 @@ import { ContextManager } from '../agent/memory/context-manager.js';
 import { MemoryRecallInjector } from '../agent/memory/recall-injector.js';
 // Phase 71 Task D7：Budget Offload 文件清理钩子（会话结束 + 孤儿文件清理）
 import { registerOffloadCleaner } from '../agent/context/offload-cleaner.js';
+// P0-14：graceful shutdown 集中注册式清理链（替代散点 process.on）
+import { registerShutdownHook } from './graceful-shutdown.js';
+// P0-11：Analytics 队列（静态导入，避免在非 async 函数体内使用 await import）
+import {
+  attachAnalyticsSink,
+  logEvent,
+  forceFlushNow,
+  type AnalyticsSink,
+  type AnalyticsEvent,
+} from '../observability/analytics-queue.js';
 import { ContextCompactor } from '../agent/context-compaction.js';
 import { estimateTokens } from '../utils/token-estimate.js';
 import { VisionAssistant } from '../agent/vision.js';
@@ -479,10 +489,11 @@ export function createAppDependencies(
       : undefined;
     const store = new SessionMemoryStore(maxMemories, persistentPath);
 
-    // 注册服务关闭钩子：进程退出前 flush 最终状态，避免 debounce 中的待写数据丢失
+    // P0-14：注册服务关闭钩子（集中式），进程退出前 flush 最终状态，避免 debounce 中的待写数据丢失
+    // 优先级 100：session-memory 属于关键持久化，需先于 watcher/analytics 执行
     if (persistentPath) {
       const handleClose = () => { store.close().catch(() => {}); };
-      process.on('beforeExit', handleClose);
+      registerShutdownHook(100, 'session-memory', handleClose);
     }
     return store;
   })();
@@ -989,12 +1000,21 @@ export function createAppDependencies(
           ?? options?.systemPrompt
           ?? '你是一个专注的子 Agent，负责完成分配给你的独立子任务。';
 
+        // P0-4：renderedSystemPrompt 优先级最高 —— 父 Agent 已渲染的 prompt 字节透传
+        // 当调用方提供此字段时，子 Agent 直接复用，保证 prompt cache 字节一致前缀
+        // 未提供时回退到 profile.systemPrompt / options.systemPrompt / 默认提示
+        const effectiveSystemPrompt = options?.renderedSystemPrompt ?? childSystemPrompt;
+
+        // P0-4：forkedConversationHistory 优先级最高 —— 预构造的字节一致消息前缀
+        // 未提供时使用空数组（现有行为）
+        const effectiveHistory = options?.forkedConversationHistory ?? [];
+
         for await (const event of childLoop.run({
           userMessage: normalizedParams.prompt,
           llmClient: childClient,
           routeDecision,
-          conversationHistory: [],
-          systemPrompt: childSystemPrompt,
+          conversationHistory: effectiveHistory,
+          systemPrompt: effectiveSystemPrompt,
         })) {
           switch (event.type) {
             case 'text_delta':
@@ -1182,16 +1202,16 @@ export function createAppDependencies(
   }
 
   // ===== Phase 41/42：tree-sitter 代码地图引擎预热 =====
-  // 启动时异步触发首次 fullIndex，不阻塞主流程（.then().catch() 模式）
-  // 失败时仅 warn 不崩溃；middleware 首次调用时会再次尝试 fullIndex，
-  // 若仍失败则降级到 regex 方案（fail-open）
+  // Phase 72 Task D1：启动时异步触发 loadOrBuildIndex（artifact 优先，秒级启动），
+  // 不阻塞主流程（.then().catch() 模式）。失败时仅 warn 不崩溃；
+  // middleware 首次调用时会再次尝试，若仍失败则降级到 regex 方案（fail-open）
   import('../code-map/indexer.js')
-    .then(async (mod: { fullIndex: (rootDir: string, opts?: { maxFiles?: number }) => Promise<{ stats: unknown; db: unknown }> }) => {
+    .then(async (mod: { loadOrBuildIndex: (rootDir: string, opts?: { maxFiles?: number }) => Promise<{ stats: unknown; db: unknown }> }) => {
       try {
-        await mod.fullIndex(cwd, { maxFiles: 5000 });
-        logger.info('CodeMap fullIndex prewarmed', { rootDir: cwd });
+        await mod.loadOrBuildIndex(cwd, { maxFiles: 5000 });
+        logger.info('CodeMap loadOrBuildIndex prewarmed', { rootDir: cwd });
       } catch (err) {
-        logger.warn('CodeMap fullIndex prewarm failed', {
+        logger.warn('CodeMap loadOrBuildIndex prewarm failed', {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -1352,7 +1372,9 @@ export function createAppDependencies(
         watcher.start();
         logger.info('CodeMapWatcher started', { rootDir: cwd, watchMode: true });
 
-        // 注册进程退出钩子，释放 fs.watch 句柄避免泄漏
+        // P0-14：注册进程退出钩子（集中式），释放 fs.watch 句柄避免泄漏
+        // 优先级 50：watcher 属于资源释放，次于持久化但先于 analytics flush
+        // 原散点 process.on('beforeExit'/'SIGINT'/'SIGTERM') 三处合并为单一 registerShutdownHook
         const handleClose = () => {
           try {
             watcher.close();
@@ -1360,9 +1382,7 @@ export function createAppDependencies(
             // fail-open：关闭失败不影响退出
           }
         };
-        process.on('beforeExit', handleClose);
-        process.on('SIGINT', handleClose);
-        process.on('SIGTERM', handleClose);
+        registerShutdownHook(50, 'codemap-watcher', handleClose);
       })
       .catch((err: unknown) => {
         // fail-open：watcher 模块加载失败不阻塞主流程
@@ -1734,6 +1754,8 @@ export function createAppDependencies(
     offloadDir: offloadRootDir,
     maxChars: toolBudgetCfg?.maxCharsPerOutput ?? 2000,
     sessionId: offloadSessionId,
+    // Phase 72 Task B2：ContentRouter 按内容类型分派压缩（默认关闭，零回归）
+    contentRoutingEnabled: config.optimization?.contentRouting?.enabled === true,
   }));
   // Phase 32 Task 4.2：将 sanitizer 注入 MCPClientManager，检测 MCP 工具描述中的注入模式
   mcpManager.setSanitizer(resultSanitizer);
@@ -2184,53 +2206,11 @@ export function createAppDependencies(
       });
   }
 
-  // ===== Phase 45：PersonaEngine / PreferenceManager / VoiceManager 接线 =====
-  // 全部使用动态 import + fail-open，模块不可用时跳过不影响主流程
-  // 注：persona-engine.ts / preference-manager.ts 由其他子代理并行创建，
-  //     voice-manager.ts 已由本 Phase 创建，使用变量路径动态 import 保持一致性
-
-  // 1. PersonaEngine 接线：人格引擎（intensity=none 时不注入 system prompt）
-  // Phase 57：改为读取 config.persona.systemPromptAppend，不再依赖 persona-templates
-  const personaCfg = config.persona;
-  if (personaCfg?.enabled !== false && personaCfg?.intensity !== 'none') {
-    const personaModulePath = '../agent/persona-engine.js';
-    import(personaModulePath)
-      .then((mod: { PersonaEngine: new (systemPromptAppend?: string) => { setIntensity: (i: string) => void; buildPersonaFragment: (signals?: unknown) => string } }) => {
-        const engine = new mod.PersonaEngine(personaCfg.systemPromptAppend ?? '');
-        engine.setIntensity(personaCfg.intensity);
-        logger.info('PersonaEngine registered', {
-          enabled: personaCfg.enabled,
-          intensity: personaCfg.intensity,
-          hasCustomPrompt: !!(personaCfg.systemPromptAppend),
-        });
-      })
-      .catch((err: unknown) => {
-        // fail-open：persona-engine.ts 尚未创建时跳过，不影响主流程
-        logger.debug('PersonaEngine not available yet', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-  }
-
-  // 2. PreferenceManager 接线：用户偏好持久化
-  //    实例化后异步加载磁盘状态
-  const preferenceModulePath = '../agent/preference-manager.js';
-  import(preferenceModulePath)
-    .then((mod: { PreferenceManager: new (cwd: string) => { load: () => Promise<void>; setExplicit: (k: string, v: unknown, c?: number) => void } }) => {
-      const prefMgr = new mod.PreferenceManager(cwd);
-      prefMgr.load().catch((e: unknown) => {
-        logger.debug('PreferenceManager load failed', {
-          error: e instanceof Error ? e.message : String(e),
-        });
-      });
-      logger.info('PreferenceManager registered');
-    })
-    .catch((err: unknown) => {
-      // fail-open：preference-manager.ts 尚未创建时跳过，不影响主流程
-      logger.debug('PreferenceManager not available yet', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
+  // ===== Phase 45：VoiceManager 接线说明 =====
+  // 注：PersonaEngine / PreferenceManager 原为 Phase 45 接线目标，但实例化后未注入
+  //     AppDependencies 也无消费端，构成"实例化即丢弃"死代码（I1 修复：已移除）。
+  //     如需启用，应将实例存入 AppDependencies 并在 AgentLoop / systemPromptBuilder
+  //     中消费。voice-manager.ts 仅 Desktop renderer 可用，CLI 跳过实例化。
 
   // 4. VoiceManager：语音输入/输出管理（仅 Desktop renderer 可用，CLI 跳过）
   //    voice-manager.ts 使用浏览器 API（webkitSpeechRecognition / SpeechSynthesisUtterance），
@@ -2528,49 +2508,13 @@ export function createAppDependencies(
         });
       });
   }
-  if (phase49Cfg?.qualityGateEnabled) {
-    // Skill 质量门接入：Skill 生成时可被调用
-    import('../skills/quality-gate.js')
-      .then((mod) => {
-        // 实例化保留供未来扩展；AgentLoop.setSkillQualityGate setter 尚不存在，未接入主流程
-        const gate = new mod.SkillQualityGate();
-        void gate;
-        logger.debug('SkillQualityGate instantiated (not yet integrated into AgentLoop — setter does not exist)');
-      })
-      .catch((err: unknown) => {
-        logger.debug('SkillQualityGate not available', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-  }
-  if (phase49Cfg?.contextUsagePanelEnabled) {
-    // 上下文占用率面板接入：context-compaction 调用
-    import('../agent/context-usage-panel.js')
-      .then((mod) => {
-        new mod.ContextUsagePanel();
-        logger.info('Phase 49 ContextUsagePanel integrated', { enabled: true });
-      })
-      .catch((err: unknown) => {
-        logger.debug('ContextUsagePanel not available', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-  }
-  if (phase49Cfg?.evaluationFrameworkEnabled) {
-    // 评估集框架接入：Skill 生成或 /goal 完成时可选调用
-    // 注：EvaluationFramework 构造需要 executeTarget/judge 回调，此处仅确认模块可加载
-    // 实例化由 /goal 完成或 Skill 生成时按需创建（依赖注入 LLM 客户端）
-    import('../evaluation/evaluation-framework.js')
-      .then((mod) => {
-        void mod;
-        logger.info('Phase 49 EvaluationFramework module available', { enabled: true });
-      })
-      .catch((err: unknown) => {
-        logger.debug('EvaluationFramework not available', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-  }
+  // I1 修复：移除 phase49Cfg 三个"实例化即丢弃"块（SkillQualityGate / ContextUsagePanel /
+  //   EvaluationFramework）。原代码实例化后未存储、未注入 AppDependencies，构成纯死代码。
+  //   - SkillQualityGate：AgentLoop.setSkillQualityGate setter 尚不存在
+  //   - ContextUsagePanel：实例未存储，无消费端
+  //   - EvaluationFramework：仅 `void mod`，未实例化
+  //   如需启用，应将实例注入 AppDependencies 并在 AgentLoop / context-compaction /
+  //   /goal 完成回调中消费。
 
   // ===== Phase 52 模块接入（全部由 config.phase52Integration 开关守护）=====
   // 设计原则：未启用的模块不初始化，实例为 undefined；用 ?? 兜底避免 config 字段未定义时崩溃
@@ -2672,6 +2616,39 @@ export function createAppDependencies(
           error: err instanceof Error ? err.message : String(err),
         });
       });
+  }
+
+  // ===== P0-11：Analytics 队列挂载 sink + 关键路径 logEvent =====
+  // 借鉴 Claude Code：模块加载时 sink=null，app 启动时 attachAnalyticsSink
+  // 此处挂载一个简单的 logger sink（生产可替换为 OtelExporter）
+  try {
+    const loggerSink: AnalyticsSink = {
+      name: 'logger-sink',
+      flush(events: AnalyticsEvent[]) {
+        for (const ev of events) {
+          logger.debug('analytics event', {
+            name: ev.name,
+            timestamp: ev.timestamp,
+            attrs: ev.attributes,
+          });
+        }
+      },
+    };
+    attachAnalyticsSink(loggerSink);
+    // 记录 app 启动事件（验证 logEvent 被实际调用，消除死代码）
+    logEvent('app_init', {
+      providerCount: clientManager.listAll().size,
+      sessionId: trace.getSessionId(),
+      cwd,
+    });
+    // P0-14：注册 analytics flush shutdown hook
+    // 优先级 10：最低优先级，确保持久化/资源释放先完成；退出前强制 flush 队列中的剩余事件
+    registerShutdownHook(10, 'analytics-flush', () => forceFlushNow());
+  } catch (err) {
+    // fail-open：analytics 挂载失败不影响主流程
+    logger.warn('P0-11: analytics sink attach failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   return {

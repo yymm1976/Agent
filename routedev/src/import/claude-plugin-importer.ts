@@ -20,6 +20,7 @@ import { logger } from '../utils/logger.js';
 import { SkillMdParser } from '../skills/skill-md-parser.js';
 import { mapToolNames, validateSkillTools } from './tool-name-mapper.js';
 import type { LoadedSkill } from './anthropic-skills-loader.js';
+import type { IntegrityManifest } from '../security/integrity-manifest.js';
 
 // ============================================================
 // 类型定义
@@ -144,6 +145,12 @@ export class ClaudePluginImporter {
   static readonly COMMANDS_DIR = 'commands';
   /** Agents 子目录名 */
   static readonly AGENTS_DIR = 'agents';
+  /** 依赖完整性校验清单（未注入时跳过校验） */
+  private readonly integrityManifest?: IntegrityManifest;
+
+  constructor(integrityManifest?: IntegrityManifest) {
+    this.integrityManifest = integrityManifest;
+  }
 
   /**
    * 从本地路径导入 Claude Code Plugin
@@ -213,6 +220,19 @@ export class ClaudePluginImporter {
       'claude',
       metadata.name,
     );
+
+    // 完整性校验：若输出目录已存在且所有文件校验通过，跳过重复导入
+    if (this.integrityManifest && fsSync.existsSync(outputDir)) {
+      const skipInfo = await this.trySkipImport(outputDir, metadata.name);
+      if (skipInfo.skipped && skipInfo.result) {
+        logger.info('ClaudePluginImporter.importFromPath: skipped (already imported & verified)', {
+          plugin: metadata.name,
+          outputDir,
+        });
+        return skipInfo.result;
+      }
+    }
+
     await this.writeOutput(outputDir, {
       metadata,
       skills: [...skills, ...commands],
@@ -223,6 +243,20 @@ export class ClaudePluginImporter {
       errors,
       outputDir,
     });
+
+    // 完整性校验：导入完成后记录所有输出文件 SHA-256
+    if (this.integrityManifest) {
+      try {
+        await this.recordOutputFiles(outputDir);
+        await this.integrityManifest.save();
+      } catch (err) {
+        // fail-open：record 失败不阻塞导入
+        logger.warn('ClaudePluginImporter.importFromPath: integrity record failed', {
+          plugin: metadata.name,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
 
     logger.info('ClaudePluginImporter.importFromPath: done', {
       plugin: metadata.name,
@@ -245,6 +279,140 @@ export class ClaudePluginImporter {
       errors,
       outputDir,
     };
+  }
+
+  // ============================================================
+  // 内部方法：完整性校验
+  // ============================================================
+
+  /**
+   * 递归列出目录下所有文件（绝对路径）
+   */
+  private async listFiles(dir: string): Promise<string[]> {
+    const results: string[] = [];
+    let entries: fsSync.Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return results;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        results.push(...(await this.listFiles(fullPath)));
+      } else if (entry.isFile()) {
+        results.push(fullPath);
+      }
+    }
+    return results;
+  }
+
+  /**
+   * 记录输出目录中所有文件的 SHA-256
+   */
+  private async recordOutputFiles(outputDir: string): Promise<void> {
+    if (!this.integrityManifest) return;
+    const files = await this.listFiles(outputDir);
+    for (const file of files) {
+      await this.integrityManifest.record(file, 'claude-plugin');
+    }
+  }
+
+  /**
+   * 尝试跳过重复导入
+   *
+   * 条件：输出目录存在 + manifest.json 存在 + 所有已记录文件 verify 通过
+   * 返回：{ skipped: true, result: 重建的 PluginImportResult } 或 { skipped: false }
+   */
+  private async trySkipImport(
+    outputDir: string,
+    pluginName: string,
+  ): Promise<{ skipped: boolean; result?: PluginImportResult }> {
+    if (!this.integrityManifest) return { skipped: false };
+    const manifestPath = path.join(outputDir, 'manifest.json');
+    if (!fsSync.existsSync(manifestPath)) return { skipped: false };
+
+    // 校验所有已记录的输出文件
+    const files = await this.listFiles(outputDir);
+    let recordedCount = 0;
+    for (const file of files) {
+      if (!this.integrityManifest.has(file)) continue;
+      recordedCount++;
+      try {
+        const verifyResult = await this.integrityManifest.verify(file);
+        if (!verifyResult.ok) {
+          logger.warn('ClaudePluginImporter: integrity mismatch, will re-import', {
+            plugin: pluginName,
+            file,
+            expected: verifyResult.expected,
+            actual: verifyResult.actual,
+          });
+          return { skipped: false };
+        }
+      } catch (err) {
+        // verify 抛错（如文件读取失败）→ 不跳过，继续重新导入
+        logger.warn('ClaudePluginImporter: verify error, will re-import', {
+          plugin: pluginName,
+          file,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return { skipped: false };
+      }
+    }
+    // 没有任何已记录文件 → 首次导入，不跳过
+    if (recordedCount === 0) return { skipped: false };
+
+    // 所有已记录文件校验通过 → 重建 PluginImportResult 从 manifest.json
+    try {
+      const raw = await fs.readFile(manifestPath, 'utf-8');
+      const obj = JSON.parse(raw) as {
+        metadata: PluginMetadata;
+        skills: Array<{ name: string; sourceCommand?: string; sourcePath: string; autoEnable: boolean }>;
+        agents: Array<{ name: string; sourcePath: string }>;
+        mcp: { servers: string[]; warning?: string };
+        hooks: ImportedHook[];
+        warnings: string[];
+        errors: Array<{ path: string; error: string }>;
+      };
+      const result: PluginImportResult = {
+        metadata: obj.metadata,
+        skills: obj.skills.map((s) => ({
+          name: s.name,
+          description: '',
+          version: '0.0.0',
+          author: '',
+          tags: [],
+          content: '',
+          sourcePath: s.sourcePath,
+          origin: 'claude-plugin',
+          autoEnable: s.autoEnable,
+          pluginName: obj.metadata.name,
+          sourceCommand: s.sourceCommand,
+        })),
+        agents: obj.agents.map((a) => ({
+          name: a.name,
+          content: '',
+          sourcePath: a.sourcePath,
+          pluginName: obj.metadata.name,
+        })),
+        mcp: {
+          servers: obj.mcp.servers.map((id) => ({ id, config: {} })),
+          warning: obj.mcp.warning,
+        },
+        hooks: obj.hooks,
+        warnings: obj.warnings,
+        errors: obj.errors,
+        outputDir,
+      };
+      return { skipped: true, result };
+    } catch (err) {
+      // manifest.json 解析失败 → 不跳过，继续重新导入
+      logger.warn('ClaudePluginImporter: manifest.json parse failed, will re-import', {
+        plugin: pluginName,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return { skipped: false };
+    }
   }
 
   // ============================================================

@@ -64,6 +64,12 @@ export interface PendingReference {
   line: number;
   /** 调用所在文件路径 */
   filePath: string;
+  /**
+   * Phase 72 Task D4：该 callee 来自的 import source（若 calleeName 在当前文件 import 列表中）
+   * 供 indexer.resolveCrossFileCalls 用 type-resolver 精确解析跨文件 definition
+   * 若 callee 是同文件内定义，此字段为 undefined
+   */
+  importSource?: string;
 }
 
 /** 提取结果 */
@@ -982,6 +988,17 @@ export function extractFromTree(
 
   walkAndExtract(tree.rootNode, filePath, language, null, nodes, edges, fileNodeId, pendingReferences);
 
+  // Phase 72 Task D4：构建当前文件的 importedName → sourceModule 映射
+  // 用于给 unresolved refs 附加 importSource，供 indexer.resolveCrossFileCalls 精确解析
+  const localImportMap = new Map<string, string>(); // importedName → sourceModule
+  for (const node of nodes) {
+    if (node.kind !== 'import' || !node.sourceModule || !node.importedNames) continue;
+    for (const name of node.importedNames) {
+      // 同名 import 取第一个（覆盖语义暂不处理，影响可忽略）
+      if (!localImportMap.has(name)) localImportMap.set(name, node.sourceModule);
+    }
+  }
+
   // 解析 pendingReferences：按名字匹配定义节点，匹配成功生成 CALLS 边（target=节点 ID），未匹配存入 unresolvedRefs
   for (const ref of pendingReferences) {
     // 优先精确匹配：同文件作用域内或跨文件 exported
@@ -998,7 +1015,9 @@ export function extractFromTree(
         weight: EDGE_WEIGHTS.CALLS,
       });
     } else {
-      unresolvedRefs.push(ref);
+      // Phase 72 Task D4：附加 importSource（若 calleeName 来自当前文件 import）
+      const importSource = localImportMap.get(ref.calleeName);
+      unresolvedRefs.push(importSource ? { ...ref, importSource } : ref);
     }
   }
 

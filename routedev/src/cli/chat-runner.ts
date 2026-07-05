@@ -29,6 +29,8 @@ import { formatToolFeedback, getToolRunningMessageId } from './tool-verb.js';
 // Phase 34 Task 2：微摘要
 import { generateMicroSummary } from '../agent/micro-summary.js';
 import { shouldAutoCollapseOnComplete } from './output-style.js';
+// P0-13：流式输出高度棘轮（避免 verbose 模式下工具结果回缩）
+import { createRatchetState, ratchetRender, resetRatchet, type RatchetState } from './ratchet.js';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -175,6 +177,9 @@ export function createChatRunner(deps: ChatRunnerDeps) {
     let actualUserMessage = text;
     let chatAbort: AbortController | null = null;
     let hasTaskError = false;
+    // P0-13：每个会话独立 Ratchet 状态，防止流式输出"先涨后缩"导致布局抖动
+    // lock='offscreen' 模式：内容在视口内可自然伸缩，离开视口后才锁定最小高度
+    const ratchetState = createRatchetState();
     try {
       // Phase 32 Task 4.6：传入项目上下文，帮助 LLM 分类器做出更准确的判断
       const projectContext = detectProjectContext(process.cwd());
@@ -238,9 +243,11 @@ export function createChatRunner(deps: ChatRunnerDeps) {
         if (skillsRouter) {
           const matchedSkills = skillsRouter.route(actualUserMessage, 3);
           if (matchedSkills.length > 0) {
-            const skillBlocks = matchedSkills.map((s) =>
-              `## Skill: ${s.name}\n${s.content}`,
-            );
+            // P0-7：Skill block 同时注入 whenToUse（指导 LLM 何时使用此 Skill）
+            const skillBlocks = matchedSkills.map((s) => {
+              const whenToUse = s.whenToUse ? `\n\n**何时使用**: ${s.whenToUse}` : '';
+              return `## Skill: ${s.name}\n${s.content}${whenToUse}`;
+            });
             skillPromptSuffix = `---\n# 已激活的 Skill（根据任务自动匹配）\n${skillBlocks.join('\n\n')}`;
           }
         }
@@ -249,6 +256,16 @@ export function createChatRunner(deps: ChatRunnerDeps) {
           userPreferences: await getUserProfileRaw(),  // Phase 71 Task D2：注入用户偏好
           contextDiscipline: buildContextDisciplinePrompt(),  // Phase 71 Task E3：注入上下文工程纪律
           skillSuffix: skillPromptSuffix,
+          // Phase 72 Task C3：传入当前用户消息，触发 isCodeTask → LazyCoderLadder 注入
+          userMessage: actualUserMessage,
+          // Phase 72 Task B1：动态上下文归入尾部，前缀字节稳定便于 cache_control 命中
+          dynamicContext: {
+            date: new Date().toISOString().slice(0, 10),
+            cwd: process.cwd(),
+            // sessionId 当前 chat-runner 未持有，传 undefined 由 builder 内部 fallback
+            sessionId: undefined,
+            routeDecision: `${rd.model.id}@${rd.providerId}${rd.degraded ? '(degraded)' : ''}`,
+          },
           // projectRules/projectMemory 暂留空，后续 Task 接入
         });
         for await (const event of agentLoop.run({
@@ -268,7 +285,13 @@ export function createChatRunner(deps: ChatRunnerDeps) {
           switch (event.type) {
             case 'text_delta':
               accumulatedContent += event.text;
-              setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: accumulatedContent } : m));
+              // P0-13：流式输出棘轮锁定——verbose 模式下若历史最大行数大于当前，
+              // 用空行填充避免消息气泡回缩造成视觉抖动。lock='offscreen' 保守模式，
+              // 仅在内容离开视口后锁定；视口内仍允许自然伸缩。
+              {
+                const rendered = ratchetRender(accumulatedContent, ratchetState, 'offscreen', false);
+                setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: rendered } : m));
+              }
               break;
             case 'tool_call_start': {
               // Phase 34 Task 3：动词体系 + 待执行状态

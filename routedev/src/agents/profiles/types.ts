@@ -2,7 +2,7 @@
 // Agent Profile 类型定义
 //
 // 设计目标：
-//   1. 定义子 Agent 的角色配置（researcher / executor / reviewer / custom）
+//   1. 定义子 Agent 的角色配置（researcher / executor / reviewer / planner / verifier / synthesizer / custom）
 //   2. 描述工具白名单、质疑权限、输出格式等契约字段
 //   3. 与 SKILL.md 格式兼容（type = 'agent-profile'）
 //
@@ -14,13 +14,23 @@
 // ============================================================
 
 /** 子 Agent 角色 */
-export type AgentRole = 'researcher' | 'executor' | 'reviewer' | 'custom';
+export type AgentRole =
+  | 'researcher'
+  | 'executor'
+  | 'reviewer'
+  | 'planner'
+  | 'verifier'
+  | 'synthesizer'
+  | 'custom';
 
 /** 输出格式 */
 type AgentOutputFormat =
   | 'research_report'
   | 'code_change'
   | 'review_report'
+  | 'task_plan'
+  | 'verification_report'
+  | 'synthesis_report'
   | 'custom';
 
 /** 质疑严重级别 */
@@ -119,7 +129,15 @@ export function validateProfile(profile: AgentProfile): AgentProfileValidationEr
   if (!profile.version || profile.version.trim().length === 0) {
     errors.push({ field: 'version', message: 'version must not be empty' });
   }
-  const validRoles: AgentRole[] = ['researcher', 'executor', 'reviewer', 'custom'];
+  const validRoles: AgentRole[] = [
+    'researcher',
+    'executor',
+    'reviewer',
+    'planner',
+    'verifier',
+    'synthesizer',
+    'custom',
+  ];
   if (!validRoles.includes(profile.role)) {
     errors.push({ field: 'role', message: `role must be one of: ${validRoles.join(', ')}` });
   }
@@ -136,6 +154,9 @@ export function validateProfile(profile: AgentProfile): AgentProfileValidationEr
     'research_report',
     'code_change',
     'review_report',
+    'task_plan',
+    'verification_report',
+    'synthesis_report',
     'custom',
   ];
   if (!validOutputFormats.includes(profile.outputFormat)) {

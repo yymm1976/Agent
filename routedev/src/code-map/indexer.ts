@@ -34,9 +34,13 @@ import {
   batchUpdateRankScores,
   getFileContentHash,
   setFileContentHash,
+  insertNodeFts,
+  deleteNodeFtsByFile,
   type DB,
 } from './database.js';
 import { computePageRank } from './ranker.js';
+import { exportArtifact, importArtifact, artifactExists } from './artifact.js';
+import { buildFileImportMap, buildExportedSymbolMap, resolveRefByImport } from './type-resolver.js';
 
 /**
  * 自上次 PageRank 计算以来发生 content hash 变化的文件路径集合
@@ -166,6 +170,8 @@ export async function indexFile(
   markFileChanged(db, relPath);
 
   // 删除旧数据（含 unresolved_refs）
+  // Phase 72 Task D2：FTS5 索引需在 deleteFileNodes 之前清理（FTS 用 node_id 关联，删 nodes 后查不到 id）
+  deleteNodeFtsByFile(db, relPath);
   deleteFileUnresolvedRefs(db, relPath);
   deleteFileNodes(db, relPath);
 
@@ -200,6 +206,8 @@ export async function indexFile(
 
   for (const node of nodes) {
     insertNode(db, node);
+    // Phase 72 Task D2：同步写入 FTS5 索引（BM25 符号搜索）
+    insertNodeFts(db, node);
   }
   for (const edge of edges) {
     insertEdge(db, edge);
@@ -242,6 +250,10 @@ export async function fullIndex(
   // 计算 PageRank
   updatePageRank(db);
 
+  // Phase 72 Task D1：全量索引完成后导出 team-shared artifact（VACUUM INTO + zstd 压缩）
+  // 失败不阻塞索引流程，仅打日志
+  exportArtifact(db, rootDir);
+
   const durationMs = Date.now() - startTime;
   const stats: IndexStats = {
     fileCount: files.length - skippedFiles,
@@ -253,6 +265,32 @@ export async function fullIndex(
   };
 
   return { stats, db };
+}
+
+/**
+ * 加载或构建索引（Phase 72 Task D1：artifact 优先策略）
+ *
+ * 启动顺序：
+ * 1. 检测 .routedev/code-map.db.zst 是否存在
+ * 2. 存在 → importArtifact 解压为运行时 DB → 调 incrementalIndex 补 diff（新机器/新分支秒级启动）
+ * 3. 不存在 → 走 fullIndex（首索引或 artifact 缺失场景）
+ *
+ * @returns 索引统计 + 已打开的 DB 实例
+ */
+export async function loadOrBuildIndex(
+  rootDir: string,
+  options?: IndexOptions,
+): Promise<{ stats: IndexStats; db: DB }> {
+  const hasArtifact = await artifactExists(rootDir);
+  if (hasArtifact) {
+    const dbPath = await importArtifact(rootDir);
+    if (dbPath) {
+      // artifact 导入成功：走增量索引补 diff（DB 已有大部分内容，仅扫描变更文件）
+      return incrementalIndex(rootDir, undefined, { ...options, dbPath });
+    }
+    // 导入失败：降级走 fullIndex
+  }
+  return fullIndex(rootDir, options);
 }
 
 /** 增量索引 */
@@ -309,6 +347,8 @@ export async function incrementalIndex(
  * 跨文件 CALLS 边回填
  *
  * 从 unresolved_refs 表读取所有未解析的调用引用，按 callee 名字在 nodes 表中匹配定义节点：
+ * - Phase 72 Task D4 优先：若 ref 带 importSource（来自 extractor 的 import 解析），
+ *   用 type-resolver 按 import 信息精确解析到具体文件的 definition 节点
  * - 唯一匹配：插入 CALLS 边（source=source_node_id, target=匹配节点id, weight=EDGE_WEIGHTS.CALLS），
  *   删除该 unresolved_refs 记录
  * - 多个匹配：仅当最高 rank_score > 0 时（说明 PageRank 已计算过）才选取最高分节点回填，
@@ -322,7 +362,35 @@ export function resolveCrossFileCalls(db: DB): { resolved: number; skipped: numb
   let resolved = 0;
   let skipped = 0;
 
+  // Phase 72 Task D4：构建全局 import/export 映射 + 文件路径集合，供 type-resolver 精确解析
+  const allNodes = getAllNodes(db);
+  const importMap = buildFileImportMap(allNodes);
+  const exportMap = buildExportedSymbolMap(allNodes);
+  const allFilePaths = new Set(allNodes.map(n => n.filePath));
+
   for (const ref of refs) {
+    // Phase 72 Task D4：优先用 import 信息精确解析（处理多匹配场景的关键）
+    // 当 calleeName 有多个候选 definition 时，按 caller 文件的 import 列表精确选目标
+    const importResolved = resolveRefByImport(ref, importMap, exportMap, allFilePaths);
+    if (importResolved) {
+      // 避免重复插入
+      if (edgeExists(db, ref.sourceId, importResolved.id, 'CALLS')) {
+        deleteUnresolvedRef(db, ref.sourceId, ref.calleeName, ref.line, ref.filePath);
+        resolved++;
+        continue;
+      }
+      insertEdge(db, {
+        id: `${ref.sourceId}->${importResolved.id}:CALLS`,
+        source: ref.sourceId,
+        target: importResolved.id,
+        kind: 'CALLS',
+        weight: EDGE_WEIGHTS.CALLS,
+      });
+      deleteUnresolvedRef(db, ref.sourceId, ref.calleeName, ref.line, ref.filePath);
+      resolved++;
+      continue;
+    }
+
     const candidates = getNodeIdsByName(db, ref.calleeName);
 
     if (candidates.length === 0) {

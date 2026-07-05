@@ -163,6 +163,8 @@ export const DEFAULT_CONFIG: AppConfig = {
       outputDir: '.routedev/token-logs',
     },
     conciseThinking: { enabled: false },
+    // Phase 72 Task B2：ContentRouter 默认关闭（零回归，需用户显式启用）
+    contentRouting: { enabled: false },
     workflow: {
       unifiedPipeline: true,
       autoRequirements: true,

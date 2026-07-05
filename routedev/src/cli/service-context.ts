@@ -24,6 +24,7 @@ import type { TraceCollector } from '../harness/trace-collector.js';
 import type { AuditLogger } from '../harness/audit-logger.js';
 import type { PromptTemplateManager } from '../prompts/manager.js';
 import type { ProjectMemoryManager } from '../memory/project-memory.js';
+import type { CodebaseMemory } from '../memory/codebase-memory.js';
 import type { ToolExecutorAdapter } from '../agent/loop-config.js';
 import type { CheckpointManager } from '../harness/checkpoint-manager.js';
 // E9-B：ExperimentManager 单例字段类型（由 AppDependencies 注入到 ServiceContext）
@@ -107,6 +108,8 @@ export interface ServiceContext {
   audit: AuditLogger;
   prompts: PromptTemplateManager;
   projectMemory: ProjectMemoryManager;
+  /** 代码库语义索引（可选——config.memory.codebaseMemoryEnabled=false 时为 undefined） */
+  codebaseMemory?: CodebaseMemory;
   toolExecutor: ToolExecutorAdapter;
   setToolExecutor: (executor: ToolExecutorAdapter) => void;
   mcpManager: MCPClientManager;
@@ -162,6 +165,7 @@ export function createServiceContext(deps: ServiceContextDeps): ServiceContext {
     audit: deps.audit,
     prompts: deps.prompts,
     projectMemory: deps.projectMemory,
+    ...(deps.codebaseMemory ? { codebaseMemory: deps.codebaseMemory } : {}),
     toolExecutor: deps.toolExecutor,
     setToolExecutor: deps.setToolExecutor ?? ((executor: ToolExecutorAdapter) => {
       ctx.toolExecutor = executor;
@@ -204,6 +208,8 @@ export interface ServiceContextDeps {
   audit: AuditLogger;
   prompts: PromptTemplateManager;
   projectMemory: ProjectMemoryManager;
+  /** 代码库语义索引（可选） */
+  codebaseMemory?: CodebaseMemory;
   toolExecutor: ToolExecutorAdapter;
   checkpointManager: CheckpointManager;
   mcpManager: MCPClientManager;

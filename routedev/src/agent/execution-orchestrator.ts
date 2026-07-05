@@ -45,7 +45,7 @@ import type { EpistemicPreservingSummarizer } from './epistemic-preserving-summa
 import type { QualityMetricsRecorder } from '../harness/quality-metrics-types.js';
 // Phase 69：Worktree 隔离执行与多代理并行编排
 import type { WorktreeManager } from './multi/worktree-manager.js';
-import type { ParallelExecutor, ParallelOutcome } from './multi/parallel-executor.js';
+import type { ParallelOutcome } from './multi/types.js';
 import type { ResultComparator } from './multi/result-comparator.js';
 import type { AgentGroupResolver } from './multi/agent-group-resolver.js';
 import type { CLIAdapterRegistry } from './multi/cli-adapter.js';
@@ -103,14 +103,14 @@ export interface ExecutionOrchestratorDeps {
   // Phase 69：Worktree 隔离执行与多代理并行编排
   /** Worktree 管理器——为隔离 worker 创建 worktree */
   worktreeManager?: WorktreeManager;
-  /** 并行执行引擎——并行执行多个 worker */
-  parallelExecutor?: ParallelExecutor;
   /** 结果比较器——比较和排序 worker 结果 */
   resultComparator?: ResultComparator;
   /** 代理组解析器——解析 @group 地址 */
   agentGroupResolver?: AgentGroupResolver;
   /** CLI 适配器注册表——管理 CLI 适配器会话 */
   cliAdapterRegistry?: CLIAdapterRegistry;
+  /** LLM 客户端——供 SynthesizeBarrier judging 策略等内部模块使用 */
+  llmClient?: ILLMClient;
 }
 
 /**

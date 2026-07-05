@@ -16,6 +16,7 @@ import fsSync from 'node:fs';
 import path from 'node:path';
 import { logger } from '../utils/logger.js';
 import { SkillMdParser } from '../skills/skill-md-parser.js';
+import type { IntegrityManifest } from '../security/integrity-manifest.js';
 
 // ============================================================
 // 类型定义
@@ -81,6 +82,12 @@ export class AnthropicSkillsLoader {
   static readonly SKILLS_DIR_NAME = 'anthropic_skills';
   /** SKILL.md 文件名 */
   static readonly SKILL_FILE_NAME = 'SKILL.md';
+  /** 依赖完整性校验清单（未注入时跳过校验） */
+  private readonly integrityManifest?: IntegrityManifest;
+
+  constructor(integrityManifest?: IntegrityManifest) {
+    this.integrityManifest = integrityManifest;
+  }
 
   /**
    * 扫描项目根下的 anthropic_skills/{name}/SKILL.md
@@ -143,6 +150,32 @@ export class AnthropicSkillsLoader {
     const skillFiles = await this.findSkillFiles(skillsDir);
     for (const file of skillFiles) {
       try {
+        // 完整性校验：加载前 verify（未注入 integrityManifest 时跳过）
+        if (this.integrityManifest) {
+          try {
+            const verifyResult = await this.integrityManifest.verify(file);
+            if (!verifyResult.ok) {
+              // 校验失败：warn 并跳过此文件（不阻塞其他 skill 加载）
+              logger.warn('AnthropicSkillsLoader.load: integrity check failed, skipping', {
+                file,
+                expected: verifyResult.expected,
+                actual: verifyResult.actual,
+              });
+              errors.push({
+                path: file,
+                error: `integrity check failed: expected=${verifyResult.expected} actual=${verifyResult.actual}`,
+              });
+              continue;
+            }
+          } catch (err) {
+            // verify 抛错（如文件读取失败）→ fail-open，继续尝试解析
+            logger.warn('AnthropicSkillsLoader.load: verify error, attempting parse', {
+              file,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
         const skill = await this.parseSkillFile(
           file,
           'anthropic-skills',
@@ -150,6 +183,19 @@ export class AnthropicSkillsLoader {
         );
         if (skill) {
           loaded.push(skill);
+          // 完整性校验：加载成功后 record
+          if (this.integrityManifest) {
+            try {
+              await this.integrityManifest.record(file, 'anthropic-skills');
+              await this.integrityManifest.save();
+            } catch (err) {
+              // fail-open：record 失败不阻塞加载
+              logger.warn('AnthropicSkillsLoader.load: integrity record failed', {
+                file,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
         } else {
           // parseSkillFile 返回 null 表示内容为空等可恢复场景
           errors.push({ path: file, error: 'SKILL.md 内容为空或解析后为空' });

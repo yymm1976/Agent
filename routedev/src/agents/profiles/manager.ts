@@ -502,7 +502,15 @@ function asNumber(v: unknown, def: number): number {
 }
 
 function asRole(v: unknown, def: AgentRole): AgentRole {
-  if (v === 'researcher' || v === 'executor' || v === 'reviewer' || v === 'custom') {
+  if (
+    v === 'researcher' ||
+    v === 'executor' ||
+    v === 'reviewer' ||
+    v === 'planner' ||
+    v === 'verifier' ||
+    v === 'synthesizer' ||
+    v === 'custom'
+  ) {
     return v;
   }
   return def;
@@ -515,9 +523,31 @@ function asSeverity(v: unknown, def: 'blocking' | 'warning'): 'blocking' | 'warn
 
 function asOutputFormat(
   v: unknown,
-  def: 'research_report' | 'code_change' | 'review_report' | 'custom',
-): 'research_report' | 'code_change' | 'review_report' | 'custom' {
-  if (v === 'research_report' || v === 'code_change' || v === 'review_report' || v === 'custom') {
+  def:
+    | 'research_report'
+    | 'code_change'
+    | 'review_report'
+    | 'task_plan'
+    | 'verification_report'
+    | 'synthesis_report'
+    | 'custom',
+):
+  | 'research_report'
+  | 'code_change'
+  | 'review_report'
+  | 'task_plan'
+  | 'verification_report'
+  | 'synthesis_report'
+  | 'custom' {
+  if (
+    v === 'research_report' ||
+    v === 'code_change' ||
+    v === 'review_report' ||
+    v === 'task_plan' ||
+    v === 'verification_report' ||
+    v === 'synthesis_report' ||
+    v === 'custom'
+  ) {
     return v;
   }
   return def;

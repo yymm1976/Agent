@@ -100,6 +100,9 @@ const api: RouteDevAPI = {
   // Phase 54：计划编辑响应（StepEditor 确认/取消后回传主进程）
   plan: {
     respondEdit: (payload) => ipcRenderer.send('plan:edit-response', payload),
+    // Phase 71：读取 plan 修订历史 + 触发遗漏点检查
+    getRevisions: (goalId: string) => ipcRenderer.invoke('plan:get-revisions', goalId),
+    checkOmissions: (goalId: string) => ipcRenderer.invoke('plan:check-omissions', goalId),
   },
   // Phase 48 Task 4 接线修复：Agent Profile 管理
   profile: {

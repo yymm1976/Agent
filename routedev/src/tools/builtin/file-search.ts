@@ -107,10 +107,19 @@ export class FileSearchTool implements ITool {
       }
 
       if (results.length === 0) {
+        // Phase 72 Task C1：无匹配为 partial 态（语义上可接受的空结果，非失败）
+        // 附加 structured 三态字段，便于上游区分"工具执行失败"与"无匹配"
         return {
           success: true,
           output: '未找到匹配结果',
           durationMs: 0,
+          structured: {
+            status: 'partial',
+            error: {
+              code: 'NOT_FOUND',
+              message: '无匹配结果',
+            },
+          },
         };
       }
 

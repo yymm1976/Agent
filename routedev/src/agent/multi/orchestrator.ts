@@ -292,6 +292,13 @@ export class Orchestrator {
         analysis,
       );
 
+      // Phase 72: synthesizer 派生点
+      // 当多个 worker 产出冲突的结果时，应在此处自动派生 synthesizer 子 Agent 做合成。
+      // 当前 orchestrator 只生成执行计划，不执行 worker（worker 执行在 WorkerExecutor，
+      // 结果比较在 ResultComparator），故此处仅作派生点标记。
+      // 后续 Phase 若将 worker 结果收集上移到 orchestrator，应在 resolvedGroups 产出后、
+      // 计划返回前，根据 ResultComparator.needsHumanReview / 多 worker 结论矛盾派生 synthesizer。
+
       // Phase 54 Task 3：从 goalPlan.steps 传递 acceptanceCriteria 到 dependencies
       // 供协作剧场面板展示与 GoalAuditor 三层验收使用
       for (const dep of analysis) {
@@ -584,4 +591,12 @@ export class Orchestrator {
   isRetryable(errorType: WorkerErrorType): boolean {
     return isRetryable(errorType);
   }
+
+  // TODO Phase 73：synthesizer 派生点
+  // 触发条件（满足任一即派生 synthesizer 子 Agent 做合成）：
+  //   1. 多个 worker 的结论相互矛盾（success 但 conclusion 文本差异显著）
+  //   2. ResultComparator 返回 needsHumanReview=true（无法自动选优）
+  //   3. 并行组中多个 worker 都成功且产出不同结论
+  // 启用方式：在 worker 结果收集后做冲突检测，true 时通过 spawn_agent 派生
+  // role='synthesizer' 的子 Agent，把所有 worker 的 conclusion 作为输入。
 }

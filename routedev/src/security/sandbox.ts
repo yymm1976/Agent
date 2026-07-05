@@ -56,7 +56,16 @@ export interface SandboxResult {
   durationMs: number;
 }
 
-export interface ValidationResult {
+/**
+ * 命令级校验结果（P0-2 改造：原 ValidationResult 改名为 CommandValidationResult）
+ *
+ * 命名冲突说明：src/tools/types.ts 也导出 ValidationResult（辨识联合，用于工具参数校验），
+ * 两者语义不同：
+ *   - 本类型：命令级 allow/deny + reason
+ *   - types.ts：工具参数级辨识联合（result + message + errorCode + behavior）
+ * 改名后避免跨模块 import 时歧义，types.ts 的 ValidationResult 成为唯一权威定义。
+ */
+export interface CommandValidationResult {
   allowed: boolean;
   reason?: string;
 }
@@ -339,7 +348,7 @@ export class CommandSandbox {
   static validateCommand(
     command: string,
     options: SandboxOptions,
-  ): ValidationResult {
+  ): CommandValidationResult {
     // 1) 非空检查
     if (!command || typeof command !== 'string' || command.trim() === '') {
       return { allowed: false, reason: '命令为空' };
@@ -431,7 +440,7 @@ export class CommandSandbox {
   /**
    * 实例方法：校验命令是否允许执行（委托给静态方法，使用实例的 options）
    */
-  validate(command: string): ValidationResult {
+  validate(command: string): CommandValidationResult {
     return CommandSandbox.validateCommand(command, this.options);
   }
 }

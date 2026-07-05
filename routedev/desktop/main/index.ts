@@ -357,6 +357,39 @@ ipcMain.on('plan:edit-response', (_event, payload: import('../shared/ipc-types.j
   engine?.resolvePlanEdit(payload.requestId, payload.steps);
 });
 
+// Phase 71：Plan 修订历史读取 + 遗漏点检查
+ipcMain.handle('plan:get-revisions', async (_event, goalId: string) => {
+  // 从 .routedev/plan-revisions/<goalId>.jsonl 读取修订历史
+  // 路径通过 config.plan.revisionHistoryPath 配置，默认 .routedev/plan-revisions/
+  try {
+    const path = await import('node:path');
+    const fs = await import('node:fs/promises');
+    type PlanConfig = { plan?: { revisionHistoryPath?: string } };
+    const cfg = (engine?.getConfig?.() ?? {}) as PlanConfig;
+    const revisionDir = cfg.plan?.revisionHistoryPath
+      ? path.resolve(cfg.plan.revisionHistoryPath)
+      : path.join(process.cwd(), '.routedev', 'plan-revisions');
+    const revisionFile = path.join(revisionDir, `${goalId}.jsonl`);
+    const data = await fs.readFile(revisionFile, 'utf-8');
+    const revisions = data.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    return { ok: true, revisions };
+  } catch {
+    // 文件不存在或读取失败返回空（fail-open）
+    return { ok: true, revisions: [] };
+  }
+});
+
+ipcMain.handle('plan:check-omissions', async (_event, goalId: string) => {
+  // 通过 engine 触发遗漏点检查（LLM 调用，结果异步返回）
+  // 实际 LLM 调用由 OmissionChecker 在主进程完成
+  try {
+    const result = await engine?.checkOmissions?.(goalId);
+    return { ok: true, result: result ?? { omissions: [], summary: '检查未执行' } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
 // 聊天：停止当前生成（中止进行中的 LLM 请求与 Agent Loop）
 ipcMain.on('chat:stop', () => {
   engine?.stopGeneration();

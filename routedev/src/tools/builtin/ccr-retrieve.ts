@@ -49,7 +49,7 @@ export class CCRRetrieveTool implements ITool {
           : JSON.stringify(msg.content);
         return `[${msg.role}] ${content}`;
       })
-      .join('`n---`n');
+      .join('\n---\n');
 
     return {
       success: true,

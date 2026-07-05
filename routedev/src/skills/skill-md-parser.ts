@@ -14,8 +14,20 @@
 //   version: 1.0.0
 //   author: anonymous
 //   tags: [tag1, tag2]
+//   when_to_use: 当用户需要 ... 时使用
+//   allowed-tools: [file_read, file_edit]
+//   arguments: [foo, bar]
+//   argument-hint: "<foo> <bar>"
+//   paths: ["src/**/*.ts"]
 //   ---
 //   <Markdown 正文>
+//
+// P0-7 改造（2026-07-05）：扩展 frontmatter 契约，对齐 Claude Code loadSkillsDir 字段集
+//   - when_to_use：注入 system prompt 影响 skill 触发概率
+//   - allowed-tools：白名单（配合权限系统做"这个 skill 只能读不能写"）
+//   - arguments / argument-hint：参数声明（支持 $ARGUMENTS / $0 / $1 / $foo 占位符）
+//   - paths：按文件路径自动激活的 glob 模式
+//   - 兼容旧字段：未声明新字段时按原行为运行
 
 import { parse as parseYaml } from 'yaml';
 import { logger } from '../utils/logger.js';
@@ -24,12 +36,34 @@ import { logger } from '../utils/logger.js';
 // 类型定义
 // ============================================================
 
+/** P0-7：参数声明条目（命名参数支持 $foo 占位符） */
+export interface SkillArgumentDef {
+  /** 参数名（kebab-case） */
+  name: string;
+  /** 是否必需 */
+  required?: boolean;
+  /** 默认值（字符串） */
+  default?: string;
+  /** 简短描述 */
+  description?: string;
+}
+
 export interface SkillMetadata {
   name: string;
   description: string;
   version: string;
   author: string;
   tags: string[];
+  /** P0-7：触发条件描述，注入 system prompt 影响触发概率 */
+  whenToUse?: string;
+  /** P0-7：工具白名单（省略 = 不限制；空数组 = 无工具权限） */
+  allowedTools?: string[];
+  /** P0-7：参数声明（命名参数列表） */
+  arguments?: SkillArgumentDef[];
+  /** P0-7：参数提示文本（显示在 /help 和补全中） */
+  argumentHint?: string;
+  /** P0-7：按文件路径自动激活的 glob 模式列表 */
+  paths?: string[];
 }
 
 export interface ParsedSkill {
@@ -136,6 +170,8 @@ export class SkillMdParser {
 
   /**
    * 序列化为 SKILL.md 格式
+   *
+   * P0-7：新增字段在存在时才输出，保持向后兼容（旧工具读取新文件时忽略未知字段）
    */
   static serialize(metadata: SkillMetadata, content: string): string {
     const tags = Array.isArray(metadata.tags)
@@ -144,16 +180,48 @@ export class SkillMdParser {
         : ' []'
       : ' []';
 
-    const frontmatter = [
+    const lines: string[] = [
       '---',
       `name: ${SkillMdParser.escapeYamlScalar(metadata.name)}`,
       `description: ${SkillMdParser.escapeYamlScalar(metadata.description)}`,
       `version: ${SkillMdParser.escapeYamlScalar(metadata.version)}`,
       `author: ${SkillMdParser.escapeYamlScalar(metadata.author)}`,
       `tags:${tags}`,
-      '---',
-    ].join('\n');
+    ];
 
+    // P0-7：可选字段（存在时输出，使用 snake/kebab-case 与 Claude Code 对齐）
+    if (metadata.whenToUse) {
+      lines.push(`when_to_use: ${SkillMdParser.escapeYamlScalar(metadata.whenToUse)}`);
+    }
+    if (Array.isArray(metadata.allowedTools) && metadata.allowedTools.length > 0) {
+      lines.push(`allowed-tools:\n  - ${metadata.allowedTools.join('\n  - ')}`);
+    }
+    if (Array.isArray(metadata.arguments) && metadata.arguments.length > 0) {
+      // 简写形式：仅 name 时输出字符串数组；含 required/default/description 时输出对象数组
+      const allSimple = metadata.arguments.every(
+        (a) => a.required === undefined && a.default === undefined && a.description === undefined,
+      );
+      if (allSimple) {
+        lines.push(`arguments: [${metadata.arguments.map((a) => a.name).join(', ')}]`);
+      } else {
+        lines.push('arguments:');
+        for (const a of metadata.arguments) {
+          lines.push(`  - name: ${SkillMdParser.escapeYamlScalar(a.name)}`);
+          if (a.required !== undefined) lines.push(`    required: ${a.required}`);
+          if (a.default !== undefined) lines.push(`    default: ${SkillMdParser.escapeYamlScalar(a.default)}`);
+          if (a.description !== undefined) lines.push(`    description: ${SkillMdParser.escapeYamlScalar(a.description)}`);
+        }
+      }
+    }
+    if (metadata.argumentHint) {
+      lines.push(`argument-hint: ${SkillMdParser.escapeYamlScalar(metadata.argumentHint)}`);
+    }
+    if (Array.isArray(metadata.paths) && metadata.paths.length > 0) {
+      lines.push(`paths:\n  - ${metadata.paths.join('\n  - ')}`);
+    }
+
+    lines.push('---');
+    const frontmatter = lines.join('\n');
     return `${frontmatter}\n\n${content.trim()}\n`;
   }
 
@@ -176,13 +244,75 @@ export class SkillMdParser {
 
   /** 从对象中提取并规范化 SkillMetadata */
   private static extractMetadata(obj: Record<string, unknown>): SkillMetadata {
+    // P0-7：兼容 Claude Code 字段命名（snake_case → camelCase）
+    //   - when_to_use / allowed-tools / argument-hint 在 frontmatter 中使用 snake/kebab-case
+    //   - 内部存储统一为 camelCase
+    const whenToUse =
+      SkillMdParser.asOptionalString(obj.whenToUse) ??
+      SkillMdParser.asOptionalString(obj.when_to_use);
+    const allowedTools =
+      SkillMdParser.asOptionalStringArray(obj.allowedTools) ??
+      SkillMdParser.asOptionalStringArray(obj['allowed-tools']);
+    const argumentHint =
+      SkillMdParser.asOptionalString(obj.argumentHint) ??
+      SkillMdParser.asOptionalString(obj['argument-hint']);
+    const paths = SkillMdParser.asOptionalStringArray(obj.paths);
+
     return {
       name: SkillMdParser.asString(obj.name, 'unknown'),
       description: SkillMdParser.asString(obj.description, ''),
       version: SkillMdParser.asString(obj.version, '0.0.0'),
       author: SkillMdParser.asString(obj.author, 'anonymous'),
       tags: SkillMdParser.asStringArray(obj.tags),
+      // P0-7：新增字段（可选，未声明时为 undefined）
+      whenToUse,
+      allowedTools,
+      arguments: SkillMdParser.asArgumentDefs(obj.arguments),
+      argumentHint,
+      paths,
     };
+  }
+
+  /** P0-7：可选字符串字段（未声明时返回 undefined，区别于 asString 的默认值行为） */
+  private static asOptionalString(value: unknown): string | undefined {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === 'string') return value.trim() || undefined;
+    return String(value);
+  }
+
+  /** P0-7：可选字符串数组字段 */
+  private static asOptionalStringArray(value: unknown): string[] | undefined {
+    if (value === null || value === undefined) return undefined;
+    if (!Array.isArray(value)) return undefined;
+    const arr = value
+      .filter((v): v is string => typeof v === 'string')
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0);
+    return arr.length > 0 ? arr : undefined;
+  }
+
+  /** P0-7：参数声明解析（支持字符串数组简写或对象数组完整定义） */
+  private static asArgumentDefs(value: unknown): SkillArgumentDef[] | undefined {
+    if (!Array.isArray(value)) return undefined;
+    const defs: SkillArgumentDef[] = [];
+    for (const item of value) {
+      if (typeof item === 'string') {
+        // 简写形式：["foo", "bar"] → [{ name: "foo" }, { name: "bar" }]
+        const trimmed = item.trim();
+        if (trimmed) defs.push({ name: trimmed });
+      } else if (item && typeof item === 'object') {
+        const obj = item as Record<string, unknown>;
+        const name = typeof obj.name === 'string' ? obj.name.trim() : '';
+        if (!name) continue;
+        defs.push({
+          name,
+          required: typeof obj.required === 'boolean' ? obj.required : undefined,
+          default: typeof obj.default === 'string' ? obj.default : undefined,
+          description: typeof obj.description === 'string' ? obj.description : undefined,
+        });
+      }
+    }
+    return defs.length > 0 ? defs : undefined;
   }
 
   /** 安全转换为字符串，缺失时返回默认值 */

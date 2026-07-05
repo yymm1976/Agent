@@ -1,6 +1,7 @@
 // tests/agent/context/tool-output-pipeline.test.ts
 // Phase 71 Task D3：ToolOutputPipeline 单元测试
 // Phase 71 Task D7：更新占位测试以反映 Budget Offload 实装行为
+// Phase 72 Task B2：更新测试为 async（process 改为 async 以支持 ContentRouter）
 import { describe, it, expect, vi } from 'vitest';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -20,19 +21,19 @@ function makeMockSanitizer(impl: (toolName: string, content: string) => {
 }
 
 describe('ToolOutputPipeline', () => {
-  it('无 sanitizer 时跳过安全检查', () => {
+  it('无 sanitizer 时跳过安全检查', async () => {
     const pipeline = new ToolOutputPipeline({
       conciseThinkingEnabled: false,
       budgetEnabled: false,
       offloadDir: '/tmp',
       maxChars: 2000,
     });
-    const result = pipeline.process('read', 'hello');
+    const result = await pipeline.process('read', 'hello');
     expect(result.output).toBe('hello');
     expect(result.stages).not.toContain('sanitizer');
   });
 
-  it('sanitizer 检测到注入时仍返回内容（加 warning）', () => {
+  it('sanitizer 检测到注入时仍返回内容（加 warning）', async () => {
     const mockSanitizer = makeMockSanitizer(() => ({
       content: 'warned content',
       injectionDetected: true,
@@ -47,12 +48,12 @@ describe('ToolOutputPipeline', () => {
       offloadDir: '/tmp',
       maxChars: 2000,
     });
-    const result = pipeline.process('exec', 'malicious');
+    const result = await pipeline.process('exec', 'malicious');
     expect(result.output).toBe('warned content');
     expect(result.stages).toContain('sanitizer');
   });
 
-  it('conciseThinkingEnabled=true 时裁剪过长输出', () => {
+  it('conciseThinkingEnabled=true 时裁剪过长输出', async () => {
     const longOutput = 'a'.repeat(3000);
     const pipeline = new ToolOutputPipeline({
       conciseThinkingEnabled: true,
@@ -60,12 +61,12 @@ describe('ToolOutputPipeline', () => {
       offloadDir: '/tmp',
       maxChars: 2000,
     });
-    const result = pipeline.process('read', longOutput);
+    const result = await pipeline.process('read', longOutput);
     expect(result.output.length).toBeLessThan(longOutput.length);
     expect(result.stages).toContain('concise-thinking');
   });
 
-  it('conciseThinkingEnabled=false 时不裁剪', () => {
+  it('conciseThinkingEnabled=false 时不裁剪', async () => {
     const longOutput = 'a'.repeat(3000);
     const pipeline = new ToolOutputPipeline({
       conciseThinkingEnabled: false,
@@ -73,11 +74,11 @@ describe('ToolOutputPipeline', () => {
       offloadDir: '/tmp',
       maxChars: 2000,
     });
-    const result = pipeline.process('read', longOutput);
+    const result = await pipeline.process('read', longOutput);
     expect(result.output).toBe(longOutput);
   });
 
-  it('sanitizer 抛错时 fail-open 返回原内容', () => {
+  it('sanitizer 抛错时 fail-open 返回原内容', async () => {
     const mockSanitizer = makeMockSanitizer(() => {
       throw new Error('sanitizer error');
     });
@@ -88,24 +89,24 @@ describe('ToolOutputPipeline', () => {
       offloadDir: '/tmp',
       maxChars: 2000,
     });
-    const result = pipeline.process('read', 'content');
+    const result = await pipeline.process('read', 'content');
     expect(result.output).toBe('content');
     expect(result.stages).toContain('sanitizer-failed');
   });
 
-  it('budgetEnabled=false 时跳过 offload 阶段', () => {
+  it('budgetEnabled=false 时跳过 offload 阶段', async () => {
     const pipeline = new ToolOutputPipeline({
       conciseThinkingEnabled: false,
       budgetEnabled: false,
       offloadDir: '/tmp',
       maxChars: 2000,
     });
-    const result = pipeline.process('read', 'a'.repeat(5000));
+    const result = await pipeline.process('read', 'a'.repeat(5000));
     expect(result.offloadedPath).toBeUndefined();
     expect(result.stages).not.toContain('budget-offload');
   });
 
-  it('budgetEnabled=true 且输出超长时写入 offload 文件并返回路径（Task D7 实装）', () => {
+  it('budgetEnabled=true 且输出超长时写入 offload 文件并返回路径（Task D7 实装）', async () => {
     // 用真实临时目录验证 offload 写入
     const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'routedev-offload-'));
     try {
@@ -116,7 +117,7 @@ describe('ToolOutputPipeline', () => {
         maxChars: 2000,
         sessionId: 'test-session',
       });
-      const result = pipeline.process('read', 'a'.repeat(5000));
+      const result = await pipeline.process('read', 'a'.repeat(5000));
       // 阶段记录由 'budget-offload-skipped' 改为 'budget-offload'
       expect(result.stages).toContain('budget-offload');
       expect(result.stages).not.toContain('budget-offload-skipped');
@@ -131,7 +132,7 @@ describe('ToolOutputPipeline', () => {
     }
   });
 
-  it('stages 字段记录所有执行阶段', () => {
+  it('stages 字段记录所有执行阶段', async () => {
     const mockSanitizer = makeMockSanitizer(() => ({
       content: 'safe',
       injectionDetected: false,
@@ -146,8 +147,56 @@ describe('ToolOutputPipeline', () => {
       offloadDir: '/tmp',
       maxChars: 2000,
     });
-    const result = pipeline.process('read', 'a'.repeat(3000));
+    const result = await pipeline.process('read', 'a'.repeat(3000));
     expect(result.stages).toContain('sanitizer');
     expect(result.stages).toContain('concise-thinking');
+  });
+
+  // ============================================================
+  // Phase 72 Task B2：ContentRouter 阶段测试
+  // ============================================================
+  it('Phase 72 Task B2：contentRoutingEnabled=true 时 JSON 走 json-sampler', async () => {
+    const pipeline = new ToolOutputPipeline({
+      conciseThinkingEnabled: false,
+      budgetEnabled: false,
+      offloadDir: '/tmp',
+      maxChars: 2000,
+      contentRoutingEnabled: true,
+    });
+    // 构造一个 > 200 token 的 JSON
+    const bigJson = JSON.stringify({
+      items: Array.from({ length: 30 }, (_, i) => ({ id: i, name: `item-${i}` })),
+    });
+    const result = await pipeline.process('file_read', bigJson);
+    expect(result.stages).toContain('content-router');
+    expect(result.compressStrategy).toBe('json-sampler');
+    // 压缩后应保留 array 长度信息
+    expect(result.output).toContain('omitted');
+  });
+
+  it('Phase 72 Task B2：< 200 token 直通（content-router-skipped）', async () => {
+    const pipeline = new ToolOutputPipeline({
+      conciseThinkingEnabled: false,
+      budgetEnabled: false,
+      offloadDir: '/tmp',
+      maxChars: 2000,
+      contentRoutingEnabled: true,
+    });
+    const result = await pipeline.process('file_read', 'short content');
+    expect(result.stages).toContain('content-router-skipped');
+    expect(result.compressStrategy).toBe('passthrough');
+  });
+
+  it('Phase 72 Task B2：contentRoutingEnabled=false 时跳过路由压缩（零回归）', async () => {
+    const pipeline = new ToolOutputPipeline({
+      conciseThinkingEnabled: false,
+      budgetEnabled: false,
+      offloadDir: '/tmp',
+      maxChars: 2000,
+      contentRoutingEnabled: false,
+    });
+    const result = await pipeline.process('file_read', '{"items":[1,2,3]}'.repeat(100));
+    expect(result.stages).not.toContain('content-router');
+    expect(result.stages).not.toContain('content-router-skipped');
   });
 });

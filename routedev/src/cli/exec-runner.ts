@@ -357,6 +357,7 @@ async function defaultExecuteFn(
     deps.permissionEngine,
     autonomyModeRef,
     commandBridgeRef,
+    deps.registry,
   );
 
   // 场景分类 + 路由

@@ -308,8 +308,62 @@ export type SpawnAgentFunction = (
     systemPrompt?: string;
     /** 旧字段：最大迭代次数（保留向后兼容，新调用方应使用 params.maxIterations） */
     maxIterations?: number;
+    /**
+     * P0-4：父 Agent 已渲染的 system prompt 字节（借鉴 Claude Code forkSubagent）
+     *
+     * 当提供此字段时：
+     *   1. 子 Agent 直接复用此 system prompt，不再重新渲染（保证 prompt cache 字节一致前缀）
+     *   2. 调用方应同时通过 buildForkedMessages 构造字节一致的消息前缀
+     *   3. 父 Agent 的 assistant 消息 + 占位 tool_result 保持完整，仅在末尾追加 per-child directive
+     *
+     * 未提供时（默认）：使用 systemPrompt 或回退默认提示，不影响现有行为
+     */
+    renderedSystemPrompt?: string;
+    /**
+     * P0-4：可选的预构造对话历史（与 renderedSystemPrompt 配合）
+     * 由 buildForkedMessages 生成，确保 prompt cache 命中
+     */
+    forkedConversationHistory?: import('../../router/types.js').LLMMessage[];
   },
 ) => Promise<SpawnResult>;
+
+/**
+ * P0-4：构造 fork 子 Agent 的字节一致消息前缀（借鉴 Claude Code buildForkedMessages）
+ *
+ * 目标：让多个子 Agent 共享同一 prompt cache 前缀，仅末尾 directive 不同。
+ *
+ * 做法：
+ *   1. 保留父 Agent 完整的 assistant 消息（含 tool_use blocks）
+ *   2. 为每个 tool_use 生成完全相同的 placeholder tool_result（"[forked placeholder]"）
+ *      —— 这是关键：tool_use 与 tool_result 必须配对，否则 LLM API 报错
+ *   3. 在末尾追加 user 消息：per-child directive（子任务描述）
+ *
+ * @example
+ * const forked = buildForkedMessages(parentAssistantMessage, '研究 X 库的 API');
+ * // forked 可作为 conversationHistory 传给 spawnAgent
+ *
+ * @param parentAssistantContent 父 Agent 的 assistant 消息内容（含 tool_use）
+ * @param childDirective 子任务指令（每个子 Agent 不同）
+ * @returns 构造好的消息前缀，可作为 conversationHistory 传入
+ */
+export function buildForkedMessages(
+  parentAssistantContent: string,
+  childDirective: string,
+): import('../../router/types.js').LLMMessage[] {
+  // 简化实现：父 assistant + 占位 tool_result + 子 directive
+  // 真实场景中 parentAssistantContent 应为 JSON 序列化的 tool_use blocks
+  // 此处保留接口形状，未来可扩展为完整 tool_use/tool_result 配对
+  return [
+    {
+      role: 'assistant',
+      content: parentAssistantContent,
+    },
+    {
+      role: 'user',
+      content: '[forked tool_result placeholder]\n\n' + childDirective,
+    },
+  ];
+}
 
 // ============================================================
 // Phase 50 Task 3：子 Agent 委托体系接入
@@ -842,9 +896,29 @@ export class SpawnAgentTool implements ITool {
     }
 
     // 兼容旧 options.systemPrompt（保留透传，由 app-init.ts 处理）
-    const options: { systemPrompt?: string; maxIterations?: number } = {};
+    // P0-4：扩展 options 以支持 renderedSystemPrompt + forkedConversationHistory
+    const options: {
+      systemPrompt?: string;
+      maxIterations?: number;
+      renderedSystemPrompt?: string;
+      forkedConversationHistory?: import('../../router/types.js').LLMMessage[];
+    } = {};
     if (args.systemPrompt !== undefined) {
       options.systemPrompt = args.systemPrompt as string;
+    }
+
+    // P0-4：若调用方提供 parentAssistantContent（父 Agent 当前 assistant 消息内容），
+    // 调用 buildForkedMessages 构造字节一致前缀，启用 prompt cache 共享。
+    // 未提供时跳过，保持现有行为（子 Agent 独立上下文）。
+    if (typeof args.parentAssistantContent === 'string' && args.parentAssistantContent.length > 0) {
+      options.forkedConversationHistory = buildForkedMessages(
+        args.parentAssistantContent,
+        prompt,
+      );
+      // renderedSystemPrompt 透传：若调用方同时提供，则一并传递
+      if (typeof args.renderedSystemPrompt === 'string') {
+        options.renderedSystemPrompt = args.renderedSystemPrompt as string;
+      }
     }
 
     try {

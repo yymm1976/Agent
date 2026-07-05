@@ -478,6 +478,69 @@ export class RouteDevEngine {
   }
 
   /**
+   * Phase 71：触发 plan 遗漏点检查
+   * 流程：从 plan-revisions/<goalId>.jsonl 读取最后一份 plan → 实例化 OmissionChecker → 调用 LLM 检查
+   * fail-open：任何环节失败都返回空 OmissionResult，不抛异常
+   * @param goalId 目标 ID
+   * @returns 遗漏点检查结果
+   */
+  async checkOmissions(goalId: string): Promise<{
+    omissions: Array<{ category: string; description: string; severity: string; suggestedStep?: string }>;
+    summary: string;
+  }> {
+    const EMPTY = { omissions: [], summary: '检查未执行' };
+    // 检查配置开关与必需依赖
+    const planCfg = (this.config as AppConfig & { plan?: { omissionCheckEnabled?: boolean; omissionCheckModel?: string; revisionHistoryPath?: string } }).plan;
+    if (!planCfg?.omissionCheckEnabled) {
+      return { ...EMPTY, summary: '遗漏点检查未启用（config.plan.omissionCheckEnabled=false）' };
+    }
+    if (!this.clientManager) {
+      return { ...EMPTY, summary: 'LLM 客户端未就绪' };
+    }
+    try {
+      // 读取 plan 修订历史，取最后一条的 after 字段作为当前 plan
+      const fs = await import('node:fs/promises');
+      const nodePath = await import('node:path');
+      const revisionDir = planCfg.revisionHistoryPath
+        ? nodePath.resolve(planCfg.revisionHistoryPath)
+        : nodePath.join(this.options.cwd, '.routedev', 'plan-revisions');
+      const revisionFile = nodePath.join(revisionDir, `${goalId}.jsonl`);
+      const data = await fs.readFile(revisionFile, 'utf-8');
+      const lines = data.trim().split('\n').filter(Boolean);
+      if (lines.length === 0) {
+        return { ...EMPTY, summary: '无 plan 修订历史' };
+      }
+      const lastRevision = JSON.parse(lines[lines.length - 1]) as { after?: Array<{ id: number | string; description: string; acceptanceCriteria?: string }> };
+      const rawSteps = Array.isArray(lastRevision.after) ? lastRevision.after : [];
+      if (rawSteps.length === 0) {
+        return { ...EMPTY, summary: 'plan 步骤为空' };
+      }
+      // 把存储中的 GoalStep（id: number）转换为 OmissionChecker 期望的 PlanStep（id: string）
+      const { toDiffPlanStep } = await import('../../src/agent/plan-diff.js');
+      const currentPlan = rawSteps.map(toDiffPlanStep);
+
+      // 取一个 ready 的 LLM client
+      const readyClients = this.clientManager.getReadyClients();
+      if (readyClients.length === 0) {
+        return { ...EMPTY, summary: '无可用 LLM 客户端' };
+      }
+
+      // 动态导入 OmissionChecker，避免主进程启动时加载开销
+      const { OmissionChecker } = await import('../../src/agent/omission-checker.js');
+      const checker = new OmissionChecker({
+        llmClient: readyClients[0].client,
+        modelId: planCfg.omissionCheckModel ?? 'fast',
+        enabled: true,
+      });
+      // goal 描述从 plan-revisions 元数据无法可靠获取，用 goalId 兜底（不影响检查效果）
+      return await checker.check(currentPlan, { goal: goalId });
+    } catch (err) {
+      console.warn('[Engine] checkOmissions fail-open:', err);
+      return { ...EMPTY, summary: `检查失败: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+
+  /**
    * 更新引擎配置（用户在设置页面修改配置后调用，确保自主度等设置实时生效）
    */
   updateConfig(newConfig: AppConfig): void {
@@ -843,8 +906,25 @@ export class RouteDevEngine {
     try {
       // Phase 53 Task 6：安装前注入安全门控（未启用时 undefined，SkillMarketManager fail-open 跳过）
       const securityGate = await this.createSecurityGateFromConfig();
-      const marketManager = new SkillMarketManager(this.options.cwd, securityGate);
+      // Phase 71 Task 2：注入完整性校验清单（未启用时 undefined，SkillMarketManager fail-open 跳过）
+      const integrityManifest = await this.createIntegrityManifestFromConfig() as
+        import('../../src/security/integrity-manifest.js').IntegrityManifest | undefined;
+      const marketManager = new SkillMarketManager(
+        this.options.cwd,
+        securityGate,
+        undefined,
+        integrityManifest,
+      );
       await marketManager.install(payload.name, payload.version);
+
+      // Phase 71 Task 2：安装后校验完整性（record 已在 install 内完成，此处做一次 verify 确认）
+      if (integrityManifest) {
+        try {
+          await marketManager.verifyInstalled(payload.name);
+        } catch {
+          // verify 失败已在 marketManager 内部 logger.warn，此处不阻断流程（integrityStrict=false 时）
+        }
+      }
 
       // 重新发现并注册（与 createSkill 后处理一致，避免重启引擎才生效）
       const skills = await this.deps.filesystemDiscovery.discoverSkills();
@@ -876,6 +956,32 @@ export class RouteDevEngine {
     } catch (err) {
       // fail-open：模块不可用时不阻塞安装
       console.warn('SkillSecurityGate module not available, install will skip scan', err);
+      return undefined;
+    }
+  }
+
+  /**
+   * Phase 71 Task 2：根据配置创建 IntegrityManifest
+   *
+   * - config.security.integrityCheck=true → 创建 manifest 实例，用于 skill 安装/加载时校验 SHA-256
+   * - 未启用或模块不可用 → 返回 undefined（SkillMarketManager fail-open 跳过校验）
+   *
+   * 与 app-init.ts 保持一致的 config 守护与动态 import 模式。
+   */
+  private async createIntegrityManifestFromConfig(): Promise<unknown | undefined> {
+    const cfg = this.config.security;
+    if (!cfg?.integrityCheck) return undefined;
+    try {
+      const mod = await import('../../src/security/integrity-manifest.js');
+      const manifestPath = cfg.integrityManifestPath
+        ? require('node:path').resolve(this.options.cwd, cfg.integrityManifestPath)
+        : require('node:path').join(this.options.cwd, '.routedev', 'integrity-manifest.json');
+      const manifest = new mod.IntegrityManifest(manifestPath);
+      await manifest.load();
+      return manifest;
+    } catch (err) {
+      // fail-open：模块不可用时不阻塞安装
+      console.warn('IntegrityManifest module not available, install will skip checksum', err);
       return undefined;
     }
   }

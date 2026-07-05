@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { ResultComparator, DEFAULT_COMPARATOR_CONFIG } from '../../../src/agent/multi/result-comparator.js';
-import type { ParallelOutcome } from '../../../src/agent/multi/parallel-executor.js';
+import type { ParallelOutcome } from '../../../src/agent/multi/types.js';
 
 vi.mock('../../../src/utils/token-estimate.js', () => ({
   estimateTokens: vi.fn((text: string) => Math.ceil(text.length / 4)),

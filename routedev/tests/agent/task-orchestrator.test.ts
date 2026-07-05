@@ -73,8 +73,6 @@ function makeConfig(overrides?: Partial<AppConfig['optimization']>): AppConfig {
     ui: { disclosureLevel: 2, bell: true, idleHintSeconds: 30 },
     optimization: {
       tokenTracking: { enabled: true, persistSession: true, outputDir: '.routedev/token-logs' },
-      structuredState: { enabled: false },
-      declarativeContext: { enabled: false },
       conciseThinking: { enabled: false },
       workflow: {
         unifiedPipeline: true,

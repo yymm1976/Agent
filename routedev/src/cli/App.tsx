@@ -59,6 +59,22 @@ import {
   doctorCommand,
   // Phase 57：/consolidate-memory（原 /dream 改名）；Phase 60：dream alias 已删除
   consolidateMemoryCommand,
+  // Phase 71：Plan diff 与遗漏点分析
+  planDiffCommand,
+  // Phase 72：/deep-review 改用 registerLazy 懒加载（P0-6 接线）
+  // deepReviewCommand 不再 eager import，改为首次调用时动态 import
+  // Phase 74：/ask /architect /code 三种交互模式（强模型规划 + 弱模型执行 / 只读问答 / 直接编码）
+  askCommand, architectCommand, codeCommand,
+  // Phase 74：/include 将文件加入上下文（对齐 Aider /add，支持 glob）
+  includeCommand,
+  // Phase 49 Task 5.4：/eval 内置评估用例集
+  evalCommand,
+  // SDK 插件管理命令（/plugins，动态加载/卸载 RouteDevPlugin）
+  pluginsCommand,
+  // /security 安全审计命令
+  securityCommand,
+  // Phase 73：/undo 撤销最近一次文件编辑（Aider 风格，单次编辑级别）
+  undoCommand,
 } from './commands/index.js';
 import { initPluginSystem, registerPermissionMiddleware } from './plugin-init.js';
 import { createAppDependencies } from './app-init.js';
@@ -172,23 +188,78 @@ export function App({ config, clientManager, classifier, modelRouter, tracker }:
   autonomyModeRef.current = autonomyMode;
   const commandBridgeRef = useRef<{ requestConfirm: (p: string) => Promise<boolean> } | null>(null);
   // Phase 21：注册 PermissionEngine 中间件（deny 规则不可绕过）
+  // P0-3：传入 toolRegistry 以启用 backfillObservableInput 绝对路径回填
   useEffect(() => {
-    registerPermissionMiddleware(deps.middlewarePipeline, deps.permissionEngine, autonomyModeRef, commandBridgeRef);
-  }, [deps.middlewarePipeline, deps.permissionEngine]);
+    registerPermissionMiddleware(deps.middlewarePipeline, deps.permissionEngine, autonomyModeRef, commandBridgeRef, deps.registry);
+  }, [deps.middlewarePipeline, deps.permissionEngine, deps.registry]);
 
   // 初始化分支管理器：移入 useEffect，避免每次渲染都调用
   useEffect(() => {
     deps.branchManager.initFromHistory(conversationHistoryRef.current);
   }, [deps.branchManager, messages.length]);
 
-  // 命令注册表（注册所有 26 个命令，含 Phase 31 Task 7.3 新增的 3 个）
+  // 命令注册表（注册所有 50 个命令，含 Phase 74 接线的 8 个此前未注册命令）
   const commandRegistryRef = useRef<CommandRegistry | null>(null);
   if (commandRegistryRef.current === null) {
     commandRegistryRef.current = new CommandRegistry();
   }
   const commandRegistry = commandRegistryRef.current;
   useEffect(() => {
-    [autoCommand, semiCommand, manualCommand, pauseCommand, checkpointCommand, rollbackCommand, goalCommand, branchCommand, initCommand, quitCommand, clearCommand, helpCommand, statusCommand, traceCommand, promptCommand, channelsCommand, costCommand, historyCommand, pluginCommand, diffCommand, buildCommand, planCommand, composeCommand, resumeCommand, tokenCommand, memoryCommand, permissionsCommand, configCommand, outputStyleCommand, techDebtCommand, swarmCommand, btwCommand, reviewCommand, clarifyCommand, experimentCommand, qualityCommand, scheduleCommand, trustCommand, doctorCommand, consolidateMemoryCommand].forEach(c => commandRegistry.register(c));
+    [autoCommand, semiCommand, manualCommand, pauseCommand, checkpointCommand, rollbackCommand, goalCommand, branchCommand, initCommand, quitCommand, clearCommand, helpCommand, statusCommand, traceCommand, promptCommand, channelsCommand, costCommand, historyCommand, pluginCommand, diffCommand, buildCommand, planCommand, composeCommand, resumeCommand, tokenCommand, memoryCommand, permissionsCommand, configCommand, outputStyleCommand, techDebtCommand, swarmCommand, btwCommand, reviewCommand, clarifyCommand, experimentCommand, qualityCommand, scheduleCommand, trustCommand, doctorCommand, consolidateMemoryCommand, planDiffCommand, askCommand, architectCommand, codeCommand, includeCommand, evalCommand, pluginsCommand, securityCommand, undoCommand].forEach(c => commandRegistry.register(c));
+
+    // P0-6：/deep-review 改用 registerLazy 懒加载
+    // 借鉴 Claude Code stub + load() 模式：启动时仅注册元数据，首次调用时动态 import
+    // 减少 simple-git、DeepReviewOrchestrator 等重依赖的启动加载开销
+    commandRegistry.registerLazy({
+      name: 'deep-review',
+      description: '并行多 reviewer 对抗性审查（Phase 72）',
+      usage: '/deep-review [focuses] | /deep-review auto',
+      load: async () => (await import('./commands/deep-review.js')).deepReviewCommand,
+    });
+
+    // P0-8：把每个已发现 Skill 注册为 PromptCommand（懒加载）
+    // 借鉴 Claude Code "Skill 即 PromptCommand"：用户输入 /skill-name args 触发 Skill
+    // 首次调用时通过 getPromptForSkill 渲染 prompt，作为 system 消息注入对话
+    if (deps.skillsRouter) {
+      for (const skill of deps.skillsRouter.list()) {
+        // 跳过与内置命令同名的 Skill（避免覆盖）
+        if (commandRegistry.has(skill.name)) continue;
+        commandRegistry.registerLazy({
+          name: skill.name,
+          description: skill.description || `Skill: ${skill.name}`,
+          usage: skill.argumentHint ? `/${skill.name} ${skill.argumentHint}` : `/${skill.name}`,
+          load: async () => {
+            // 动态构造 CommandDefinition：调用 getPromptForSkill 渲染 prompt
+            const { getPromptForSkill } = await import('../skills/skill-prompt-command.js');
+            const { SkillMdParser } = await import('../skills/skill-md-parser.js');
+            return {
+              name: skill.name,
+              description: skill.description || `Skill: ${skill.name}`,
+              usage: skill.argumentHint ? `/${skill.name} ${skill.argumentHint}` : `/${skill.name}`,
+              handler: async (args: string, _ctx) => {
+                try {
+                  // 重新读取 Skill 内容（可能已更新）
+                  const fs = await import('node:fs/promises');
+                  const raw = await fs.readFile(skill.sourcePath, 'utf-8');
+                  const parsed = SkillMdParser.parse(raw);
+                  const result = getPromptForSkill(parsed, args);
+                  // 返回渲染后的 prompt 作为 system 消息
+                  return {
+                    type: 'handled' as const,
+                    messages: [`[Skill: ${skill.name}]\n${result.prompt}`],
+                  };
+                } catch (err) {
+                  return {
+                    type: 'handled' as const,
+                    messages: [`Skill ${skill.name} 执行失败: ${err instanceof Error ? err.message : String(err)}`],
+                  };
+                }
+              },
+            };
+          },
+        });
+      }
+    }
 
     // Phase 47 Task 7：加载自定义 Slash 命令（.routedev/commands/ 目录）
     // 命名空间隔离：自定义命令与内置命令同名时，内置命令优先，自定义命令被忽略并 logger.warn（陷阱 #139）

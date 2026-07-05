@@ -20,6 +20,7 @@ import { logger } from '../utils/logger.js';
 import { SkillMdParser, type SkillMetadata, type ParsedSkill } from './skill-md-parser.js';
 import type { SkillSecurityGate } from './security-gate.js';
 import type { SkillQualityGate } from './quality-gate.js';
+import type { IntegrityManifest } from '../security/integrity-manifest.js';
 
 // ============================================================
 // 类型定义
@@ -62,17 +63,25 @@ export class SkillMarketManager {
   private readonly securityGate?: SkillSecurityGate;
   /** Phase 49 Task 3.5：技能质量门（在 publish/import 时 check；未注入时 fail-open） */
   private readonly qualityGate?: SkillQualityGate;
+  /** 依赖完整性校验清单（在 install 后 record，verifyInstalled 时校验；未注入时跳过） */
+  private readonly integrityManifest?: IntegrityManifest;
+  /** 完整性校验严格模式：true 时校验失败抛错，false 时只 warn */
+  private readonly integrityStrict: boolean;
 
   constructor(
     rootDir: string,
     securityGate?: SkillSecurityGate,
     qualityGate?: SkillQualityGate,
+    integrityManifest?: IntegrityManifest,
+    integrityStrict: boolean = false,
   ) {
     this.marketDir = path.join(rootDir, '.routedev', 'market', 'skills');
     this.draftDir = path.join(rootDir, '.routedev', 'market-draft', 'skills');
     this.installDir = path.join(rootDir, '.routedev', 'skills');
     this.securityGate = securityGate;
     this.qualityGate = qualityGate;
+    this.integrityManifest = integrityManifest;
+    this.integrityStrict = integrityStrict;
   }
 
   /**
@@ -246,6 +255,54 @@ export class SkillMarketManager {
     await fs.mkdir(destDir, { recursive: true });
     await fs.copyFile(srcPath, destPath);
 
+    // P0-9：Bundled skill 安全抽取
+    // 若源版本目录含 bundled/ 子目录（含附件资源），调用 extractBundledSkill 解包
+    // 安全策略：O_NOFOLLOW 等价 + 0o600 权限 + 路径穿越拒绝 + memoize promise
+    const bundledDir = path.join(this.marketDir, name, targetVersion, 'bundled');
+    if (fsSync.existsSync(bundledDir)) {
+      try {
+        const { extractBundledSkill } = await import('./bundled-skill-extractor.js');
+        type ExtractEntry = import('./bundled-skill-extractor.js').ExtractEntry;
+        // 收集 bundled/ 下所有文件为 entries
+        const entries: ExtractEntry[] = [];
+        const collectFiles = async (dir: string, baseRel: string): Promise<void> => {
+          const items = await fs.readdir(dir, { withFileTypes: true });
+          for (const item of items) {
+            const full = path.join(dir, item.name);
+            const rel = baseRel ? `${baseRel}/${item.name}` : item.name;
+            if (item.isDirectory()) {
+              await collectFiles(full, rel);
+            } else if (item.isFile()) {
+              const content = await fs.readFile(full);
+              entries.push({ relativePath: rel, content });
+            }
+            // 符号链接跳过（extractBundledSkill 内部也会拒绝）
+          }
+        };
+        await collectFiles(bundledDir, '');
+        if (entries.length > 0) {
+          const result = await extractBundledSkill(destDir, entries);
+          if (result.skipped.length > 0) {
+            logger.warn('SkillMarketManager.install: bundled extraction 有跳过项', {
+              name,
+              skipped: result.skipped.length,
+              details: result.skipped.slice(0, 5),
+            });
+          }
+          logger.info('SkillMarketManager.install: bundled extracted', {
+            name,
+            extracted: result.extractedPaths.length,
+          });
+        }
+      } catch (err) {
+        // fail-open：bundled 抽取失败不阻塞 SKILL.md 安装，但记录警告
+        logger.warn('SkillMarketManager.install: bundled extraction failed', {
+          name,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     // 写入安装信息
     const installMetaPath = path.join(destDir, '.installed.json');
     await fs.writeFile(
@@ -254,7 +311,58 @@ export class SkillMarketManager {
       'utf-8',
     );
 
+    // 完整性校验：安装成功后记录 SHA-256（未注入 integrityManifest 时跳过）
+    if (this.integrityManifest) {
+      try {
+        await this.integrityManifest.record(destPath, 'skill-market');
+        await this.integrityManifest.save();
+      } catch (err) {
+        // fail-open：record 失败不阻塞安装
+        logger.warn('SkillMarketManager.install: integrity record failed', {
+          name,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     logger.info('SkillMarketManager: installed', { name, version: targetVersion });
+  }
+
+  /**
+   * 校验已安装 skill 的完整性
+   *
+   * 在首次读取已安装 skill 前调用：
+   *   - integrityManifest 未注入 → 直接返回 ok=true（跳过校验）
+   *   - manifest 中无记录 → ok=true（首次信任）
+   *   - 校验通过 → ok=true
+   *   - 校验失败 → ok=false；integrityStrict=true 时抛错，false 时只 warn
+   *
+   * @param name skill 名
+   * @returns 校验结果
+   */
+  async verifyInstalled(name: string): Promise<{ ok: boolean; expected?: string; actual: string }> {
+    const destPath = path.join(this.installDir, name, 'SKILL.md');
+    if (!this.integrityManifest) {
+      // 未注入 manifest 时跳过校验（fail-open）
+      return { ok: true, actual: '' };
+    }
+    if (!fsSync.existsSync(destPath)) {
+      // 文件不存在时不算校验失败（让上层处理 ENOENT）
+      return { ok: true, actual: '' };
+    }
+    const result = await this.integrityManifest.verify(destPath);
+    if (!result.ok) {
+      const errMsg = `Skill "${name}" integrity check failed: expected=${result.expected} actual=${result.actual}`;
+      if (this.integrityStrict) {
+        throw new Error(errMsg);
+      }
+      logger.warn('SkillMarketManager.verifyInstalled: integrity mismatch (fail-open)', {
+        name,
+        expected: result.expected,
+        actual: result.actual,
+      });
+    }
+    return result;
   }
 
   /**

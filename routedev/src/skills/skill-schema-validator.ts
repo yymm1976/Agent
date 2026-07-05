@@ -12,6 +12,11 @@
 //   3. description 长度（10-200 字符）
 //   4. version 格式（^\d+\.\d+\.\d+$，若提供则校验）
 //   5. tags 数量上限（maxItems: 10）
+//   6. P0-7：when_to_use 长度上限（500 字符）
+//   7. P0-7：allowed-tools 元素格式（kebab-case + 下划线）
+//   8. P0-7：arguments 元素 name 必填且唯一
+//   9. P0-7：paths 元素为非空字符串
+//   10. P0-7：argument-hint 长度上限（100 字符）
 
 import type { ParsedSkill } from './skill-md-parser.js';
 
@@ -25,6 +30,8 @@ export interface SchemaValidationResult {
 
 /**
  * Skill JSON Schema 定义（蓝图 3.4 节）
+ *
+ * P0-7 扩展：新增 when_to_use / allowed-tools / arguments / argument-hint / paths 字段
  *
  * 此常量描述了 Skill frontmatter 的标准结构，可用于：
  *   - 文档参考
@@ -43,6 +50,29 @@ export const SKILL_JSON_SCHEMA = {
     version: { type: 'string', pattern: '^\\d+\\.\\d+\\.\\d+$' },
     author: { type: 'string' },
     tags: { type: 'array', items: { type: 'string' }, maxItems: 10 },
+    // P0-7：新增字段（可选）
+    whenToUse: { type: 'string', maxLength: 500 },
+    allowedTools: {
+      type: 'array',
+      items: { type: 'string', pattern: '^[a-z][a-z0-9_-]*$' },
+      maxItems: 50,
+    },
+    arguments: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name'],
+        properties: {
+          name: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9_-]*$' },
+          required: { type: 'boolean' },
+          default: { type: 'string' },
+          description: { type: 'string', maxLength: 200 },
+        },
+      },
+      maxItems: 20,
+    },
+    argumentHint: { type: 'string', maxLength: 100 },
+    paths: { type: 'array', items: { type: 'string', minLength: 1 }, maxItems: 20 },
   },
 } as const;
 
@@ -50,6 +80,10 @@ export const SKILL_JSON_SCHEMA = {
 const NAME_PATTERN = /^[a-z0-9-]+$/;
 /** version 格式正则（X.Y.Z 语义化版本） */
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
+/** P0-7：allowed-tools 元素格式（小写字母开头，可含数字/下划线/连字符） */
+const TOOL_NAME_PATTERN = /^[a-z][a-z0-9_-]*$/;
+/** P0-7：arguments 元素 name 格式（字母开头，可含数字/下划线/连字符） */
+const ARG_NAME_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 
 /** name 最小长度 */
 const NAME_MIN_LENGTH = 2;
@@ -61,6 +95,16 @@ const DESC_MIN_LENGTH = 10;
 const DESC_MAX_LENGTH = 200;
 /** tags 最大数量 */
 const TAGS_MAX_ITEMS = 10;
+/** P0-7：when_to_use 最大长度 */
+const WHEN_TO_USE_MAX_LENGTH = 500;
+/** P0-7：argument-hint 最大长度 */
+const ARGUMENT_HINT_MAX_LENGTH = 100;
+/** P0-7：allowed-tools 最大数量 */
+const ALLOWED_TOOLS_MAX_ITEMS = 50;
+/** P0-7：arguments 最大数量 */
+const ARGUMENTS_MAX_ITEMS = 20;
+/** P0-7：paths 最大数量 */
+const PATHS_MAX_ITEMS = 20;
 
 /**
  * Skill JSON Schema 校验器
@@ -124,6 +168,90 @@ export class SkillSchemaValidator {
       errors.push(
         `metadata.tags 数量 ${metadata.tags.length} 超过最大值 ${TAGS_MAX_ITEMS}`,
       );
+    }
+
+    // ===== P0-7：whenToUse 长度上限 =====
+    if (metadata.whenToUse !== undefined) {
+      if (metadata.whenToUse.length > WHEN_TO_USE_MAX_LENGTH) {
+        errors.push(
+          `metadata.whenToUse 长度 ${metadata.whenToUse.length} 超过最大值 ${WHEN_TO_USE_MAX_LENGTH}`,
+        );
+      }
+    }
+
+    // ===== P0-7：allowedTools 元素格式 + 数量上限 =====
+    if (metadata.allowedTools !== undefined) {
+      if (!Array.isArray(metadata.allowedTools)) {
+        errors.push('metadata.allowedTools 必须是字符串数组');
+      } else {
+        if (metadata.allowedTools.length > ALLOWED_TOOLS_MAX_ITEMS) {
+          errors.push(
+            `metadata.allowedTools 数量 ${metadata.allowedTools.length} 超过最大值 ${ALLOWED_TOOLS_MAX_ITEMS}`,
+          );
+        }
+        for (const tool of metadata.allowedTools) {
+          if (!TOOL_NAME_PATTERN.test(tool)) {
+            errors.push(
+              `metadata.allowedTools 元素 "${tool}" 不符合格式（必须匹配 ^[a-z][a-z0-9_-]*$）`,
+            );
+          }
+        }
+      }
+    }
+
+    // ===== P0-7：arguments 元素校验 =====
+    if (metadata.arguments !== undefined) {
+      if (!Array.isArray(metadata.arguments)) {
+        errors.push('metadata.arguments 必须是数组');
+      } else {
+        if (metadata.arguments.length > ARGUMENTS_MAX_ITEMS) {
+          errors.push(
+            `metadata.arguments 数量 ${metadata.arguments.length} 超过最大值 ${ARGUMENTS_MAX_ITEMS}`,
+          );
+        }
+        const seenNames = new Set<string>();
+        for (let i = 0; i < metadata.arguments.length; i++) {
+          const arg = metadata.arguments[i];
+          if (!arg || typeof arg.name !== 'string' || arg.name.trim().length === 0) {
+            errors.push(`metadata.arguments[${i}] 缺少 name 字段`);
+            continue;
+          }
+          if (!ARG_NAME_PATTERN.test(arg.name)) {
+            errors.push(
+              `metadata.arguments[${i}].name "${arg.name}" 不符合格式（必须匹配 ^[a-zA-Z][a-zA-Z0-9_-]*$）`,
+            );
+          }
+          if (seenNames.has(arg.name)) {
+            errors.push(`metadata.arguments[${i}].name "${arg.name}" 重复`);
+          }
+          seenNames.add(arg.name);
+        }
+      }
+    }
+
+    // ===== P0-7：argumentHint 长度上限 =====
+    if (metadata.argumentHint !== undefined && metadata.argumentHint.length > ARGUMENT_HINT_MAX_LENGTH) {
+      errors.push(
+        `metadata.argumentHint 长度 ${metadata.argumentHint.length} 超过最大值 ${ARGUMENT_HINT_MAX_LENGTH}`,
+      );
+    }
+
+    // ===== P0-7：paths 元素非空 + 数量上限 =====
+    if (metadata.paths !== undefined) {
+      if (!Array.isArray(metadata.paths)) {
+        errors.push('metadata.paths 必须是字符串数组');
+      } else {
+        if (metadata.paths.length > PATHS_MAX_ITEMS) {
+          errors.push(
+            `metadata.paths 数量 ${metadata.paths.length} 超过最大值 ${PATHS_MAX_ITEMS}`,
+          );
+        }
+        for (const p of metadata.paths) {
+          if (typeof p !== 'string' || p.trim().length === 0) {
+            errors.push('metadata.paths 元素必须是非空字符串');
+          }
+        }
+      }
     }
 
     return { valid: errors.length === 0, errors };

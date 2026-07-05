@@ -1,0 +1,4 @@
+# Phase 72 Task D1：Team-Shared Graph Artifact
+# code-map artifact 是机器生成的二进制压缩文件，团队成员各自索引可能产生微差异
+# 合并冲突时保留本地版本（merge=ours），避免合并产生损坏的 zstd 流
+.routedev/code-map.db.zst merge=ours

@@ -268,4 +268,32 @@ describe('BudgetMonitor', () => {
       expect(() => new BudgetMonitor()).toThrow();
     });
   });
+
+  // ============================================================
+  // Phase 72 Task B4：reserveRatio + getAvailableBudget
+  // ============================================================
+  describe('Phase 72 Task B4: reserveRatio', () => {
+    it('默认 reserveRatio 为 0.2', () => {
+      const m = new BudgetMonitor({ tokenLimit: 10000 });
+      expect(m.getReserveRatio()).toBe(0.2);
+    });
+
+    it('available = total * (1 - reserveRatio)', () => {
+      const m = new BudgetMonitor({ tokenLimit: 10000, reserveRatio: 0.2 });
+      // 10000 * 0.8 = 8000
+      expect(m.getAvailableBudget()).toBe(8000);
+    });
+
+    it('reserveRatio=0 时 available=total', () => {
+      const m = new BudgetMonitor({ tokenLimit: 10000, reserveRatio: 0 });
+      expect(m.getAvailableBudget()).toBe(10000);
+    });
+
+    it('reserveRatio 超出 [0, 0.5] 时 clamp', () => {
+      const tooHigh = new BudgetMonitor({ tokenLimit: 10000, reserveRatio: 0.9 });
+      expect(tooHigh.getReserveRatio()).toBe(0.5);
+      const negative = new BudgetMonitor({ tokenLimit: 10000, reserveRatio: -0.5 });
+      expect(negative.getReserveRatio()).toBe(0);
+    });
+  });
 });
