@@ -10,7 +10,7 @@
 //
 // 接入方式：
 //   通过 AgentMiddlewarePipeline.onActing 中间件拦截工具调用
-//   详见 src/cli/plugin-init.ts 的 registerPermissionMiddleware()
+//   详见 src/runtime/plugin-init.ts 的 registerPermissionMiddleware()
 
 import type { AutonomyMode } from '../config/schema.js';
 import { parseCommand } from './command-parser.js';

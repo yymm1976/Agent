@@ -46,10 +46,10 @@ const CLEANED_SAMPLES: Array<{ file: string; symbols: string[] }> = [
   // { file: 'src/skills/skill-flow-types.ts', symbols: ['FlowNodeType', 'Attractor', 'RunReactCallback', 'EvaluateBranchCallback'] },
   // src/router/
   { file: 'src/router/cache-optimizer.ts', symbols: ['CompactionAction'] },
-  // src/cli/
-  { file: 'src/cli/custom-commands.ts', symbols: ['RenderContext'] },
-  { file: 'src/cli/tool-verb.ts', symbols: ['ToolFeedbackState'] },
-  { file: 'src/cli/args.ts', symbols: ['CLIArgs'] },
+  // src/runtime/
+  { file: 'src/runtime/custom-commands.ts', symbols: ['RenderContext'] },
+  { file: 'src/runtime/tool-verb.ts', symbols: ['ToolFeedbackState'] },
+  { file: 'src/runtime/args.ts', symbols: ['CLIArgs'] },
   // src/agent/
   { file: 'src/agent/hooks.ts', symbols: ['StepError', 'HookHandler'] },
   { file: 'src/agent/preference-manager.ts', symbols: ['PreferenceCategory', 'UserPreference', 'AuditLogEntry'] },
@@ -106,7 +106,7 @@ describe('Phase 50 Task 9 - export 清理验证', () => {
     });
 
     it('custom-commands 仍导出 loadCustomCommands / parseMarkdown / renderTemplate', async () => {
-      const mod = await import('../../src/cli/custom-commands.js');
+      const mod = await import('../../src/runtime/custom-commands.js');
       expect(mod.loadCustomCommands).toBeDefined();
       expect(mod.parseMarkdown).toBeDefined();
       expect(mod.renderTemplate).toBeDefined();
@@ -114,7 +114,7 @@ describe('Phase 50 Task 9 - export 清理验证', () => {
     });
 
     it('args 仍导出 parseArgs / parseExecArgs / ExecArgs / ExecWorkMode', async () => {
-      const mod = await import('../../src/cli/args.js');
+      const mod = await import('../../src/runtime/args.js');
       expect(mod.parseArgs).toBeDefined();
       expect(mod.parseExecArgs).toBeDefined();
       expect(typeof mod.parseArgs).toBe('function');

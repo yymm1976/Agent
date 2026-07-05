@@ -2,20 +2,23 @@
 // 核心引擎桥接：把 CLI 的 App 依赖工厂包装成主进程可直接调用的服务
 
 import type { AppConfig } from '../../src/config/schema.js';
-import type { LLMMessage, ScenarioTier } from '../../src/router/types.js';
+import type { LLMMessage, ScenarioTier, RoutingResult } from '../../src/router/types.js';
 import { LLMClientManager } from '../../src/router/llm/index.js';
 import { TokenTracker } from '../../src/router/tracker.js';
 import { ScenarioClassifier } from '../../src/router/classifier.js';
 import { ModelRouter } from '../../src/router/router.js';
 import { buildRouterConfig } from '../../src/router/config.js';
-import { createAppDependencies } from '../../src/cli/app-init.js';
-import type { AppDependencies } from '../../src/cli/app-init.js';
+import { createAppDependencies } from '../../src/runtime/app-init.js';
+import type { AppDependencies } from '../../src/runtime/app-init.js';
 import type { ChatStreamPayload, MCPStatus, MCPConnectionResult, MCPInstallResult, MCPInstallPayload, SkillInstallPayload, AgentProfileInfo, AgentProfileDetail, ProfileSavePayload, ProfileOpResult, GoalEvent, PlanEditRequestPayload } from '../shared/ipc-types.js';
 import type { TokenProfileSnapshot } from '../../src/agent/token-profiler.js';
 import { VisionAssistant, type ImageInput } from '../../src/agent/vision.js';
-import { notifyRoutingFallback } from '../../src/cli/notification.js';
+import { notifyRoutingFallback } from '../../src/runtime/notification.js';
 import { estimateTokens } from '../../src/utils/token-estimate.js';
 import type { TraceSpan } from '../../src/harness/trace-types.js';
+import type { TrajectorySummary } from '../../src/harness/trace-types.js';
+// Phase 34 Task 2：微摘要生成器（任务结束后从 trace spans + 最终回复中提取摘要）
+import { generateMicroSummary } from '../../src/agent/micro-summary.js';
 import type { SkillStatus } from '../../src/plugins/filesystem-discovery.js';
 import { getCatalogEntry } from './mcp-catalog.js';
 import type { MCPServerEntry } from '../../src/tools/mcp/types.js';
@@ -29,7 +32,7 @@ import type { HookTemplate } from '../../src/hooks/templates.js';
 import { checkBashSecurity } from '../../src/tools/security-enhanced.js';
 import type { Checkpoint } from '../../src/harness/types.js';
 // Phase 54：GoalRunner 接入——Electron 端 /goal 命令实际执行入口
-import { createGoalRunner } from '../../src/cli/goal-runner.js';
+import { createGoalRunner } from '../../src/runtime/goal-runner.js';
 import type { GoalPlan, PlanStep } from '../../src/agent/goal-types.js';
 // Phase 37 Skill 市场接线：复用 SkillMarketManager 的 install 能力
 import { SkillMarketManager } from '../../src/skills/market-manager.js';
@@ -249,10 +252,18 @@ export class RouteDevEngine {
       return;
     }
 
+    // 把以下变量提到 try 外，便于 finally 块中生成 trajectory 汇总和微摘要
+    // 与 chat-runner.ts 顶部声明保持一致，确保删除 chat-runner 后 desktop 不丢失可观测性
+    let hasTaskError = false;
+    let accumulatedContent = '';
+    let actualUserMessage = text;
+    let routeDecision: RoutingResult | null = null;
+    let trajectorySummary: TrajectorySummary | null = null;
+
     try {
       const classifyResult = await this.classifier.classify({ query: text });
       this.currentTier = classifyResult.tier;
-      const routeDecision = await this.modelRouter.route(classifyResult);
+      routeDecision = await this.modelRouter.route(classifyResult);
       const fallbackNotice = notifyRoutingFallback(routeDecision);
       if (fallbackNotice) {
         this.options.onStream({ type: 'progress', progress: { label: fallbackNotice, current: 0, total: 1 } });
@@ -283,7 +294,6 @@ export class RouteDevEngine {
         },
       });
 
-      let actualUserMessage = text;
       const imageRefs = VisionAssistant.extractImageReferences(text);
       if (imageRefs.length > 0) {
         const loadedImages: ImageInput[] = [];
@@ -309,7 +319,6 @@ export class RouteDevEngine {
       }
 
       this.abortController = new AbortController();
-      let accumulatedContent = '';
       let finalUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
       // Phase 37：Skill 路由——根据用户消息匹配已启用的 Skill，将内容追加到 systemPrompt
@@ -372,6 +381,8 @@ export class RouteDevEngine {
             });
             break;
           case 'error':
+            // 标记任务错误状态，用于 finally 块生成 trajectory summary 和微摘要时判定 success/failure
+            hasTaskError = true;
             this.options.onStream({ type: 'error', error: event.error });
             break;
           case 'done':
@@ -384,6 +395,9 @@ export class RouteDevEngine {
       }
 
       this.tracker.record(finalUsage, { modelId: routeDecision.model.id, agentId: 'default', stepId: 'chat' });
+      // CONCERN 修复：CircuitBreaker 接入——Agent Loop 成功完成时重置模型失败计数
+      // 与 chat-runner.ts 内层 try 末尾的 recordModelSuccess 对齐
+      this.modelRouter.recordModelSuccess(routeDecision.model.id);
       this.options.onStream({ type: 'progress', progress: { label: '完成', current: 3, total: 3 } });
       this.options.onStream({ type: 'done' });
 
@@ -428,6 +442,9 @@ export class RouteDevEngine {
         }
       }
     } catch (err) {
+      // CONCERN 修复：CircuitBreaker 接入——路由或 Agent Loop 抛异常时记录模型失败
+      // 与 chat-runner.ts 两层 catch 中的 recordModelFailure 对齐（routeDecision 可能为 null）
+      if (routeDecision?.model?.id) this.modelRouter.recordModelFailure(routeDecision.model.id);
       this.options.onStream({
         type: 'error',
         error: err instanceof Error ? err.message : String(err),
@@ -435,6 +452,47 @@ export class RouteDevEngine {
       this.options.onStream({ type: 'done' });
     } finally {
       this.abortController = null;
+
+      // Phase 34：任务结束时记录 trajectory 级过程评测汇总
+      // 与 chat-runner.ts finally 块对齐，确保删除 chat-runner 后 desktop 不丢失可观测性
+      if (this.deps?.trace && this.deps?.audit && routeDecision) {
+        try {
+          trajectorySummary = this.deps.trace.summarizeTrajectory({
+            success: !hasTaskError,
+            terminationReason: hasTaskError ? 'error' : 'completed',
+            modelId: routeDecision.model.id,
+            tier: routeDecision.originalTier,
+          });
+          this.deps.audit.logTrajectorySummary(trajectorySummary);
+        } catch (err) {
+          console.warn('[Engine] failed to log trajectory summary:', err);
+        }
+      }
+
+      // Phase 34 Task 2：生成微摘要并推送到渲染进程
+      // 与 chat-runner.ts finally 块对齐，仅在存在工具调用/关键决策等有意义内容时推送
+      if (this.deps?.trace && routeDecision) {
+        try {
+          const status: 'success' | 'failure' = hasTaskError ? 'failure' : 'success';
+          const microSummary = generateMicroSummary(
+            actualUserMessage,
+            accumulatedContent,
+            this.deps.trace.getSpans(),
+            trajectorySummary,
+            status,
+          );
+          // 只有确实存在工具调用或关键决策时才推送微摘要，避免空卡片
+          const hasMeaningfulSummary =
+            microSummary.stepCount > 0 ||
+            microSummary.keyDecisions.length > 0 ||
+            microSummary.fileChanges.length > 0;
+          if (hasMeaningfulSummary) {
+            this.options.onStream({ type: 'micro_summary', microSummary });
+          }
+        } catch (err) {
+          console.warn('[Engine] failed to generate micro summary:', err);
+        }
+      }
     }
   }
 

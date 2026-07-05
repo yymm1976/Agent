@@ -10,8 +10,7 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ReviewFocus } from '../../cli/commands/review.js';
-import type { DeepReviewConfig } from './types.js';
+import type { DeepReviewConfig, ReviewFocus } from './types.js';
 
 /** prompt 模板文件所在目录（基于当前模块路径推导，避免硬编码绝对路径） */
 const PROMPTS_DIR = path.dirname(fileURLToPath(import.meta.url)) + path.sep + 'prompts';

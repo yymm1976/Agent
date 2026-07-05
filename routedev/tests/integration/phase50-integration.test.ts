@@ -10,7 +10,7 @@
 // 验证三件事：(a) config 开关 (b) 代码接线点 (c) try/catch 降级不崩溃
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createGoalRunner } from '../../src/cli/goal-runner.js';
+import { createGoalRunner } from '../../src/runtime/goal-runner.js';
 import { GoalAuditor } from '../../src/agent/goal-audit.js';
 import { GoalPersistence } from '../../src/agent/goal-persistence.js';
 import { Orchestrator } from '../../src/agent/multi/orchestrator.js';

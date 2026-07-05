@@ -10,7 +10,7 @@ import { HookRunner, createHookRunner, type HookContext } from '../../src/agent/
 import {
   parseTimelineEntries,
   renderTraceTimelineText,
-} from '../../src/cli/components/TracePanel.js';
+} from '../../src/runtime/components/TracePanel.js';
 import type { ToolResult } from '../../src/tools/types.js';
 import type { TraceSpan } from '../../src/harness/trace-types.js';
 

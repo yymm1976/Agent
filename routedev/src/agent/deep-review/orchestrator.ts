@@ -7,11 +7,9 @@
 //   3. P2 将通过 sandboxOverride 参数实现真正并行（当前 config.parallel 字段保留但不使用）
 //   4. 风险评分低于阈值或功能关闭时降级（triggered=false），调用方自行 fallback
 
-import type { ReviewFocus } from '../../cli/commands/review.js';
 import type { SandboxLevel } from '../../tools/permission-engine.js';
 import type { PermissionEngine } from '../../tools/permission-engine.js';
 import type { ToolExecutorAdapter } from '../../agent/loop-config.js';
-import type { CommandBridge } from '../../cli/service-context.js';
 import type { ILLMClient } from '../../router/types.js';
 import { logger } from '../../utils/logger.js';
 import { scoreRisk } from './risk-scorer.js';
@@ -20,8 +18,18 @@ import { aggregate, parseIssuesFromReport } from './aggregator.js';
 import type {
   DeepReviewConfig,
   DeepReviewResult,
+  ReviewFocus,
   ReviewerReport,
 } from './types.js';
+
+/**
+ * 命令桥最小契约（仅 deep-review 编排器用到的部分）
+ * 原 service-context.ts 已随终端 UI 层移除，此处内联最小接口避免依赖被删模块
+ */
+export interface CommandBridge {
+  /** 向 UI 推送一条系统消息 */
+  addSystemMessage: (content: string) => void;
+}
 
 /** 编排器依赖参数 */
 export interface DeepReviewOrchestratorDeps {

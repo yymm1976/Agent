@@ -19,7 +19,7 @@ export interface ChatHistoryMessage {
 }
 
 export interface ChatStreamPayload {
-  type: 'text_delta' | 'reasoning_delta' | 'tool_start' | 'tool_done' | 'progress' | 'done' | 'error';
+  type: 'text_delta' | 'reasoning_delta' | 'tool_start' | 'tool_done' | 'progress' | 'done' | 'error' | 'micro_summary';
   chunk?: string;
   /** 推理过程增量文本（DeepSeek-R1 等 reasoning 模型） */
   reasoning?: string;
@@ -28,6 +28,12 @@ export interface ChatStreamPayload {
   toolResult?: unknown;
   progress?: { current: number; total: number; label: string; modelId?: string; tier?: string };
   error?: string;
+  /**
+   * Phase 34 Task 2：任务结束时生成的微摘要（步骤数/关键决策/文件变更等）
+   * 仅在 type === 'micro_summary' 时有效，由 engine-bridge 在 Agent Loop 完成后推送
+   * 用于 desktop 端展示任务执行卡片，与 CLI 端 chat-runner 行为对齐
+   */
+  microSummary?: import('../../src/agent/micro-summary.js').MicroSummary;
 }
 
 export interface CommandExecutePayload {

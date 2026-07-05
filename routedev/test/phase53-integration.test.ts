@@ -36,7 +36,7 @@ import { DagEngine, type DagNode } from '../src/agent/workflow/dag-engine.js';
 import { CircuitBreaker } from '../src/agent/circuit-breaker.js';
 import { McpSecurityScanner } from '../src/tools/mcp/security-scanner.js';
 import { SkillSecurityGate, type SkillSecurityFinding } from '../src/skills/security-gate.js';
-import { Doctor } from '../src/cli/doctor.js';
+import { Doctor } from '../src/runtime/doctor.js';
 
 // ============================================================
 // 辅助：创建临时目录并返回路径（用于 AuditLogger 文件 IO 测试）

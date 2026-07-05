@@ -12,8 +12,8 @@ import type {
   ReviewerReport,
   ReviewIssue,
   DeepReviewConfig,
+  ReviewFocus,
 } from '../../../src/agent/deep-review/types.js';
-import type { ReviewFocus } from '../../../src/cli/commands/review.js';
 
 /** 构造一份 ReviewerReport */
 function makeReport(overrides: Partial<ReviewerReport> = {}): ReviewerReport {

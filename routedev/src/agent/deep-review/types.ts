@@ -1,7 +1,8 @@
 // src/agent/deep-review/types.ts
 // Phase 72：Deep Review 并行多 reviewer 类型定义
 
-import type { ReviewFocus } from '../../cli/commands/review.js';
+/** 审查维度（与 config/schema.ts 的 deepReviewFocuses 枚举对齐） */
+export type ReviewFocus = 'correctness' | 'security' | 'performance' | 'style';
 
 /** 单个 reviewer 的执行结果 */
 export interface ReviewerReport {

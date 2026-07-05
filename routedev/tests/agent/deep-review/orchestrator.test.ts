@@ -3,8 +3,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { DeepReviewOrchestrator } from '../../../src/agent/deep-review/orchestrator.js';
-import type { DeepReviewConfig } from '../../../src/agent/deep-review/types.js';
-import type { ReviewFocus } from '../../../src/cli/commands/review.js';
+import type { DeepReviewConfig, ReviewFocus } from '../../../src/agent/deep-review/types.js';
 import type { ToolExecutorAdapter } from '../../../src/agent/loop-config.js';
 import type { PermissionEngine } from '../../../src/tools/permission-engine.js';
 
