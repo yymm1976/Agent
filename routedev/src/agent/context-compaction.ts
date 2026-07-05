@@ -17,10 +17,8 @@ import { decideCompactionAction, DEFAULT_COMPACTION_THRESHOLDS, type CompactionT
 import { createCompactionBoundary, type CompactionBoundary } from '../tools/trust-gradient.js';
 import { logger } from '../utils/logger.js';
 import type { CCRCache, CCRMarker } from './ccr-cache.js';
-import { CuratedSet } from './curated-set.js';
 import { KSentenceCompressor } from './ksentence-compressor.js';
 import { BudgetAwareRenderer } from './budget-aware-renderer.js';
-import { VerificationRecords } from './verification-records.js';
 import { ContentDeduplicator } from './content-deduplicator.js';
 import type { ToolOutputBudgetManager } from './memory/tool-output-budget.js';
 import type { MessageGrouper } from './memory/message-grouper.js';
@@ -70,7 +68,6 @@ interface CompactionConfig {
    * 开启后会在压缩流程的关键点插入条件调用：
    *   - L2 snip 阶段：kSentenceCompression / contentDedup
    *   - 渲染阶段：budgetAwareRendering
-   *   - 压缩后：curatedSet / verificationRecords
    */
   stateExternalization?: StateExternalizationConfig;
   // Phase 70：上下文压缩技术深度优化（所有字段可选，fail-open）
@@ -123,12 +120,6 @@ export interface StateExternalizationConfig {
     forceThreshold?: number;
     renderEveryTurn?: boolean;
   };
-  /** 验证记录：压缩后记录验证状态 */
-  verificationRecords?: {
-    enabled?: boolean;
-    maxRecords?: number;
-    ttlMs?: number;
-  };
 }
 
 // 阈值常量
@@ -143,8 +134,6 @@ export class ContextCompactor {
   private tokenCache = new WeakMap<LLMMessage, number>();
 
   // Phase 63：状态外部化模块（仅在对应开关开启时实例化，跨 compact() 调用复用）
-  private curatedSet: CuratedSet | null = null;
-  private verificationRecords: VerificationRecords | null = null;
   private kSentenceCompressor: KSentenceCompressor | null = null;
   private contentDeduplicator: ContentDeduplicator | null = null;
   private budgetAwareRenderer: BudgetAwareRenderer | null = null;
@@ -157,20 +146,10 @@ export class ContextCompactor {
    * Phase 63：根据 stateExternalization 配置实例化对应模块
    *
    * 各模块仅在对应子开关开启时实例化；未开启时字段保持 null，compact() 中的对应调用会被跳过。
-   * CuratedSet 与 VerificationRecords 跨 compact() 调用复用（前者积累候选 chunk，后者积累验证记录）。
    */
   private initStateExternalizationModules(): void {
     const se = this.config.stateExternalization;
     if (!se) return;
-
-    if (se.curatedSet?.enabled) {
-      this.curatedSet = new CuratedSet({
-        autoPopulateCount: se.curatedSet.autoPopulateCount ?? 8,
-        maxTokenBudget: se.curatedSet.maxTokenBudget ?? 8000,
-        importanceTaggingEnabled: se.curatedSet.importanceTaggingEnabled ?? true,
-        subtractiveCurationEnabled: se.curatedSet.subtractiveCurationEnabled ?? true,
-      });
-    }
 
     if (se.kSentenceCompression?.enabled) {
       this.kSentenceCompressor = new KSentenceCompressor({
@@ -207,14 +186,6 @@ export class ContextCompactor {
         },
         this.config.estimateTokens,
       );
-    }
-
-    if (se.verificationRecords?.enabled) {
-      this.verificationRecords = new VerificationRecords({
-        enabled: true,
-        maxRecords: se.verificationRecords.maxRecords ?? 1000,
-        ttlMs: se.verificationRecords.ttlMs ?? 3600000,
-      });
     }
   }
 
@@ -355,18 +326,6 @@ export class ContextCompactor {
         if (budgetPrompt.prompt) {
           current = [{ role: 'system', content: budgetPrompt.prompt }, ...current];
         }
-      }
-
-      // Phase 63：压缩后——CuratedSet 策展重要上下文
-      // 把压缩后消息中的关键内容加入策展集（critical/useful/obsolete 自动分类）
-      if (this.curatedSet) {
-        this.populateCuratedSet(current);
-      }
-
-      // Phase 63：压缩后——VerificationRecords 记录验证状态
-      // 把本次压缩作为一条 claim 记录入验证记录，便于后续判断是否需要重新验证
-      if (this.verificationRecords) {
-        this.recordCompactionVerification(messages, current, maxStageReached, summaryFailed);
       }
 
       // Phase 70：压缩后——SessionMemoryStore 保存会话记忆
@@ -741,74 +700,6 @@ export class ContextCompactor {
       }
     }
     return newMessages;
-  }
-
-  /**
-   * 压缩后：把压缩结果中的关键内容加入 CuratedSet
-   *
-   * 提取每条消息的字符串内容加入策展集，由 CuratedSet 自动分类为
-   * critical / useful / obsolete。后续可通过 getCuratedSet() 取出策展集。
-   */
-  private populateCuratedSet(messages: LLMMessage[]): void {
-    if (!this.curatedSet) return;
-    for (const msg of messages) {
-      const content = typeof msg.content === 'string' ? msg.content : '';
-      if (content.length === 0) continue;
-      // 异步加入但不需要等待——策展集是积累式的，失败不影响压缩主流程
-      this.curatedSet.add(content, `compaction:${msg.role}`).catch(() => {
-        // CuratedSet.add 当前为同步实现，catch 仅作防御
-      });
-    }
-  }
-
-  /**
-   * 压缩后：把本次压缩作为一条 claim 记录入 VerificationRecords
-   *
-   * targetHash 用压缩前消息的 JSON 哈希，便于后续 isVerified 判断输入是否变化。
-   * passed = !summaryFailed（L5 失败视为未通过）。
-   */
-  private recordCompactionVerification(
-    before: LLMMessage[],
-    after: LLMMessage[],
-    maxStageReached: 1 | 2 | 3 | 4 | 5,
-    summaryFailed: boolean,
-  ): void {
-    if (!this.verificationRecords) return;
-    try {
-      const target = 'context-compaction';
-      const targetHash = this.verificationRecords.hashContent(
-        JSON.stringify(before.map((m) => ({ role: m.role, content: m.content }))),
-      );
-      this.verificationRecords.record({
-        type: 'claim',
-        target,
-        targetHash,
-        passed: !summaryFailed,
-        source: `ContextCompactor(stage=${maxStageReached}, afterLen=${after.length})`,
-      });
-    } catch (err) {
-      logger.warn('ContextCompactor: 记录验证状态失败', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  /**
-   * Phase 63：获取 CuratedSet 实例（仅在 curatedSet.enabled 时存在）
-   *
-   * 供外部调用方读取策展集状态（如渲染到 prompt、查询 chunk 等）。
-   */
-  getCuratedSet(): CuratedSet | null {
-    return this.curatedSet;
-  }
-
-  /**
-   * Phase 63：获取 VerificationRecords 实例（仅在 verificationRecords.enabled 时存在）
-   *
-   * 供外部调用方查询历史压缩记录、判断是否需要重新验证等。
-   */
-  getVerificationRecords(): VerificationRecords | null {
-    return this.verificationRecords;
   }
 
   /** 计算消息列表的总 token 数（P8：使用 WeakMap 缓存，避免重复计算） */

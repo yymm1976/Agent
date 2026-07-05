@@ -24,13 +24,6 @@ import {
   isSessionExpired,
 } from '../../src/agents/subagent-session.js';
 import {
-  createSessionStorageKey,
-  parseSessionStorageKey,
-  HarnessScope,
-  createDefaultInstance,
-  createHarness,
-} from '../../src/agents/instance-harness.js';
-import {
   createChildRegistry,
   type DelegationContext,
 } from '../../src/tools/builtin/spawn-agent.js';
@@ -612,35 +605,12 @@ describe('Phase 51 场景 4: 错误受众分层', () => {
 });
 
 // ============================================================
-// 场景 5: 三层抽象 + 活动面板端到端（额外覆盖 Task 5/6）
+// 场景 5: 活动面板端到端（额外覆盖 Task 5/6）
 // ============================================================
 
-describe('Phase 51 场景 5: 三层抽象与活动面板端到端', () => {
+describe('Phase 51 场景 5: 活动面板端到端', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-  });
-
-  it('5.1 createDefaultInstance → createHarness → createSessionStorageKey 完整链路', () => {
-    const instance = createDefaultInstance('/path/to/project');
-    const harness = createHarness(instance, 'default', 'gpt-5.4');
-    const sessionName = 'task:parent:sub-1';
-    const storageKey = createSessionStorageKey(instance.id, harness.name, sessionName);
-    expect(storageKey).toBe(`default/default/${sessionName}`);
-    // 反解
-    const parsed = parseSessionStorageKey(storageKey);
-    expect(parsed).toEqual({
-      instanceId: 'default',
-      harnessName: 'default',
-      sessionName,
-    });
-  });
-
-  it('5.2 HarnessScope.abort 级联取消子 scope（不影响父）', () => {
-    const root = new HarnessScope();
-    const child = root.createChild();
-    child.abort('child cancelled');
-    expect(child.signal.aborted).toBe(true);
-    expect(root.signal.aborted).toBe(false); // 父不受影响
   });
 
   it('5.3 AgentActivityStore 跟踪子 Agent 活动三态机', () => {
@@ -672,7 +642,7 @@ describe('Phase 51 场景 5: 三层抽象与活动面板端到端', () => {
     expect(splitModelLabel('gpt-5.4')).toEqual({ model: 'gpt-5.4' });
   });
 
-  it('5.5 isSessionExpired 配合 HarnessScope 实现超时取消', () => {
+  it('5.5 isSessionExpired 实现超时判定', () => {
     const profile = makeProfile();
     const session = createSubAgentSession('parent-1', 'executor', profile, 1);
     // 刚创建，未过期

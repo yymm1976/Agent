@@ -539,27 +539,6 @@ const WorkflowConfigSchema = z.object({
   reviewModel: z.string().default('auto'),
   /** 审查严格度 */
   reviewStrictness: z.enum(['low', 'medium', 'high']).default('medium'),
-  /** Phase 72：Deep Review 并行多 reviewer 总开关（默认关闭，避免影响现有 /review） */
-  deepReviewEnabled: z.boolean().default(false),
-  /** Deep Review 启用的审查维度（focus 列表） */
-  deepReviewFocuses: z.array(z.enum(['correctness', 'security', 'performance', 'style']))
-    .default(['correctness', 'security', 'performance', 'style']),
-  /** Deep Review 并行 reviewer 数量上限（1-4）。
-   *  注：MVP 阶段保留字段，实际串行执行（沙箱共享 permissionEngine 不能并行）；
-   *  P2 将通过 sandboxOverride 参数启用真正并行。 */
-  deepReviewParallel: z.number().int().min(1).max(4).default(2),
-  /** 仲裁策略：critical-veto / majority-vote / highest-severity / all-must-pass */
-  deepReviewArbitration: z.enum(['critical-veto', 'majority-vote', 'highest-severity', 'all-must-pass'])
-    .default('critical-veto'),
-  /** 聚合模式：concat（拼接）/ llm-summary（LLM 汇总） */
-  deepReviewAggregateMode: z.enum(['concat', 'llm-summary'])
-    .default('llm-summary'),
-  /** 是否跨模型审查（不同 focus 用不同模型）。
-   *  注：MVP 阶段保留字段，spawn_agent 入参暂未支持 model 覆盖；
-   *  P2 将扩展 spawn_agent 支持 model 参数后启用。 */
-  deepReviewCrossModel: z.boolean().default(false),
-  /** 风险评分阈值（10-100），低于此值时 Deep Review 降级为单 reviewer */
-  deepReviewRiskThreshold: z.number().int().min(10).max(100).default(40),
 });
 export type WorkflowConfig = z.infer<typeof WorkflowConfigSchema>;
 
@@ -617,7 +596,7 @@ export type WorkerContextConfig = z.infer<typeof WorkerContextConfigSchema>;
 
 /**
  * 需求澄清配置
- * 控制 RequirementsClarifier 的行为：模糊度阈值、最大问题数、是否自动跳过
+ * 控制需求澄清模块的行为：模糊度阈值、最大问题数、是否自动跳过
  */
 const ClarificationConfigSchema = z.object({
   /** 是否启用需求澄清 */
@@ -1504,15 +1483,6 @@ const ActivityPanelSchema = z.preprocess((v) => v ?? {}, z.object({
 }));
 export type ActivityPanelConfig = z.infer<typeof ActivityPanelSchema>;
 
-/** 三层抽象 Instance/Harness/Session（Phase 51 Task 6） */
-const InstanceHarnessSchema = z.preprocess((v) => v ?? {}, z.object({
-  threeTierAbstractionEnabled: z.boolean().default(false),
-  defaultInstanceId: z.string().default(''),
-  defaultHarnessName: z.string().default('default'),
-  scopeAbortCascadeEnabled: z.boolean().default(false),
-}));
-export type InstanceHarnessConfig = z.infer<typeof InstanceHarnessSchema>;
-
 /** 项目级配置分层（Phase 51 Task 8） */
 const ConfigLayeringSchema = z.preprocess((v) => v ?? {}, z.object({
   // 旧字段(保留向后兼容)
@@ -2056,7 +2026,6 @@ export const AppConfigSchema = z.object({
   reviewerPolicy: z.preprocess((v) => v ?? {}, ReviewerPolicySchema),
   delegationPolicy: z.preprocess((v) => v ?? {}, DelegationPolicySchema),
   activityPanel: z.preprocess((v) => v ?? {}, ActivityPanelSchema),
-  instanceHarness: z.preprocess((v) => v ?? {}, InstanceHarnessSchema),
   configLayering: z.preprocess((v) => v ?? {}, ConfigLayeringSchema),
   errorDisplay: z.preprocess((v) => v ?? {}, ErrorDisplaySchema),
   resultSchema: z.preprocess((v) => v ?? {}, ResultSchemaConfigSchema),
@@ -2070,13 +2039,6 @@ export const AppConfigSchema = z.object({
   // Phase 63：上下文状态外部化（Harness-1 论文落地）
   stateExternalization: z.preprocess((v) => v ?? {}, z.object({
     enabled: z.boolean().default(false),
-    curatedSet: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      autoPopulateCount: z.number().int().min(1).max(20).default(8),
-      maxTokenBudget: z.number().int().default(8000),
-      importanceTaggingEnabled: z.boolean().default(true),
-      subtractiveCurationEnabled: z.boolean().default(true),
-    })),
     kSentenceCompression: z.preprocess((v) => v ?? {}, z.object({
       enabled: z.boolean().default(false),
       k: z.number().int().min(1).max(10).default(4),
@@ -2097,11 +2059,6 @@ export const AppConfigSchema = z.object({
       triggerThreshold: z.number().min(0).max(1).default(0.8),
       forceThreshold: z.number().min(0).max(1).default(0.9),
       renderEveryTurn: z.boolean().default(true),
-    })),
-    verificationRecords: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      maxRecords: z.number().int().default(1000),
-      ttlMs: z.number().int().default(3600000),
     })),
   })),
   // Phase 64：组合技能 SAD 迭代分解（v4.6.3）

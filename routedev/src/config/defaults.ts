@@ -172,14 +172,6 @@ export const DEFAULT_CONFIG: AppConfig = {
       reviewMode: 'builtin',
       reviewModel: 'auto',
       reviewStrictness: 'medium',
-      // Phase 72：Deep Review 并行多 reviewer（默认关闭，避免影响现有 /review）
-      deepReviewEnabled: false,
-      deepReviewFocuses: ['correctness', 'security', 'performance', 'style'],
-      deepReviewParallel: 2,
-      deepReviewArbitration: 'critical-veto',
-      deepReviewAggregateMode: 'llm-summary',
-      deepReviewCrossModel: false,
-      deepReviewRiskThreshold: 40,
     },
     safety: {
       readBeforeWrite: true,
@@ -547,12 +539,6 @@ export const DEFAULT_CONFIG: AppConfig = {
     showToolCallStats: true,
     showThinkingLevel: true,
   },
-  instanceHarness: {
-    threeTierAbstractionEnabled: false,
-    defaultInstanceId: '',
-    defaultHarnessName: 'default',
-    scopeAbortCascadeEnabled: false,
-  },
   configLayering: {
     enabled: true,
     projectConfigPath: '.routedev/config.json',
@@ -749,13 +735,6 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   stateExternalization: {
     enabled: true,
-    curatedSet: {
-      enabled: true,
-      autoPopulateCount: 8,
-      maxTokenBudget: 8000,
-      importanceTaggingEnabled: true,
-      subtractiveCurationEnabled: true,
-    },
     kSentenceCompression: {
       enabled: true,
       k: 4,
@@ -776,11 +755,6 @@ export const DEFAULT_CONFIG: AppConfig = {
       triggerThreshold: 0.8,
       forceThreshold: 0.9,
       renderEveryTurn: true,
-    },
-    verificationRecords: {
-      enabled: true,
-      maxRecords: 1000,
-      ttlMs: 3600000,
     },
   },
   skillRouting: {

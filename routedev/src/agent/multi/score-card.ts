@@ -17,8 +17,38 @@
 //   - formatReport()：格式化为 /quality 命令的展示文本
 
 // Phase 52 Task 2/6 深度接入：过程级缺陷 + 架构感知指标
-import type { ProcessDefect } from '../../evaluation/process-defect-ontology.js';
+// ProcessDefect / DefectCategory 原定义于 src/evaluation/process-defect-ontology.ts，
+// 该文件已被删除（其余导出无消费方），此处本地保留 ProcessDefect 接口以供 ScoreCard 使用。
 import type { ComponentMetrics } from '../../evaluation/architecture-aware-metrics.js';
+
+/**
+ * 过程级缺陷分类（来自 ProcBench 论文的缺陷本体，共 10 类）
+ */
+export type DefectCategory =
+  | 'tool_misuse'           // 工具误用（参数错误/选错工具）
+  | 'context_loss'          // 上下文丢失（忘记前序信息）
+  | 'step_skip'             // 步骤跳过（跳过必要步骤）
+  | 'infinite_loop'         // 死循环
+  | 'premature_termination' // 过早终止（声称完成但未完成）
+  | 'scope_creep'           // 范围蔓延（做了不该做的）
+  | 'recovery_failure'      // 恢复失败（出错后未能恢复）
+  | 'hallucination'         // 幻觉（虚构工具结果/文件内容）
+  | 'permission_violation'  // 权限违反
+  | 'resource_exhaustion';  // 资源耗尽（token/时间超限）
+
+/** 单条过程缺陷 */
+export interface ProcessDefect {
+  category: DefectCategory;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  /** 校准后的风险分（0-1，考虑频率和影响） */
+  calibratedRisk: number;
+  stepIndex: number;
+  description: string;
+  /** 日志片段证据 */
+  evidence: string;
+  /** 是否成功恢复 */
+  recoveredFrom?: boolean;
+}
 
 /** 用户反馈类型 */
 type UserFeedback = 'accepted' | 'rejected' | 'edited' | 'pending';
