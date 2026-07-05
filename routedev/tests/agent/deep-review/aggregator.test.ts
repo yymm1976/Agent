@@ -293,14 +293,6 @@ security 总结`,
       // 无 llmClient → 降级 concat，summary 应包含原总结内容
       expect(result.summary).toContain('foo');
     });
-
-    it('tournament 模式降级为 llm-summary（再降级为 concat）', async () => {
-      const reports = [makeReport({ output: '### 总结\nbar' })];
-      const config = makeConfig({ aggregateMode: 'tournament' });
-      const result = await aggregate(reports, config, undefined);
-      // tournament → llm-summary → 无 llmClient 时 concat
-      expect(result.summary).toContain('bar');
-    });
   });
 
   // Phase 72 修复 C3：验证 reviewStrictness 注入 prompt

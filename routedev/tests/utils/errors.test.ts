@@ -6,10 +6,7 @@ import { describe, it, expect } from 'vitest';
 import {
   RouteDevError,
   ToolExecutionError,
-  PermissionDeniedError,
   ConfigValidationError,
-  SecurityViolationError,
-  LLMError,
   isRouteDevError,
   formatErrorForUser,
   formatErrorForDev,
@@ -32,32 +29,10 @@ describe('自定义错误类体系', () => {
     expect(err instanceof RouteDevError).toBe(true);
   });
 
-  it('PermissionDeniedError 应携带 rule', () => {
-    const err = new PermissionDeniedError('deny-rm-rf-root', 'rm -rf /');
-    expect(err.rule).toBe('deny-rm-rf-root');
-    expect(err.code).toBe('PERMISSION_DENIED');
-    expect(err instanceof RouteDevError).toBe(true);
-  });
-
   it('ConfigValidationError 应携带 field', () => {
     const err = new ConfigValidationError('budget.dailyLimit', 'must be positive');
     expect(err.field).toBe('budget.dailyLimit');
     expect(err.code).toBe('CONFIG_VALIDATION_ERROR');
-    expect(err instanceof RouteDevError).toBe(true);
-  });
-
-  it('SecurityViolationError 应有正确 code', () => {
-    const err = new SecurityViolationError('path traversal detected');
-    expect(err.code).toBe('SECURITY_VIOLATION');
-    expect(err.message).toContain('path traversal');
-    expect(err instanceof RouteDevError).toBe(true);
-  });
-
-  it('LLMError 应携带 provider 和 statusCode', () => {
-    const err = new LLMError('rate limited', 'openai', 429);
-    expect(err.provider).toBe('openai');
-    expect(err.statusCode).toBe(429);
-    expect(err.code).toBe('LLM_ERROR');
     expect(err instanceof RouteDevError).toBe(true);
   });
 
@@ -74,7 +49,7 @@ describe('自定义错误类体系', () => {
     expect(err instanceof RouteDevError).toBe(true);
     expect(err instanceof Error).toBe(true);
     // 不应误判为其他子类
-    expect(err instanceof PermissionDeniedError).toBe(false);
+    expect(err instanceof ConfigValidationError).toBe(false);
   });
 });
 

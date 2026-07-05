@@ -2206,24 +2206,6 @@ export function createAppDependencies(
       });
   }
 
-  // ===== Phase 45：VoiceManager 接线说明 =====
-  // 注：PersonaEngine / PreferenceManager 原为 Phase 45 接线目标，但实例化后未注入
-  //     AppDependencies 也无消费端，构成"实例化即丢弃"死代码（I1 修复：已移除）。
-  //     如需启用，应将实例存入 AppDependencies 并在 AgentLoop / systemPromptBuilder
-  //     中消费。voice-manager.ts 仅 Desktop renderer 可用，CLI 跳过实例化。
-
-  // 4. VoiceManager：语音输入/输出管理（仅 Desktop renderer 可用，CLI 跳过）
-  //    voice-manager.ts 使用浏览器 API（webkitSpeechRecognition / SpeechSynthesisUtterance），
-  //    在 Node CLI 环境 isAvailable() 永远返回 false，此处不再实例化。
-  //    Desktop renderer 通过 preload 暴露的 API 自行接入。
-  const voiceCfg = config.voice;
-  if (voiceCfg && (voiceCfg.inputProvider !== 'off' || voiceCfg.outputProvider !== 'off')) {
-    logger.debug('Voice config detected but skipped in CLI mode (browser-only)', {
-      inputProvider: voiceCfg.inputProvider,
-      outputProvider: voiceCfg.outputProvider,
-    });
-  }
-
   // Phase 48 Task 3：ScheduleEngine 实例化与启动
   // Phase 48 Task 6 修复：原代码在非 async 函数中使用 `await import`，导致 typecheck 失败。
   // 改为顶层静态 import（scheduler 模块无顶层副作用，安全）。
@@ -2508,13 +2490,6 @@ export function createAppDependencies(
         });
       });
   }
-  // I1 修复：移除 phase49Cfg 三个"实例化即丢弃"块（SkillQualityGate / ContextUsagePanel /
-  //   EvaluationFramework）。原代码实例化后未存储、未注入 AppDependencies，构成纯死代码。
-  //   - SkillQualityGate：AgentLoop.setSkillQualityGate setter 尚不存在
-  //   - ContextUsagePanel：实例未存储，无消费端
-  //   - EvaluationFramework：仅 `void mod`，未实例化
-  //   如需启用，应将实例注入 AppDependencies 并在 AgentLoop / context-compaction /
-  //   /goal 完成回调中消费。
 
   // ===== Phase 52 模块接入（全部由 config.phase52Integration 开关守护）=====
   // 设计原则：未启用的模块不初始化，实例为 undefined；用 ?? 兜底避免 config 字段未定义时崩溃

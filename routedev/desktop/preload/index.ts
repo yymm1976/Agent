@@ -58,7 +58,6 @@ const api: RouteDevAPI = {
     preview: (name: string) => ipcRenderer.invoke('skill:preview', name),
     toggle: (name: string, enabled: boolean) => ipcRenderer.invoke('skill:toggle', { name, enabled }),
     create: (payload) => ipcRenderer.invoke('skill:create', payload),
-    install: (payload) => ipcRenderer.invoke('skill:install', payload),
     delete: (name: string) => ipcRenderer.invoke('skill:delete', name),
     reload: () => ipcRenderer.invoke('skill:reload'),
     route: (taskDescription: string) => ipcRenderer.invoke('skill:route', taskDescription),
@@ -90,7 +89,6 @@ const api: RouteDevAPI = {
     toggle: (hookId: string, enabled: boolean) => ipcRenderer.invoke('hook:toggle', { hookId, enabled }),
     create: (payload) => ipcRenderer.invoke('hook:create', payload),
     delete: (hookId: string) => ipcRenderer.invoke('hook:delete', hookId),
-    templates: () => ipcRenderer.invoke('hook:templates'),
   },
   // Phase 47 Task 6：Checkpoint 时间轴
   checkpoint: {
@@ -103,14 +101,6 @@ const api: RouteDevAPI = {
     // Phase 71：读取 plan 修订历史 + 触发遗漏点检查
     getRevisions: (goalId: string) => ipcRenderer.invoke('plan:get-revisions', goalId),
     checkOmissions: (goalId: string) => ipcRenderer.invoke('plan:check-omissions', goalId),
-  },
-  // Phase 48 Task 4 接线修复：Agent Profile 管理
-  profile: {
-    list: () => ipcRenderer.invoke('profile:list'),
-    get: (id: string) => ipcRenderer.invoke('profile:get', id),
-    save: (payload) => ipcRenderer.invoke('profile:save', payload),
-    delete: (id: string) => ipcRenderer.invoke('profile:delete', id),
-    duplicate: (id: string, newName: string) => ipcRenderer.invoke('profile:duplicate', { id, newName }),
   },
   on: (channel, callback) => {
     const channelMap = getChannelMap(channel);

@@ -438,8 +438,6 @@ export interface RouteDevAPI {
     toggle: (name: string, enabled: boolean) => Promise<boolean>;
     /** 创建新 Skill */
     create: (payload: SkillCreatePayload) => Promise<SkillOpResult>;
-    /** 从市场安装 Skill（拷贝到 .routedev/skills/ 并重新注册） */
-    install: (payload: SkillInstallPayload) => Promise<SkillOpResult>;
     /** 删除 Skill */
     delete: (name: string) => Promise<SkillOpResult>;
     /** 重新发现 Skill（从文件系统重新加载） */
@@ -488,8 +486,6 @@ export interface RouteDevAPI {
     create: (payload: HookCreatePayload) => Promise<{ success: boolean; hookId?: string; error?: string }>;
     /** 删除自定义 Hook */
     delete: (hookId: string) => Promise<{ success: boolean; error?: string }>;
-    /** 列出内置 Hook 模板（供 UI 选择创建） */
-    templates: () => Promise<HookTemplate[]>;
   };
   // Phase 47 Task 6：Checkpoint 时间轴 API
   checkpoint: {
@@ -507,19 +503,6 @@ export interface RouteDevAPI {
     getRevisions: (goalId: string) => Promise<{ ok: boolean; revisions?: unknown[] }>;
     /** 触发 plan 遗漏点检查（LLM 调用，结果异步返回） */
     checkOmissions: (goalId: string) => Promise<{ ok: boolean; result?: unknown; error?: string }>;
-  };
-  // Phase 48 Task 4 接线修复：Agent Profile 管理 API
-  profile: {
-    /** 列出所有 Profile（不含 systemPrompt，仅列表元信息） */
-    list: () => Promise<AgentProfileInfo[]>;
-    /** 获取指定 Profile 详情（含完整 systemPrompt） */
-    get: (id: string) => Promise<AgentProfileDetail | null>;
-    /** 保存 Profile（新增或更新；内置 Profile 仅更新缓存） */
-    save: (payload: ProfileSavePayload) => Promise<ProfileOpResult>;
-    /** 删除 Profile（内置 Profile 不可删除，会返回 error） */
-    delete: (id: string) => Promise<ProfileOpResult>;
-    /** 复制 Profile 生成自定义副本（需要传入新名称） */
-    duplicate: (id: string, newName: string) => Promise<ProfileOpResult>;
   };
   on: (channel: MainToRendererEvent['channel'], callback: (payload: unknown) => void) => void;
   off: (channel: MainToRendererEvent['channel'], callback: (payload: unknown) => void) => void;

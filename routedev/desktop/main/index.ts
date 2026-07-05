@@ -512,14 +512,6 @@ ipcMain.handle('skill:create', async (_event, payload: import('../shared/ipc-typ
     ?? { success: false, error: '引擎未初始化' };
 });
 
-// Phase 37 Skill 市场接线：从市场安装 Skill 到 .routedev/skills/<name>/
-// 注：renderer 层当前未消费此 handler（SettingsPage 尚未实现 Skill 市场浏览 UI），
-// preload 已暴露 window.routedev.skill.install，待 UI 接入后即可生效
-ipcMain.handle('skill:install', async (_event, payload: import('../shared/ipc-types.js').SkillInstallPayload): Promise<import('../shared/ipc-types.js').SkillOpResult> => {
-  if (!engine) return { success: false, error: '引擎未初始化' };
-  return engine.installSkill(payload);
-});
-
 ipcMain.handle('skill:delete', async (_event, name: string) => {
   return engine?.deleteSkill(name) ?? { success: false, error: '引擎未初始化' };
 });
@@ -722,14 +714,6 @@ ipcMain.handle('hook:create', async (_event, payload: unknown): Promise<{ succes
   return engine.createHook(payload as Parameters<typeof engine.createHook>[0]);
 });
 
-// 列出内置 Hook 模板（供 UI 选择创建）
-// 注：renderer 层当前未消费此 handler（Hook 管理 UI 尚未实现模板选择），
-// preload 已暴露 window.routedev.hook.templates，待 UI 接入后即可生效
-ipcMain.handle('hook:templates', async (): Promise<import('../shared/ipc-types.js').HookTemplate[]> => {
-  if (!engine) return [];
-  return engine.listHookTemplates();
-});
-
 // 删除自定义 Hook
 ipcMain.handle('hook:delete', async (_event, hookId: string): Promise<{ success: boolean; error?: string }> => {
   if (!engine) return { success: false, error: '引擎未初始化' };
@@ -751,34 +735,4 @@ ipcMain.handle('checkpoint:list', async (_event, projectId?: string) => {
 ipcMain.handle('checkpoint:rollback', async (_event, checkpointId: string): Promise<{ success: boolean; error?: string }> => {
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.rollbackCheckpoint(checkpointId);
-});
-
-// ============================================================
-// Phase 48 Task 4 接线修复：Agent Profile 管理 IPC handler
-// 渲染层调用 → engine → AgentProfileManager
-// 注：renderer 层当前未消费 profile:* handler（SettingsPage 尚未实现 Profile 编辑 UI），
-// preload 已暴露 window.routedev.profile.*，待 UI 接入后即可生效
-// ============================================================
-
-ipcMain.handle('profile:list', async () => {
-  return engine?.listProfiles() ?? [];
-});
-
-ipcMain.handle('profile:get', async (_event, id: string) => {
-  return engine?.getProfile(id) ?? null;
-});
-
-ipcMain.handle('profile:save', async (_event, payload: import('../shared/ipc-types.js').ProfileSavePayload): Promise<import('../shared/ipc-types.js').ProfileOpResult> => {
-  if (!engine) return { success: false, error: '引擎未初始化' };
-  return engine.saveProfile(payload);
-});
-
-ipcMain.handle('profile:delete', async (_event, id: string): Promise<import('../shared/ipc-types.js').ProfileOpResult> => {
-  if (!engine) return { success: false, error: '引擎未初始化' };
-  return engine.deleteProfile(id);
-});
-
-ipcMain.handle('profile:duplicate', async (_event, payload: { id: string; newName: string }): Promise<import('../shared/ipc-types.js').ProfileOpResult> => {
-  if (!engine) return { success: false, error: '引擎未初始化' };
-  return engine.duplicateProfile(payload.id, payload.newName);
 });

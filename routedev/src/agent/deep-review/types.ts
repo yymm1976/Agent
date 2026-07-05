@@ -69,7 +69,7 @@ export type ArbitrationStrategy =
   | 'all-must-pass';
 
 /** 聚合模式字面量类型 */
-export type AggregateMode = 'concat' | 'llm-summary' | 'tournament';
+export type AggregateMode = 'concat' | 'llm-summary';
 
 /** Deep Review 配置（从 WorkflowConfig 中提取，便于编排器单参数传入） */
 export interface DeepReviewConfig {

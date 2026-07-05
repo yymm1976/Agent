@@ -59,7 +59,7 @@ const ModelCapabilitySchema = z.enum([
 export type ModelCapability = z.infer<typeof ModelCapabilitySchema>;
 
 // 单个模型的配置
-export const ModelConfigSchema = z.object({
+const ModelConfigSchema = z.object({
   id: z.string().min(1),                      // 模型唯一标识
   name: z.string().min(1),                    // 模型展示名
   provider: z.string().min(1),                // 所属 provider id
@@ -73,7 +73,7 @@ export const ModelConfigSchema = z.object({
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 
 // LLM 提供商配置（OpenAI / Anthropic 双协议）
-export const ProviderConfigSchema = z.object({
+const ProviderConfigSchema = z.object({
   id: z.string().min(1),            // provider 唯一标识
   name: z.string().min(1),          // provider 展示名
   protocol: ProtocolSchema,         // 协议类型
@@ -227,7 +227,7 @@ export type GoalVerifierConfig = z.infer<typeof GoalVerifierConfigSchema>;
  * 对抗性验证配置
  * 启用后用独立 LLM 客户端（fast tier 廉价模型）尝试推翻主验证结论
  */
-export const AdversarialConfigSchema = z.object({
+const AdversarialConfigSchema = z.object({
   /** 是否启用对抗性验证 */
   enabled: z.boolean().default(false),
   /** 严重度阈值（0-1，低于此值的质疑不返回，默认 0.5） */
@@ -241,21 +241,21 @@ export type AdversarialConfig = z.infer<typeof AdversarialConfigSchema>;
 
 // Phase 47 Task 4：沙箱级与审批级
 /** 沙箱级：决定工具能做多少 */
-export const SandboxLevelSchema = z.enum(['read-only', 'workspace-write', 'full-access']);
+const SandboxLevelSchema = z.enum(['read-only', 'workspace-write', 'full-access']);
 export type SandboxLevel = z.infer<typeof SandboxLevelSchema>;
 
 /** 审批级：决定是否询问用户 */
-export const ApprovalLevelSchema = z.enum(['always-ask', 'on-request', 'never-ask']);
+const ApprovalLevelSchema = z.enum(['always-ask', 'on-request', 'never-ask']);
 export type ApprovalLevel = z.infer<typeof ApprovalLevelSchema>;
 
 /** 工具分类 */
-export const ToolCategorySchema = z.enum([
+const ToolCategorySchema = z.enum([
   'read', 'write', 'shell', 'network', 'git-read', 'git-write', 'agent', 'mcp',
 ]);
 export type ToolCategory = z.infer<typeof ToolCategorySchema>;
 
 // 7 层安全模型中的配置层（参见蓝图决策 4）
-export const SecurityConfigSchema = z.object({
+const SecurityConfigSchema = z.object({
   directoryBoundary: z.boolean().default(true),                       // 目录边界限制
   commandBlacklist: z.array(z.string()).default(['rm -rf', 'format', 'del /s']), // 危险命令黑名单
   commandWhitelist: z.array(z.string()).default([]),                   // 白名单（空 = 不限制）
@@ -293,7 +293,7 @@ export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 
 // --- 自主度配置 ---
 
-export const AutonomyConfigSchema = z.object({
+const AutonomyConfigSchema = z.object({
   defaultMode: AutonomyModeSchema.default('semi'),
   /** 无论什么模式下都自动批准的工具 pattern（如 ["file_read", "code_search"]） */
   autoApprovePatterns: z.array(z.string()).default([]),
@@ -351,7 +351,7 @@ export type SoundsConfig = z.infer<typeof SoundsConfigSchema>;
  * Phase 50 Task 7：CLI 组件开关配置
  * 控制 7 个 React 组件是否接入 UI（关闭时回退到纯文本渲染函数）
  */
-export const UIComponentsSchema = z.preprocess((v) => v ?? {}, z.object({
+const UIComponentsSchema = z.preprocess((v) => v ?? {}, z.object({
   /** BranchSwitcher：分支树可视化（状态栏区域） */
   branchSwitcher: z.boolean().default(true),
   /** ResumePicker：恢复执行选择器（/resume 命令） */
@@ -551,8 +551,8 @@ const WorkflowConfigSchema = z.object({
   /** 仲裁策略：critical-veto / majority-vote / highest-severity / all-must-pass */
   deepReviewArbitration: z.enum(['critical-veto', 'majority-vote', 'highest-severity', 'all-must-pass'])
     .default('critical-veto'),
-  /** 聚合模式：concat（拼接）/ llm-summary（LLM 汇总）/ tournament（锦标赛，暂未实现降级为 llm-summary） */
-  deepReviewAggregateMode: z.enum(['concat', 'llm-summary', 'tournament'])
+  /** 聚合模式：concat（拼接）/ llm-summary（LLM 汇总） */
+  deepReviewAggregateMode: z.enum(['concat', 'llm-summary'])
     .default('llm-summary'),
   /** 是否跨模型审查（不同 focus 用不同模型）。
    *  注：MVP 阶段保留字段，spawn_agent 入参暂未支持 model 覆盖；
@@ -1603,7 +1603,7 @@ export type SkillLifecycleConfig = z.infer<typeof SkillLifecycleConfigSchema>;
  * 注：即使 enabled=false，BoundedRecoveryManager 仍可被实例化（测试场景），
  *     接入层根据此开关决定是否调用 computeRecoveryScope
  */
-export const BoundedRecoveryConfigSchema = z.object({
+const BoundedRecoveryConfigSchema = z.object({
   /** 是否启用有界局部恢复 */
   enabled: z.boolean().default(false),
   /** 最大回溯步数（含失败步骤本身，1-10，默认 3） */
@@ -1648,7 +1648,7 @@ export type Phase52IntegrationConfig = z.infer<typeof Phase52IntegrationConfigSc
  *
  * Phase 59 Task 2：默认 true——Intent Guard + Playbook 是安全核心
  */
-export const PolicyEngineConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const PolicyEngineConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用策略引擎（Phase 59 默认 true） */
   enabled: z.boolean().default(true),
   /** 默认策略：无匹配规则时 deny（fail-closed）或 allow */
@@ -1671,7 +1671,7 @@ export type PolicyEngineConfig = z.infer<typeof PolicyEngineConfigSchema>;
  *
  * Phase 59 Task 2：默认 true——审计链路是合规核心
  */
-export const AuditChainConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const AuditChainConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用哈希链（Phase 59 默认 true） */
   enabled: z.boolean().default(true),
   /** 审计日志文件路径（可选，默认沿用 AuditLogger 的 storageDir） */
@@ -1733,7 +1733,7 @@ export type ConfigGuardConfig = z.infer<typeof ConfigGuardConfigSchema>;
  * Phase 53 Task 8：前缀感知缓存配置
  * 借鉴 LMCache 的内容可寻址分块缓存
  */
-export const PrefixCacheConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const PrefixCacheConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用前缀感知缓存（默认 false，向后兼容） */
   enabled: z.boolean().default(false),
   /** 分块大小（Token 数，64-1024） */
@@ -1781,7 +1781,7 @@ export type DagEngineConfig = z.infer<typeof DagEngineConfigSchema>;
  * Phase 53 Task 11：熔断器配置
  * 三态机：closed / open / half_open
  */
-export const CircuitBreakerConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+const CircuitBreakerConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用熔断器（默认 false，向后兼容） */
   enabled: z.boolean().default(false),
   /** 连续失败 N 次后熔断 */

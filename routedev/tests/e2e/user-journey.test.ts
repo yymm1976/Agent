@@ -16,7 +16,6 @@ import { ComposePipeline } from '../../src/agent/compose-pipeline.js';
 import { WorkModeController } from '../../src/agent/work-modes.js';
 import { MCPClientManager } from '../../src/tools/mcp/client.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
-import { TelegramAdapter } from '../../src/channels/adapters/telegram.js';
 import type {
   ILLMClient,
   LLMResponse,
@@ -408,28 +407,5 @@ describe('E2E 用户旅程测试', () => {
     // 未连接时列表为空
     const connections = manager.listConnections();
     expect(connections).toHaveLength(0);
-  });
-
-  // E2E-10: 渠道集成消息流（Telegram mock）
-  it('E2E-10: 渠道集成 → Telegram 消息 → 适配器解析', async () => {
-    const adapter = new TelegramAdapter({
-      type: 'telegram',
-      name: 'test-telegram',
-      enabled: true,
-      options: {
-        botToken: 'test-token',
-        pollIntervalMs: '5000',
-      },
-    });
-
-    expect(adapter.type).toBe('telegram');
-    expect(adapter.isRunning()).toBe(false);
-
-    // 验证适配器接口完整
-    expect(typeof adapter.start).toBe('function');
-    expect(typeof adapter.stop).toBe('function');
-    expect(typeof adapter.sendResponse).toBe('function');
-    expect(typeof adapter.onMessage).toBe('function');
-    expect(typeof adapter.getStatus).toBe('function');
   });
 });

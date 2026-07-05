@@ -52,10 +52,8 @@ const CLEANED_SAMPLES: Array<{ file: string; symbols: string[] }> = [
   { file: 'src/runtime/args.ts', symbols: ['CLIArgs'] },
   // src/agent/
   { file: 'src/agent/hooks.ts', symbols: ['StepError', 'HookHandler'] },
-  { file: 'src/agent/preference-manager.ts', symbols: ['PreferenceCategory', 'UserPreference', 'AuditLogEntry'] },
   { file: 'src/agent/requirements-clarifier.ts', symbols: ['ClarificationQuestion', 'ClarificationResult', 'RequirementsClarifierOptions'] },
-  // Phase 57：voice-manager.ts 已移至 src/optional/voice/
-  { file: 'src/optional/voice/voice-manager.ts', symbols: ['VoiceProvider', 'TTSProvider', 'TranscriptionResult'] },
+  // 注：preference-manager.ts / voice-manager.ts 已整体删除（死代码清理）
   // E11 移除：durable-executor.ts 已整体删除（E1：GoalPersistence + CheckpointManager + HookRunner.fire 替代）
   { file: 'src/agent/goal-types.ts', symbols: ['GoalStepStatus'] },
   // Phase 57 移除：persona-templates.ts 已整体删除（人格片段改由 config.persona.systemPromptAppend 提供）

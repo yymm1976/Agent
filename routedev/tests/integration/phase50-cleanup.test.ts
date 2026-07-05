@@ -177,24 +177,9 @@ describe('Phase 50 Task 8 - deterministic-rules.ts 已清理无用函数', () =>
   });
 });
 
-describe('Phase 50 Task 8 - preference-manager.ts 已清理 exportAll', () => {
-  it('PreferenceManager 原型上不存在 exportAll 方法', async () => {
-    const { PreferenceManager } = await import('../../src/agent/preference-manager.js');
-    expect(PreferenceManager.prototype.exportAll).toBeUndefined();
-  });
-
-  it('源码不再包含 exportAll 方法定义', async () => {
-    const source = await readSource('src/agent/preference-manager.ts');
-    expect(source).not.toMatch(/exportAll\s*\(/);
-  });
-
-  it('仍保留核心方法（get / getAll / setExplicit / save / load）', async () => {
-    const { PreferenceManager } = await import('../../src/agent/preference-manager.js');
-    expect(typeof PreferenceManager.prototype.get).toBe('function');
-    expect(typeof PreferenceManager.prototype.getAll).toBe('function');
-    expect(typeof PreferenceManager.prototype.setExplicit).toBe('function');
-    expect(typeof PreferenceManager.prototype.save).toBe('function');
-    expect(typeof PreferenceManager.prototype.load).toBe('function');
+describe('Phase 50 Task 8 - preference-manager.ts 已整体删除', () => {
+  it('preference-manager.ts 文件不再存在', () => {
+    expectFileNotToExist('src/agent/preference-manager.ts');
   });
 });
 
@@ -211,18 +196,15 @@ describe('Phase 50 Task 8 - 受影响模块可被正常动态导入', () => {
       // E11 移除：model-drift-detector.ts 已删除
       // E11 移除：skill-metadata-extension.ts 已删除
       import('../../src/router/deterministic-rules.js'),
-      import('../../src/agent/preference-manager.js'),
+      // preference-manager.ts 已整体删除（死代码清理）
     ];
     const mods = await Promise.all(imports);
 
     // 验证关键导出存在（非空断言：索引对应上方 imports 顺序）
-    // E11 更新：imports 数组移除 model-drift-detector / skill-metadata-extension 后索引重排
     //   mods[0] = ClaudePluginImporter
     //   mods[1] = deterministic-rules
-    //   mods[2] = preference-manager
     expect(mods[0]!.ClaudePluginImporter).toBeDefined();
     expect(mods[1]!.matchDeterministicRule).toBeDefined();
-    expect(mods[2]!.PreferenceManager).toBeDefined();
   });
 
   // E11 整体删除：app-init.ts 已不再使用 listRecoverable / listRecoverableAsync

@@ -5,7 +5,7 @@
 //   1. parseIssuesFromReport：从 markdown 输出解析问题列表（正则匹配 ### 段落 + 列表项）
 //   2. dedupeIssues：按 dedupeKey 去重，保留严重度最高的一项
 //   3. arbitrate：按策略产生 approve/request_changes/reject/inconclusive
-//   4. aggregate：组装完整结果（含 summary，支持 concat / llm-summary / tournament）
+//   4. aggregate：组装完整结果（含 summary，支持 concat / llm-summary）
 
 import type {
   ReviewerReport,
@@ -208,7 +208,6 @@ function extractSummarySection(output: string): string {
  * 按 aggregateMode：
  *   - concat：简单拼接各成功 reviewer 的总结段
  *   - llm-summary：调 LLM 生成汇总（无 llmClient 或 modelId 时降级为 concat）
- *   - tournament：暂不实现，降级为 llm-summary
  *
  * @param reports reviewer 报告列表
  * @param mode 聚合模式
@@ -231,8 +230,7 @@ async function buildSummary(
     return concatSummary || '（无 reviewer 成功完成）';
   }
 
-  // llm-summary / tournament 模式：尝试 LLM 汇总，失败降级为 concat
-  // tournament 暂未实现，按设计降级为 llm-summary
+  // llm-summary 模式：尝试 LLM 汇总，失败降级为 concat
   // 无 LLM 客户端，或未提供具体模型 id（'auto' 由调用方解析，此处未解析则降级）
   if (!llmClient || !modelId || modelId === 'auto' || modelId === '') {
     return concatSummary || '（无 reviewer 成功完成，且无 LLM 客户端可用于汇总）';

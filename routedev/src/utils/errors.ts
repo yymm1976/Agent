@@ -83,27 +83,6 @@ export class ToolExecutionError extends RouteDevError {
 }
 
 /**
- * 权限拒绝错误
- * 携带命中的权限规则 ID
- */
-export class PermissionDeniedError extends RouteDevError {
-  readonly rule: string;
-
-  constructor(
-    rule: string,
-    message: string,
-    options?: {
-      details?: string;
-      dev?: string;
-      cause?: unknown;
-    },
-  ) {
-    super(`权限拒绝 [${rule}]: ${message}`, 'PERMISSION_DENIED', options);
-    this.rule = rule;
-  }
-}
-
-/**
  * 配置验证错误
  * 携带出错的配置字段路径
  */
@@ -121,52 +100,6 @@ export class ConfigValidationError extends RouteDevError {
   ) {
     super(`配置验证失败 [${field}]: ${message}`, 'CONFIG_VALIDATION_ERROR', options);
     this.field = field;
-  }
-}
-
-/**
- * 安全违规错误
- * 用于路径遍历、命令注入、敏感文件访问等安全检查失败场景
- */
-export class SecurityViolationError extends RouteDevError {
-  constructor(
-    message: string,
-    options?: {
-      details?: string;
-      dev?: string;
-      cause?: unknown;
-    },
-  ) {
-    super(`安全违规: ${message}`, 'SECURITY_VIOLATION', options);
-  }
-}
-
-/**
- * LLM 调用错误（已存在，此处重新导出以集中管理）
- * 保留原 LLMError 的兼容性
- *
- * 注意：router/llm 层使用的是 src/router/types.ts 中独立的 LLMError 类
- * （构造器签名 message/statusCode/model/cause，承载 type 推断等领域逻辑）；
- * 本类是 RouteDevError 体系内的 LLM 错误，用于统一的错误显示与分类。
- * 两者通过 instanceof 各自区分，互不冲突。
- */
-export class LLMError extends RouteDevError {
-  readonly provider?: string;
-  readonly statusCode?: number;
-
-  constructor(
-    message: string,
-    provider?: string,
-    statusCode?: number,
-    options?: {
-      details?: string;
-      dev?: string;
-      cause?: unknown;
-    },
-  ) {
-    super(message, 'LLM_ERROR', options);
-    this.provider = provider;
-    this.statusCode = statusCode;
   }
 }
 
