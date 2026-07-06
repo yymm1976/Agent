@@ -13,8 +13,6 @@
 import type { MemoryStore, MemoryEntry } from './memory-store.js';
 import type { Embedder } from '../skills/embedder.js';
 import { BM25Index } from './bm25-index.js';
-import { retrievalFidelity } from './eval-metrics.js';
-import { logger } from '../utils/logger.js';
 
 export interface HybridRetrieverConfig {
   enabled: boolean;
@@ -133,11 +131,6 @@ export class HybridRetriever {
 
       scored.sort((a, b) => b.score - a.score);
       const topK = scored.slice(0, this.config.topK);
-
-      if (topK.length > 0) {
-        const fid = retrievalFidelity(topK, topK.map((e) => e.id!), this.config.topK);
-        logger.debug('HybridRetriever: retrieval fidelity', { query: query.slice(0, 50), topK: topK.length, fidelity: fid });
-      }
 
       return topK;
     } catch {

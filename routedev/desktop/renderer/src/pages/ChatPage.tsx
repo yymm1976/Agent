@@ -15,7 +15,7 @@ import {
 import type { ChatMessage, PendingConfirm } from '../hooks/useRouteDev.js';
 import type { AppConfig, AutonomyMode } from '../../../../src/config/schema.js';
 import type { TokenProfileSnapshot } from '../../../../src/agent/token-profiler.js';
-import type { ConfigSaveResult, SkillInfo, MCPToolInfo, FollowUpItem } from '../../../shared/ipc-types.js';
+import type { ConfigSaveResult, SkillInfo, MCPToolInfo, FollowUpItem, FollowUpMode } from '../../../shared/ipc-types.js';
 import { MarkdownRenderer } from '../components/MarkdownRenderer.js';
 import { ActionSummaryRow, SubAgentRow, ToolCallCard, getToolLabel, type OutputStyle, type ToolCallItem } from '../components/ToolCallCard.js';
 import { Button } from '../components/ui/button.js';
@@ -820,6 +820,9 @@ export function ChatPage({
   // 与排队队列差异：follow-up 在同一 run() 内层 ReAct 退出后注入，开启新一轮 ReAct
   const [followUpQueue, setFollowUpQueue] = useState<FollowUpItem[]>([]);
   const [followUpExpanded, setFollowUpExpanded] = useState(false);
+  // Phase 73 Part C 修复：follow-up 出队模式（与主进程 setFollowUpMode 同步）
+  // 默认 'one-at-a-time'（逐条），用户可切换为 'all'（全部一次性注入）
+  const [followUpMode, setFollowUpModeState] = useState<FollowUpMode>('one-at-a-time');
   // 自主度下拉菜单
   const [autonomyMenuOpen, setAutonomyMenuOpen] = useState(false);
   // 输入区高度（可拖动上边框调整）
@@ -1461,6 +1464,28 @@ export function ChatPage({
           </button>
           {followUpExpanded && (
             <div className="max-h-40 overflow-y-auto px-4 pb-2">
+              {/* Phase 73 Part C 修复：follow-up 出队模式切换（逐条 / 全部） */}
+              <div className="mb-1.5 flex items-center gap-1 border-b border-rd-border pb-1.5">
+                <span className="mr-1 text-xs text-rd-textSubtle">出队模式</span>
+                {(['one-at-a-time', 'all'] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => {
+                      setFollowUpModeState(m);
+                      window.routedev.agent.setFollowUpMode(m);
+                    }}
+                    title={m === 'one-at-a-time' ? '内层循环退出时仅注入第一条，剩余保留' : '内层循环退出时一次性注入全部 follow-up 消息'}
+                    className={[
+                      'rounded px-2 py-0.5 text-xs transition',
+                      followUpMode === m
+                        ? 'bg-rd-primary/10 font-semibold text-rd-primary'
+                        : 'text-rd-textMuted hover:bg-rd-surfaceHover hover:text-rd-text',
+                    ].join(' ')}
+                  >
+                    {m === 'one-at-a-time' ? '逐条' : '全部'}
+                  </button>
+                ))}
+              </div>
               {followUpQueue.map((item, idx) => (
                 <div key={idx} className="mb-1 flex items-start gap-2 rounded border border-rd-border bg-rd-background px-2 py-1.5">
                   <span className="mt-0.5 text-xs font-medium text-rd-textSubtle">#{idx + 1}</span>

@@ -144,13 +144,13 @@ export class ReActAgentLoop {
   /**
    * Phase 73 Part C：本 Loop 内部 steering 队列（与 steeringConsumer 共存）
    *
-   * 设计动机：未接入 TaskOrchestrator 的场景（如单测 / 自定义集成）需要直接通过 steer()
-   * 排队 steering 消息。接入 TaskOrchestrator 时消息通过 steeringConsumer 取出，
-   * 此队列保持为空，不影响生产路径。
+   * 设计动机：原 steer() 方法已删除（避免与 setSteeringConsumer 形成两套 steering 入口）。
+   * 当前生产路径统一通过 steeringConsumer 桥接 TaskOrchestrator，消息从外部队列取出。
+   * 本字段保留供 drainSteeringIntoMessages 合并消费，外部不再有直接入队入口。
    *
    * drainSteeringIntoMessages 会同时合并两个来源：
-   *   1. steeringConsumer 返回的外部队列消息
-   *   2. steeringQueue 中的本地消息
+   *   1. steeringConsumer 返回的外部队列消息（生产路径）
+   *   2. steeringQueue 中的本地消息（当前无外部入队入口，恒为空）
    */
   private steeringQueue: { content: string; mode: string; enqueuedAt: number }[] = [];
   /**
@@ -300,26 +300,14 @@ export class ReActAgentLoop {
   }
 
   /**
-   * Phase 73 Part C：注入 steering 消息（直接进入本 Loop 的 steering 队列）
-   *
-   * 兼容场景：调用方未接入 TaskOrchestrator 时，可直接通过此方法排队 steering 消息。
-   * 接入 TaskOrchestrator 时应优先用 setSteeringConsumer 桥接，避免双队列状态分裂。
-   *
-   * @param content 消息内容
-   * @param mode 交付时机（默认 next_iteration）
-   * @returns 是否被接受（恒为 true，当前实现无上限）
-   */
-  steer(content: string, mode: 'immediate' | 'next_iteration' | 'after_current_step' = 'next_iteration'): boolean {
-    this.steeringQueue.push({ content, mode, enqueuedAt: Date.now() });
-    logger.debug('Steering message enqueued (local)', { mode, queueSize: this.steeringQueue.length });
-    return true;
-  }
-
-  /**
    * Phase 73 Part C：清空 steering 队列（本 Loop 内部暂存的 steering 消息）
    *
    * 注意：若通过 setSteeringConsumer 接入 TaskOrchestrator，外部队列状态在
    * TaskOrchestrator 中，需通过其 reset() 清空。此方法仅清空 Loop 内部暂存。
+   *
+   * Phase 73 Part C 修复：原 steer() 方法已被删除（生产路径统一走 setSteeringConsumer
+   * 桥接，避免两套 steering 入口造成状态分裂）。本 Loop 内部 steeringQueue 仅由
+   * drainSteeringIntoMessages 在消费时清空，外部不再有直接入队入口。
    */
   clearSteeringQueue(): void {
     this.steeringQueue = [];
@@ -383,7 +371,8 @@ export class ReActAgentLoop {
    */
   clearAllQueues(): void {
     this.clearSteeringQueue();
-    this.followUpQueue = [];
+    // Phase 73 Part C 修复：复用 clearFollowUpQueue()，避免直接赋空绕过该方法
+    this.clearFollowUpQueue();
   }
 
   /**
@@ -645,8 +634,8 @@ export class ReActAgentLoop {
    * C5 修复：从 Steering Queue 取出消息并注入 messages
    *
    * Phase 73 Part C：合并两个来源——
-   *   1. steeringConsumer 返回的外部队列消息（接入 TaskOrchestrator 时）
-   *   2. 本 Loop 内部 steeringQueue 中的消息（通过 steer() 直接排队）
+   *   1. steeringConsumer 返回的外部队列消息（接入 TaskOrchestrator 时，生产路径）
+   *   2. 本 Loop 内部 steeringQueue 中的消息（原 steer() 已删除，当前恒为空，保留以兼容未来扩展）
    *
    * @param modeFilter 筛选模式（'next_iteration' / 'immediate' / 'after_current_step'）；不传则取出全部
    * @returns 是否注入了消息

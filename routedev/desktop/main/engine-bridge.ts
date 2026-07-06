@@ -954,6 +954,25 @@ export class RouteDevEngine {
   }
 
   /**
+   * Phase 73 Part C 修复：设置 follow-up 出队模式
+   *
+   * 调用时机：用户在 UI 切换"逐条 / 全部"模式。
+   *   - 'one-at-a-time'（默认）：内层循环退出时仅注入第一条 follow-up，剩余保留
+   *   - 'all'：内层循环退出时一次性注入全部 follow-up 消息
+   *
+   * @param mode 出队模式
+   * @returns 是否设置成功（deps 未就绪时返回 false）
+   */
+  setFollowUpMode(mode: 'all' | 'one-at-a-time'): boolean {
+    if (!this.deps?.agentLoop) {
+      console.warn('[Engine] agentLoop 未就绪，setFollowUpMode 调用被忽略');
+      return false;
+    }
+    this.deps.agentLoop.setFollowUpMode(mode);
+    return true;
+  }
+
+  /**
    * 查询队列状态（UI 展示用）
    *
    * @returns steering 与 follow-up 队列当前长度（deps 未就绪时返回 0/0）

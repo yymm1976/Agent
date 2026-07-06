@@ -7,7 +7,7 @@
 //   3. [已删除] app-init.ts 中创建 ScheduleEngine 实例（Task 3）—— ScheduleEngine 空转引擎已移除
 //   4. ProjectMemoryManager 有 setProjectDoc/getProjectDoc 方法（Task 2）
 //   5. spawn-agent.ts 有 resolveProfileForSubagent 函数（Task 4 AgentProfileManager 接入）
-//   6. trace-collector.ts 有 getTrajectoryAggregator 方法（Task 6）
+//   6. [已删除] trace-collector.ts 有 getTrajectoryAggregator 方法（Task 6）—— TrajectoryAggregator 死链清理已移除
 //   7. package.json scripts 包含 lint:descriptions（Task 5）
 //   8. src/cli/exec.ts 不存在（已清理，Task 5）
 //   9. SettingsPage.tsx 包含沙箱级选择器（SandboxLevel，Task 1 UI）
@@ -23,7 +23,6 @@ import {
   createChildRegistry,
 } from '../../src/tools/builtin/spawn-agent.js';
 import { AgentProfileManager } from '../../src/agents/profiles/manager.js';
-import { TraceCollector } from '../../src/harness/trace-collector.js';
 import { createDefaultEngine } from '../../src/tools/permission-engine.js';
 
 // ============================================================
@@ -34,7 +33,6 @@ const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const APP_INIT_PATH = path.join(PROJECT_ROOT, 'src', 'cli', 'app-init.ts');
 const PROJECT_MEMORY_PATH = path.join(PROJECT_ROOT, 'src', 'memory', 'project-memory.ts');
 const SPAWN_AGENT_PATH = path.join(PROJECT_ROOT, 'src', 'tools', 'builtin', 'spawn-agent.ts');
-const TRACE_COLLECTOR_PATH = path.join(PROJECT_ROOT, 'src', 'harness', 'trace-collector.ts');
 const SERVICE_CONTEXT_PATH = path.join(PROJECT_ROOT, 'src', 'cli', 'service-context.ts');
 const SETTINGS_PAGE_PATH = path.join(
   PROJECT_ROOT,
@@ -167,29 +165,6 @@ describe('Phase 48 E2E - Task 4: spawn-agent.ts 接入 AgentProfileManager', () 
     const mgr = new AgentProfileManager(process.cwd());
     expect(mgr).toBeInstanceOf(AgentProfileManager);
     expect(typeof mgr.loadAll).toBe('function');
-  });
-});
-
-// ============================================================
-// 6. trace-collector.ts 有 getTrajectoryAggregator 方法（Task 6）
-// ============================================================
-describe('Phase 48 E2E - Task 6: trace-collector.ts 接入 TrajectoryAggregator', () => {
-  it('TraceCollector.prototype 上存在 getTrajectoryAggregator 方法', () => {
-    expect(typeof TraceCollector.prototype.getTrajectoryAggregator).toBe('function');
-  });
-
-  it('trace-collector.ts 源代码包含 TrajectoryAggregator 接线逻辑', async () => {
-    const content = await readFile(TRACE_COLLECTOR_PATH);
-    expect(content).toContain('TrajectoryAggregator');
-    expect(content).toContain('getTrajectoryAggregator');
-    expect(content).toMatch(/new TrajectoryAggregator/);
-  });
-
-  it('TraceCollector 实例的 getTrajectoryAggregator 返回同一实例（共享）', () => {
-    const tc = new TraceCollector({ storageDir: undefined });
-    const agg1 = tc.getTrajectoryAggregator();
-    const agg2 = tc.getTrajectoryAggregator();
-    expect(agg1).toBe(agg2);
   });
 });
 

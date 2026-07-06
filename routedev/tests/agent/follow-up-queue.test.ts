@@ -156,14 +156,13 @@ describe('Phase 73 Part C：follow-up 队列', () => {
   });
 
   describe('clearAllQueues 清空所有队列', () => {
-    it('同时清空 steering 与 follow-up 队列', () => {
+    it('清空 follow-up 队列且 steering 队列保持为空（steer() 已删除，无外部入队入口）', () => {
       const loop = createLoop();
-      // 通过 steer() 入队 steering 消息（进入 Loop 内部 steering 队列）
-      loop.steer('中途调整方向');
+      // steer() 已删除（生产路径统一走 setSteeringConsumer），本地 steering 队列恒为空
       loop.followUp('后续任务');
 
       const statusBefore = loop.getQueueStatus();
-      expect(statusBefore.steering).toBe(1);
+      expect(statusBefore.steering).toBe(0);
       expect(statusBefore.followUp).toBe(1);
 
       loop.clearAllQueues();
@@ -236,11 +235,10 @@ describe('Phase 73 Part C：follow-up 队列', () => {
       expect(loop.getQueueStatus().followUp).toBe(0);
     });
 
-    it('反映 steering 队列长度变化', () => {
+    it('steering 队列无外部入队入口（steer() 已删除），恒为 0', () => {
       const loop = createLoop();
-      loop.steer('调整');
-      expect(loop.getQueueStatus().steering).toBe(1);
-
+      // steer() 已删除，本地 steering 队列只能由 drainSteeringIntoMessages 内部消费
+      expect(loop.getQueueStatus().steering).toBe(0);
       loop.clearSteeringQueue();
       expect(loop.getQueueStatus().steering).toBe(0);
     });

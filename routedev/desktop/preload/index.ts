@@ -106,6 +106,7 @@ const api: RouteDevAPI = {
   agent: {
     followUp: (content: string) => ipcRenderer.send('agent:followUp', content),
     clearAllQueues: () => ipcRenderer.send('agent:clearAllQueues'),
+    setFollowUpMode: (mode: 'all' | 'one-at-a-time') => ipcRenderer.send('agent:setFollowUpMode', mode),
     getQueueStatus: () => ipcRenderer.invoke('agent:queueStatus'),
     getFollowUpQueue: () => ipcRenderer.invoke('agent:getFollowUpQueue'),
     removeFollowUp: (index: number) => ipcRenderer.invoke('agent:removeFollowUp', index),

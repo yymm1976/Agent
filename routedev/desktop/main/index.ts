@@ -760,6 +760,15 @@ ipcMain.on('agent:clearAllQueues', () => {
   engine.clearAllQueues();
 });
 
+// Phase 73 Part C 修复：设置 follow-up 出队模式（逐条 / 全部）
+ipcMain.on('agent:setFollowUpMode', (_event, mode: 'all' | 'one-at-a-time') => {
+  if (!engine) {
+    console.warn('[agent:setFollowUpMode] 引擎未初始化，调用被忽略');
+    return;
+  }
+  engine.setFollowUpMode(mode);
+});
+
 // 查询队列状态（UI 展示用）
 ipcMain.handle('agent:queueStatus', async (): Promise<import('../shared/ipc-types.js').AgentQueueStatus> => {
   if (!engine) return { steering: 0, followUp: 0 };

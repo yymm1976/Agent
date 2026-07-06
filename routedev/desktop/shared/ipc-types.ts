@@ -394,6 +394,13 @@ export interface FollowUpItem {
   enqueuedAt: number;
 }
 
+/**
+ * Phase 73 Part C 修复：follow-up 出队模式
+ *   - 'one-at-a-time'：内层循环退出时仅注入第一条 follow-up（默认）
+ *   - 'all'：内层循环退出时一次性注入全部 follow-up 消息
+ */
+export type FollowUpMode = 'all' | 'one-at-a-time';
+
 export type MainToRendererEvent =
   | { channel: 'chat:stream'; payload: ChatStreamPayload }
   | { channel: 'chat:tool-confirm-request'; payload: { toolName: string; params: Record<string, unknown> } }
@@ -527,6 +534,7 @@ export interface RouteDevAPI {
   // Phase 73 Part C：Steering / Follow-up 双消息队列 API
   //   - followUp：排队后续任务（Agent 完成当前工作后执行）
   //   - clearAllQueues：清空 steering + follow-up 队列（取消所有待执行任务）
+  //   - setFollowUpMode：设置 follow-up 出队模式（逐条 / 全部）
   //   - getQueueStatus：查询队列状态（UI 展示用）
   //   - getFollowUpQueue：查询 follow-up 队列内容（UI 列表展示用）
   //   - removeFollowUp：删除指定索引的 follow-up 消息（UI 单条删除用）
@@ -535,6 +543,8 @@ export interface RouteDevAPI {
     followUp: (content: string) => void;
     /** 清空所有队列（steering + follow-up） */
     clearAllQueues: () => void;
+    /** 设置 follow-up 出队模式（'one-at-a-time' 逐条 / 'all' 全部） */
+    setFollowUpMode: (mode: FollowUpMode) => void;
     /** 查询队列状态 */
     getQueueStatus: () => Promise<AgentQueueStatus>;
     /** 查询 follow-up 队列内容（只读快照） */

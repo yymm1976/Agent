@@ -170,7 +170,7 @@ export class DualLoopOrchestrator {
    *
    * 未启用 boundedRecovery 时此方法为空操作（向后兼容）
    */
-  registerRecoveryArtifact(artifact: StepArtifact): void {
+  private registerRecoveryArtifact(artifact: StepArtifact): void {
     if (this.boundedRecoveryConfig?.enabled && this.recoveryManager) {
       this.recoveryManager.registerArtifact(artifact);
     }
