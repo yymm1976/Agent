@@ -36,3 +36,6 @@ _import-paths.txt
 _importers.txt
 _unreferenced-src.txt
 imported.txt
+dead-code-audit-output.md
+dead-code-audit-script.cjs
+zombie-analysis.cjs
