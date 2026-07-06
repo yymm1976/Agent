@@ -811,6 +811,26 @@ export class RouteDevEngine {
         goalId,
         // Phase 53 P5：步骤级钩子运行器（与 CLI App.tsx 对齐，触发 pre-step/post-step/on-complete）
         hookRunner: this.deps.hookRunner,
+        // Phase 61：ACRouter 闭环模型路由（可选，未启用 config.closedLoopRouting 时为 undefined）
+        // goal-runner 内部以 if 守卫消费：routingOrchestrator.isEnabled/route、routingHistory.append、
+        // routingMemory.isEnabled、executionVerifier.verify、routingRegretTracker.computeCumulativeRegret
+        routingOrchestrator: this.deps.routingOrchestrator,
+        routingHistory: this.deps.routingHistory,
+        routingMemory: this.deps.routingMemory,
+        executionVerifier: this.deps.executionVerifier,
+        routingRegretTracker: this.deps.routingRegretTracker,
+        // Phase 65：记忆系统（可选，未启用 config.memorySystem 时为 undefined）
+        // goal-runner 内部以 if 守卫消费：memoryStore.write、hybridRetriever.retrieve、localMaintenance.shouldMaintain/maintain
+        memoryStore: this.deps.memoryStore,
+        hybridRetriever: this.deps.hybridRetriever,
+        localMaintenance: this.deps.localMaintenance,
+        // Phase 68：知识图谱（可选，未启用 config.phase68Integration 时为 undefined）
+        // goal-runner 内部以 if 守卫消费：provenanceGraph.addArtifact、kanObstacleChecker.check、
+        // quantitativeGate.evaluate、classifyOperation(signal, gid)
+        provenanceGraph: this.deps.provenanceGraph,
+        kanObstacleChecker: this.deps.kanObstacleChecker,
+        quantitativeGate: this.deps.quantitativeGate,
+        classifyOperation: this.deps.classifyOperation,
       });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);

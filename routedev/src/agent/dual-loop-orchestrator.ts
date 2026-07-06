@@ -64,9 +64,7 @@ import type {
   ReviewerPolicyConfig,
   BoundedRecoveryConfig,
 } from '../config/schema.js';
-// Phase 59：ArchitectureAwareMetricsCollector / TrajectoryInput import 已删除（死链清理）
-// - setMetricsCollector 无外部调用方，metricsCollector 字段仅在死分支中被读取
-// - 源文件 src/evaluation/architecture-aware-metrics.ts 保留
+// Phase 59：ArchitectureAwareMetricsCollector / TrajectoryInput import 已删除（源文件已清理）
 
 /** 陷阱 #141：maxReruns 默认 2 而非 3，避免 Token 爆炸 */
 export const DEFAULT_MAX_RERUNS = 2;

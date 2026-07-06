@@ -1,5 +1,5 @@
 {
-  "totalExports": 1411,
+  "totalExports": 1406,
   "deadExports": [
     {
       "file": "src/agent/bounded-recovery.ts",
@@ -270,21 +270,6 @@
       "file": "src/agent/multi/orchestrator.ts",
       "name": "WorkerError",
       "type": "interface"
-    },
-    {
-      "file": "src/agent/multi/score-card.ts",
-      "name": "ProcessDefect",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/multi/score-card.ts",
-      "name": "ScoreCard",
-      "type": "interface"
-    },
-    {
-      "file": "src/agent/multi/score-card.ts",
-      "name": "DefectCategory",
-      "type": "type"
     },
     {
       "file": "src/agent/multi/types.ts",
@@ -1497,16 +1482,6 @@
       "type": "type"
     },
     {
-      "file": "src/runtime/plugin-init.ts",
-      "name": "initPluginSystem",
-      "type": "function"
-    },
-    {
-      "file": "src/runtime/plugin-init.ts",
-      "name": "registerPermissionMiddleware",
-      "type": "function"
-    },
-    {
       "file": "src/security/audit-panel.ts",
       "name": "SecurityEvent",
       "type": "interface"
@@ -2074,6 +2049,11 @@
       "type": "function"
     },
     {
+      "file": "src/agent/init-analyzer.ts",
+      "name": "InitAnalyzer",
+      "type": "class"
+    },
+    {
       "file": "src/agent/loop-memory.ts",
       "name": "LOOP_MEMORY_DIR",
       "type": "const"
@@ -2492,6 +2472,21 @@
       "file": "src/config/schema.ts",
       "name": "ErrorDisplaySchema",
       "type": "const"
+    },
+    {
+      "file": "src/evaluation/architecture-aware-metrics.ts",
+      "name": "ArchitectureAwareMetricsCollector",
+      "type": "class"
+    },
+    {
+      "file": "src/evaluation/architecture-aware-metrics.ts",
+      "name": "ComponentMetrics",
+      "type": "interface"
+    },
+    {
+      "file": "src/evaluation/architecture-aware-metrics.ts",
+      "name": "TrajectoryInput",
+      "type": "interface"
     },
     {
       "file": "src/hooks/adapter.ts",

@@ -71,7 +71,6 @@ import {
 import { ContextCompactor } from '../agent/context-compaction.js';
 import { estimateTokens } from '../utils/token-estimate.js';
 import { VisionAssistant } from '../agent/vision.js';
-import { BranchManager } from '../agent/branch.js';
 import { Blackboard } from '../agent/multi/blackboard.js';
 import { Orchestrator, type OrchestrationIntegrationOptions } from '../agent/multi/orchestrator.js';
 // Phase 50 Task 1：Goal 流程核心模块（按 config.goalIntegration 渐进接入）
@@ -91,16 +90,12 @@ import { AuditLogger } from '../harness/audit-logger.js';
 import { logger } from '../utils/logger.js';
 import { PromptTemplateManager } from '../prompts/manager.js';
 import { ProjectMemoryManager, loadProjectDoc } from '../memory/project-memory.js';
-import { GoalParser } from '../agent/goal-parser.js';
-import { GoalVerifier } from '../agent/goal-verifier.js';
 import { HookRunner } from '../agent/hooks.js';
 import { registerBuiltinHooks } from '../hooks/built-in.js';
 import { HookEnhancementManager } from '../hooks/hook-enhancement.js';
 import { getHookTemplates } from '../hooks/templates.js';
 // Phase 32 Task 1：接入 Phase 31 模块（之前全部为死代码）
 import { TaskOrchestrator, createTaskOrchestrator } from '../agent/task-orchestrator.js';
-import { RequirementsGatherer, createRequirementsGatherer } from '../agent/requirements-gatherer.js';
-import { TaskComplexityAnalyzer, createTaskComplexityAnalyzer } from '../agent/complexity-analyzer.js';
 import { UnifiedReviewer, createUnifiedReviewer } from '../agent/unified-reviewer.js';
 import { CompletionGate, createCompletionGate } from '../agent/completion-gate.js';
 import { ReadTracker, createReadTracker } from '../tools/read-tracker.js';
@@ -125,8 +120,7 @@ import { createBoundedRecoveryManager } from '../agent/bounded-recovery.js';
 import type { DualLoopOrchestrator } from '../agent/dual-loop-orchestrator.js';
 // Phase 55：DagEngine 类型（异步创建，goal-runner 通过 ref 延迟读取）
 import type { DagEngine } from '../agent/workflow/dag-engine.js';
-// Phase 59：ArchitectureAwareMetricsCollector/SaturationMonitor import 已删除（批次1，实例化块移除）
-// 注：类型仍被 score-card.ts / dual-loop-orchestrator.ts / completion-gate.ts 通过各自 import 引用
+// Phase 59：ArchitectureAwareMetricsCollector/SaturationMonitor 已删除（源文件已清理）
 // CR-4b：接入 compositional-router（Phase 52 Task 4 组合式路由）
 import { decomposeWithSkillAwareness, retrieveSkill, composeDAG, DEFAULT_ROUTING_CONFIG, type AtomicSubTask, type SkillMatch, type SkillDAGPlan, type CompositionalRoutingConfig } from '../skills/compositional-router.js';
 // Phase 53 Task 5/7：MCP 安全扫描器 + 配置保护守卫（Task 6 SkillSecurityGate 使用动态 import）
@@ -159,7 +153,7 @@ import { createBuiltinToolApprovalPolicies } from '../policies/tool-approval.js'
 import { ProvenanceGraph } from '../memory/provenance-graph.js';
 import { KanObstacleChecker } from '../skills/kan-obstacle-checker.js';
 import { QuantitativeGate } from '../agent/quantitative-gate.js';
-import { classifyOperation, buildRegimeTransition, type OperationSignal } from '../skills/operation-classifier.js';
+import { classifyOperation, type OperationSignal } from '../skills/operation-classifier.js';
 // Phase 69：Worktree 隔离执行与多代理并行编排——已删除（ExecutionOrchestrator 死代码清理）
 // Phase 70：上下文压缩技术深度优化
 import { ToolOutputBudgetManager, DEFAULT_BUDGET_CONFIG } from '../agent/memory/tool-output-budget.js';
@@ -222,17 +216,14 @@ export interface AppDependencies {
   contextManager: ContextManager;
   // 辅助 Agent
   visionAssistant: VisionAssistant | undefined;
-  branchManager: BranchManager;
-  // Phase 59：initAnalyzer 接口字段已删除（僵尸字段，全 src/ + desktop/ 无消费方）
+  // Phase 59：branchManager/initAnalyzer 接口字段已删除（僵尸字段，全 src/ + desktop/ 无消费方）
   // 基础设施
   prompts: PromptTemplateManager;
   blackboard: Blackboard;
   trace: TraceCollector;
   audit: AuditLogger;
   projectMemory: ProjectMemoryManager;
-  // 目标解析与验证（无状态，可复用）
-  goalParser: GoalParser;
-  goalVerifier: GoalVerifier;
+  // Phase 59：goalParser/goalVerifier 接口字段已删除（僵尸字段，goal-runner.ts 内部自建实例）
   /** Phase 35 Task 2：生命周期钩子运行器（生产激活） */
   hookRunner: HookRunner;
   // LLM 客户端
@@ -243,10 +234,7 @@ export interface AppDependencies {
   // Phase 32 Task 1：Phase 31 模块（之前全部为死代码，现接入生产路径）
   /** 统一工作流编排器——App.tsx handleSubmit 的分发入口 */
   taskOrchestrator: TaskOrchestrator;
-  /** 需求收集器——development 意图走需求确认阶段时使用 */
-  requirementsGatherer: RequirementsGatherer;
-  /** 任务复杂度分析器——规划阶段评估每步复杂度 */
-  complexityAnalyzer: TaskComplexityAnalyzer;
+  // Phase 59：requirementsGatherer/complexityAnalyzer 接口字段已删除（僵尸字段，全 src/ + desktop/ 无消费方）
   /** 统一审查器——GoalVerifier + 代码审查双层验证 */
   unifiedReviewer: UnifiedReviewer;
   /** 独立代码验证门——typecheck/lint/tests 兜底 */
@@ -302,7 +290,7 @@ export interface AppDependencies {
   kanObstacleChecker?: KanObstacleChecker;
   quantitativeGate?: QuantitativeGate;
   classifyOperation?: (signal: OperationSignal, sessionId: string) => ReturnType<typeof classifyOperation>;
-  buildRegimeTransition?: typeof buildRegimeTransition;
+  // Phase 59：buildRegimeTransition 接口字段已删除（僵尸字段，全 src/ + desktop/ 无消费方）
   // Phase 69：Worktree 隔离执行与多代理并行编排——已删除（ExecutionOrchestrator 死代码清理）
   // Phase 70：上下文压缩技术深度优化（可选）
   toolOutputBudgetManager?: ToolOutputBudgetManager;
@@ -530,8 +518,7 @@ export function createAppDependencies(
   const visionAssistant = config.vision?.enabled
     ? new VisionAssistant(config.providers, (id: string) => clientManager.get(id))
     : undefined;
-  const branchManager = new BranchManager();
-  // Phase 59：initAnalyzer 实例化已删除（僵尸字段，无消费方；源文件 src/agent/init-analyzer.ts 保留）
+  // Phase 59：branchManager/initAnalyzer 实例化已删除（僵尸字段，源文件均已清理）
   // ===== 基础设施 =====
   const prompts = new PromptTemplateManager({ projectOverrides: true });
   const blackboard = new Blackboard();
@@ -1486,7 +1473,7 @@ export function createAppDependencies(
   }
 
   // ===== 目标解析与验证（无状态） =====
-  const goalParser = new GoalParser();
+  // Phase 59：goalParser 实例化已删除（僵尸字段，goal-runner.ts 内部自建实例）
   // Phase 58：实例化 PathRouter（统一路径路由器，App.tsx 传给 createGoalRunner）
   const pathRouter = new PathRouter();
   // Phase 53 Task 10：DAG 引擎（受 config.phase53Integration.dagEngine.enabled 守护，fail-open）
@@ -1508,7 +1495,7 @@ export function createAppDependencies(
       })
       .catch(() => { /* fail-open：DAG 引擎不可用时跳过 */ });
   }
-  const goalVerifier = new GoalVerifier();
+  // Phase 59：goalVerifier 实例化已删除（僵尸字段，goal-runner.ts 内部自建实例）
 
   // ===== Phase 50 Task 1：Goal 流程核心模块（按 config.goalIntegration 渐进接入） =====
   // 未开启的开关对应实例为 null，App.tsx 传给 createGoalRunner 时若为 undefined/null 则不接入
@@ -1692,9 +1679,7 @@ export function createAppDependencies(
 
   // Phase 62：动态工作流模式与隔离治理模块实例化——已删除（ExecutionOrchestrator 死代码清理）
 
-  // 4. RequirementsGatherer + ComplexityAnalyzer——无状态，工厂创建即可
-  const requirementsGatherer = createRequirementsGatherer();
-  const complexityAnalyzer = createTaskComplexityAnalyzer();
+  // Phase 59：RequirementsGatherer + ComplexityAnalyzer 实例化已删除（僵尸字段，全 src/ + desktop/ 无消费方）
 
   // 5. TaskOrchestrator——统一工作流编排器
   //    依赖 classifier + modelRouter + clientManager + config
@@ -2149,9 +2134,7 @@ export function createAppDependencies(
     logger.info('app-init: boundedRecovery 配置已确认，将在 Phase 49 DualLoopOrchestrator 创建时注入');
   }
 
-  // Phase 59：archAwareMetrics/saturationMonitor 已删除（批次1 无价值 Integration）
-  // 原实例化块已移除；类型仍被 score-card.ts / dual-loop-orchestrator.ts / completion-gate.ts 通过 type 引用
-  // 故源文件 architecture-aware-metrics.ts / saturation-monitor.ts 保留，仅删配置字段与实例化
+  // Phase 59：archAwareMetrics/saturationMonitor 已删除（源文件 architecture-aware-metrics.ts 已清理）
 
   // CR-4b：组合式路由器（config.phase52Integration.compositionalRouting.enabled 守护）
   // 包装 decomposeWithSkillAwareness / composeDAG，按配置注入路由参数，供上层 planner 调用
@@ -2269,22 +2252,18 @@ export function createAppDependencies(
     checkpointWriter,
     contextManager,
     visionAssistant,
-    branchManager,
+    // Phase 59：branchManager/goalParser/goalVerifier/requirementsGatherer/complexityAnalyzer 返回字段已删除（僵尸字段）
     prompts,
     blackboard,
     trace,
     audit,
     projectMemory,
-    goalParser,
-    goalVerifier,
     hookRunner,
     primaryClient,
     checkpointClient,
     profiler,
     // Phase 32 Task 1：Phase 31 模块（之前全部为死代码）
     taskOrchestrator,
-    requirementsGatherer,
-    complexityAnalyzer,
     unifiedReviewer,
     completionGate,
     readTracker,
@@ -2439,7 +2418,6 @@ export function createAppDependencies(
 
       if (p68Cfg.operationClassification?.enabled) {
         result.classifyOperation = classifyOperation;
-        result.buildRegimeTransition = buildRegimeTransition;
       }
 
       if (Object.keys(result).length > 0) {

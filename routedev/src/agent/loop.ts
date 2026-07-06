@@ -1829,14 +1829,4 @@ export class ReActAgentLoop {
       }
     }
   }
-
-  /** 更新工具执行器（Phase 6 替换为真实实现时调用） */
-  updateToolExecutor(executor: ToolExecutorAdapter): void {
-    this.toolExecutor = executor;
-  }
-
-  /** 更新配置 */
-  updateConfig(config: Partial<ReActConfig>): void {
-    this.config = { ...this.config, ...config };
-  }
 }

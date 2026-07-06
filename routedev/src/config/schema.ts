@@ -1572,8 +1572,7 @@ export type BoundedRecoveryConfig = z.infer<typeof BoundedRecoveryConfigSchema>;
  *
  * Phase 59：processEvaluation/archAwareMetrics/saturationMonitor 已删除（批次1 无价值学术指标）
  * 旧配置中的这三个字段会被 Zod safe-parse 忽略
- * 注：architecture-aware-metrics.ts / saturation-monitor.ts 源文件保留（被 score-card /
- * dual-loop-orchestrator / completion-gate 通过 type 引用），仅删配置与实例化
+ * 注：architecture-aware-metrics.ts 源文件已删除（Phase 59 死链清理）
  */
 const Phase52IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** Task 1：Skill 生命周期管理 */

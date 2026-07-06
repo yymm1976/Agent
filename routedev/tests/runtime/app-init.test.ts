@@ -18,8 +18,6 @@ import { CheckpointManager } from '../../src/harness/checkpoint-manager.js';
 import { CheckpointWriter } from '../../src/agent/memory/checkpoint-writer.js';
 import { ContextManager } from '../../src/agent/memory/context-manager.js';
 // Phase 57：VisionAssistant import 已移除（visionAssistant 改为可选，测试不再断言其类型）
-import { BranchManager } from '../../src/agent/branch.js';
-import { InitAnalyzer } from '../../src/agent/init-analyzer.js';
 import { Blackboard } from '../../src/agent/multi/blackboard.js';
 import { Orchestrator } from '../../src/agent/multi/orchestrator.js';
 import { WorkerExecutor } from '../../src/agent/multi/worker-executor.js';
@@ -27,14 +25,10 @@ import { TraceCollector } from '../../src/harness/trace-collector.js';
 import { AuditLogger } from '../../src/harness/audit-logger.js';
 import { PromptTemplateManager } from '../../src/prompts/manager.js';
 import { ProjectMemoryManager } from '../../src/memory/project-memory.js';
-import { GoalParser } from '../../src/agent/goal-parser.js';
-import { GoalVerifier } from '../../src/agent/goal-verifier.js';
 // E1 删除：DurableExecutor 已被 GoalPersistence + CheckpointManager + HookRunner.fire 替代
 import { HookRunner } from '../../src/agent/hooks.js';
 import { TokenProfiler } from '../../src/agent/token-profiler.js';
 import { TaskOrchestrator } from '../../src/agent/task-orchestrator.js';
-import { RequirementsGatherer } from '../../src/agent/requirements-gatherer.js';
-import { TaskComplexityAnalyzer } from '../../src/agent/complexity-analyzer.js';
 import { UnifiedReviewer } from '../../src/agent/unified-reviewer.js';
 import { CompletionGate } from '../../src/agent/completion-gate.js';
 import { ReadTracker } from '../../src/tools/read-tracker.js';
@@ -255,16 +249,14 @@ describe('createAppDependencies', () => {
       // 辅助 Agent
       // Phase 57：visionAssistant 改为可选（config.vision.enabled=false 时为 undefined）
       expect(deps.visionAssistant).toBeUndefined();
-      expect(deps.branchManager).toBeInstanceOf(BranchManager);
+      // Phase 59：branchManager/initAnalyzer 字段已从 AppDependencies 移除（僵尸字段）
       // 基础设施
       expect(deps.prompts).toBeInstanceOf(PromptTemplateManager);
       expect(deps.blackboard).toBeInstanceOf(Blackboard);
       expect(deps.trace).toBeInstanceOf(TraceCollector);
       expect(deps.audit).toBeInstanceOf(AuditLogger);
       expect(deps.projectMemory).toBeInstanceOf(ProjectMemoryManager);
-      // 目标解析与验证
-      expect(deps.goalParser).toBeInstanceOf(GoalParser);
-      expect(deps.goalVerifier).toBeInstanceOf(GoalVerifier);
+      // Phase 59：goalParser/goalVerifier 字段已从 AppDependencies 移除（goal-runner 内部自建实例）
       // E1 删除：durableExecutor 字段已从 AppDependencies 移除（上位替代为 GoalPersistence）
       expect(deps.hookRunner).toBeInstanceOf(HookRunner);
       // LLM 客户端
@@ -272,8 +264,7 @@ describe('createAppDependencies', () => {
       expect(deps.checkpointClient).toBeDefined();
       // Phase 31/32 模块
       expect(deps.taskOrchestrator).toBeInstanceOf(TaskOrchestrator);
-      expect(deps.requirementsGatherer).toBeInstanceOf(RequirementsGatherer);
-      expect(deps.complexityAnalyzer).toBeInstanceOf(TaskComplexityAnalyzer);
+      // Phase 59：requirementsGatherer/complexityAnalyzer 字段已从 AppDependencies 移除（僵尸字段）
       expect(deps.unifiedReviewer).toBeInstanceOf(UnifiedReviewer);
       expect(deps.completionGate).toBeInstanceOf(CompletionGate);
       expect(deps.readTracker).toBeInstanceOf(ReadTracker);
@@ -283,12 +274,7 @@ describe('createAppDependencies', () => {
       expect(deps.sharedSystemPromptRef.current).toBe('');
     });
 
-    it('initAnalyzer 在有 primaryClient 时创建实例', () => {
-      const config = makeConfig();
-      const clientManager = createMockClientManager();
-      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
-      expect(deps.initAnalyzer).toBeInstanceOf(InitAnalyzer);
-    });
+    // Phase 59：initAnalyzer 测试已删除（源文件 src/agent/init-analyzer.ts 已清理）
   });
 
   describe('LLM 客户端解析', () => {
@@ -371,23 +357,7 @@ describe('createAppDependencies', () => {
     });
   });
 
-  describe('initAnalyzer 为 null 的场景', () => {
-    it('primaryClient 为 undefined 时 initAnalyzer 为 null', () => {
-      const config = makeConfig();
-      // 创建一个空的 clientManager（没有任何客户端）
-      const emptyClientManager = {
-        get: vi.fn().mockReturnValue(undefined),
-        listAll: vi.fn().mockReturnValue(new Map()),
-        register: vi.fn(),
-        unregister: vi.fn(),
-        isReady: vi.fn().mockReturnValue(false),
-        getReadyClients: vi.fn().mockReturnValue(new Map()),
-      } as unknown as LLMClientManager;
-
-      const deps = createAppDependencies(config, emptyClientManager, 'test-model', makeTempCwd());
-      expect(deps.initAnalyzer).toBeNull();
-    });
-  });
+  // Phase 59：initAnalyzer 为 null 的场景测试已删除（源文件 src/agent/init-analyzer.ts 已清理）
 
   describe('可选依赖 classifier/modelRouter/tracker', () => {
     it('未传入 classifier/modelRouter 时仍能正常创建（使用桩执行器）', () => {
@@ -521,11 +491,11 @@ describe('createAppDependencies', () => {
         'permissionEngine', 'orchestrator', 'workerExecutor',
         'checkpointManager', 'checkpointWriter', 'contextManager',
         // Phase 57：visionAssistant 改为可选（config.vision.enabled=false 时为 undefined），不再断言
-        'branchManager', 'initAnalyzer',
+        // Phase 59：branchManager/initAnalyzer/goalParser/goalVerifier/requirementsGatherer/complexityAnalyzer 已删除（僵尸字段）
         'prompts', 'blackboard', 'trace', 'audit', 'projectMemory',
-        'goalParser', 'goalVerifier', 'hookRunner',
+        'hookRunner',
         'primaryClient', 'checkpointClient', 'profiler',
-        'taskOrchestrator', 'requirementsGatherer', 'complexityAnalyzer',
+        'taskOrchestrator',
         'unifiedReviewer', 'completionGate',
         'readTracker', 'resultSanitizer', 'sharedSystemPromptRef',
         // E9-B：新增 experimentManager 单例字段
