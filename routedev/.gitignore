@@ -39,3 +39,5 @@ imported.txt
 dead-code-audit-output.md
 dead-code-audit-script.cjs
 zombie-analysis.cjs
+scripts/config-audit.ts
+scripts/true-dead-audit.ts
