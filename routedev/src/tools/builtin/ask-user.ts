@@ -21,6 +21,8 @@ export class AskUserTool implements ITool {
     },
     requiresApproval: true,
     category: 'system',
+    // Phase 73 Part B：依赖用户交互的 confirmPayload，必须串行执行
+    executionMode: 'sequential' as const,
   };
 
   validateArgs(args: Record<string, unknown>): { valid: boolean; errors: string[] } {

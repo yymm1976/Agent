@@ -102,6 +102,14 @@ const api: RouteDevAPI = {
     getRevisions: (goalId: string) => ipcRenderer.invoke('plan:get-revisions', goalId),
     checkOmissions: (goalId: string) => ipcRenderer.invoke('plan:check-omissions', goalId),
   },
+  // Phase 73 Part C：Steering / Follow-up 双消息队列 API
+  agent: {
+    followUp: (content: string) => ipcRenderer.send('agent:followUp', content),
+    clearAllQueues: () => ipcRenderer.send('agent:clearAllQueues'),
+    getQueueStatus: () => ipcRenderer.invoke('agent:queueStatus'),
+    getFollowUpQueue: () => ipcRenderer.invoke('agent:getFollowUpQueue'),
+    removeFollowUp: (index: number) => ipcRenderer.invoke('agent:removeFollowUp', index),
+  },
   on: (channel, callback) => {
     const channelMap = getChannelMap(channel);
     if (channelMap.has(callback)) return;

@@ -69,6 +69,8 @@ import {
   type AnalyticsEvent,
 } from '../observability/analytics-queue.js';
 import { ContextCompactor } from '../agent/context-compaction.js';
+// Phase 73 Part D 修复：BranchManager——onCompaction 回调的消费者，用于追加 CompactionNode
+import { BranchManager } from '../agent/branch.js';
 import { estimateTokens } from '../utils/token-estimate.js';
 import { VisionAssistant } from '../agent/vision.js';
 import { Blackboard } from '../agent/multi/blackboard.js';
@@ -411,6 +413,10 @@ export function createAppDependencies(
   // - 源文件 src/memory/codebase-memory.ts 保留
   // - UnifiedMemoryStoreImpl 注入点改为 null（unified-memory.ts L207 在 codebaseMemory=null 时 return []，行为兼容）
 
+  // Phase 73 Part D 修复：创建 BranchManager 实例，供 onCompaction 回调追加 CompactionNode
+  // 此前 BranchManager 仅在测试中实例化，生产路径从未创建——导致 appendCompactionNode 沦为死代码
+  const branchManager = new BranchManager();
+
   const contextCompactor = new ContextCompactor({
     targetTokens: Math.floor((currentModelConfig?.contextWindow ?? 128000) * 0.6),
     estimateTokens,
@@ -441,6 +447,15 @@ export function createAppDependencies(
     // Phase 63：状态外部化配置 wiring——defaults.ts 已定义默认值，但此前未透传到 CompactionConfig
     // 不传则 context-compaction.ts initStateExternalizationModules 在 `!se` 处直接 return，三个子模块永不激活
     stateExternalization: config.stateExternalization,
+    // Phase 73 Part D 修复：onCompaction 回调——压缩成功后向 BranchManager 追加 CompactionNode
+    // 此前回调未传，导致 CompactionNode 永不追加，getPath() 中处理 CompactionNode 的优化分支永远不触发
+    // firstKeptEntryId 近似取当前 tip 节点 ID：压缩后新消息会追加到 tip 之后，语义上等价
+    // 若 BranchManager 尚未 initFromHistory（activeBranchId 为 null），跳过本次追加（避免误挂到根）
+    onCompaction: ({ summary, tokensBefore }) => {
+      const tipNodeId = branchManager.getActiveBranchId();
+      if (!tipNodeId) return;
+      branchManager.appendCompactionNode(summary, tipNodeId, tokensBefore);
+    },
   });
   contextManager.setCompactor(contextCompactor);
 

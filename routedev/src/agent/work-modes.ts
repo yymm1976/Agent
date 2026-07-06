@@ -256,6 +256,11 @@ export class GuardedToolExecutorAdapter implements ToolExecutorAdapter {
     return this.inner.hasTool(toolName);
   }
 
+  /** Phase 73 Part B：委托给内部适配器查询工具执行模式 */
+  getToolExecutionMode(toolName: string): 'sequential' | 'parallel' | undefined {
+    return this.inner.getToolExecutionMode?.(toolName);
+  }
+
   async executeTool(
     toolName: string,
     toolCallId: string,

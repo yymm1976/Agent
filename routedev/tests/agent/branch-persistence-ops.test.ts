@@ -230,9 +230,10 @@ describe('BranchOperations', () => {
     // 新节点应存在
     const m2 = managerInternals(bm);
     // 找到新插入的节点（content === 'inserted msg'）
+    // Phase 73 Part D：BranchNode 为联合类型，需类型守卫访问 message 字段
     let insertedNode: BranchNode | undefined;
     for (const n of m2.nodes.values()) {
-      if (n.message.content === 'inserted msg') {
+      if (n.type === 'message' && n.message.content === 'inserted msg') {
         insertedNode = n;
         break;
       }

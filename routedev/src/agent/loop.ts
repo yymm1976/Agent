@@ -39,6 +39,10 @@ import type { ComposePipeline } from './compose-pipeline.js';
 import { CONCISE_THINKING_BLOCK, trimToolResult, shouldSkipConcise } from './concise-thinking.js';
 // 任务1：evaluateAdvance 需要 ToolResult 类型
 import type { ToolResult } from '../tools/types.js';
+// Phase 73 Part A：AgentMessage 抽象层——LLM 调用边界的消息转换
+// Phase 73 Part C：FollowUpMessage 类型——follow-up 队列条目
+import type { AgentMessage, FollowUpMessage } from './message-types.js';
+import { defaultConvertToLlm } from './message-types.js';
 // Phase 53 Task 2：装配验证与 setter 注入
 // 使用 type-only import 避免运行时循环依赖（PolicyEngine/CiteManager/MacroManager 不在 Loop 运行时路径上）
 import type { PolicyEngine } from '../policies/policy-engine.js';
@@ -137,6 +141,38 @@ export class ReActAgentLoop {
    * 接入后，run() 每次迭代前后会取出排队的用户转向消息并注入 messages
    */
   private steeringConsumer: (() => { content: string; mode: string }[] | null) | null = null;
+  /**
+   * Phase 73 Part C：本 Loop 内部 steering 队列（与 steeringConsumer 共存）
+   *
+   * 设计动机：未接入 TaskOrchestrator 的场景（如单测 / 自定义集成）需要直接通过 steer()
+   * 排队 steering 消息。接入 TaskOrchestrator 时消息通过 steeringConsumer 取出，
+   * 此队列保持为空，不影响生产路径。
+   *
+   * drainSteeringIntoMessages 会同时合并两个来源：
+   *   1. steeringConsumer 返回的外部队列消息
+   *   2. steeringQueue 中的本地消息
+   */
+  private steeringQueue: { content: string; mode: string; enqueuedAt: number }[] = [];
+  /**
+   * Phase 73 Part C：follow-up 队列（Agent 完成当前工作后排队执行的后续任务）
+   *
+   * 与 steering 队列的差异：
+   *   - steering：在内层 ReAct 循环迭代间注入，打断/调整当前任务方向
+   *   - follow_up：在内层 ReAct 循环自然退出后注入，开启新一轮 ReAct 循环
+   *
+   * 实际状态由 Loop 自身持有（不依赖外部 consumer），调用方通过 followUp() 排队、
+   * clearFollowUpQueue() 清空、drainFollowUpQueue() 取出。
+   */
+  private followUpQueue: FollowUpMessage[] = [];
+  /**
+   * Phase 73 Part C：follow-up 出队模式
+   *   - 'all'：内层循环退出时一次性注入全部 follow-up 消息
+   *   - 'one-at-a-time'：每次只注入第一条，剩余保留在队列中（默认）
+   *
+   * 默认 'one-at-a-time' 与 steering 队列的"逐条消化"语义一致，
+   * 避免一次注入多条 follow-up 让 LLM 误把它们当作同一任务的子步骤。
+   */
+  private followUpMode: 'all' | 'one-at-a-time' = 'one-at-a-time';
   /**
    * C6 修复：HookRunner（可选）
    * 接入后，run() 会在工具调用前后/session 起止触发对应钩子
@@ -261,6 +297,125 @@ export class ReActAgentLoop {
    */
   setSteeringConsumer(consumer: (() => { content: string; mode: string }[] | null) | null): void {
     this.steeringConsumer = consumer;
+  }
+
+  /**
+   * Phase 73 Part C：注入 steering 消息（直接进入本 Loop 的 steering 队列）
+   *
+   * 兼容场景：调用方未接入 TaskOrchestrator 时，可直接通过此方法排队 steering 消息。
+   * 接入 TaskOrchestrator 时应优先用 setSteeringConsumer 桥接，避免双队列状态分裂。
+   *
+   * @param content 消息内容
+   * @param mode 交付时机（默认 next_iteration）
+   * @returns 是否被接受（恒为 true，当前实现无上限）
+   */
+  steer(content: string, mode: 'immediate' | 'next_iteration' | 'after_current_step' = 'next_iteration'): boolean {
+    this.steeringQueue.push({ content, mode, enqueuedAt: Date.now() });
+    logger.debug('Steering message enqueued (local)', { mode, queueSize: this.steeringQueue.length });
+    return true;
+  }
+
+  /**
+   * Phase 73 Part C：清空 steering 队列（本 Loop 内部暂存的 steering 消息）
+   *
+   * 注意：若通过 setSteeringConsumer 接入 TaskOrchestrator，外部队列状态在
+   * TaskOrchestrator 中，需通过其 reset() 清空。此方法仅清空 Loop 内部暂存。
+   */
+  clearSteeringQueue(): void {
+    this.steeringQueue = [];
+  }
+
+  /**
+   * Phase 73 Part C：排队 follow-up 消息
+   *
+   * 调用方在 Agent 工作期间可排队后续任务，内层 ReAct 循环自然退出后，
+   * 外层循环会通过 drainFollowUpQueue 取出并注入 messages，开启新一轮 ReAct。
+   *
+   * @param content 后续任务内容
+   */
+  followUp(content: string): void {
+    this.followUpQueue.push({ role: 'follow_up', content, enqueuedAt: Date.now() });
+    logger.debug('Follow-up message enqueued', { queueSize: this.followUpQueue.length });
+  }
+
+  /**
+   * Phase 73 Part C：设置 follow-up 出队模式
+   *   - 'all'：内层循环退出时一次性注入全部 follow-up 消息
+   *   - 'one-at-a-time'：每次只注入第一条（默认）
+   */
+  setFollowUpMode(mode: 'all' | 'one-at-a-time'): void {
+    this.followUpMode = mode;
+  }
+
+  /**
+   * Phase 73 Part C：清空 follow-up 队列
+   */
+  clearFollowUpQueue(): void {
+    this.followUpQueue = [];
+  }
+
+  /**
+   * Phase 73 Part C：查询 follow-up 队列内容（UI 展示用，只读快照）
+   *
+   * @returns 队列内容的浅拷贝（避免外部修改内部状态）
+   */
+  getFollowUpQueue(): FollowUpMessage[] {
+    return [...this.followUpQueue];
+  }
+
+  /**
+   * Phase 73 Part C：删除指定索引的 follow-up 消息（UI 单条删除用）
+   *
+   * @param index 队列索引（0 表示最早入队的）
+   * @returns 是否删除成功（索引越界时返回 false）
+   */
+  removeFollowUp(index: number): boolean {
+    if (index < 0 || index >= this.followUpQueue.length) return false;
+    this.followUpQueue.splice(index, 1);
+    return true;
+  }
+
+  /**
+   * Phase 73 Part C：清空所有队列（steering + follow-up）
+   *
+   * 用于 stopGeneration / 会话重置 / 用户主动取消等场景，
+   * 避免残留消息在下次 run() 时被错误注入。
+   */
+  clearAllQueues(): void {
+    this.clearSteeringQueue();
+    this.followUpQueue = [];
+  }
+
+  /**
+   * Phase 73 Part C：查询队列状态（UI 展示用）
+   *
+   * @returns steering 与 follow-up 队列当前长度
+   */
+  getQueueStatus(): { steering: number; followUp: number } {
+    return {
+      steering: this.steeringQueue.length,
+      followUp: this.followUpQueue.length,
+    };
+  }
+
+  /**
+   * Phase 73 Part C：取出 follow-up 队列消息（供外层循环注入）
+   *
+   * 根据 followUpMode 决定出队策略：
+   *   - 'all'：返回全部并清空队列
+   *   - 'one-at-a-time'：返回第一条并从队列中移除
+   *
+   * @returns 待注入的 follow-up 消息列表（可能为空）
+   */
+  private drainFollowUpQueue(): FollowUpMessage[] {
+    if (this.followUpQueue.length === 0) return [];
+    if (this.followUpMode === 'all') {
+      const drained = this.followUpQueue;
+      this.followUpQueue = [];
+      return drained;
+    }
+    // one-at-a-time：取第一条
+    return [this.followUpQueue.shift()!];
   }
 
   /**
@@ -488,6 +643,11 @@ export class ReActAgentLoop {
 
   /**
    * C5 修复：从 Steering Queue 取出消息并注入 messages
+   *
+   * Phase 73 Part C：合并两个来源——
+   *   1. steeringConsumer 返回的外部队列消息（接入 TaskOrchestrator 时）
+   *   2. 本 Loop 内部 steeringQueue 中的消息（通过 steer() 直接排队）
+   *
    * @param modeFilter 筛选模式（'next_iteration' / 'immediate' / 'after_current_step'）；不传则取出全部
    * @returns 是否注入了消息
    */
@@ -495,12 +655,24 @@ export class ReActAgentLoop {
     messages: LLMMessage[],
     modeFilter?: string,
   ): boolean {
-    if (!this.steeringConsumer) return false;
-    const drained = this.steeringConsumer();
-    if (!drained || drained.length === 0) return false;
+    // 来源 1：外部 consumer（TaskOrchestrator 等）
+    const externalDrained = this.steeringConsumer ? (this.steeringConsumer() ?? []) : [];
+    // 来源 2：本 Loop 内部 steeringQueue（按 modeFilter 过滤，取出后从队列中移除）
+    let internalDrained: { content: string; mode: string; enqueuedAt: number }[] = [];
+    if (this.steeringQueue.length > 0) {
+      if (modeFilter) {
+        internalDrained = this.steeringQueue.filter((m) => m.mode === modeFilter);
+        this.steeringQueue = this.steeringQueue.filter((m) => m.mode !== modeFilter);
+      } else {
+        internalDrained = this.steeringQueue;
+        this.steeringQueue = [];
+      }
+    }
+    const merged = [...externalDrained, ...internalDrained];
+    if (merged.length === 0) return false;
     const filtered = modeFilter
-      ? drained.filter((m) => m.mode === modeFilter)
-      : drained;
+      ? merged.filter((m) => m.mode === modeFilter)
+      : merged;
     if (filtered.length === 0) return false;
     for (const msg of filtered) {
       messages.push({ role: 'user', content: `[用户转向指令] ${msg.content}` });
@@ -802,6 +974,15 @@ export class ReActAgentLoop {
     let totalUsage: TokenUsageInfo = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     let finalContent = '';
 
+    // Phase 73 Part C：双层循环结构
+    //   外层 followUpLoop：follow-up 驱动——内层 ReAct 自然退出后检查 follow-up 队列，
+    //                     有则注入 messages 并重新进入内层循环；无则真正退出
+    //   内层 while (iteration < maxIterations)：现有 ReAct 循环（tool calls + steering 驱动）
+    //
+    // 设计原则：不重写现有 ReAct 循环逻辑，仅在外层包一个 while 处理 follow-up。
+    // 文本回复退出点（无工具调用）会检查 follow-up；其他退出点（取消/错误/maxIterations）
+    // 直接 return，不处理 follow-up（避免无限循环 / 用户主动取消时仍继续执行）。
+    followUpLoop: while (true) {
     while (iteration < this.config.maxIterations) {
       // 检查取消信号
       if (signal?.aborted) {
@@ -968,9 +1149,15 @@ export class ReActAgentLoop {
 
           // 执行每个工具调用
           // P2-12：支持并行工具执行（parallelToolExecution 配置项）
-          if (this.config.parallelToolExecution && result.toolCalls.length > 1) {
+          // Phase 73 Part B：batch 级 sequential 检测——若 batch 中任一工具声明
+          // executionMode='sequential'，则整个 batch 回退串行，避免状态竞争
+          const hasSequential = result.toolCalls.some(tc => {
+            const mode = this.toolExecutor.getToolExecutionMode?.(tc.name);
+            return mode === 'sequential';
+          });
+          if (this.config.parallelToolExecution && !hasSequential && result.toolCalls.length > 1) {
             // ===== 并行模式 =====
-            // 阶段1：串行确认 + 中间件检查 + ask_user 串行处理（需要 yield 事件，必须串行）
+            // 阶段1：串行确认 + 中间件检查（需要 yield 事件，必须串行）
             const approvedCalls: typeof result.toolCalls = [];
             for (const toolCall of result.toolCalls) {
               yield {
@@ -1021,51 +1208,9 @@ export class ReActAgentLoop {
                 continue;
               }
 
-              // I18 修复：ask_user 工具需要用户交互，必须在并行模式下串行处理
-              // ask_user 依赖 confirmPayload（来自 onConfirmTool 回调），并行执行会导致用户交互混乱
-              if (toolCall.name === 'ask_user') {
-                // C6 修复/I16 修复：并行模式下 ask_user 也触发 pre-tool-call 钩子
-                const askUserPreHook = await this.fireHookSafe('pre-tool-call', {
-                  stepId: toolCall.id,
-                  toolName: toolCall.name,
-                  toolArgs: toolCall.arguments,
-                });
-                let askUserResult: string;
-                let askUserIsError: boolean;
-                if (askUserPreHook.action === 'deny') {
-                  const denyReason = askUserPreHook.reason ?? '工具调用被钩子拒绝';
-                  askUserResult = await this.sanitizeToolResult(toolCall.name, `[工具被拒绝] ${denyReason}`);
-                  askUserIsError = true;
-                } else {
-                  askUserResult = await this.sanitizeToolResult(toolCall.name, JSON.stringify(confirmPayload ?? {}, null, 2));
-                  askUserIsError = false;
-                }
-                // I16 修复：触发 post-tool-call 钩子
-                await this.fireHookSafe('post-tool-call', {
-                  stepId: toolCall.id,
-                  toolName: toolCall.name,
-                  toolArgs: toolCall.arguments,
-                  toolResult: askUserResult,
-                  toolDuration: 0,
-                });
-                yield {
-                  type: 'tool_call_result',
-                  toolName: toolCall.name,
-                  toolCallId: toolCall.id,
-                  result: askUserResult,
-                  isError: askUserIsError,
-                };
-                messages.push({
-                  role: 'user',
-                  content: [{
-                    type: 'tool_result' as const,
-                    toolUseId: toolCall.id,
-                    content: askUserResult,
-                    isError: askUserIsError,
-                  }],
-                });
-                continue;
-              }
+              // Phase 73 Part B：原 ask_user 并行分支硬编码已删除
+              // ask_user 现通过 executionMode='sequential' 声明，由 batch 级检测
+              // 路由到串行分支处理（confirmPayload UI 逻辑保留在串行分支）
 
               // 中间件检查
               if (this.middleware) {
@@ -1550,6 +1695,27 @@ export class ReActAgentLoop {
           }
         }
 
+        // Phase 73 Part C：内层 ReAct 循环自然退出（LLM 文本回复，无工具调用）
+        // 检查 follow-up 队列——有则注入 messages 并重新进入外层循环（新一轮 ReAct）
+        // 把本轮 LLM 回复先入上下文，让 LLM 知道上一轮已自然完成
+        const followUps = this.drainFollowUpQueue();
+        if (followUps.length > 0) {
+          messages.push({ role: 'assistant', content: result.content });
+          for (const fu of followUps) {
+            // 注入 follow-up 消息（带前缀让 LLM 知悉这是后续任务）
+            messages.push({ role: 'user', content: `[后续任务] ${fu.content}` });
+            logger.debug('Follow-up message injected into messages', {
+              content: fu.content,
+              remaining: this.followUpQueue.length,
+            });
+          }
+          // 重置迭代计数器，让外层循环重新计数（避免 follow-up 立刻撞到 maxIterations）
+          iteration = 0;
+          // 重置连续错误计数（新一轮 ReAct 不应继承上一轮的错误状态）
+          consecutiveErrors = 0;
+          continue followUpLoop;
+        }
+
         const finalDone: ReActEvent = {
           type: 'done',
           content: result.content,
@@ -1618,6 +1784,9 @@ export class ReActAgentLoop {
     const doneEvent: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
     yield doneEvent;
     this.trace?.recordEvent(doneEvent);
+    // Phase 73 Part C：maxIterations 退出不处理 follow-up（避免无限循环），直接退出外层 while
+    break followUpLoop;
+    } // end followUpLoop
     } finally {
       // C6 修复：确保 session 结束时触发 on-session-end
       await this.fireHookSafe('on-session-end', {});
@@ -1672,9 +1841,16 @@ export class ReActAgentLoop {
       }
     }
 
+    // Phase 73 Part A：在 LLM 调用边界插入 convertToLlm 过滤层
+    // 循环内部可承载自定义 AgentMessage（如 plan 状态、memory 片段），
+    // 调用 LLM 前过滤为标准 LLMMessage。未配置 convertToLlm 时回退到 defaultConvertToLlm。
+    // 注意：仅过滤传给 LLM 的消息，不改动循环内部的 messages 工作内存。
+    const convertFn = this.config.convertToLlm ?? defaultConvertToLlm;
+    const llmMessages = convertFn(messages as AgentMessage[]);
+
     const options: LLMRequestOptions = {
       model: modelId,
-      messages,
+      messages: llmMessages,
       systemPrompt,
       // Phase 55：透传 systemBlocks（结构化 blocks），LLM 客户端优先使用，未传时回退 systemPrompt
       systemBlocks,

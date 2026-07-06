@@ -9,14 +9,48 @@ import { logger } from '../utils/logger.js';
 // 注：branch-operations.ts 仅 import 本文件的 type，运行时无循环依赖
 import { BranchOperations } from './branch-operations.js';
 
-/** 分支节点 */
-export interface BranchNode {
+// Phase 73 Part D：BranchNode 扩展为联合类型
+// - MessageNode：原有消息节点
+// - CompactionNode：上下文压缩后追加的压缩节点（记录摘要 + 保留起点）
+// - BranchSummaryNode：切换分支时为被放弃分支生成的摘要节点
+// 所有节点共享 BaseNode 的 id/parentId/children/timestamp 字段
+
+/** 节点基础接口 */
+export interface BaseNode {
   id: string;
   parentId: string | null;
-  message: LLMMessage;
   children: string[];
   timestamp: number;
 }
+
+/** 消息节点（原有类型） */
+export interface MessageNode extends BaseNode {
+  type: 'message';
+  message: LLMMessage;
+}
+
+/** 压缩节点：记录一次上下文压缩的摘要和保留起点 */
+export interface CompactionNode extends BaseNode {
+  type: 'compaction';
+  /** 压缩生成的摘要文本 */
+  summary: string;
+  /** 压缩后保留的第一条消息节点 ID（重建 context 时从此处开始取 MessageNode） */
+  firstKeptEntryId: string;
+  /** 压缩前的 token 数 */
+  tokensBefore: number;
+}
+
+/** 分支摘要节点：切换分支时为被放弃分支生成的统计摘要 */
+export interface BranchSummaryNode extends BaseNode {
+  type: 'branch_summary';
+  /** 被放弃分支的末端节点 ID */
+  fromId: string;
+  /** 统计摘要文本（不调用 LLM，仅时间戳 + 消息数） */
+  summary: string;
+}
+
+/** 分支节点联合类型 */
+export type BranchNode = MessageNode | CompactionNode | BranchSummaryNode;
 
 /** 分支信息 */
 export interface BranchInfo {
@@ -52,6 +86,7 @@ export class BranchManager {
     // 创建虚拟根节点
     const rootId = this.generateId();
     this.nodes.set(rootId, {
+      type: 'message',
       id: rootId,
       parentId: null,
       message: { role: 'system', content: '__root__' },
@@ -64,7 +99,8 @@ export class BranchManager {
 
     for (const msg of history) {
       const id = this.generateId();
-      const node: BranchNode = {
+      const node: MessageNode = {
+        type: 'message',
         id,
         parentId: currentParent,
         message: msg,
@@ -106,7 +142,8 @@ export class BranchManager {
     }
 
     const newId = this.generateId();
-    const newNode: BranchNode = {
+    const newNode: MessageNode = {
+      type: 'message',
       id: newId,
       parentId,
       message: newMessage,
@@ -152,7 +189,8 @@ export class BranchManager {
   append(message: LLMMessage): string {
     const id = this.generateId();
     const parentId = this.activeBranchId;
-    const node: BranchNode = {
+    const node: MessageNode = {
+      type: 'message',
       id,
       parentId,
       message,
@@ -202,6 +240,8 @@ export class BranchManager {
     const targetNodeId = this.historyNodeIds[historyIndex];
     const targetNode = this.nodes.get(targetNodeId);
     if (!targetNode) return null;
+    // Phase 73 Part D：仅 MessageNode 可被编辑
+    if (targetNode.type !== 'message') return null;
 
     const parentId = targetNode.parentId;
     if (!parentId) return null;
@@ -220,7 +260,8 @@ export class BranchManager {
     for (let i = historyIndex + 1; i < initialLength; i++) {
       const laterNodeId = this.historyNodeIds[i];
       const laterNode = this.nodes.get(laterNodeId);
-      if (laterNode) {
+      // Phase 73 Part D：仅 MessageNode 可被复制
+      if (laterNode && laterNode.type === 'message') {
         lastId = this.append({ ...laterNode.message });
       }
     }
@@ -257,8 +298,12 @@ export class BranchManager {
   }
 
   private switchToBranch(branchId: string): LLMMessage[] {
-    if (this.activeBranchKey) {
-      const oldBranch = this.branches.get(this.activeBranchKey);
+    // Phase 73 Part D：记录被放弃分支的信息，用于生成 BranchSummaryNode
+    const oldTipNodeId = this.activeBranchId;
+    const oldBranchKey = this.activeBranchKey;
+
+    if (oldBranchKey) {
+      const oldBranch = this.branches.get(oldBranchKey);
       if (oldBranch) oldBranch.isActive = false;
     }
     const branch = this.branches.get(branchId);
@@ -268,23 +313,197 @@ export class BranchManager {
     }
     this.activeBranchId = branch!.tipNodeId;  // 切换到分支末端节点
     this.activeBranchKey = branchId;
-    return this.getPath(branch!.tipNodeId);
+
+    // Phase 73 Part D：切换分支时为被放弃分支生成统计摘要并追加到新分支末端
+    // 不调用 LLM，仅用消息数 + 时间范围生成摘要（避免异步复杂度）
+    if (oldTipNodeId && oldBranchKey && oldBranchKey !== branchId) {
+      const summary = this.generateBranchAbandonmentSummary(oldTipNodeId);
+      this.appendBranchSummaryNode(oldTipNodeId, summary);
+    }
+
+    return this.getPath(this.activeBranchId);
   }
 
-  /** 获取从根到指定节点的消息路径 */
+  /**
+   * Phase 73 Part D：追加 CompactionNode
+   *
+   * 在上下文压缩后调用，记录压缩摘要和保留起点。重建 context 时
+   * 从 leaf 往 root 找最新 CompactionNode，用其 summary 替代被压缩的旧消息。
+   *
+   * @param summary 压缩摘要文本
+   * @param firstKeptEntryId 压缩后保留的第一条消息节点 ID
+   * @param tokensBefore 压缩前 token 数
+   * @returns 新创建的 CompactionNode ID
+   */
+  appendCompactionNode(summary: string, firstKeptEntryId: string, tokensBefore: number): string {
+    const id = this.generateId();
+    const parentId = this.activeBranchId;
+    const node: CompactionNode = {
+      type: 'compaction',
+      id,
+      parentId,
+      summary,
+      firstKeptEntryId,
+      tokensBefore,
+      children: [],
+      timestamp: Date.now(),
+    };
+    this.nodes.set(id, node);
+    if (parentId) {
+      const parent = this.nodes.get(parentId);
+      if (parent) parent.children.push(id);
+    }
+    // 更新当前分支 tip 指向新节点
+    if (this.activeBranchKey) {
+      const branch = this.branches.get(this.activeBranchKey);
+      if (branch) {
+        branch.tipNodeId = id;
+        branch.lastActiveAt = Date.now();
+      }
+    }
+    this.activeBranchId = id;
+    return id;
+  }
+
+  /**
+   * Phase 73 Part D：追加 BranchSummaryNode
+   *
+   * 切换分支时调用，为被放弃分支生成统计摘要节点并追加到当前分支末端。
+   * 摘要不调用 LLM，仅包含消息数和时间范围。
+   *
+   * @param fromId 被放弃分支的末端节点 ID
+   * @param summary 统计摘要文本
+   * @returns 新创建的 BranchSummaryNode ID
+   */
+  appendBranchSummaryNode(fromId: string, summary: string): string {
+    const id = this.generateId();
+    const parentId = this.activeBranchId;
+    const node: BranchSummaryNode = {
+      type: 'branch_summary',
+      id,
+      parentId,
+      fromId,
+      summary,
+      children: [],
+      timestamp: Date.now(),
+    };
+    this.nodes.set(id, node);
+    if (parentId) {
+      const parent = this.nodes.get(parentId);
+      if (parent) parent.children.push(id);
+    }
+    // 更新当前分支 tip 指向新节点
+    if (this.activeBranchKey) {
+      const branch = this.branches.get(this.activeBranchKey);
+      if (branch) {
+        branch.tipNodeId = id;
+        branch.lastActiveAt = Date.now();
+      }
+    }
+    this.activeBranchId = id;
+    return id;
+  }
+
+  /**
+   * Phase 73 Part D：生成被放弃分支的统计摘要
+   *
+   * 从 tipNodeId 回溯到根，统计 MessageNode 数量和时间范围。
+   * 不调用 LLM，避免引入异步复杂度和 API 调用成本。
+   */
+  private generateBranchAbandonmentSummary(tipNodeId: string): string {
+    let count = 0;
+    let firstTs = Date.now();
+    let lastTs = 0;
+    let cur: string | null = tipNodeId;
+    while (cur) {
+      const node = this.nodes.get(cur);
+      if (!node) break;
+      // Phase 73 Part D：仅统计 MessageNode（跳过虚拟根节点）
+      if (node.type === 'message' && !this.isRootMessage(node.message)) {
+        count++;
+      }
+      firstTs = Math.min(firstTs, node.timestamp);
+      lastTs = Math.max(lastTs, node.timestamp);
+      cur = node.parentId;
+    }
+    const startStr = new Date(firstTs).toISOString();
+    const endStr = new Date(lastTs).toISOString();
+    return `之前探索了 ${count} 条消息的分支（时间范围：${startStr} ~ ${endStr}）`;
+  }
+
+  /** Phase 73 Part D：判断是否为虚拟根节点的消息 */
+  private isRootMessage(msg: LLMMessage): boolean {
+    return msg.role === 'system' && typeof msg.content === 'string' && msg.content === '__root__';
+  }
+
+  /**
+   * 获取从根到指定节点的消息路径
+   *
+   * Phase 73 Part D：处理 CompactionNode 和 BranchSummaryNode
+   * - CompactionNode：从 leaf 往 root 找最新的，用其 summary 作为第一条 system 消息，
+   *   并跳过 firstKeptEntryId 之前的 MessageNode（被压缩部分）
+   * - BranchSummaryNode：转换为 user 消息（"[分支探索记录] ..."）
+   * - MessageNode：原样保留（跳过虚拟根节点）
+   */
   getPath(nodeId: string): LLMMessage[] {
-    const messages: LLMMessage[] = [];
+    // 从 root → leaf 收集节点（unshift 保证顺序）
+    const pathNodes: BranchNode[] = [];
     let currentId: string | null = nodeId;
     while (currentId) {
       const node = this.nodes.get(currentId);
       if (!node) break;
-      const msg = node.message;
-      // 跳过虚拟根节点
-      if (msg.role !== 'system' || (typeof msg.content === 'string' && msg.content !== '__root__')) {
-        messages.unshift(msg);
-      }
+      pathNodes.unshift(node);
       currentId = node.parentId;
     }
+
+    // Phase 73 Part D：从 leaf 往 root 找最新的 CompactionNode
+    let compactionIdx = -1;
+    for (let i = pathNodes.length - 1; i >= 0; i--) {
+      if (pathNodes[i].type === 'compaction') {
+        compactionIdx = i;
+        break;
+      }
+    }
+
+    const messages: LLMMessage[] = [];
+
+    if (compactionIdx >= 0) {
+      // 有 CompactionNode：用其 summary 作为第一条 system 消息
+      const compaction = pathNodes[compactionIdx] as CompactionNode;
+      messages.push({ role: 'system', content: compaction.summary });
+
+      // firstKeptEntryId 及之后、CompactionNode 之前的 MessageNode 保留
+      let foundFirstKept = false;
+      for (let i = 0; i < compactionIdx; i++) {
+        const node = pathNodes[i];
+        if (node.id === compaction.firstKeptEntryId) {
+          foundFirstKept = true;
+        }
+        if (foundFirstKept && node.type === 'message' && !this.isRootMessage(node.message)) {
+          messages.push(node.message);
+        }
+      }
+
+      // CompactionNode 之后的节点（MessageNode / BranchSummaryNode）保留
+      for (let i = compactionIdx + 1; i < pathNodes.length; i++) {
+        const node = pathNodes[i];
+        if (node.type === 'message' && !this.isRootMessage(node.message)) {
+          messages.push(node.message);
+        } else if (node.type === 'branch_summary') {
+          messages.push({ role: 'user', content: `[分支探索记录] ${node.summary}` });
+        }
+      }
+    } else {
+      // 无 CompactionNode：所有 MessageNode + BranchSummaryNode 按原顺序保留
+      for (const node of pathNodes) {
+        if (node.type === 'message' && !this.isRootMessage(node.message)) {
+          messages.push(node.message);
+        } else if (node.type === 'branch_summary') {
+          messages.push({ role: 'user', content: `[分支探索记录] ${node.summary}` });
+        }
+      }
+    }
+
     return messages;
   }
 
@@ -294,8 +513,8 @@ export class BranchManager {
     while (currentId) {
       const node = this.nodes.get(currentId);
       if (!node) break;
-      const msg = node.message;
-      if (msg.role !== 'system' || (typeof msg.content === 'string' && msg.content !== '__root__')) {
+      // Phase 73 Part D：仅统计 MessageNode（跳过虚拟根节点）
+      if (node.type === 'message' && !this.isRootMessage(node.message)) {
         count++;
       }
       currentId = node.parentId;
@@ -338,9 +557,10 @@ export class BranchManager {
     }
 
     // 按时间排序，淘汰最早的非保护节点（保留最近 maxNodes/2 个）
+    // Phase 73 Part D：仅淘汰 MessageNode（非虚拟根），保留 CompactionNode/BranchSummaryNode
     const candidates: Array<{ id: string; timestamp: number }> = [];
     for (const [id, node] of this.nodes) {
-      if (!protectedIds.has(id) && node.message.role !== 'system') {
+      if (!protectedIds.has(id) && node.type === 'message' && !this.isRootMessage(node.message)) {
         candidates.push({ id, timestamp: node.timestamp });
       }
     }

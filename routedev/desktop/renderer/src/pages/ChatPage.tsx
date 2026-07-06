@@ -15,7 +15,7 @@ import {
 import type { ChatMessage, PendingConfirm } from '../hooks/useRouteDev.js';
 import type { AppConfig, AutonomyMode } from '../../../../src/config/schema.js';
 import type { TokenProfileSnapshot } from '../../../../src/agent/token-profiler.js';
-import type { ConfigSaveResult, SkillInfo, MCPToolInfo } from '../../../shared/ipc-types.js';
+import type { ConfigSaveResult, SkillInfo, MCPToolInfo, FollowUpItem } from '../../../shared/ipc-types.js';
 import { MarkdownRenderer } from '../components/MarkdownRenderer.js';
 import { ActionSummaryRow, SubAgentRow, ToolCallCard, getToolLabel, type OutputStyle, type ToolCallItem } from '../components/ToolCallCard.js';
 import { Button } from '../components/ui/button.js';
@@ -816,6 +816,10 @@ export function ChatPage({
   const [queueExpanded, setQueueExpanded] = useState(false);
   const [editingQueueIdx, setEditingQueueIdx] = useState<number | null>(null);
   const [editingQueueValue, setEditingQueueValue] = useState('');
+  // Phase 73 Part C：follow-up 队列展示（Agent 完成当前工作后排队的后续任务）
+  // 与排队队列差异：follow-up 在同一 run() 内层 ReAct 退出后注入，开启新一轮 ReAct
+  const [followUpQueue, setFollowUpQueue] = useState<FollowUpItem[]>([]);
+  const [followUpExpanded, setFollowUpExpanded] = useState(false);
   // 自主度下拉菜单
   const [autonomyMenuOpen, setAutonomyMenuOpen] = useState(false);
   // 输入区高度（可拖动上边框调整）
@@ -925,6 +929,47 @@ export function ChatPage({
     }
     prevProcessingRef.current = isProcessing;
   }, [isProcessing, queue, sendMessage]);
+
+  // Phase 73 Part C：轮询 follow-up 队列状态（仅 isProcessing 时拉取，避免空闲时无谓轮询）
+  // 队列内容可能由用户主动入队或程序化注入（如 Hook），UI 需要实时反映
+  useEffect(() => {
+    if (!isProcessing) {
+      // 引擎停止时清空 UI 列表（队列已在主进程侧保留，UI 仅作展示镜像）
+      setFollowUpQueue([]);
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const items = await window.routedev.agent.getFollowUpQueue();
+        if (!cancelled) setFollowUpQueue(items);
+      } catch {
+        // fail-open：拉取失败不抛异常，下次轮询继续
+      }
+    };
+    poll();
+    const timer = setInterval(poll, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isProcessing]);
+
+  // Phase 73 Part C：把当前输入加入 follow-up 队列
+  const handleFollowUp = () => {
+    if (!input.trim() || !isProcessing) return;
+    window.routedev.agent.followUp(input.trim());
+    setInput('');
+    setFollowUpExpanded(true);
+  };
+
+  // Phase 73 Part C：删除指定索引的 follow-up 消息
+  const removeFollowUpItem = async (idx: number) => {
+    const ok = await window.routedev.agent.removeFollowUp(idx);
+    if (ok) {
+      setFollowUpQueue((prev) => prev.filter((_, i) => i !== idx));
+    }
+  };
 
   // 从 tokenSnapshots 获取最新快照
   const latestSnapshot = tokenSnapshots[tokenSnapshots.length - 1];
@@ -1403,6 +1448,37 @@ export function ChatPage({
         </div>
       )}
 
+      {/* Phase 73 Part C：follow-up 队列展示（Agent 完成当前工作后排队的后续任务） */}
+      {followUpQueue.length > 0 && (
+        <div className="bg-rd-surface/50">
+          <button
+            onClick={() => setFollowUpExpanded(!followUpExpanded)}
+            className="flex w-full items-center gap-2 px-4 py-1.5 text-xs text-rd-textMuted transition hover:bg-rd-surfaceHover"
+          >
+            <History size={12} className="text-rd-primary" />
+            <span>已排队 {followUpQueue.length} 条后续消息</span>
+            <ChevronDown size={12} className={['transition-transform', followUpExpanded ? 'rotate-180' : ''].join(' ')} />
+          </button>
+          {followUpExpanded && (
+            <div className="max-h-40 overflow-y-auto px-4 pb-2">
+              {followUpQueue.map((item, idx) => (
+                <div key={idx} className="mb-1 flex items-start gap-2 rounded border border-rd-border bg-rd-background px-2 py-1.5">
+                  <span className="mt-0.5 text-xs font-medium text-rd-textSubtle">#{idx + 1}</span>
+                  <span className="min-w-0 flex-1 truncate text-xs text-rd-text" title={item.content}>{item.content}</span>
+                  <button
+                    onClick={() => removeFollowUpItem(idx)}
+                    title="移除"
+                    className="flex h-4 w-4 items-center justify-center text-rd-textSubtle hover:text-rd-danger"
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="bg-rd-surfaceHover" style={{ height: inputHeight }}>
         <div
           onMouseDown={handleResizeStart}
@@ -1600,16 +1676,29 @@ export function ChatPage({
                 <span className="truncate text-xs text-rd-textSubtle">Enter 发送 · Shift+Enter 换行 · 输入 / 查看命令</span>
               </div>
               {isProcessing ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={stopGeneration}
-                  title="停止生成"
-                  className="h-11 gap-2 rounded-rdLg px-5"
-                >
-                  <Square size={16} fill="currentColor" />
-                  停止
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleFollowUp}
+                    disabled={!input.trim()}
+                    title="把当前输入作为后续任务排队（Agent 完成当前工作后自动接续）"
+                    className="h-11 gap-2 rounded-rdLg px-4"
+                  >
+                    <History size={16} />
+                    加入后续
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={stopGeneration}
+                    title="停止生成"
+                    className="h-11 gap-2 rounded-rdLg px-5"
+                  >
+                    <Square size={16} fill="currentColor" />
+                    停止
+                  </Button>
+                </div>
               ) : (
                 <Button
                   type="submit"

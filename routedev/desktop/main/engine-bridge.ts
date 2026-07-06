@@ -912,6 +912,80 @@ export class RouteDevEngine {
     console.log(`[Engine] 对话历史已同步: ${this.conversationHistory.length} 条`);
   }
 
+  // ============================================================
+  // Phase 73 Part C：Steering / Follow-up 双消息队列桥接方法
+  // 直接调用 agentLoop 的 API（fail-open：deps 未就绪时记录但不抛异常）
+  // ============================================================
+
+  /**
+   * 排队 follow-up 消息
+   *
+   * 调用时机：用户在 Agent 工作期间排队后续任务。Agent 完成当前工作后，
+   * run() 内层 ReAct 循环自然退出时取出 follow-up 注入 messages，开启新一轮 ReAct。
+   *
+   * @param content 后续任务内容（不能为空字符串）
+   * @returns 是否成功入队（deps 未就绪或内容为空时返回 false）
+   */
+  followUp(content: string): boolean {
+    if (!this.deps?.agentLoop) {
+      console.warn('[Engine] agentLoop 未就绪，followUp 调用被忽略');
+      return false;
+    }
+    if (typeof content !== 'string' || content.trim().length === 0) {
+      console.warn('[Engine] followUp 内容为空，调用被忽略');
+      return false;
+    }
+    this.deps.agentLoop.followUp(content);
+    return true;
+  }
+
+  /**
+   * 清空所有队列（steering + follow-up）
+   *
+   * 调用时机：用户主动取消 / 会话重置 / 切换项目。
+   * 避免残留消息在下次 run() 时被错误注入。
+   */
+  clearAllQueues(): void {
+    if (!this.deps?.agentLoop) {
+      console.warn('[Engine] agentLoop 未就绪，clearAllQueues 调用被忽略');
+      return;
+    }
+    this.deps.agentLoop.clearAllQueues();
+  }
+
+  /**
+   * 查询队列状态（UI 展示用）
+   *
+   * @returns steering 与 follow-up 队列当前长度（deps 未就绪时返回 0/0）
+   */
+  getQueueStatus(): { steering: number; followUp: number } {
+    if (!this.deps?.agentLoop) {
+      return { steering: 0, followUp: 0 };
+    }
+    return this.deps.agentLoop.getQueueStatus();
+  }
+
+  /**
+   * 查询 follow-up 队列内容（UI 展示列表用，只读快照）
+   *
+   * @returns follow-up 队列内容的浅拷贝（deps 未就绪时返回空数组）
+   */
+  getFollowUpQueue(): { role: 'follow_up'; content: string; enqueuedAt: number }[] {
+    if (!this.deps?.agentLoop) return [];
+    return this.deps.agentLoop.getFollowUpQueue();
+  }
+
+  /**
+   * 删除指定索引的 follow-up 消息（UI 单条删除用）
+   *
+   * @param index 队列索引（0 表示最早入队的）
+   * @returns 是否删除成功（deps 未就绪或索引越界时返回 false）
+   */
+  removeFollowUp(index: number): boolean {
+    if (!this.deps?.agentLoop) return false;
+    return this.deps.agentLoop.removeFollowUp(index);
+  }
+
   getMCPStatus(): MCPStatus {
     if (!this.deps) return { connected: false, servers: [] };
     const servers = this.deps.mcpManager.listConnections().map((s) => ({

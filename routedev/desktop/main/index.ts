@@ -736,3 +736,44 @@ ipcMain.handle('checkpoint:rollback', async (_event, checkpointId: string): Prom
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.rollbackCheckpoint(checkpointId);
 });
+
+// ============================================================
+// Phase 73 Part C：Steering / Follow-up 双消息队列 IPC handler
+// 数据流：renderer → IPC → engine-bridge → agentLoop
+// ============================================================
+
+// 排队 follow-up 消息（fire-and-forget，无返回值）
+ipcMain.on('agent:followUp', (_event, content: string) => {
+  if (!engine) {
+    console.warn('[agent:followUp] 引擎未初始化，调用被忽略');
+    return;
+  }
+  engine.followUp(content);
+});
+
+// 清空所有队列（steering + follow-up）
+ipcMain.on('agent:clearAllQueues', () => {
+  if (!engine) {
+    console.warn('[agent:clearAllQueues] 引擎未初始化，调用被忽略');
+    return;
+  }
+  engine.clearAllQueues();
+});
+
+// 查询队列状态（UI 展示用）
+ipcMain.handle('agent:queueStatus', async (): Promise<import('../shared/ipc-types.js').AgentQueueStatus> => {
+  if (!engine) return { steering: 0, followUp: 0 };
+  return engine.getQueueStatus();
+});
+
+// 查询 follow-up 队列内容（UI 列表展示 + 单条删除用）
+ipcMain.handle('agent:getFollowUpQueue', async (): Promise<import('../shared/ipc-types.js').FollowUpItem[]> => {
+  if (!engine) return [];
+  return engine.getFollowUpQueue();
+});
+
+// 删除指定索引的 follow-up 消息（UI 单条删除）
+ipcMain.handle('agent:removeFollowUp', async (_event, index: number): Promise<boolean> => {
+  if (!engine) return false;
+  return engine.removeFollowUp(index);
+});

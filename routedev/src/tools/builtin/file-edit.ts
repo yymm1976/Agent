@@ -163,6 +163,8 @@ export class FileEditTool implements ITool {
     },
     requiresApproval: true,
     category: 'file',
+    // Phase 73 Part B：文件编辑有状态竞争（乐观锁/读改写依赖串行化），强制串行
+    executionMode: 'sequential' as const,
   };
 
   validateArgs(args: Record<string, unknown>): { valid: boolean; errors: string[] } {

@@ -100,6 +100,14 @@ export class ToolRegistryAdapter implements ToolExecutorAdapter {
     return this.registry.has(toolName);
   }
 
+  /**
+   * Phase 73 Part B：查询工具的执行模式
+   * 从 registry 查工具定义，返回 executionMode；未声明时返回 undefined（调用方默认 parallel）
+   */
+  getToolExecutionMode(toolName: string): 'sequential' | 'parallel' | undefined {
+    return this.registry.get(toolName)?.definition.executionMode;
+  }
+
   updateContext(context: Partial<ToolExecutionContext>): void {
     this.context = { ...this.context, ...context };
   }

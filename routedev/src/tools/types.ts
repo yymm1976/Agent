@@ -28,6 +28,15 @@ export interface ToolDefinition {
   requiresApproval: boolean;
   /** 工具分类 */
   category: 'file' | 'shell' | 'git' | 'web' | 'search' | 'code' | 'system' | 'mcp';
+  /**
+   * Phase 73 Part B：工具执行模式
+   *   - 'sequential'：串行执行（有状态竞争的工具，如 ask_user/file_edit/shell_exec）
+   *   - 'parallel'：并行执行（默认，无状态竞争的只读工具）
+   *
+   * ReActAgentLoop 在并行分支前会扫描 batch 中所有工具的 executionMode，
+   * 若任一为 'sequential'，则整个 batch 回退为串行执行，避免状态竞争。
+   */
+  executionMode?: 'sequential' | 'parallel';
 }
 
 /**
@@ -196,6 +205,8 @@ export interface ToolDef {
   requiresApproval: boolean;
   /** 工具分类 */
   category: ToolDefinition['category'];
+  /** Phase 73 Part B：工具执行模式（未设置时默认 'parallel'） */
+  executionMode?: ToolDefinition['executionMode'];
   /** 参数校验：返回辨识联合，相比 { valid; errors } 支持 errorCode 与 behavior */
   validate?: (args: Record<string, unknown>) => ValidationResult;
   /** 兼容旧签名：返回 { valid; errors }。与 validate 二选一，validate 优先 */
@@ -237,6 +248,7 @@ export function buildTool(def: ToolDef): ITool {
       parameters: def.parameters,
       requiresApproval: def.requiresApproval,
       category: def.category,
+      ...(def.executionMode ? { executionMode: def.executionMode } : {}),
     },
     execute: def.execute,
     validateArgs: adaptValidate(def),

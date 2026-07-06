@@ -8,15 +8,23 @@
 //   - validate：检测缺失节点引用、孤立分支等完整性问题
 //   - extractFromManager / applyToManager：与 BranchManager 互转
 //
-// JSONL 格式：
+// JSONL 格式（Phase 73 Part D 更新）：
 //   第 1 行：header  { type:'header', version, activeBranchId, activeBranchKey, lastModifiedAt }
-//   后续行：{ type:'node', ...BranchNode } 或 { type:'branch', ...BranchInfo }
+//   后续行：节点直接序列化（自带 type 字段）：
+//          { type:'message', id, parentId, message, children, timestamp }
+//          { type:'compaction', id, parentId, summary, firstKeptEntryId, tokensBefore, children, timestamp }
+//          { type:'branch_summary', id, parentId, fromId, summary, children, timestamp }
+//          或 { type:'branch', ...BranchInfo }
 //   末行：  { type:'history', nodeIds: string[] }
+//
+// 旧格式兼容（Phase 73 Part D 迁移）：
+//   - 旧 JSONL：节点行使用 { type:'node', ...fields } → 自动迁移为 { type:'message', ...fields }
+//   - 旧单 JSON：整文件为一个 { version, nodes, branches, ... } 对象 → 自动迁移为 JSONL
 
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
-import type { BranchNode, BranchInfo } from './branch.js';
+import type { BranchNode, BranchInfo, MessageNode, CompactionNode, BranchSummaryNode } from './branch.js';
 import { logger } from '../utils/logger.js';
 
 /** 持久化的对话树 */
@@ -30,10 +38,12 @@ export interface PersistedConversationTree {
   lastModifiedAt: number;
 }
 
-/** JSONL 行类型 */
+/** JSONL 行类型（Phase 73 Part D：节点行使用节点自身的 type 字段） */
 type JsonlLine =
   | { type: 'header'; version: 1; activeBranchId: string | null; activeBranchKey: string | null; lastModifiedAt: number }
-  | { type: 'node' } & BranchNode
+  | MessageNode        // type: 'message'
+  | CompactionNode     // type: 'compaction'
+  | BranchSummaryNode  // type: 'branch_summary'
   | { type: 'branch' } & BranchInfo
   | { type: 'history'; nodeIds: string[] };
 
@@ -178,9 +188,9 @@ export class BranchPersistence {
       lastModifiedAt: tree.lastModifiedAt,
     };
     lines.push(JSON.stringify(header));
+    // Phase 73 Part D：节点自带 type 字段（message/compaction/branch_summary），直接序列化
     for (const node of tree.nodes) {
-      const line: JsonlLine = { type: 'node', ...node };
-      lines.push(JSON.stringify(line));
+      lines.push(JSON.stringify(node));
     }
     for (const branch of tree.branches) {
       const line: JsonlLine = { type: 'branch', ...branch };
@@ -195,29 +205,50 @@ export class BranchPersistence {
     const lines = raw.split(/\r?\n/).filter(l => l.trim().length > 0);
     if (lines.length === 0) throw new Error('empty-file');
 
+    // Phase 73 Part D：检测旧单 JSON 格式（整文件为一个对象，含 nodes 字段）
+    // 旧格式：{ version:1, nodes:[...], branches:[...], ... }
+    // 新格式：第 1 行是 { type:'header', ... }，后续每行一个条目
+    const firstObj = JSON.parse(lines[0]) as Record<string, unknown>;
+    if (firstObj && Array.isArray(firstObj['nodes']) && firstObj['type'] !== 'header') {
+      // 旧单 JSON 格式 → 迁移为 PersistedConversationTree
+      return this.migrateOldSingleJson(firstObj as unknown as PersistedConversationTree);
+    }
+
     let header: JsonlLine | null = null;
     const nodes: BranchNode[] = [];
     const branches: BranchInfo[] = [];
     let historyNodeIds: string[] = [];
 
     for (const line of lines) {
-      const obj = JSON.parse(line) as JsonlLine;
-      switch (obj.type) {
+      const obj = JSON.parse(line) as Record<string, unknown>;
+      const lineType = obj['type'] as string | undefined;
+      switch (lineType) {
         case 'header':
-          header = obj;
+          header = obj as Extract<JsonlLine, { type: 'header' }>;
           break;
+        // Phase 73 Part D：新格式节点行（自带 type 字段）
+        case 'message':
+        case 'compaction':
+        case 'branch_summary':
+          nodes.push(obj as unknown as BranchNode);
+          break;
+        // Phase 73 Part D：旧 JSONL 格式迁移——{ type:'node', ...fields } → { type:'message', ...fields }
         case 'node': {
+          // 旧格式节点无 type 字段标识，统一迁移为 MessageNode
           const { type: _t, ...rest } = obj;
-          nodes.push(rest as BranchNode);
+          void _t;
+          const migrated: MessageNode = { type: 'message', ...(rest as Omit<MessageNode, 'type'>) };
+          nodes.push(migrated);
           break;
         }
         case 'branch': {
           const { type: _t, ...rest } = obj;
-          branches.push(rest as BranchInfo);
+          void _t;
+          branches.push(rest as unknown as BranchInfo);
           break;
         }
         case 'history':
-          historyNodeIds = obj.nodeIds;
+          historyNodeIds = (obj as { nodeIds: string[] }).nodeIds;
           break;
         default:
           // 未知行类型忽略，向前兼容
@@ -237,6 +268,34 @@ export class BranchPersistence {
       branches,
       historyNodeIds,
       lastModifiedAt: header.lastModifiedAt,
+    };
+  }
+
+  /**
+   * Phase 73 Part D：迁移旧单 JSON 格式
+   *
+   * 旧格式为整文件一个 JSON 对象 { version, nodes, branches, ... }，
+   * 其中 nodes 数组的元素没有 type 字段。迁移时为每个节点添加 type:'message'。
+   */
+  private migrateOldSingleJson(old: PersistedConversationTree): PersistedConversationTree {
+    const migratedNodes: BranchNode[] = (old.nodes || []).map((n) => {
+      // 旧格式节点无 type 字段或 type 为 'node'，统一迁移为 MessageNode
+      const nodeType = (n as unknown as { type?: string }).type;
+      if (!nodeType || nodeType === 'node') {
+        const rest = { ...(n as unknown as Record<string, unknown>) };
+        delete rest['type'];
+        return { type: 'message', ...(rest as Omit<MessageNode, 'type'>) };
+      }
+      return n as BranchNode;
+    });
+    return {
+      version: 1,
+      activeBranchId: old.activeBranchId ?? null,
+      activeBranchKey: old.activeBranchKey ?? null,
+      nodes: migratedNodes,
+      branches: old.branches ?? [],
+      historyNodeIds: old.historyNodeIds ?? [],
+      lastModifiedAt: old.lastModifiedAt ?? Date.now(),
     };
   }
 

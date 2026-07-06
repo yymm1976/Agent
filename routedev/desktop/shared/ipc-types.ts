@@ -374,6 +374,26 @@ export interface PlanEditResponsePayload {
   steps: { id: number; description: string; acceptanceCriteria?: string; dependencies: number[]; suggestedRole?: 'researcher' | 'executor' | 'reviewer' }[] | null;
 }
 
+// ============================================================
+// Phase 73 Part C：Steering / Follow-up 双消息队列 IPC 类型
+// 数据流：renderer → IPC agent:followUp / agent:clearAllQueues / agent:queueStatus → engine-bridge → agentLoop
+// ============================================================
+
+/** 队列状态（IPC 传输用） */
+export interface AgentQueueStatus {
+  /** steering 队列当前长度（用户在 Agent 工作期间排队的中断指令数） */
+  steering: number;
+  /** follow-up 队列当前长度（Agent 完成当前工作后排队执行的后续任务数） */
+  followUp: number;
+}
+
+/** follow-up 队列条目（IPC 传输用，与 FollowUpMessage 同构） */
+export interface FollowUpItem {
+  role: 'follow_up';
+  content: string;
+  enqueuedAt: number;
+}
+
 export type MainToRendererEvent =
   | { channel: 'chat:stream'; payload: ChatStreamPayload }
   | { channel: 'chat:tool-confirm-request'; payload: { toolName: string; params: Record<string, unknown> } }
@@ -503,6 +523,24 @@ export interface RouteDevAPI {
     getRevisions: (goalId: string) => Promise<{ ok: boolean; revisions?: unknown[] }>;
     /** 触发 plan 遗漏点检查（LLM 调用，结果异步返回） */
     checkOmissions: (goalId: string) => Promise<{ ok: boolean; result?: unknown; error?: string }>;
+  };
+  // Phase 73 Part C：Steering / Follow-up 双消息队列 API
+  //   - followUp：排队后续任务（Agent 完成当前工作后执行）
+  //   - clearAllQueues：清空 steering + follow-up 队列（取消所有待执行任务）
+  //   - getQueueStatus：查询队列状态（UI 展示用）
+  //   - getFollowUpQueue：查询 follow-up 队列内容（UI 列表展示用）
+  //   - removeFollowUp：删除指定索引的 follow-up 消息（UI 单条删除用）
+  agent: {
+    /** 排队 follow-up 消息（content 不能为空字符串） */
+    followUp: (content: string) => void;
+    /** 清空所有队列（steering + follow-up） */
+    clearAllQueues: () => void;
+    /** 查询队列状态 */
+    getQueueStatus: () => Promise<AgentQueueStatus>;
+    /** 查询 follow-up 队列内容（只读快照） */
+    getFollowUpQueue: () => Promise<FollowUpItem[]>;
+    /** 删除指定索引的 follow-up 消息（0 表示最早入队的） */
+    removeFollowUp: (index: number) => Promise<boolean>;
   };
   on: (channel: MainToRendererEvent['channel'], callback: (payload: unknown) => void) => void;
   off: (channel: MainToRendererEvent['channel'], callback: (payload: unknown) => void) => void;

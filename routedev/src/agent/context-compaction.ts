@@ -77,6 +77,14 @@ interface CompactionConfig {
   autoCompactGuardian?: AutoCompactGuardian;
   compactPromptEngine?: CompactPromptEngine;
   sessionMemoryStore?: SessionMemoryStore;
+  /**
+   * Phase 73 Part D：压缩完成回调
+   *
+   * L5 摘要生成成功后调用，调用方据此向 BranchManager 追加 CompactionNode。
+   * 注意：firstKeptEntryId 需要由调用方根据压缩后的消息映射到 BranchNode ID，
+   * compact() 内部仅能提供 summary 和 tokensBefore（LLMMessage 无节点 ID）。
+   */
+  onCompaction?: (info: { summary: string; tokensBefore: number }) => void;
 }
 
 /**
@@ -201,6 +209,9 @@ export class ContextCompactor {
    * Claude Code 集成：压缩时记录边界 UUID 标记
    */
   async compact(
+    // Phase 73 Part A/C：入参类型保持 LLMMessage[]
+    // 调用方若持有 AgentMessage[]（含 steering/follow_up 等自定义消息），
+    // 需在传入前用 convertToLlm 过滤为 LLMMessage[]，压缩管线内部仅按标准消息语义处理
     messages: LLMMessage[],
   ): Promise<{ messages: LLMMessage[]; result: CompactionResult }> {
     const beforeTokens = this.totalTokens(messages);
@@ -360,6 +371,18 @@ export class ContextCompactor {
       // Phase 70 修复：压缩成功后记录到 AutoCompactGuardian
       if (this.config.autoCompactGuardian) {
         this.config.autoCompactGuardian.recordSuccess();
+      }
+
+      // Phase 73 Part D：L5 摘要成功时触发 onCompaction 回调
+      // 调用方据此向 BranchManager 追加 CompactionNode（firstKeptEntryId 由调用方解析）
+      if (summary && this.config.onCompaction) {
+        try {
+          this.config.onCompaction({ summary, tokensBefore: beforeTokens });
+        } catch (cbErr) {
+          logger.warn('ContextCompactor: Phase 73 Part D onCompaction callback failed', {
+            error: cbErr instanceof Error ? cbErr.message : String(cbErr),
+          });
+        }
       }
 
       return {

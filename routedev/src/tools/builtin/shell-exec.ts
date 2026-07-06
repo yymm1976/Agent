@@ -62,6 +62,8 @@ export class ShellExecTool implements ITool {
     },
     requiresApproval: true,
     category: 'shell',
+    // Phase 73 Part B：shell 命令常涉及文件系统/进程状态竞争，强制串行
+    executionMode: 'sequential' as const,
   };
 
   validateArgs(args: Record<string, unknown>): { valid: boolean; errors: string[] } {

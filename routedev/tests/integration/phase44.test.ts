@@ -90,7 +90,7 @@ describe('Phase 44 Integration - BranchPersistence', () => {
       const persistence = new mod.BranchPersistence(tmpDir);
 
       // 构造一棵最小可持久化的对话树
-      // BranchNode: { id, parentId, message: {role, content}, children, timestamp }
+      // Phase 73 Part D：BranchNode 为联合类型，MessageNode 需包含 type:'message'
       // BranchInfo: { id, name, tipNodeId, messageCount, isActive, createdAt, parentId, lastActiveAt }
       const tree = {
         version: 1 as const,
@@ -98,6 +98,7 @@ describe('Phase 44 Integration - BranchPersistence', () => {
         activeBranchKey: 'branch-main',
         nodes: [
           {
+            type: 'message' as const,
             id: 'node-1',
             parentId: null,
             message: { role: 'user', content: 'hello' },
@@ -105,6 +106,7 @@ describe('Phase 44 Integration - BranchPersistence', () => {
             timestamp: Date.now(),
           },
           {
+            type: 'message' as const,
             id: 'node-2',
             parentId: 'node-1',
             message: { role: 'assistant', content: 'hi' },

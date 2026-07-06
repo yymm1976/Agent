@@ -165,7 +165,11 @@ describe('BranchManager append 状态一致性', () => {
 
       // 再切回 fork 分支
       bm.switchBranch(forkId);
-      expect(bm.getActiveBranchId()).toBe(forkId); // tipNodeId 此时还是 forkId
+      // Phase 73 Part D：switchBranch 现在会为被放弃分支追加 BranchSummaryNode，
+      // activeBranchId 不再等于 forkId（而是新追加的 BranchSummaryNode ID）
+      // 核心验证改为：forkBranch 仍存在，且后续 append 应正确追加到 fork 分支
+      const forkBranchBeforeAppend = bm.listBranches().find(b => b.id === forkId);
+      expect(forkBranchBeforeAppend).toBeDefined();
 
       // 在 fork 分支上 append
       const newId = bm.append({ role: 'user', content: 'on fork' });

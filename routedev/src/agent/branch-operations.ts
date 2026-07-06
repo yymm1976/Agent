@@ -8,7 +8,7 @@
 //   - undo/redo 采用"操作前快照"策略：每次操作前完整快照 manager 的内部状态，
 //     undo 时整体恢复。简单可靠，避免反向操作逻辑出错
 
-import type { BranchManager, BranchNode, BranchInfo } from './branch.js';
+import type { BranchManager, BranchNode, MessageNode, BranchInfo } from './branch.js';
 import type { LLMMessage } from '../router/types.js';
 import crypto from 'node:crypto';
 import { logger } from '../utils/logger.js';
@@ -198,7 +198,8 @@ export class BranchOperations {
 
     // 1. 在目标节点之后插入新节点（作为目标的子节点）
     const newNodeId = this.generateId();
-    const newNode: BranchNode = {
+    const newNode: MessageNode = {
+      type: 'message',
       id: newNodeId,
       parentId: targetId,
       message: { role: message.role as LLMMessage['role'], content: message.content },
@@ -216,8 +217,11 @@ export class BranchOperations {
       const laterId = m.historyNodeIds[i];
       const laterNode = m.nodes.get(laterId);
       if (!laterNode) continue;
+      // Phase 73 Part D：仅复制 MessageNode
+      if (laterNode.type !== 'message') continue;
       const copyId = this.generateId();
-      const copyNode: BranchNode = {
+      const copyNode: MessageNode = {
+        type: 'message',
         id: copyId,
         parentId: lastInsertedId,
         message: { ...laterNode.message },
@@ -316,6 +320,8 @@ export class BranchOperations {
       const laterId = m.historyNodeIds[i];
       const laterNode = m.nodes.get(laterId);
       if (!laterNode) continue;
+      // Phase 73 Part D：仅复制 MessageNode
+      if (laterNode.type !== 'message') continue;
       lastId = this.appendAt(lastId, {
         role: laterNode.message.role,
         content: typeof laterNode.message.content === 'string'
@@ -359,7 +365,8 @@ export class BranchOperations {
     const parent = m.nodes.get(parentId);
     if (!parent) return null;
     const id = this.generateId();
-    const node: BranchNode = {
+    const node: MessageNode = {
+      type: 'message',
       id,
       parentId,
       message: { role: message.role as LLMMessage['role'], content: message.content },
@@ -376,7 +383,8 @@ export class BranchOperations {
     const m = this.internals();
     const parent = m.nodes.get(parentId);
     const id = this.generateId();
-    const node: BranchNode = {
+    const node: MessageNode = {
+      type: 'message',
       id,
       parentId,
       message: { role: message.role as LLMMessage['role'], content: message.content },
@@ -395,9 +403,12 @@ export class BranchOperations {
     while (cur) {
       const node = m.nodes.get(cur);
       if (!node) break;
-      const msg = node.message;
-      if (msg.role !== 'system' || (typeof msg.content === 'string' && msg.content !== '__root__')) {
-        count++;
+      // Phase 73 Part D：仅统计 MessageNode（跳过虚拟根节点）
+      if (node.type === 'message') {
+        const msg = node.message;
+        if (msg.role !== 'system' || (typeof msg.content === 'string' && msg.content !== '__root__')) {
+          count++;
+        }
       }
       cur = node.parentId;
     }

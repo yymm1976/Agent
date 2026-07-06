@@ -2,7 +2,8 @@
 // ReAct Agent Loop 的配置和事件类型
 // agent/types.ts 已定义 AgentEvent 等通用类型，这里补充循环专用配置和事件
 
-import type { LLMToolDefinition, TokenUsageInfo } from '../router/types.js';
+import type { LLMMessage, LLMToolDefinition, TokenUsageInfo } from '../router/types.js';
+import type { AgentMessage } from './message-types.js';
 
 /** ReAct 循环配置 */
 export interface ReActConfig {
@@ -21,6 +22,12 @@ export interface ReActConfig {
    * 默认包含只读安全工具：file_read、list_directory、code_search 等
    */
   autoApprovePatterns: string[];
+  /** Phase 73 Part A：LLM 调用边界消息转换钩子（可选）
+   *  循环内部可承载自定义 AgentMessage（如 plan 状态、memory 片段），
+   *  调用 LLM 前通过此钩子过滤为 LLM 能理解的 LLMMessage。
+   *  未配置时回退到 defaultConvertToLlm（仅保留 user/assistant/tool/system）。
+   */
+  convertToLlm?: (messages: AgentMessage[]) => LLMMessage[];
 }
 
 /** 默认循环配置 */
@@ -104,4 +111,13 @@ export interface ToolExecutorAdapter {
 
   /** 检查指定工具是否存在 */
   hasTool(toolName: string): boolean;
+
+  /**
+   * Phase 73 Part B：查询工具的执行模式
+   * @returns 'sequential' 表示该工具需串行执行；'parallel' 或未实现表示可并行
+   *
+   * 设为可选方法以保持向后兼容：未实现的适配器默认返回 'parallel'，
+   * loop.ts 调用方需对 undefined 做容错处理。
+   */
+  getToolExecutionMode?(toolName: string): 'sequential' | 'parallel' | undefined;
 }
