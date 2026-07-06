@@ -831,6 +831,18 @@ export class RouteDevEngine {
         kanObstacleChecker: this.deps.kanObstacleChecker,
         quantitativeGate: this.deps.quantitativeGate,
         classifyOperation: this.deps.classifyOperation,
+        // Phase 55/58：组合式路由 + DAG 引擎 + 双循环编排 + 路径路由（Wiring-Bug 修复）
+        // goal-runner.ts 内部消费点：
+        //   - compositionalRouter：executePlanWithCompose 跨领域分解（L1869 decompose / L1879 planDAG）
+        //   - dagEngine：executePlanWithDag 执行 DAG 工作流（与 compositionalRouter 互斥守卫）
+        //   - dualLoopOrchestratorRef：ref 延迟读取异步创建的 orchestrator（L1173/L1176）
+        //   - pathRouter：路径路由，缺省时 goal-runner 内部 new PathRouter() 兜底（L1083）
+        // 注意：GoalRunnerDeps.dagEngine 期望 DagEngine 实例，AppDependencies 暴露的是 dagEngineRef，
+        //       此处解引用 .current（可能为 null，未启用 phase53 时），用 ?? undefined 归一化为可选类型
+        compositionalRouter: this.deps.compositionalRouter,
+        dualLoopOrchestratorRef: this.deps.dualLoopOrchestratorRef,
+        dagEngine: this.deps.dagEngineRef.current ?? undefined,
+        pathRouter: this.deps.pathRouter,
       });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);

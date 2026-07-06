@@ -217,7 +217,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     classifier, modelRouter, clientManager, tracker, agentLoop,
     checkpointManager, contextManager, config, systemPromptRef,
     conversationHistoryRef, pendingConfirmRef, abortControllerRef,
-    currentPlanRef, awaitingGoalConfirmRef,
+    currentPlanRef,
     addSystemMessage, requestPlanEdit, setIsProcessing, setTodayTokensUsed, profiler,
     completionGate,
     goalAuditor, goalPersistence,

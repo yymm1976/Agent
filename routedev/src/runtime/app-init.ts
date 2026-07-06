@@ -1679,7 +1679,7 @@ export function createAppDependencies(
 
   // Phase 62：动态工作流模式与隔离治理模块实例化——已删除（ExecutionOrchestrator 死代码清理）
 
-  // Phase 59：RequirementsGatherer + ComplexityAnalyzer 实例化已删除（僵尸字段，全 src/ + desktop/ 无消费方）
+  // Phase 59：RequirementsGatherer + ComplexityAnalyzer 源文件已清理（True-Dead，全 src/ + desktop/ 无消费方）
 
   // 5. TaskOrchestrator——统一工作流编排器
   //    依赖 classifier + modelRouter + clientManager + config

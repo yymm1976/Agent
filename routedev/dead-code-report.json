@@ -1,5 +1,5 @@
 {
-  "totalExports": 1406,
+  "totalExports": 1402,
   "deadExports": [
     {
       "file": "src/agent/bounded-recovery.ts",
@@ -40,6 +40,11 @@
       "file": "src/agent/circuit-breaker.ts",
       "name": "CircuitStats",
       "type": "interface"
+    },
+    {
+      "file": "src/agent/complexity-analyzer.ts",
+      "name": "createTaskComplexityAnalyzer",
+      "type": "function"
     },
     {
       "file": "src/agent/complexity-analyzer.ts",
@@ -330,6 +335,11 @@
       "file": "src/agent/quantitative-gate.ts",
       "name": "QuantitativeGateConfig",
       "type": "interface"
+    },
+    {
+      "file": "src/agent/requirements-gatherer.ts",
+      "name": "createRequirementsGatherer",
+      "type": "function"
     },
     {
       "file": "src/agent/state-migration.ts",
@@ -1995,6 +2005,11 @@
     },
     {
       "file": "src/agent/complexity-analyzer.ts",
+      "name": "TaskComplexityAnalyzer",
+      "type": "class"
+    },
+    {
+      "file": "src/agent/complexity-analyzer.ts",
       "name": "SIMPLE_READ_KEYWORDS",
       "type": "reexport"
     },
@@ -2047,11 +2062,6 @@
       "file": "src/agent/hooks.ts",
       "name": "createHookRunner",
       "type": "function"
-    },
-    {
-      "file": "src/agent/init-analyzer.ts",
-      "name": "InitAnalyzer",
-      "type": "class"
     },
     {
       "file": "src/agent/loop-memory.ts",
@@ -2197,6 +2207,11 @@
       "file": "src/agent/quantitative-gate.ts",
       "name": "GateDecision",
       "type": "type"
+    },
+    {
+      "file": "src/agent/requirements-gatherer.ts",
+      "name": "RequirementsGatherer",
+      "type": "class"
     },
     {
       "file": "src/agent/reviewer-tier-evaluator.ts",
@@ -2474,21 +2489,6 @@
       "type": "const"
     },
     {
-      "file": "src/evaluation/architecture-aware-metrics.ts",
-      "name": "ArchitectureAwareMetricsCollector",
-      "type": "class"
-    },
-    {
-      "file": "src/evaluation/architecture-aware-metrics.ts",
-      "name": "ComponentMetrics",
-      "type": "interface"
-    },
-    {
-      "file": "src/evaluation/architecture-aware-metrics.ts",
-      "name": "TrajectoryInput",
-      "type": "interface"
-    },
-    {
       "file": "src/hooks/adapter.ts",
       "name": "configToDefinition",
       "type": "function"
@@ -2732,6 +2732,11 @@
       "file": "src/skills/kan-obstacle-checker.ts",
       "name": "InputDependency",
       "type": "interface"
+    },
+    {
+      "file": "src/skills/operation-classifier.ts",
+      "name": "buildRegimeTransition",
+      "type": "function"
     },
     {
       "file": "src/skills/operation-classifier.ts",
