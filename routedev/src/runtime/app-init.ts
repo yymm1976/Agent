@@ -192,27 +192,18 @@ export interface AppDependencies {
   // 工具链
   registry: ToolRegistry;
   mcpManager: MCPClientManager;
-  securityChecker: SecurityChecker;
   toolExecutor: ToolExecutor;
-  adapter: ToolRegistryAdapter;
-  workModeController: WorkModeController;
-  guardedAdapter: GuardedToolExecutorAdapter;
   agentLoop: ReActAgentLoop;
   // 插件系统
-  middlewarePipeline: AgentMiddlewarePipeline;
-  pluginRegistry: PluginRegistry;
   /** Phase 37：Skills 路由器（按需加载 Markdown Skill） */
   skillsRouter: SkillsRouter;
   /** Phase 37：文件系统发现器（发现/创建/删除 Skill 文件） */
   filesystemDiscovery: FilesystemDiscovery;
-  // 权限
-  permissionEngine: PermissionEngine;
   // 多 Agent
   orchestrator: Orchestrator;
   workerExecutor: WorkerExecutor;
   // 记忆与上下文
   checkpointManager: CheckpointManager;
-  checkpointWriter: CheckpointWriter;
   contextManager: ContextManager;
   // 辅助 Agent
   visionAssistant: VisionAssistant | undefined;
@@ -222,36 +213,25 @@ export interface AppDependencies {
   blackboard: Blackboard;
   trace: TraceCollector;
   audit: AuditLogger;
-  projectMemory: ProjectMemoryManager;
   // Phase 59：goalParser/goalVerifier 接口字段已删除（僵尸字段，goal-runner.ts 内部自建实例）
   /** Phase 35 Task 2：生命周期钩子运行器（生产激活） */
   hookRunner: HookRunner;
   // LLM 客户端
-  primaryClient: ILLMClient;
   checkpointClient: ILLMClient;
   /** Phase 30：Token Profiler（可观测性，可选） */
   profiler: TokenProfiler | null;
-  // Phase 32 Task 1：Phase 31 模块（之前全部为死代码，现接入生产路径）
-  /** 统一工作流编排器——App.tsx handleSubmit 的分发入口 */
-  taskOrchestrator: TaskOrchestrator;
   // Phase 59：requirementsGatherer/complexityAnalyzer 接口字段已删除（僵尸字段，全 src/ + desktop/ 无消费方）
   /** 统一审查器——GoalVerifier + 代码审查双层验证 */
   unifiedReviewer: UnifiedReviewer;
   /** 独立代码验证门——typecheck/lint/tests 兜底 */
   completionGate: CompletionGate;
-  /** 文件读取追踪器——先读后写强制 */
-  readTracker: ReadTracker;
-  /** 工具结果净化器——注入检测 + 智能截断 + 敏感字段脱敏 */
-  resultSanitizer: ToolResultSanitizer;
   /** Phase 31/32 P0 接线：共享 systemPrompt ref，App.tsx 同步更新此 ref */
   sharedSystemPromptRef: { current: string };
   /** Phase 50 Task 1：Goal 流程核心模块实例（按 config.goalIntegration 渐进接入，未开启时为 null） */
   goalAuditor: GoalAuditor | null;
   goalPersistence: GoalPersistence | null;
   // Phase 59：goalPromptBuilder 已删除（批次1 无价值 Integration）
-  /** Phase 50 Task 3：子 Agent 委托体系模块实例（按 config.delegationIntegration 渐进接入，未开启时为 null） */
-  subAgentLifecycle: SubAgentLifecycle | null;
-  subAgentScoreCardCollector: SubAgentScoreCardCollector | null;
+  // Phase 50 Task 3：subAgentLifecycle/subAgentScoreCardCollector 接口字段已删除（仅 app-init.ts 内部消费）
   /** Phase 52 Task 1：Skill 生命周期管理器（未启用时为 undefined） */
   skillLifecycleManager?: SkillLifecycleManager;
   // Phase 59：metricsCollector/saturationMonitor 接口字段已删除（批次1）
@@ -293,12 +273,8 @@ export interface AppDependencies {
   // Phase 59：buildRegimeTransition 接口字段已删除（僵尸字段，全 src/ + desktop/ 无消费方）
   // Phase 69：Worktree 隔离执行与多代理并行编排——已删除（ExecutionOrchestrator 死代码清理）
   // Phase 70：上下文压缩技术深度优化（可选）
-  toolOutputBudgetManager?: ToolOutputBudgetManager;
-  messageGrouper?: MessageGrouper;
-  actionChainDetector?: ActionChainDetector;
-  autoCompactGuardian?: AutoCompactGuardian;
-  compactPromptEngine?: CompactPromptEngine;
-  sessionMemoryStore?: SessionMemoryStore;
+  // 注：toolOutputBudgetManager/messageGrouper/actionChainDetector/autoCompactGuardian/compactPromptEngine/sessionMemoryStore
+  // 仅在 app-init.ts 内部注入 ContextCompactor，无外部 deps.xxx 消费，接口字段已删除（实例化代码保留）
   // Phase 59：codebaseMemory 接口字段已删除（僵尸字段，deps.codebaseMemory 全 src/ + desktop/ 无消费方）
 }
 
@@ -988,6 +964,28 @@ export function createAppDependencies(
   if (config.phase52Integration?.skillLifecycle?.enabled) {
     skillLifecycleManager = new SkillLifecycleManager(config.phase52Integration.skillLifecycle);
     logger.info('app-init: SkillLifecycleManager 已启用');
+
+    // 技术债 2 修复：定期清理过期 Skill 记忆（陷阱 #171：memoryRetentionDays 必须严格执行）
+    // 此前 cleanupExpiredMemory 仅在 tests/ 调用，生产路径从未触发，导致过期记忆长期驻留。
+    // 现以 10 分钟为间隔定期清理，并在应用关闭时清除定时器。
+    const memoryRetentionDays = config.phase52Integration.skillLifecycle.memoryRetentionDays;
+    const CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // 10 分钟
+    const cleanupTimer = setInterval(() => {
+      try {
+        const cleaned = skillLifecycleManager!.cleanupExpiredMemory(memoryRetentionDays);
+        if (cleaned > 0) {
+          logger.info('SkillLifecycleManager: 清理过期记忆', { cleanedCount: cleaned, memoryRetentionDays });
+        }
+      } catch (err) {
+        logger.warn('SkillLifecycleManager.cleanupExpiredMemory failed (non-blocking)', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }, CLEANUP_INTERVAL_MS);
+    // P0-14：注册 shutdown 钩子，进程退出前清除定时器，避免 unref'd timer 阻止退出
+    registerShutdownHook(60, 'skill-lifecycle-cleanup-timer', () => {
+      clearInterval(cleanupTimer);
+    });
   }
 
   if (subAgentsEnabled && MAX_CONCURRENT_SUB_AGENTS > 0) {
@@ -1834,7 +1832,8 @@ export function createAppDependencies(
           return {
             ...newDeps,
             routeDecision,
-            llmClient: newDeps.primaryClient,
+            // 注：primaryClient 字段已从 AppDependencies 移除，此处直接引用外层闭包的 primaryClient 局部变量
+            llmClient: primaryClient,
           };
         };
         const runner = runnerMod.createExperimentRunner(depsFactory);
@@ -2232,51 +2231,56 @@ export function createAppDependencies(
     });
   }
 
+  // Phase 70：日志观测哪些子模块已激活（接口字段已删除，仅作可观测性输出）
+  if (p70Cfg && (
+    p70ToolOutputBudgetManager || p70MessageGrouper || p70ActionChainDetector ||
+    p70AutoCompactGuardian || p70CompactPromptEngine || p70SessionMemoryStore
+  )) {
+    logger.info('Phase 70: Context compaction modules enabled', {
+      toolOutputBudgetManager: !!p70ToolOutputBudgetManager,
+      messageGrouper: !!p70MessageGrouper,
+      actionChainDetector: !!p70ActionChainDetector,
+      autoCompactGuardian: !!p70AutoCompactGuardian,
+      compactPromptEngine: !!p70CompactPromptEngine,
+      compactPromptDirection: p70Cfg?.compactPrompt?.defaultDirection,
+      sessionMemoryStore: !!p70SessionMemoryStore,
+      sessionMemoryPersistPath: p70SessionMemoryPersistentPath,
+      sessionMemoryMaxMemories: p70Cfg?.sessionMemory?.maxMemories,
+    });
+  }
+
   return {
     registry,
     mcpManager,
-    securityChecker,
     toolExecutor,
-    adapter,
-    workModeController,
-    guardedAdapter,
     agentLoop,
-    middlewarePipeline: pluginSystem.middlewarePipeline,
-    pluginRegistry: pluginSystem.pluginRegistry,
     skillsRouter,
     filesystemDiscovery,
-    permissionEngine,
     orchestrator,
     workerExecutor,
     checkpointManager,
-    checkpointWriter,
     contextManager,
     visionAssistant,
     // Phase 59：branchManager/goalParser/goalVerifier/requirementsGatherer/complexityAnalyzer 返回字段已删除（僵尸字段）
+    // 注：securityChecker/adapter/workModeController/guardedAdapter/middlewarePipeline/pluginRegistry/permissionEngine/
+    // checkpointWriter/projectMemory/primaryClient/taskOrchestrator/readTracker/resultSanitizer/
+    // subAgentLifecycle/subAgentScoreCardCollector 返回字段已删除（实例化代码保留，仅在 app-init.ts 内部消费）
     prompts,
     blackboard,
     trace,
     audit,
-    projectMemory,
     hookRunner,
-    primaryClient,
     checkpointClient,
     profiler,
-    // Phase 32 Task 1：Phase 31 模块（之前全部为死代码）
-    taskOrchestrator,
     unifiedReviewer,
     completionGate,
-    readTracker,
-    resultSanitizer,
     // Phase 31/32 P0 接线：共享 systemPrompt ref，App.tsx 同步更新此 ref 让 UnifiedReviewer 获取最新系统提示词
     sharedSystemPromptRef,
     // Phase 50 Task 1：goalIntegration 实例（App.tsx 传给 createGoalRunner）
     goalAuditor,
     goalPersistence,
     // Phase 59：goalPromptBuilder/metricsCollector/saturationMonitor 返回字段已删除（批次1）
-    // Phase 50 Task 3：delegationIntegration 实例（供 UI / 测试观察）
-    subAgentLifecycle: delegationLifecycle,
-    subAgentScoreCardCollector: delegationScoreCardCollector,
+    // Phase 50 Task 3：delegationLifecycle/delegationScoreCardCollector 实例仅 app-init.ts 内部消费，返回字段已删除
     // Phase 52 模块（全部可选，未启用时为 undefined）
     skillLifecycleManager,
     // CR-4b：孤立模块接线点实例（按各自 config 开关守护，未启用时为 undefined）
@@ -2434,53 +2438,6 @@ export function createAppDependencies(
       return result as Partial<AppDependencies>;
     })(),
     // Phase 69：Worktree 隔离执行与多代理并行编排——已删除（ExecutionOrchestrator 死代码清理）
-    // Phase 70：上下文压缩技术深度优化（引用提前创建的实例，与 ContextCompactor 共享）
-    ...(() => {
-      if (!p70Cfg) return {};
-
-      const result: Record<string, unknown> = {};
-
-      if (p70ToolOutputBudgetManager) {
-        result.toolOutputBudgetManager = p70ToolOutputBudgetManager;
-      }
-
-      if (p70MessageGrouper) {
-        result.messageGrouper = p70MessageGrouper;
-      }
-
-      if (p70ActionChainDetector) {
-        result.actionChainDetector = p70ActionChainDetector;
-      }
-
-      if (p70AutoCompactGuardian) {
-        result.autoCompactGuardian = p70AutoCompactGuardian;
-      }
-
-      if (p70CompactPromptEngine) {
-        result.compactPromptEngine = p70CompactPromptEngine;
-      }
-
-      if (p70SessionMemoryStore) {
-        result.sessionMemoryStore = p70SessionMemoryStore;
-      }
-
-      // Phase 59：codebaseMemory 字段已从 AppDependencies 接口删除，此处不再注入
-
-      if (Object.keys(result).length > 0) {
-        logger.info('Phase 70: Context compaction modules enabled', {
-          toolOutputBudgetManager: !!result.toolOutputBudgetManager,
-          messageGrouper: !!result.messageGrouper,
-          actionChainDetector: !!result.actionChainDetector,
-          autoCompactGuardian: !!result.autoCompactGuardian,
-          compactPromptEngine: !!result.compactPromptEngine,
-          compactPromptDirection: p70Cfg?.compactPrompt?.defaultDirection,
-          sessionMemoryStore: !!result.sessionMemoryStore,
-          sessionMemoryPersistPath: p70SessionMemoryPersistentPath,
-          sessionMemoryMaxMemories: p70Cfg?.sessionMemory?.maxMemories,
-        });
-      }
-
-      return result as Partial<AppDependencies>;
-    })(),
+    // Phase 70：上下文压缩技术深度优化（实例已在上方提前创建并注入 ContextCompactor，无外部 deps.xxx 消费）
   };
 }

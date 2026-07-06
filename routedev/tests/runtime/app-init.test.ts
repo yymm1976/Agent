@@ -9,13 +9,9 @@ import type { ILLMClient, LLMResponse, LLMStreamEvent, LLMRequestOptions } from 
 import type { LLMClientManager } from '../../src/router/llm/index.js';
 import { ToolRegistry } from '../../src/tools/registry.js';
 import { ToolExecutor } from '../../src/tools/executor.js';
-import { SecurityChecker } from '../../src/tools/security.js';
-import { ToolRegistryAdapter } from '../../src/tools/adapter.js';
 import { MCPClientManager } from '../../src/tools/mcp/client.js';
 import { ReActAgentLoop } from '../../src/agent/loop.js';
-import { WorkModeController, GuardedToolExecutorAdapter } from '../../src/agent/work-modes.js';
 import { CheckpointManager } from '../../src/harness/checkpoint-manager.js';
-import { CheckpointWriter } from '../../src/agent/memory/checkpoint-writer.js';
 import { ContextManager } from '../../src/agent/memory/context-manager.js';
 // Phase 57：VisionAssistant import 已移除（visionAssistant 改为可选，测试不再断言其类型）
 import { Blackboard } from '../../src/agent/multi/blackboard.js';
@@ -24,19 +20,15 @@ import { WorkerExecutor } from '../../src/agent/multi/worker-executor.js';
 import { TraceCollector } from '../../src/harness/trace-collector.js';
 import { AuditLogger } from '../../src/harness/audit-logger.js';
 import { PromptTemplateManager } from '../../src/prompts/manager.js';
-import { ProjectMemoryManager } from '../../src/memory/project-memory.js';
 // E1 删除：DurableExecutor 已被 GoalPersistence + CheckpointManager + HookRunner.fire 替代
 import { HookRunner } from '../../src/agent/hooks.js';
 import { TokenProfiler } from '../../src/agent/token-profiler.js';
-import { TaskOrchestrator } from '../../src/agent/task-orchestrator.js';
 import { UnifiedReviewer } from '../../src/agent/unified-reviewer.js';
 import { CompletionGate } from '../../src/agent/completion-gate.js';
-import { ReadTracker } from '../../src/tools/read-tracker.js';
-import { ToolResultSanitizer } from '../../src/tools/result-sanitizer.js';
 import { SkillsRouter, FilesystemDiscovery } from '../../src/plugins/filesystem-discovery.js';
-import type { PluginRegistry } from '../../src/plugins/registry.js';
-import type { AgentMiddlewarePipeline } from '../../src/agent/middleware.js';
-import type { PermissionEngine } from '../../src/tools/permission-engine.js';
+// 注：SecurityChecker/ToolRegistryAdapter/WorkModeController/GuardedToolExecutorAdapter/CheckpointWriter/
+// ProjectMemoryManager/TaskOrchestrator/ReadTracker/ToolResultSanitizer/PluginRegistry/AgentMiddlewarePipeline/
+// PermissionEngine import 已移除（对应 AppDependencies 字段已删除，测试不再断言其类型）
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -226,25 +218,16 @@ describe('createAppDependencies', () => {
       // 工具链
       expect(deps.registry).toBeInstanceOf(ToolRegistry);
       expect(deps.mcpManager).toBeInstanceOf(MCPClientManager);
-      expect(deps.securityChecker).toBeInstanceOf(SecurityChecker);
       expect(deps.toolExecutor).toBeInstanceOf(ToolExecutor);
-      expect(deps.adapter).toBeInstanceOf(ToolRegistryAdapter);
-      expect(deps.workModeController).toBeInstanceOf(WorkModeController);
-      expect(deps.guardedAdapter).toBeInstanceOf(GuardedToolExecutorAdapter);
       expect(deps.agentLoop).toBeInstanceOf(ReActAgentLoop);
       // 插件系统
-      expect(deps.middlewarePipeline).toBeDefined();
-      expect(deps.pluginRegistry).toBeDefined();
       expect(deps.skillsRouter).toBeInstanceOf(SkillsRouter);
       expect(deps.filesystemDiscovery).toBeInstanceOf(FilesystemDiscovery);
-      // 权限
-      expect(deps.permissionEngine).toBeDefined();
       // 多 Agent
       expect(deps.orchestrator).toBeInstanceOf(Orchestrator);
       expect(deps.workerExecutor).toBeInstanceOf(WorkerExecutor);
       // 记忆与上下文
       expect(deps.checkpointManager).toBeInstanceOf(CheckpointManager);
-      expect(deps.checkpointWriter).toBeInstanceOf(CheckpointWriter);
       expect(deps.contextManager).toBeInstanceOf(ContextManager);
       // 辅助 Agent
       // Phase 57：visionAssistant 改为可选（config.vision.enabled=false 时为 undefined）
@@ -255,20 +238,18 @@ describe('createAppDependencies', () => {
       expect(deps.blackboard).toBeInstanceOf(Blackboard);
       expect(deps.trace).toBeInstanceOf(TraceCollector);
       expect(deps.audit).toBeInstanceOf(AuditLogger);
-      expect(deps.projectMemory).toBeInstanceOf(ProjectMemoryManager);
       // Phase 59：goalParser/goalVerifier 字段已从 AppDependencies 移除（goal-runner 内部自建实例）
       // E1 删除：durableExecutor 字段已从 AppDependencies 移除（上位替代为 GoalPersistence）
       expect(deps.hookRunner).toBeInstanceOf(HookRunner);
       // LLM 客户端
-      expect(deps.primaryClient).toBeDefined();
       expect(deps.checkpointClient).toBeDefined();
+      // 注：securityChecker/adapter/workModeController/guardedAdapter/middlewarePipeline/pluginRegistry/
+      // permissionEngine/checkpointWriter/projectMemory/primaryClient/taskOrchestrator/readTracker/
+      // resultSanitizer 字段已从 AppDependencies 移除（实例化代码保留，仅 app-init.ts 内部消费）
       // Phase 31/32 模块
-      expect(deps.taskOrchestrator).toBeInstanceOf(TaskOrchestrator);
       // Phase 59：requirementsGatherer/complexityAnalyzer 字段已从 AppDependencies 移除（僵尸字段）
       expect(deps.unifiedReviewer).toBeInstanceOf(UnifiedReviewer);
       expect(deps.completionGate).toBeInstanceOf(CompletionGate);
-      expect(deps.readTracker).toBeInstanceOf(ReadTracker);
-      expect(deps.resultSanitizer).toBeInstanceOf(ToolResultSanitizer);
       // 共享 ref
       expect(deps.sharedSystemPromptRef).toBeDefined();
       expect(deps.sharedSystemPromptRef.current).toBe('');
@@ -281,11 +262,12 @@ describe('createAppDependencies', () => {
     it('primaryClient 从 config.providers[0] 对应的 clientManager 客户端获取', () => {
       const config = makeConfig();
       const clientManager = createMockClientManager();
-      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
+      createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
 
       // primaryProviderId = config.providers[0].id = 'provider-1'
+      // 注：primaryClient 字段已从 AppDependencies 移除（仅 app-init.ts 内部消费），
+      // 此处仅验证 clientManager.get 调用链路是否正确
       expect(clientManager.get).toHaveBeenCalledWith('provider-1');
-      expect(deps.primaryClient).toBe(clientManager._clients.get('provider-1'));
     });
 
     it('checkpointClient 从 checkpoint.modelId 对应的 provider 获取', () => {
@@ -310,28 +292,8 @@ describe('createAppDependencies', () => {
     });
   });
 
-  describe('cwd 工作目录', () => {
-    it('使用传入的 cwd 创建 ProjectMemoryManager', () => {
-      const config = makeConfig();
-      const clientManager = createMockClientManager();
-      const cwd = makeTempCwd();
-      const deps = createAppDependencies(config, clientManager, 'test-model', cwd);
-
-      expect(deps.projectMemory).toBeInstanceOf(ProjectMemoryManager);
-      // ProjectMemoryManager.getRoutedevDir() 返回 {cwd}/.routedev
-      expect(deps.projectMemory.getRoutedevDir()).toBe(path.join(cwd, '.routedev'));
-    });
-
-    it('未传入 cwd 时使用 process.cwd() 作为默认值', () => {
-      const config = makeConfig();
-      const clientManager = createMockClientManager();
-      const deps = createAppDependencies(config, clientManager, 'test-model');
-
-      expect(deps.projectMemory).toBeInstanceOf(ProjectMemoryManager);
-      // 默认 cwd 为 process.cwd()
-      expect(deps.projectMemory.getRoutedevDir()).toBe(path.join(process.cwd(), '.routedev'));
-    });
-  });
+  // Phase 70：cwd 工作目录测试已删除（projectMemory 字段从 AppDependencies 移除，
+  // 实例化代码保留在 app-init.ts 内部，无外部可观测入口）
 
   describe('Token Profiler 配置开关', () => {
     it('tokenTracking.enabled 默认为 true 时创建 profiler', () => {
@@ -367,8 +329,9 @@ describe('createAppDependencies', () => {
       const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
 
       // E1 删除：durableExecutor 字段已从 AppDependencies 移除（上位替代为 GoalPersistence）
-      // taskOrchestrator 仍然创建（内部用 null 断言，生产路径必传）
-      expect(deps.taskOrchestrator).toBeInstanceOf(TaskOrchestrator);
+      // 注：taskOrchestrator 字段已从 AppDependencies 移除（仅 app-init.ts 内部消费），
+      // 此处验证 unifiedReviewer 仍可创建（依赖链路完整）
+      expect(deps.unifiedReviewer).toBeInstanceOf(UnifiedReviewer);
     });
 
     it('传入 classifier/modelRouter/tracker 时正常创建', () => {

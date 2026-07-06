@@ -19,7 +19,7 @@ import path from 'node:path';
 import { logger } from '../utils/logger.js';
 import { SkillMdParser, type SkillMetadata, type ParsedSkill } from './skill-md-parser.js';
 import type { SkillSecurityGate } from './security-gate.js';
-import type { SkillQualityGate } from './quality-gate.js';
+// Phase 49 Task 3.5：SkillQualityGate 已删除（无生产实例化，engine-bridge 传 undefined）
 import type { IntegrityManifest } from '../security/integrity-manifest.js';
 
 // ============================================================
@@ -61,8 +61,6 @@ export class SkillMarketManager {
   private installDir: string;
   /** Phase 53 Task 6：技能安全门控（在 install/publish/import 写入文件前 scan；未注入时 fail-open） */
   private readonly securityGate?: SkillSecurityGate;
-  /** Phase 49 Task 3.5：技能质量门（在 publish/import 时 check；未注入时 fail-open） */
-  private readonly qualityGate?: SkillQualityGate;
   /** 依赖完整性校验清单（在 install 后 record，verifyInstalled 时校验；未注入时跳过） */
   private readonly integrityManifest?: IntegrityManifest;
   /** 完整性校验严格模式：true 时校验失败抛错，false 时只 warn */
@@ -71,7 +69,6 @@ export class SkillMarketManager {
   constructor(
     rootDir: string,
     securityGate?: SkillSecurityGate,
-    qualityGate?: SkillQualityGate,
     integrityManifest?: IntegrityManifest,
     integrityStrict: boolean = false,
   ) {
@@ -79,7 +76,6 @@ export class SkillMarketManager {
     this.draftDir = path.join(rootDir, '.routedev', 'market-draft', 'skills');
     this.installDir = path.join(rootDir, '.routedev', 'skills');
     this.securityGate = securityGate;
-    this.qualityGate = qualityGate;
     this.integrityManifest = integrityManifest;
     this.integrityStrict = integrityStrict;
   }
@@ -95,7 +91,7 @@ export class SkillMarketManager {
    *
    * 门控（写入文件前）：
    *   - securityGate.scan：未注入时 fail-open
-   *   - qualityGate.check（Schema + 兜底，陷阱 #143 不做 3 场景验证）：未注入时 fail-open
+   *   - Phase 49 Task 3.5：qualityGate.check 已删除（无生产实例化，引擎始终传 undefined）
    */
   async publish(name: string, content: string): Promise<MarketItem> {
     if (!name || !/^[a-zA-Z0-9-_]+$/.test(name)) {
@@ -108,9 +104,8 @@ export class SkillMarketManager {
     const parsed = SkillMdParser.parse(content);
     const version = parsed.metadata.version || '0.0.1';
 
-    // 门控：scan + check（写入文件前）
+    // 门控：scan（写入文件前）
     this.assertSecurityPass(name, content);
-    await this.assertQualityPass(parsed);
 
     // 1. 写入草稿
     const draftPath = path.join(this.draftDir, name, 'SKILL.md');
@@ -446,13 +441,14 @@ export class SkillMarketManager {
       throw new Error(`No versions in export file: ${zipPath}`);
     }
 
-    // 门控（写入文件前）：每个版本 securityGate.scan + 最新版本 qualityGate.check
+    // 门控（写入文件前）：每个版本 securityGate.scan
+    // 注：Phase 49 Task 3.5 qualityGate.check 已删除（无生产实例化）
     // 陷阱 #143：市场导入只做 Schema + 兜底，不做 3 场景验证
     for (const [, content] of versionEntries) {
       this.assertSecurityPass(name, content);
     }
+    // 解析最新版本用于返回 metadata（原 assertQualityPass 已删，但 parsed.metadata 仍需返回）
     const parsed: ParsedSkill = SkillMdParser.parse(versionEntries[0][1]);
-    await this.assertQualityPass(parsed);
 
     // 写入所有版本
     for (const [v, content] of versionEntries) {
@@ -564,38 +560,7 @@ export class SkillMarketManager {
     });
   }
 
-  /**
-   * Phase 49 Task 3.5：质量门检查
-   *
-   * 在 publish/import 时（securityGate.scan 之后）调用 qualityGate.check：
-   *   - gate 未注入（undefined）→ fail-open，跳过（向后兼容）
-   *   - 陷阱 #143：市场导入只做 Schema + 兜底，不做 3 场景验证
-   *   - status === 'fail' → 抛错阻断安装
-   *
-   * @param parsed 已解析的 Skill
-   */
-  private async assertQualityPass(parsed: ParsedSkill): Promise<void> {
-    if (!this.qualityGate) return; // fail-open
-    const result = await this.qualityGate.check(parsed, {
-      runScenarioValidation: false,
-    });
-    if (result.status === 'fail') {
-      const reasons: string[] = [];
-      if (!result.schema.valid) {
-        reasons.push(`schema: ${result.schema.errors.join('; ') || 'invalid'}`);
-      }
-      if (!result.fallback.passed) {
-        reasons.push(`fallback: ${result.fallback.issues.join('; ') || 'failed'}`);
-      }
-      throw new Error(
-        `Skill "${parsed.metadata.name}" blocked by quality gate: ${reasons.join(' | ') || 'fail'}`,
-      );
-    }
-    logger.debug('SkillMarketManager: quality gate passed', {
-      skill: parsed.metadata.name,
-      status: result.status,
-    });
-  }
+  // Phase 49 Task 3.5：assertQualityPass 方法已删除（SkillQualityGate 无生产实例化，引擎始终传 undefined）
 
   /** 加载市场元数据（不存在时返回空骨架） */
   private async loadMetadata(name: string): Promise<MarketMetadataFile> {

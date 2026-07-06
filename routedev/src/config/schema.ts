@@ -1362,6 +1362,9 @@ export type GoalIntegrationConfig = z.infer<typeof GoalIntegrationConfigSchema>;
 const OrchestrationIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   strategyEnabled: z.boolean().default(false),
   stateGraphEnabled: z.boolean().default(false),
+  // experimental: true — BranchOrchestrator 为未完成特性，生产 wiring 未接入
+  // （app-init.ts 不创建实例，new BranchOrchestrator 仅在 tests/ 中出现）
+  // config flag 与源文件 src/agent/multi/branch-orchestrator.ts 保留待后续阶段补全
   branchOrchestrationEnabled: z.boolean().default(false),
 }));
 export type OrchestrationIntegrationConfig = z.infer<typeof OrchestrationIntegrationConfigSchema>;

@@ -1002,7 +1002,6 @@ export class RouteDevEngine {
       const marketManager = new SkillMarketManager(
         this.options.cwd,
         securityGate,
-        undefined,
         integrityManifest,
       );
       await marketManager.install(payload.name, payload.version);
