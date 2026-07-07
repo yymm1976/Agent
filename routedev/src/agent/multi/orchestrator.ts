@@ -14,6 +14,7 @@ import { ConflictDetector } from './conflict.js';
 import { StrategySelector } from './orchestrator-strategy.js';
 import { ExecutionStateGraph } from './state-graph.js';
 import { logger } from '../../utils/logger.js';
+import { z } from 'zod';
 
 // ============================================================
 // Phase 50 Task 2：编排接入开关（可选注入，未注入时回退到原行为）
@@ -231,6 +232,21 @@ export const WORKER_ROLE_PROMPTS: Record<WorkerRole, string> = {
 
 const VALID_ROLES: WorkerRole[] = ['coder', 'searcher', 'tester', 'reviewer'];
 
+// ============================================================
+// F-006 修复：LLM 步骤分析 JSON 响应 Zod schema 校验
+// 替代 parseAnalysis 中 parsed.find((p: any) => ...) 的弱类型访问
+// schema 宽松（passthrough + catch + default）：LLM 输出不可预测，
+// 整体 safeParse 失败时返回 null（与原 catch 行为一致，触发启发式回退）
+// ============================================================
+
+/** 单条步骤分析结果的 schema */
+const StepAnalysisItemSchema = z.object({
+  stepId: z.union([z.number(), z.string()]).optional(),
+  dependsOn: z.array(z.union([z.number(), z.string()])).catch([]).default([]),
+  assignedRole: z.enum(['coder', 'searcher', 'tester', 'reviewer']).optional().catch(undefined),
+  likelyFiles: z.array(z.string()).catch([]).default([]),
+}).passthrough();
+
 export class Orchestrator {
   private llmClient: ILLMClient;
   private modelId: string;
@@ -427,8 +443,17 @@ export class Orchestrator {
   private parseAnalysis(content: string, steps: GoalStep[]): StepDependency[] | null {
     try {
       const jsonStr = this.extractJson(content);
-      const parsed = JSON.parse(jsonStr);
-      if (!Array.isArray(parsed) || parsed.length === 0) return null;
+      const rawParsed = JSON.parse(jsonStr);
+      if (!Array.isArray(rawParsed) || rawParsed.length === 0) return null;
+
+      // F-006：用 Zod safeParse 校验 LLM 步骤分析数组，替代 (p: any) 弱类型访问
+      const schemaResult = StepAnalysisItemSchema.array().safeParse(rawParsed);
+      if (!schemaResult.success) {
+        // schema 校验失败 → 降级为 null（触发上层启发式回退，不阻塞流程）
+        logger.warn('Orchestrator: LLM 步骤分析 schema 不匹配', { errors: schemaResult.error.issues });
+        return null;
+      }
+      const parsed = schemaResult.data;
 
       const result: StepDependency[] = [];
       // I21 修复：使用实际的 GoalStep.id 而非 idx+1，确保 stepId 与 GoalStep.id 格式一致
@@ -437,7 +462,7 @@ export class Orchestrator {
       const validStepIds = new Set(steps.map(s => s.id));
       for (let i = 0; i < steps.length; i++) {
         const stepId = steps[i].id;
-        const item = parsed.find((p: any) => Number(p.stepId) === stepId) ?? parsed[i];
+        const item = parsed.find((p) => Number(p.stepId) === stepId) ?? parsed[i];
         if (!item) {
           result.push({
             stepId,
@@ -449,11 +474,11 @@ export class Orchestrator {
         }
         result.push({
           stepId,
-          dependsOn: Array.isArray(item.dependsOn)
-            ? item.dependsOn.map(Number).filter((id: number) => validStepIds.has(id))
-            : [],
-          assignedRole: VALID_ROLES.includes(item.assignedRole) ? item.assignedRole : 'coder',
-          likelyFiles: Array.isArray(item.likelyFiles) ? item.likelyFiles : [],
+          dependsOn: item.dependsOn
+            .map(Number)
+            .filter((id: number) => validStepIds.has(id)),
+          assignedRole: item.assignedRole ?? 'coder',
+          likelyFiles: item.likelyFiles,
         });
       }
       return result;

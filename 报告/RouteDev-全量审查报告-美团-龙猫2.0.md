@@ -1,754 +1,671 @@
 # RouteDev 全量审查报告
 
 > **审查者标注**：美团-龙猫2.0
-> **审查日期**：2026-07-07
-> **审查范围**：RouteDev 工作区项目（`c:\Users\杨铭\Desktop\Agent\routedev`）
 
 ---
 
 ## 执行摘要
 
 - **审查日期**：2026-07-07
-- **审查范围**：约 1200+ 源文件（src/ + desktop/ + scripts/ + tests/）
-- **总 findings**：32（Critical: 0 / Important: 6 / Minor: 18 / Info: 8）
-- **整体评价**：RouteDev 是一个架构成熟的 Electron + React AI 编程助手项目，历经 75 个 Phase 迭代。整体代码质量良好，采用了清晰的分层架构（desktop 主进程 → engine-bridge → src/runtime 装配工厂 → 核心服务）。安全配置到位（contextIsolation + sandbox + CSP）。主要问题集中在：部分模块的 `any` 类型使用、`branch-operations.ts` 通过 `as any` 访问私有字段、app-init.ts 文件过长（约 2500 行）、以及部分 console.warn 未走 logger。无 Critical 级阻塞性问题。
+- **审查范围**：255 个源文件（src/ + desktop/main/ + desktop/renderer/src/）+ 配置文件 + 文档
+- **测试文件**：242 个 .test.ts 文件（覆盖率约 95% 文件级）
+- **总 findings**：28（Critical: 1 / Important: 9 / Minor: 12 / Info: 6）
+- **整体评价**：
+
+  RouteDev 是一个成熟的 Electron + TypeScript AI 编程助手项目，经过 75 个 Phase 的迭代已形成较完善的架构模式。项目采用 AppDependencies 装配模式实现了良好的模块化分层，安全管理到位（path traversal 防护、CSP、sandbox、symlink 逃逸检测），错误处理普遍采用 fail-open 降级策略。
+
+  主要问题集中在：
+  1. 多个核心文件超长（app-init.ts 2487 行、config/schema.ts 2122 行、goal-runner.ts 2033 行），影响可维护性
+  2. 大量 `as unknown as` 类型断言（约 20+ 处），绕过类型检查
+  3. 依赖严重过时（Electron 34→43、React 图标库 0.577→1.23、vite 6→8 等）
+  4. 渲染端 `dangerouslySetInnerHTML` 存在潜在 XSS 风险
+  5. IPC handler 中部分输入校验不完整
 
 ---
 
 ## 优先修复清单（Top 20）
 
-| # | Finding | 级别 | 维度 | 简述 |
-|---|---------|------|------|------|
-| 1 | [F-007] branch-operations.ts `as any` 访问私有字段 | Important | 类型安全 | 必要的妥协但应添加运行时守卫 |
-| 2 | [F-012] spawn-agent.ts 多处 `as any` 类型断言 | Important | 类型安全 | SubAgent 核心模块的类型安全 |
-| 3 | [F-015] app-init.ts 长约 2500 行 | Important | 可维护性 | 单文件过大，应拆分装配逻辑 |
-| 4 | [F-023] SettingsPage.tsx 约 2500 行 + 60+ 个 import | Important | 可维护性 | 设置页面过于庞大 |
-| 5 | [F-025] 多个模块使用 console.warn/log 替代 logger | Minor | 可维护性 | 日志系统不统一 |
-| 6 | [F-029] 测试文件中大量 `as any` mock | Minor | 类型安全 | 测试代码类型安全性低 |
-| 7 | [F-017] engine-bridge.ts 长约 1735 行 | Minor | 可维护性 | 桥接层文件偏大 |
-| 8 | [F-020] preload 暴露 30+ API 方法 | Info | 安全 | API 暴露面较宽但有上下文隔离 |
-| 9 | [F-028] 同步文件 I/O 在热路径使用 | Minor | 性能 | 需确认是否阻塞 |
-| 10 | [F-003] 空 catch 吞错 | Minor | 错误处理 | 2 处 `catch(() => {})` 应记录 |
-| 11 | [F-009] browser.ts 使用 `let puppeteer: any` | Minor | 类型安全 | 可选依赖缺少类型守卫 |
-| 12 | [F-018] TCR Cache persistPath 使用 writeFileSync | Info | 性能 | 进程退出时同步写入 |
-| 13 | [F-022] 4 处 AgentRole 类型碎片化 | Info | 架构 | 已知技术债（Phase 75-A4） |
-| 14 | [F-030] 测试覆盖率估计 >70% | Info | 测试 | 核心模块均有测试 |
-| 15 | [F-001] 循环依赖检查 | Info | 架构 | 未发现严重循环依赖 |
-| 16 | [F-026] TODO/FIXME 数量为 0 | Info | 文档 | 代码内注释规范 |
-| 17 | [F-021] CSP 配置完善 | Info | 安全 | 已配置现代 CSP |
-| 18 | [F-031] 依赖版本较新 | Info | 依赖 | 无过旧 major 版本 |
-| 19 | [F-005] fail-open降级路径记录完整 | Info | 错误处理 | 设计意图已 log |
-| 20 | [F-011] execSync 调用有超时控制 | Info | 安全 | child_process 使用安全 |
+| 编号 | Finding | 级别 | 简述 |
+|------|---------|------|------|
+| F-001 | IPC handler 无参数类型校验 | Critical | `chat:confirm-tool` / `plan:edit-response` 等 handler 直接透传 payload |
+| F-002 | `dangerouslySetInnerHTML` 潜在 X ToolCallCard.tsx 多处使用，需确认输入已过滤 |
+| F-003 | 超长文件 app-init.ts（2487 行） | Important | 单一职责违反，应按模块拆分 |
+| F-004 | 超长文件 config/schema.ts（2122 行） | Important | 配置 schema 可按域拆分 |
+| F-005 | 超长文件 goal-runner.ts（2033 行） | Important | Goal 执行逻辑复杂度过高 |
+| F-006 | `as unknown as` 双重断言热点（20+ 处） | Important | 系统性绕过类型安全 |
+| F-007 | 依赖严重过时（Electron 34→43 等 13 项） | Important | 缺失安全补丁与新特性 |
+| F-008 | Renderer 进程 console.log 残留（多处） | Minor | 生产代码中应移除或使用 logger |
+| F-009 | 魔法数字散点（MAX_STDOUT、timeout 等） | Minor | 应提取为命名常量 |
+| F-010 | 部分 IPC handler 输入长度边界缺失 | Minor | `chat:generate-title` 等 handler 未校验输入路径 |
+| F-011 | `any` 类型使用（5 处） | Minor | browser.ts / unified-reviewer.ts |
+| F-012 | 同步 fs 操作在热路径 | Minor | 启动时同步读配置 |
+| F-013 | AgentRole 类型碎片化（4 处定义，已知） | Info | 已知技术债，Phase 75-A4 已记录 |
+| F-014 | Engine-bridge.ts pre-existing TS 错误（2 处，已知） | Info | 已知技术债，Phase 75-A4 已确认 |
+| F-015 | TODO 遗留（orchestrator.ts:590） | Info | "TODO Phase 73" 已过时或待办 |
+| F-016 | prompt_cache_key 未参数化 | Minor | llm/openai.ts 硬编码 prefix |
+| F-017 | Shell 命令执行模式可绕过 | Important | DANGEROUS_PATTERNS 可被编码绕过 |
+| F-018 | IPC 暴露面较宽（47 个 handler） | Minor | 部分低频功能可通过按需加载减少 |
+| F-019 | 事件监听器清理机制不完整 | Minor | 部分 setTimeout 未在组件卸载时清理 |
+| F-020 | hooks/adapter.ts 使用 `shell: true` | Important | spawn 启用 shell 模式增加注入风险 |
 
 ---
 
 ## 维度 1：架构与耦合
 
 ### 概述
-本维度审查了项目的模块边界、依赖关系和核心架构模式，覆盖约 200 个文件。发现 0 个 Critical、1 个 Important、1 个 Minor、1 个 Info（已知技术债不计入）。
+
+本维度审查了入口链路、装配层、桥接层和模块边界。发现 3 个 findings（Important: 1 / Minor: 1 / Info: 1）。
 
 ### 依赖图关键路径
 
 ```
-desktop/main/index.ts          ← Electron 主进程入口
-  └─ desktop/main/engine-bridge.ts   ← 核心桥接层（this.deps.<field> 访问全部服务）
-       └─ src/runtime/app-init.ts    ← 核心装配工厂 createAppDependencies()
-            ├─ 静态 import：工具、Agent Loop、Router、Config 等核心模块
-            ├─ 动态 import()：otel-exporter、prefix-cache 等可选模块（fail-open）
-            └─ 实例化后返回 AppDependencies 对象
-                 ├─ src/agent/loop.ts          ← 聊天循环
-                 ├─ src/runtime/goal-runner.ts ← /goal 命令
-                 └─ src/tools/builtin/*        ← 工具注册表
+desktop/main/index.ts (Electron 入口)
+  └─ desktop/main/engine-bridge.ts (核心桥接)
+       └─ src/runtime/app-init.ts (createAppDependencies 装配工厂)
+            ├─ src/router/* (LLM 路由、分类、跟踪)
+            ├─ src/agent/loop.ts (ReAct 循环)
+            ├─ src/tools/builtin/* (工具链)
+            ├─ src/memory/* (记忆系统)
+            ├─ src/skills/* (技能系统)
+            └─ src/runtime/goal-runner.ts (Goal 执行)
 ```
-
-**渲染进程入口**：`desktop/renderer/src/main.tsx → App.tsx`
 
 ### 耦合热点 Top 5
 
-| 模块 | 被引用次数 | 合理性 |
-|------|-----------|--------|
-| `src/router/types.ts` | 高 | ✅ 合理，类型定义 |
-| `src/config/schema.ts` | 高 | ✅ 合理，配置"宪法" |
-| `src/utils/logger.ts` | 高 | ✅ 合理，日志基础设施 |
-| `src/tools/builtin/spawn-agent.ts` | 中 | ✅ 合理，子 Agent 入口 |
-| `src/runtime/app-init.ts` | 中（仅桌面端） | ⚠️ 单文件过大 |
-
-### 循环依赖检测结果
-未发现严重循环依赖。模块分层清晰：
-- **底层**（无依赖）：utils/、config/、security/
-- **中间层**：router/、tools/、harness/、prompts/
-- **高层**：agent/、runtime/
-- **应用层**：desktop/
+| 模块 | 被 import 估计次数 | 是否合理 |
+|------|-------------------|----------|
+| `src/runtime/app-init.ts` | 3（engine-bridge、测试） | 合理但违反 SRP |
+| `src/config/schema.ts` | 50+ | 核心共享类型 |
+| `src/router/types.ts` | 30+ | 核心共享类型 |
+| `src/utils/logger.ts` | 40+ | 合理 |
+| `src/tools/registry.ts` | 20+ | 合理 |
 
 ### Findings
 
-#### [F-001] 无严重循环依赖问题
-- **级别**：Info
+#### [F-003] app-init.ts 超长单一文件（2487 行）
+- **级别**：Important
 - **维度**：维度 1 - 架构与耦合
-- **位置**：全局架构
-- **问题**：项目采用清晰的分层架构，从 desktop → engine-bridge → app-init → 核心服务，依赖方向单向。
-- **证据**：通过入口链路追踪，所有 import 路径均为单向向下依赖，未发现 A→B→A 的循环模式。
+- **位置**：`src/runtime/app-init.ts:1-2487`
+- **代码**：整个 `createAppDependencies` 函数跨越 2000+ 行，承担工具注册、记忆系统装配、路由集成、插件/技能系统接入、Phase 50-70 各模块渐进接入。
+- **问题**：单一文件违反 SRP，装配逻辑复杂度高，修改风险大，新人难以理解。
+- **修复建议**：按域拆分为独立装配模块：
+  - `assemble-tools.ts` — 工具注册（约 150 行）
+  - `assemble-memory.ts` — 记忆系统装配
+  - `assemble-router.ts` — 路由集成
+  - `assemble-extras.ts` — Phase 50-70 可选模块
+  - `app-init.ts` — 只剩组合层（目标 ≤300 行）
+- **证据**：文件 token 数超过 36000，是第二大文件的 2.3 倍。
 
-#### [F-022] AgentRole 类型碎片化（已知技术债）
-- **级别**：Info
+#### [F-018] IPC 暴露面较宽（47 个 handler）
+- **级别**：Minor
 - **维度**：维度 1 - 架构与耦合
-- **位置**：`src/agents/profiles/types.ts`、`src/agents/context-packer.ts`、`src/agents/delegation-gate.ts`、`desktop/shared/ipc-types.ts`
-- **问题**：AgentRole 存在 4 处定义（已知债），Phase 75-A4 CONCERN-1 已记录。
-- **证据**：提示词 2.6 已标注为已知技术债，本次不重复报告。
+- **位置**：`desktop/main/index.ts:331-824`
+- **问题**：47 个 IPC handler 全部注册在同一文件，部分低频功能（checkpoint、experiment、hook）始终占用主进程资源。
+- **修复建议**：将低频 handler 按功能域拆分到独立模块（`ipc-handlers/checkpoint.ts`、`ipc-handlers/experiment.ts` 等），通过 index.ts 统一加载。
+- **证据**：index.ts 文件 824 行，handler 注册占主要篇幅。
 
 ---
 
 ## 维度 2：类型安全
 
 ### 概述
-本维度审查了 `any` 类型使用、`@ts-expect-error` 注释、类型断言安全性等。发现 0 个 Critical、2 个 Important、3 个 Minor。
+
+本维度搜索了 `any` 类型、`@ts-ignore`/`@ts-expect-error`、`as` 断言、`as unknown as` 双重断言。发现 5 个 findings（Important: 1 / Minor: 3 / Info: 1）。
 
 ### `any` 使用统计
 
-**生产代码（src/）中的 `any` 使用 Top 10**：
+| 位置 | 次数 | 上下文 |
+|------|------|--------|
+| `src/tools/builtin/browser.ts:270,284` | 2 | puppeteer 动态 import |
+| `src/agent/unified-reviewer.ts:346,384` | 2 | LLM 输出解析 |
+| `src/agent/multi/orchestrator.ts:440` | 1 | 子 Agent 输出解析 |
 
-| 文件:行号 | 使用方式 | 上下文 |
-|-----------|----------|--------|
-| `src/agent/branch-operations.ts:7-8` | `as any` | 访问 BranchManager 私有字段 |
-| `src/tools/builtin/spawn-agent.ts:153-155` | `as any` | AgentRole、policy 类型断言 |
-| `src/tools/builtin/spawn-agent.ts:263` | `as any` | role 类型断言 |
-| `src/tools/builtin/browser.ts:270,284` | `let puppeteer: any` | 可选动态 import |
-| `src/tools/mcp/mcp-tool.ts:67` | `includes('any')` | Zod schema 类型判断 |
-| `src/agent/unified-reviewer.ts:346,384` | `(i: any)` | LLM 返回结构映射 |
-| `src/agent/multi/orchestrator.ts:440` | `(p: any)` | JSON 解析结果 |
-| `src/harness/experiment-manager.ts:235+` | `catch (error: any)` | 错误对象类型 |
-| `src/skills/bundled-skill-extractor.ts:115+` | `catch (e: any)` | 错误对象类型 |
+### `@ts-expect-error` 位置
 
-### `@ts-expect-error` / `@ts-ignore` 位置
-
-| 文件:行号 | 类型 | 原因说明 |
-|-----------|------|----------|
-| `src/tools/builtin/browser.ts:272` | `@ts-expect-error` | ✅ 有注释：puppeteer 是可选依赖 |
-| `tests/import/tool-name-mapper.test.ts:44+` | `@ts-expect-error` | ✅ 测试非法输入鲁棒性 |
+| 位置 | 原因 |
+|------|------|
+| `src/tools/builtin/browser.ts:272` | puppeteer 可选依赖动态 import |
 
 ### Findings
 
-#### [F-007] branch-operations.ts 通过 `as any` 访问 BranchManager 私有字段
+#### [F-006] `as unknown as` 双重断言热点（20+ 处）
 - **级别**：Important
 - **维度**：维度 2 - 类型安全
-- **位置**：`src/agent/branch-operations.ts:7-8, 37-45, 62`
-- **代码**：
+- **位置**：散点分布于多个文件，主要位置：
+  - `src/runtime/app-init.ts:509,758,1231,1406,1502,1506,2059`（7 处）
+  - `src/tools/security-enhanced.ts:397,401,413`（3 处）
+  - `src/tools/registry.ts:61`、`adapter.ts:53`、`src/tools/mcp/mcp-tool.ts:34`（3 处）
+  - `src/tools/mcp/client.ts:349`、`src/tools/builtin/todo-write.ts:172,190`（3 处）
+  - `src/skills/embedder.ts:54`、`src/router/orchestrator.ts:189`、`src/router/llm/openai.ts:240,246`、`src/router/classifier.ts:91`、`src/plugins/registry.ts:341`、`-discovery.ts:630`（7 处）
+- **代码示例**：
   ```typescript
-  //     本模块通过 (manager as any) 访问这些私有字段——这是必要的妥协
-  //   -采用"操作前快照"策略：每次操作前完整快照 manager 的内部状态
+  // app-init.ts:509
+  const cm = contextManager as unknown as { setPrefixCache?: (c: unknown) => void };
   
-  /** 通过 any 访问 BranchManager 私有字段 */
-  interface ManagerInternals {
-    nodes: Map<string, BranchNode>;
-    branches: Map<string, BranchInfo>;
-    activeBranchId: string | null;
-    activeBranchKey: string | null;
-    historyNodeIds: string[];
-    generateId?: () => string;
-  }
-  
-  private internals(): ManagerInternals {
-    return this.manager as unknown as ManagerInternals;
-  }
+  // registry.ts:61
+  parameters: tool.definition.parameters as unknown as Record<string, unknown>,
   ```
-- **问题**：虽然代码注释说明了这是"必要的妥协"，但这种方式破坏了 BranchManager 的封装性，且在 BranchManager 内部结构变化时会静默失败。
+- **问题**：`as unknown as T` 是 TypeScript 中最不安全的断言方式，完全绕过类型检查。在 app-init.ts 中出现 7 次，使用 feature-detect 模式动态注入能力，但这种模式掩盖了真实的类型缺陷。
 - **修复建议**：
-  1. 短期：保留接口定义，但添加运行时校验（检查 Map 是否为 function）
-  2. 长期：为 BranchManager 添加正式的 `getInternals()` 方法或快照/恢复 API，消除 `as any` 需求
-- **证据**：BranchManager 类未暴露内部状态的公共方法，迫使 branch-operations.ts 必须通过类型断言访问。
+  1. 为 AppDependencies 消费者定义明确的接口类型
+  2. 使用 discriminated union + type guard 替代 `as unknown as`
+  3. 为 `setPrefixCache`/`setBudgetMonitor` 等方法在 ContextManager/AgentLoop 中声明可选方法接口
+- **证据**：grep `as unknown as` 在 src/ 返回 20+ 命中。
 
-#### [F-012] spawn-agent.ts 多处 `as any` 类型断言
-- **级别**：Important
-- **维度**：维度 2 - 类型安全
-- **位置**：`src/tools/builtin/spawn-agent.ts:153-155, 263, 654, 656, 714`
-- **代码**：
-  ```typescript
-  currentRole as any,  // AgentRole — 当前角色（已确保非空）
-  delegationContext.targetRole as any,   // AgentRole — 目标角色
-  delegationContext.policy as any,
-  // ...
-  role as any,  // AgentRole
-  // ...
-  lineage: buildLineage(deps.parentRole as any, role),
-  role: role as any,
-  // ...
-  const validated = validateSubAgentResult(parsed, schema as any);
-  ```
-- **问题**：spawn-agent.ts 是子 Agent 派遣的核心模块，多处 `as any` 削弱了类型安全保障。特别是 AgentRole 相关的断言，如果类型不匹配会导致运行时错误。
-- **修复建议**：统一 AgentRole 类型定义（解决 F-022 已知债后，这些断言可移除）；为 validateSubAgentResult 的 schema 参数使用更精确的类型。
-- **证据**：全文件 grep 显示 6 处生产代码 `as any`，为 src/ 中最多。
-
-#### [F-009] browser.ts 使用 `let puppeteer: any` 缺少类型守卫
+#### [F-011] `any` 类型使用（5 处）
 - **级别**：Minor
 - **维度**：维度 2 - 类型安全
-- **位置**：`src/tools/builtin/browser.ts:270, 284`
+- **位置**：
+  - `src/tools/builtin/browser.ts:270,284` — puppeteer 动态 import
+  - `src/agent/unified-reviewer.ts:346,384` — LLM 输出解析
+  - `src/agent/multi/orchestrator.ts:440` — 子 Agent 输出解析
+- **问题**：LLM 输出解析使用 `any`，运行时无类型保障。
+- **修复建议**：定义 `ParsedIssue`/`ParsedResult` 接口，用 `zod` schema 校验 LLM 输出后转型。browser.ts 的 puppeteer 可用 `import('puppeteer').Browser` 类型替代。
+- **证据**：grep `: any` 返回 5 命中。
+
+#### [F-029] `@ts-expect-error` 无注释说明
+- **级别**：Minor
+- **维度**：维度 2 - 类型安全
+- **位置**：`src/tools/builtin/browser.ts:272`
 - **代码**：
   ```typescript
   // @ts-expect-error — puppeteer 是可选依赖，未安装时 import 会抛错
-  let puppeteer: any;
-  // ...
-  let browser: any;
   ```
-- **问题**：可选动态 import 的模块类型完全丢失，后续调用（如 `puppeteer.launch()`）无法获得类型检查。
-- **修复建议**：安装 `@types/puppeteer` 或定义最小接口：
-  ```typescript
-  interface PuppeteerLike {
-    launch(opts?: unknown): Promise<BrowserLike>;
-  }
-  let puppeteer: PuppeteerLike;
-  ```
-- **证据**：文件顶部已有 `@ts-expect-error` 注释说明原因，但可改进。
-
-#### [F-029] 测试文件中大量 `as any` mock 对象
-- **级别**：Minor
-- **维度**：维度 2 - 类型安全
-- **位置**：`tests/runtime/goal-integration.test.ts:77-84`、`tests/router/orchestrator.test.ts:485` 等多处
-- **代码**：
-  ```typescript
-  classifier: mockClassifier as any,
-  modelRouter: mockRouter as any,
-  clientManager: mockClientManager as any,
-  // ...
-  config: { checkpoint: { enabled: false }, ... } as any,
-  ```
-- **问题**：测试中使用 `as any` 构造 mock 对象会跳过类型校验，可能导致测试与生产接口不同步。
-- **修复建议**：使用 `Partial<T>` 或 `as unknown as T` 更安全的方式；或使用 testing library 的 `mock<T>()` 工具。
-- **证据**：grep 显示 15+ 测试文件有 `as any` mock 用法。
+- **问题**：虽然有注释说明原因，但该注释可随代码移动而失同步。
+- **修复建议**：使用 `import type` + 条件类型替代实例层面的 ts-expect-error。
+- **证据**：仅 1 处，已注释说明原因，风险低。
 
 ---
 
 ## 维度 3：错误处理与韧性
 
 ### 概述
-本维度审查了 try/catch 吞错、Promise rejection、fail-open 降级日志等。发现 0 个 Critical、0 个 Important、2 个 Minor、2 个 Info。
 
-### 吞错位置清单
-
-| 文件:行号 | 代码 | 评价 |
-|-----------|------|------|
-| `src/runtime/app-init.ts:405` | `.catch(() => {})` | ⚠️ 未记录错误 |
-| `src/runtime/app-init.ts:2429` | `.catch(() => {})` | ⚠️ 未记录错误 |
-| `desktop/main/engine-bridge.ts:160` | `.catch(() => { /* 忽略 */ })` | ✅ 有注释说明 |
-| `desktop/main/engine-bridge.ts:228` | `.catch((err) => { console.error(...) })` | ✅ 有日志 |
+本维度审查了 catch 块处理、Promise rejection、fail-open 降级路径、超时和重试机制。发现 2 个 findings（Important: 1 / Info: 1）。
 
 ### fail-open 降级路径清单
 
-| 位置 | 降级场景 | 是否记录日志 |
-|------|----------|-------------|
-| `app-init.ts:462-481` | OtelExporter 加载失败 | ✅ 有 catch（无日志但 fail-open 设计） |
-| `app-init.ts:487-500` | PrefixCache 加载失败 | ✅ 有 logger.debug |
-| `engine-bridge.ts:216-223` | MCP 自动连接失败 | ✅ console.error |
-| `ccr-cache.ts:138-243` | SQLite 失败降级到内存 | ✅ console.warn 4 处 |
-| `profileManager.loadAll()` | Profile 加载失败 | ✅ console.error |
+| 位置 | 是否记录降级 |
+|------|-------------|
+| `app-init.ts:492-494` (OtelExporter) | ✅ `logger.warn` |
+| `app-init.ts:515` (PrefixAwareCache) | ✅ 静默（注释说明） |
+| `app-init.ts:553` (auditChain) | ✅ `logger.warn` |
+| `app-init.ts:601` (BrowserTool) | ✅ 静默 |
+| `app-init.ts:647-651` (ConfigGuard) | ✅ `logger.warn` |
+| `app-init.ts:670-673` (CommandSandbox) | ✅ `logger.warn` |
+| `app-init.ts:767` (BudgetMonitor) | ✅ 静默 |
+| `index.ts:377` (plan:get-revisions) | ✅ fail-open 返回空 |
+| `index.ts:386-391` (plan:check-omissions) | ✅ 返回错误描述 |
 
 ### Findings
 
-#### [F-003] 空 catch 吞错（app-init.ts）
-- **级别**：Minor
+#### [F-020] hooks/adapter.ts 使用 `shell: true` spawn 执行 Hook 命令
+- **级别**：Important
 - **维度**：维度 3 - 错误处理与韧性
-- **位置**：`src/runtime/app-init.ts:405, 2429`
+- **位置**：`src/hooks/adapter.ts:88`
 - **代码**：
   ```typescript
-  const handleClose = () => { store.close().catch(() => {}); };
-  // ...
-  provenanceGraph.loadFromFile(p68Cfg.provenanceGraph.persistPath).catch(() => {});
+  const child = spawn(command, { shell: true, timeout, cwd });
   ```
-- **问题**：空 catch 完全吞掉错误，如果 session-memory flush 或 provenance-graph 加载失败，用户和开发者无法感知。
+- **问题**：Hook 命令通过 `shell: true` 完整传递到系统 shell，如果 Hook 命令字符串包含用户输入或 LLM 生成的内容，可被注入任意命令（如 `valid_command; rm -rf /`）。
 - **修复建议**：
-  ```typescript
-  const handleClose = () => { store.close().catch((err) => logger.warn('session-memory close failed:', err)); };
-  provenanceGraph.loadFromFile(path).catch((err) => logger.warn('provenance load failed:', err));
-  ```
-- **证据**：grep 搜索 `catch(() => {})` 仅匹配这 2 处。
+  1. 使用 `parseCommand()` tokenize 后取首 token 作为可执行文件
+  2. 将 `shell: true` 改为数组参数形式 `spawn(args[0], args.slice(1), { cwd, timeout })`
+  3. 或将命令写入脚本文件再执行
+- **证据**：与 `security/sandbox.ts` 中 `spawn(command, args)`（无 shell 模式）的安全实践不一致。
 
-#### [F-005] fail-open 降级路径日志记录完整
+#### [F-015] 遗留 TODO 注释
 - **级别**：Info
 - **维度**：维度 3 - 错误处理与韧性
-- **位置**：`src/runtime/app-init.ts`、`src/agent/ccr-cache.ts`
-- **问题**：所有 fail-open 降级路径均有注释说明或日志记录，设计意图清晰。
-- **证据**：ccr-cache.ts 的 4 处 SQLite 失败均有 `console.warn('[CCRCache] SQLite init failed, falling back to in-memory: ...')`。
+- **位置**：`src/agent/multi/orchestrator.ts:590`
+- **代码**：
+  ```typescript
+  // TODO Phase 73：synthesizer 派生点
+  ```
+- **问题**：Phase 73 已发布后，此 TODO 未清理或实现。
+- **修复建议**：确认是否需要实现，关闭或转化为 issue。
+- **证据**：grep `TODO|FIXME|XXX` 仅此 1 条命中。
 
 ---
 
 ## 维度 4：性能
 
 ### 概述
-本维度审查了 React 重渲染热点、同步阻塞操作、内存泄漏风险等。发现 0 个 Critical、0 个 Important、2 个 Minor、1 个 Info。
+
+本维度审查了同步阻塞操作、内存泄漏风险、React 渲染热点、资源释放。发现 2 个 findings（Minor: 2）。
 
 ### 同步阻塞操作清单
 
-| 文件:行号 | 操作 | 场景 | 是否热路径 |
-|-----------|------|------|-----------|
-| `src/config/loader.ts:135` | `readFileSync` | 配置加载 | ❌ 启动时一次 |
-| `src/router/tracker.ts:379,436` | `readFileSync` / `writeFileSync` | Token 持久化 | ⚠️ 进程退出时 |
-| `src/router/routing-history.ts:139` | `writeFileSync` | 路由历史写入 | ⚠️ 同步写入 |
-| `src/utils/paths.ts:15` | `writeFileSync` | 目录可写性探测 | ❌ 启动时 |
-| `src/agent/unified-reviewer.ts:324,338` | `execSync` | OCR 可用性检测 | ❌ 非热路径 |
-| `src/runtime/app-init.ts:1937` | `readFileSync` | Skill 文件读取 | ❌ 加载时 |
-| `desktop/main/index.ts:151` | `fs.statSync` | 日志文件大小检查 | ⚠️ 每条日志 |
-
-### 内存泄漏风险点
-
-| 位置 | 风险 | 缓解措施 |
-|------|------|----------|
-| `desktop/main/index.ts:41` | `authorizedCwds` Set 只增不减 | 一般不会无限增长 |
-| `engine-bridge.ts:147` | `pendingPlanEditResolvers` Map | 正常使用会 resolve/remove |
-| `security.ts:117` | `rateLimitMap` LRU | ✅ 有 maxSize 限制 |
+| 位置 | 操作 | 说明 |
+|------|------|------|
+| `src/runtime/doctor.ts:134` | `spawnSync` | 版本探测，启动时一次性 |
+| `src/router/tracker.ts:379` | `readFileSync` | 启动时加载持久化状态 |
+| `src/router/routing-history.ts:169` | ` 启动时加载历史 |
+| `src/tools/trust-gradient.ts:426` | `readFileSync` | 读取配置文件 |
+| `src/skills/market-manager.ts:163,202,523` | `readFileSync` | 读取 Skill 元数据 |
+| `src/harness/experiment-manager.ts:161,184` | `readFileSync` | 读取 gitignore / 注册表 |
+| `src/plugins/filesystem-discovery.ts:258` | `readFileSync` | 读取 Skill 状态 |
+| `src/runtime/app-init.ts:1948` | `readFileSync` | 读取 ProjectDoc |
 
 ### Findings
 
-#### [F-028] 同步文件 I/O 在部分热路径使用
+#### [F-012] 同步 fs 操作在启动热路径
 - **级别**：Minor
 - **维度**：维度 4 - 性能
-- **位置**：`desktop/main/index.ts:151`、`src/router/routing-history.ts:139`
-- **代码**：
+- **位置**：`src/router/tracker.ts:379`、`src/router/routing-history.ts:169`、`src/runtime/app-init.ts:1948`
+- **问题**：启动时使用同步读文件，在 SSD 上影响较小，但在慢速磁盘或网络挂载目录时会阻塞事件循环。
+- **修复建议**：将启动时的配置/状态读取改为 `await fs.promises.readFile()` 异步版本，配合顶层 await 或 .then() 链式调用。
+- **证据**：grep `readFileSync` 返回约 15 处，主要在启动/初始化阶段。
+
+#### [F-019] 组件事件监听器/定时器清理不完整
+- **级别**：Minor
+- **维度**：维度 4 - 性能
+- **位置**：`desktop/renderer/src/components/StatusBanner.tsx:97` 和多个 `setTimeout` 未在 `useEffect` cleanup 中清除
+- **问题**：`scheduleDismiss` 中的 `setTimeout` 未返回清理函数，组件卸载时定时器仍在运行。
+- **修复建议**：在 useEffect 返回清理函数清除所有定时器。
   ```typescript
-  // desktop/main/index.ts:148-163
-  try {
-    const stats = fs.statSync(rendererLogPath);  // 每条日志都 stat
-    if (stats.size > MAX_LOG_SIZE) { ... }
-  } catch { }
-  
-  // src/router/routing-history.ts:139
-  writeFileSync(this.persistPath, lines, 'utf-8');  // 同步写入
+  useEffect(() => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    return () => timers.forEach(clearTimeout);
+  }, [deps]);
   ```
-- **问题**：rendererLog 每次写入前都做 `statSync` 检查大小，在高频日志场景下会阻塞主进程。routing-history.ts 使用同步写入可能阻塞路由决策。
-- **修复建议**：
-  1. 维护一个计数器，每 N 条日志检查一次大小
-  2. routing-history.ts 改为异步写入或批量写入
-- **证据**：rendererLog 路径每秒可能调用多次，`statSync` + `writeFileSync` 均为同步操作。
+- **证据**：grep `setTimeout` 返回约 15 处，部分 setTimeout-for-kill 模式（shell-exec:180）需保留。
 
 ---
 
 ## 维度 5：安全
 
 ### 概述
-本维度审查了 Electron 安全配置、CSP、preload API 暴露面、注入防护等。发现 0 个 Critical、0 个 Important、0 个 Minor、3 个 Info。
 
-### 安全配置审计
+本维度审查了 Electron 安全配置、preload 暴露面、路径遍历防护、命令注入风险、敏感信息泄露、CSP 配置。发现 5 个 findings（Critical: 1 / Important: 3 / Minor: 1）。
+
+### Electron 安全配置审计
 
 | 配置项 | 值 | 评价 |
 |--------|-----|------|
-| `contextIsolation` | `true` | ✅ 安全 |
-| `nodeIntegration` | `false` | ✅ 安全 |
-| `sandbox` | `true` | ✅ 安全 |
-| preload 脚本 | 唯一 Node API 访问点 | ✅ 最小权限 |
-| CSP | `default-src 'self'; script-src 'self'` | ✅ 现代 CSP |
+| `contextIsolation` | `true` | ✅ 正确 |
+| `nodeIntegration` | `false` | ✅ 正确 |
+| `sandbox` | `true` | ✅ 正确 |
+| preload 路径 | `../preload/index.cjs` | ✅ 隔离 API |
 
-### 注入风险点清单
+### CSP 配置
 
-|风险类型 | 缓解措施 |
-|------|----------|----------|
-| `src/tools/security22-408` | 命令注入 | ✅ tokenize 解析 + 7 层 Bash 检查 |
-| `src/security/sandbox.ts:367-374` | 危险命令模式 | ✅ DANGEROUS_PATTERNS 正则 |
-| `src/tools/security.ts:417-428` | Bash 注入 | ✅ detectBashInjection |
-| `desktop/main/index.ts:529-561` | 路径遍历 | ✅ startsWith + symlink 解析 |
-| `desktop/main/index.ts:226-230` | 恶意 URL | ✅ 仅允许 http/https + system browser |
-| `preload/index.ts:114-131` | XSS via on/off | ✅ 类型化 channel 限制 |
-
-### 敏感信息泄露风险点
-
-| 位置 | 场景 | 是否泄露敏感信息 |
-|------|------|-----------------|
-| `desktop/main/engine-bridge.ts:485-493` | 微摘要推送 | ✅ 不含敏感信息 |
-| `src/tools/security.ts:420-425` | 日志中含 command | ⚠️ 含命令片段（截断至 100 字符）|
-
-### 暴露面审计（preload API 清单）
-
+```typescript
+// Content-Security-Policy（index.ts:191）
+`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src ${connectSrc}`
 ```
-routedev.chat.*          (4 methods) - 聊天控制
-routedev.config.*        (3 methods) - 配置管理
-routedev.command.execute  (1 method)  - 命令执行
-routedev.tool.execute     (1 method)  - 工具测试执行
-routedev.mcp.*            (6 methods) - MCP 管理
-routedev.skill.*          (7 methods) - Skill 管理
-routedev.fs.*             (3 methods) - 文件操作（有路径校验）
-routedev.project.setCwd   (1 method)  - 工作目录切换
-routedev.window.*         (3 methods) - 窗口控制
-routedev.experiment.*     (4 methods) - 实验分支
-routedev.hook.*           (4 methods) - Hook 管理
-routedev.checkpoint.*     (2 methods) - 检查点
-routedev.plan.*           (3 methods) - 计划编辑
-routedev.agent.*          (5 methods) - 队列控制
-routedev.on/off           (2 methods) - 事件监听
-```
+✅ 合理，生产环境 `connect-src 'self'` 限制数据外泄。
+
+### Preload API 暴露面审计
+
+暴露通道：47 个 handler，覆盖 chat、config、command、tool、mcp、skill、fs、window、experiment、hook、checkpoint、plan、agent、on/off 等。
+
+### IPC Handler 输入校验审计（抽样）
+
+| Handler | 类型校验 | 长度边界 | 枚举校验 |
+|---------|----------|----------|----------|
+| `chat:send` ✅ | ✅ | ✅ | N/A |
+| `mcp:connect` ✅ | ✅ | ✅ (≤256) | N/A |
+| `skill:toggle` ✅ | ✅ | ✅ | N/A |
+| `hook:create` ❌ | `unknown` | ❌ | N/A |
+| `experiment:adopt` ✅ | ✅ | ✅ | N/A |
+| `chat:confirm-tool` ❌ | ❌ | ❌ | N/A |
+| `plan:edit-response` ❌ | ❌ | ❌ | N/A |
+| `agent:followUp` ❌ | ❌ | ❌ | N/A |
+| `agent:setFollowUpMode` ❌ | ❌ | ❌ | ✅ |
+| `checkpoint:rollback` ✅ | ✅ | ✅ | N/A |
 
 ### Findings
 
-#### [F-020] preload 暴露 30+ API 方法
-- **级别**：Info
+#### [F-001] 多个 IPC handler 缺少参数校验（Critical）
+- **级别**：Critical
 - **维度**：维度 5 - 安全
-- **位置**：`desktop/preload/index.ts:24-132`
-- **问题**：API 暴露面较宽，特别是 `tool.execute` 和 `command.execute` 可被渲染进程任意调用。
-- **评估**：在 `contextIsolation: true` + `sandbox: true` 的前提下，渲染进程无法直接访问 Node API，只能通过暴露的 IPC 通道与主进程通信。如果渲染进程被 XSS 攻击，攻击者可调用这些 API，但：
-  - 所有 IPC handler 都有 `engine` 存在性校验
-  - `fs:read` 有严格的路径边界检查
-  - `tool.execute` 仅用于设置页测试按钮
-- **修复建议**：考虑对 `tool.execute` 和 `command.execute` 添加来源白名单或仅在生产环境禁用。
-- **证据**：preload 已使用 `contextBridge.exposeInMainWorld` 安全暴露，CSP 限制了外部脚本加载。
-
-#### [F-021] CSP 配置完善
-- **级别**：Info
-- **维度**：维度 5 - 安全
-- **位置**：`desktop/main/index.ts:183-195`
-- **代码**：
+- **位置**：`desktop/main/index.ts:351,356,739,779,788,797`
+- **问题**：以下 handler 对 payload 无直接类型/长度校验，透传给 engine 方法：
+  - `chat:confirm-tool` (line 351) — 直接调用 `engine?.resolveToolConfirm`
+  - `plan:edit-response` (line 356) — 直接调用 `engine?.resolvePlanEdit`
+  - `hook:create` (line 739) — payload 类型为 `unknown`
+  - `agent:followUp` (line 779) — content 无长度校验
+  - `agent:clearAllQueues` (line 788) — 无 arity 校验
+  - `agent:setFollowUpMode` (line 797) — 接受任意 string mode
+- **攻击场景**：渲染进程被 XSS 攻击后，攻击者可发送任意 IPC 消息。虽然 contextIsolation 限制了渲染进程访问 Node API，但已通过 preload 暴露的 IPC 通道可被滥用。例如，发送超大 content 字符串可消耗 LLM token 额度；发送非法 mode 值可能导致 engine 内部状态不一致。
+- **修复建议**：为每个 handler 添加参数类型+边界校验：
   ```typescript
-  const connectSrc = isDev
-    ? "'self' http://localhost:5173 ws://localhost:5173"
-    : "'self'";
-  cb({
-    responseHeaders: {
-      ...details.responseHeaders,
-      'Content-Security-Policy': [
-        `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src ${connectSrc}`
-      ],
-    },
+  // 示例：agent:followUp
+  ipcMain.on('agent:followUp', (_event, content: unknown) => {
+    if (typeof content !== 'string' || content.length === 0 || content > 10000) {
+      console.warn('[agent:followUp] 无效 content 参数');
+      return;
+    }
+    if (!engine) return;
+    engine.followUp(content);
   });
   ```
-- **问题**：CSP 配置现代且严格，仅允许 'self' 脚本，inline style 因 React 需要保留 'unsafe-inline'。
-- **评估**：配置合理。`script-src 'self'` 有效防止 XSS，`img-src 'self' data: https:` 允许用户头像等远程图片。
+- **证据**：grep `ipcMain.on|ipcMain.handle` 返回 47 handler，约 10 处缺少基础校验。
 
-#### [F-031] 依赖安全性
-- **级别**：Info
+#### [F-002] ToolCallCard 使用 `dangerouslySetInnerHTML`
+- **级别**：Important
 - **维度**：维度 5 - 安全
-- **位置**：`package.json`
-- **问题**：项目依赖经过维护，未使用过旧或已知漏洞版本。Electron 34.5.8、React 19.2.7 均为当前较新版本。
-- **评估**：可运行 `npm audit` 定期检查，但本次审查未发现明显安全风险。
+- **位置**：`desktop/renderer/src/components/ToolCallCard.tsx:408,411,425`
+- **代码**：
+  ```tsx
+  <span dangerouslySetInnerHTML={{ __html: fullHtml }} />
+  <span dangerouslySetInnerHTML={{ __html: headHtml }} />
+  <span dangerouslySetInnerHTML={{ __html: tailHtml }} />
+  ```
+- **问题**：`fullHtml`/`headHtml`/`tailHtml` 由 `ansiToHtml()` 生成 ANSI 转 HTML 输出。如果 ANSI 输入包含用户可控内容（如 shell 输出中的 HTML 标签），可被注入到渲染进程 DOM。
+- **修复建议**：
+  1. 确认 `ansiToHtml()` 是否对 `<>&"` 进行实体转义
+  2. 如未转义，在 `ansiToHtml()` 中添加 HTML escape 层
+  3. 替换为安全的 React token 渲染方案
+- **证据**：grep `dangerouslySetInnerHTML` 在 renderer/src 返回 3 命中。
+
+#### [F-017] Shell DANGEROUS_PATTERNS 可被编码绕过
+- **级别**：Important
+- **维度**：维度 5 - 安全
+- **位置**：`src/security/sandbox.ts:94-111`
+- **代码**：
+  ```typescript
+  const DANGEROUS_PATTERNS: RegExp[] = [
+    /rm\s+(-[a-z]*r[a-z]*f[a-z]*)\s+\/(\s|$|\*)/i,
+    /^format\s+[a-z]:/i,
+    // ...
+  ];
+  ```
+- **问题**：正则模式可被以下技术绕过：
+  1. 编码：`rm -rf /` → `$(echo cm0gLXJmIC8= | base64 -d | sh)`
+  2. Shell 别名 / PATH 劫持
+  3. 间接执行：`node -e "require('child_process').exec('rm -rf /')"`
+  4. 多行 heredoc 绕过行首匹配
+- **修复建议**：
+  1. 在 `sandbox.execute()` 中添加 parseCommand 首 token 白名单校验
+  2. 对用户输入使用 spawn(cmd, argsArray) 而非 shell 模式
+  3. 对 LLM 生成的命令添加执行前多模式交叉校验
+- **证据**：DANGEROUS_PATTERNS 仅覆盖约 10 种明显模式。
+
+#### [F-010] 部分 IPC handler 输入长度边界缺失
+- **级别**：Minor
+- **维度**：维度 5 - 安全
+- **位置**：`desktop/main/index.ts:652-659`（chat:generate-title）
+- **问题**：handler 未校验 userMessage 参数的最大长度，攻击者可发送超大字符串消耗 LLM token 额度。
+- **修复建议**：添加 `userMessage.length` 上限（如 10000 字符），超出后截断或拒绝。
 
 ---
 
 ## 维度 6：可维护性与代码质量
 
 ### 概述
-本维度审查了函数/文件长度、重复代码、命名一致性、注释覆盖率等。发现 0 个 Critical、2 个 Important、4 个 Minor。
 
-### 长文件 Top 10（>500 行，排除测试）
+本维度审查了长文件、长函数、重复代码、命名一致性、魔法数字、TODO/FIXME、注释覆盖率。发现 4 个 findings（Important: 3 / Minor: 1）。
 
-| 文件 | 行数 | 是否应拆分 |
-|------|------|-----------|
-| `src/runtime/app-init.ts` | ~2500 | ✅ 是 |
-| `desktop/renderer/src/pages/SettingsPage.tsx` | ~2500 | ✅ 是 |
-| `desktop/main/engine-bridge.ts` | ~1735 | ⚠️ 考虑拆分 |
-| `src/agent/loop.ts` | ~417 | ⚠️ 可接受 |
-| `src/agent/memory/context-manager.ts` | ~578 | ⚠️ 考虑拆分 |
-| `src/agent/multi/orchestrator.ts` | ~401 | ❌ 合理 |
-| `src/agent/task-orchestrator.ts` | ~342 | ❌ 合理 |
+### 长文件 Top 10（>500 行）
 
-### 长函数（>100 行）
-未发现超过 100 行的函数。主要模块的函数长度控制良好。
-
-### TODO / FIXME / HACK / XXX 清单
-**零个**。代码库中未发现遗留的 TODO/FIXME 注释。
-
-### [TECH-DEBT] 标签清单
-代码库中未发现 `[TECH-DEBT]` tag 的使用。根据 CONTRIBUTING.md，引入技术债的 commit 必须包含此 tag。
+| 文件 | 行数 | 评价 |
+|------|------|------|
+| `src/runtime/app-init.ts` | 2487 | ⚠️ 严重 |
+| `src/config/schema.ts` | 2122 | ⚠️ 应拆分 |
+| `src/runtime/goal-runner.ts` | 2033 | ⚠️ 应拆分 |
+| `src/agent/loop.ts` | 1954 | ⚠️ 考虑 |
+| `desktop/main/engine-bridge.ts` | 1738 | ⚠️ 考虑 |
+| `src/agent/memory/graph.ts` | 1159 | 可选 |
+| `src/code-map/extractor.ts` | 1013 | 可选 |
+| `src/tools/builtin/spawn-agent.ts` | 993 | 可选 |
+| `desktop/renderer/src/store/useRouteDevStore.ts` | 975 | ⚠️ 应拆分 |
+| `src/agent/multi/worker-executor.ts` | 952 | 可选 |
 
 ### Findings
 
-#### [F-015] app-init.ts 长约 2500 行
+#### [F-004] config/schema.ts 超长（2122 行）
 - **级别**：Important
 - **维度**：维度 6 - 可维护性与代码质量
-- **位置**：`src/runtime/app-init.ts`
-- **问题**：单个文件承担所有服务装配职责，约 2500 行代码，70+ 个静态 import。随着 Phase 迭代，此文件持续膨胀。
-- **修复建议**：
-  1. 按职责拆分为多个装配函数文件：`assemble-tools.ts`、`assemble-memory.ts`、`assemble-router.ts` 等
-  2. 引入 DI 容器模式或注册表模式，让模块自行注册到 AppDependencies
-  3. 使用工厂函数模式：`createToolRegistry(config)`、`createAgentLoop(config, deps)` 等
-- **证据**：文件读取因超过 token 限制被截断，说明文件确实过长。
+- **位置**：`src/config/schema.ts:1-2122`
+- **问题**：单文件包含所有配置类型的 Zod schema（router、agent、security、memory、mcp、subAgents、autonomy、goalIntegration 等）。
+- **修复建议**：按域拆分 schemas：
+  - `schemas/router-schema.ts`
+  - `schemas/agent-schema.ts`
+  - `schemas/security-schema.ts`
+  - `schemas/memory-schema.ts`
+  - `schemas/experimental-features.ts`（phase50-70 渐进接入开关）
+  - `schema.ts` — 统一 re-export + 组合 AppConfig
 
-#### [F-023] SettingsPage.tsx 约 2500 行 + 60+ 个 import
+#### [F-005] goal-runner.ts 超长（2033 行）
 - **级别**：Important
 - **维度**：维度 6 - 可维护性与代码质量
-- **位置**：`desktop/renderer/src/pages/SettingsPage.tsx`
-- **代码**：
-  import { useState, useEffect, useRef, type ChangeEvent } from 'react';
-  import { ... } from ...;  // 共 60+ 行 import
-  import { SettingsPersonaTab } from '../components/settings/SettingsPersonaTab.js';
-  import { SettingsVoiceTab } from '../components/settings/SettingsVoiceTab.js';
-  // ... 20+ 个 Tab 组件 import
-  ```
-- **问题**：设置页面承担所有 20+ 个 Tab 的状态管理和渲染，import 列表过长，任何修改都可能影响全局。
-- **修复建议**：
-  1. 将每个 Tab 拆分为独立路由页面
-  2. 使用 React.lazy + Suspense 懒加载 Tab 组件
-  3. 将状态管理下沉到各 Tab 组件内部（已通过 useSettingsDraft 部分实现）
-- **证据**：文件 import 行数占前 70 行，共引入 24 个 Tab 组件。
+- **位置**：`src/runtime/goal-runner.ts:1-2033`
+- **问题**：单个 `createGoalRunner` 函数实现 2033 行，包含 Goal 拆解、计划编辑、步骤执行、验证等所有逻辑。
+- **修复建议**：拆分为 `goal-decomposer.ts`、`goal-step-executor.ts`、`goal-verifier.ts` + 组合层。
 
-#### [F-017] engine-bridge.ts 长约 1735 行
+#### [F-009] 魔法数字散点
 - **级别**：Minor
 - **维度**：维度 6 - 可维护性与代码质量
-- **位置**：`desktop/main/engine-bridge.ts`
-- **问题**：桥接层文件偏大，但考虑到它需要封装引擎的全部功能（sendChat、executeCommand、GoalRunner、ProfileManager 等），尚属合理。
-- **修复建议**：可将 IPC handler 注册逻辑拆分为独立模块。
-
-#### [F-025] 多个模块使用 console.warn/log 替代 logger
-- **级别**：Minor
-- **维度**：维度 6 - 可维护性与代码质量
-- **位置**：`src/config/loader.ts:147-227`、`src/code-map/artifact.ts:57-134`、`src/agent/ccr-cache.ts:138-243`、`src/utils/paths.ts:74`
-- **代码**：
-  ```typescript
-  // src/config/loader.ts
-  console.warn(`[config] 配置文件解析失败，使用默认配置: ${filePath}`, err);
-  
-  // src/agent/ccr-cache.ts
-  console.warn(`[CCRCache] SQLite init failed, falling back to in-memory: ${String(err)}`);
-  ```
-- **问题**：项目已建立 `src/utils/logger.ts 日志），但部分模块仍/log`，导致日志不集中、无法统一配置修复建议**：将上述 4 个文件的 console 调用替换为 logger。
-- **证据**：grep 搜索+ 处。
+- **位置**：多处
+- **示例**：
+  - `src/tools/builtin/shell-exec.ts:14` — `MAX_STDOUT = 100 * 1024`
+  - `ShellExecTool.circuit` — `failureThreshold: 5, resetTimeoutMs: 30000`
+  - `src/runtime/app-init.ts:287-294` — 已部分提取为常量
+- **修复建议**：将工具内部熔断阈值和超时提取到 config schema 中统一管理。
 
 ---
 
 ## 维度 7：测试覆盖
 
 ### 概述
-本维度审查了测试文件比例、关键模块覆盖、测试质量等。发现 0 个 Critical、0 个 Important、1 个 Minor、2 个 Info。
+
+本维度统计了测试文件与源码的比例、关键模块的测试覆盖、测试命名质量。发现 1 个 finding（Minor: 1）。
 
 ### 测试覆盖率估算
 
-| 模块 | 测试覆盖 | 评价 |
-|------|----------|------|
-| `src/agent/loop.ts` | ✅ 高 | 核心循环有完整测试 |
-| `src/runtime/app-init.ts` | ✅ 中 | 有 goal-integration.test.ts |
-| `src/tools/builtin/spawn-agent.ts` | ✅ 高 | Phase 38 增强测试 |
-| `src/router/` | ✅ 高 | 多层测试 |
-| `src/config/` | ✅ 高 | loader 测试覆盖 |
-| `src/security/` | ✅ 中 | sandbox 测试 |
-| `desktop/main/` | ⚠️ 低 | 无独立测试 |
+| 模块 | 测试文件数 | 关键类/函数覆盖 |
+|------|-----------|----------------|
+| `agent/` | ~50 | ✅ 高 |
+| `router/` | ~19 | ✅ 高 |
+| `tools/` | ~25 | ✅ 高 |
+| `memory/` | ~10 | ✅ 中高 |
+| `runtime/` | ~6 | ⚠️ 中 |
+| `config/` | ~3 | ✅ 高 |
+| `plugins/` | ~4 | ✅ 高 |
+| `e2e/` | ~1 | ⚠️ 低 |
 
-### 跳过的测试清单
-未发现 `.skip` / `xit` / `xdescribe`。
+### 跳过的测试
+
+无 `.skip()` / `xit()` / `xdescribe()` 命中 ✅
 
 ### Findings
 
-#### [F-030] 测试覆盖率估计 >70%
-- **级别**：Info
-- **维度**：维度 7 - 测试覆盖
-- **位置**：tests/ 目录
-- **问题**：核心模块（agent loop、router、spawn-agent）均有完整测试，Phase 迭代产生的模块有对应的 `tests/phaseNN/` 目录。
-- **证据**：tests/ 下有 36+ 个子目录，与 src/ 镜像组织，约 300+ 测试文件。
-
-#### [F-027] desktop/ 主进程缺少独立测试
+#### [F-021] e2e 测试覆盖薄弱
 - **级别**：Minor
 - **维度**：维度 7 - 测试覆盖
-- **位置**：`desktop/main/engine-bridge.ts`
-- **问题**：engine-bridge.ts 约 1735 行代码，但没有独立的单元测试。桌面端主要通过 e2e 测试覆盖。
-- **修复建议**：为 engine-bridge.ts 的核心方法（sendChat、executeCommand、destroy）添加单元测试，mock `deps` 对象。
+- **位置/e2e/user-journey.test.ts`
+- **问题**：仅 1 个 e2e 测试文件，CONTRIBUTING.md 要求 e2e 串行运行但未实际落地覆盖。
+- **修复建议**：增加核心用户旅程 e2e 测试（首次启动、对话聊天、工具确认、切换项目）。
 
 ---
 
 ## 维度 8：文档与注释
 
 ### 概述
-本维度审查了根文档完整性、JSDoc 覆盖率、注释与代码一致性等。发现 0 个 Critical、0 个 Important、1 个 Minor、1 个 Info。
 
-### 文档完整性审计
+本维度审查了根文档覆盖率、文档与代码一致性。发现 2 个 findings（Minor: 2）。
 
-| 文档 | 状态 | 内容质量 |
-|------|------|----------|
-| `README.md` | ✅ 存在 | 待检查 |
-| `AG ✅ 存在 | ⭐ 优秀，含 Top 10 陷阱 |
-| `CONTRIBUTING.md` | ✅ 存在 | ⭐ 优秀，issue-driven workflow |
-| `CODEMAP.md` | ✅ 存在 | ⭐ 优秀，最后更新 2026-07-05 |
-| `CHANGELOG.md` | ✅ 存在 | 可能存在过时条目 |
-| `docs/` 目录 | ✅ 20+ 文档 | 覆盖架构、插件、安全等 |
+### 文档完整性
 
-### 公共 API JSDoc 覆盖率
-约 **40%**。核心类型定义（types.ts）普遍有注释，但部分工具实现文件缺少 JSDoc。
-
-### 过时注释清单
-未发现过时注释。CODEMAP.md 最后更新于 2026-07-05，与代码库同步。
+| 文档 | 状态 |
+|------|------|
+| `README.md` | ✅ |
+| `AGENTS.md` | ✅ Top 10 核心陷阱 + Phase 47/48 新增 |
+| `CONTRIBUTING.md` | ✅ Issue-driven workflow + commitlint + 测试规范 |
+| `CHANGELOG.md` | ✅ |
+| `CODEMAP.md` | ✅ |
 
 ### Findings
 
-#### [F-026] TODO/FIXME 数量为 0
-- **级别**：Info
-- **维度**：维度 8 - 文档与注释
-- **位置**：全局
-- **问题**：代码中 TODO/FIXME 注释，说明团队在开发时及时处理了待办事项，或通过 issue 跟踪。
-- **评估**：正面发现。技术债通过 `tech-debt.json` 和 issue 跟踪，而非代码注释。
-
-#### [F-024] 部分公共 API 缺少 JSDoc
+#### [F-023] README.md 与 AGENTS.md 信息冗余
 - **级别**：Minor
 - **维度**：维度 8 - 文档与注释
-- **位置**：`src/tools/builtin/*.ts`、`src/agent/tools/*`
-- **问题**：工具实现文件的公共方法（如 `execute`）缺少 JSDoc 注释，只有类型定义文件有完整注释。
-- **修复建议**：为工具的 execute 方法添加 JSDoc，描述参数、返回值、异常场景。
+- **问题**：技术栈说明在 README.md 和 AGENTS.md 中重复出现。
+- **修复建议**：README.md 仅保留简介和安装说明，技术栈详情链接到 AGENTS.md。
+
+#### [F-024] 公共 API JSDoc 覆盖率约 60%
+- **级别**：Minor
+- **维度**：维度 8 - 文档与注释
+- **问题**：部分内部工具类方法缺少 JSDOC。
+- **修复建议**：为所有 exported class 公共方法添加 JSDoc。
 
 ---
 
 ## 维度 9：依赖管理
 
 ### 概述
-本维度审查了依赖版本、未使用依赖、安全漏洞等。发现 0 个 Critical、0 个 Important、1 个 Minor、1 个 Info。
 
-### 依赖版本审计
+本维度审查了依赖版本新旧、未使用依赖、重复依赖、dev/dependencies 分界、husky/commitlint 配置。发现 2 个 findings（Important: 1 / Info: 1）。
 
-| 依赖 | 当前版本 | 最新版本 | 状态 |
-|------|----------|----------|------|
-| `electron` | 34.5.8 | 34.x | ✅ 当前 |
-| `react` | 19.2.7 | 19.x | ✅ 当前 |
-| `typescript` | 6.0.3 | 6.x | ✅ 当前 |
-| `zod` | 4.4.3 | 4.x | ✅ 当前 |
-| `winston` | 3.19.0 | 3.x | ✅ 当前 |
-| `@anthropic-ai/sdk` | 0.104.2 | 0.x | ⚠️ SDK 版本号特殊 |
-| `openai` | 6.42.0 | 6.x | ✅ 当前 |
+### 过时依赖清单（major 落后）
 
-### devDependencies 与 dependencies 分清
-✅ 正确分离。`@types/*` 在 devDependencies，运行时依赖在 dependencies。
-
-### Phase 75-A6 引入的 husky / lint-staged / commitlint
-- `husky@9.1.7` ✅ 有 `prepare` 脚本
-- `lint-staged@15.2.10` ✅ 
-- `@commitlint/cli@19.5.0` + `@commitlint/config-conventional@19.5.0` ✅
-- `commitlint.config.cjs` ✅（因 `"type": "module"` 使用 .cjs 后缀正确）
+| 包 | 当前 | 最新 | 落后 |
+|----|------|------|------|
+| `electron` | 34.5.8 | 43.0.0 | 9 major 🔴 |
+| `@vitejs/plugin-react` | 4.7.0 | 6.0.3 | 2 major |
+| `electron-vite` | 2.3.0 | 5.0.0 | 3 major 🔴 |
+| `vite` | 6.4.3 | 8.1.3 | 2 major 🔴 |
+| `tailwindcss` | 3.4.19 | 4.3.2 | 1 major |
+| `lucide-react` | 0.577.0 | 1.23.0 | 1 major |
+| `web-tree-sitter` | 0.22.6 | 0.26.10 | patch |
+| `@types/node` | 25.9.4 | 26.1.0 | 1 major |
 
 ### Findings
 
-#### [F-031] 依赖版本较新
+#### [F-007] 核心构建依赖严重过时
+- **级别**：Important
+- **维度**：维度 9 - 依赖管理
+- **位置**：`package.json:34-76`
+- **问题**：Electron（34→43，落后 9 major）、vite（6→8）、electron-vite（2→5）均严重过时。这些是核心构建/运行时依赖，意味着缺失安全补丁与新特性。
+- **修复建议**：制定分阶段升级计划：
+  1. 先升 vite 小版本 + patch 依赖
+  2. 再升 electron-vite → electron（需回归测试）
+  3. 优先级：`vite` > `electron-vite` > `tailwindcss` > `electron`
+- **证据**：`npm outdated` 显示 13 项过时，其中 5 项 major 落后。
+
+#### [F-025] commitlint 配置未完全生效
 - **级别**：Info
 - **维度**：维度 9 - 依赖管理
-- **位置**：`package.json`
-- **问题**：所有依赖均为当前版本或近期版本，无 major 版本落后。
-- **证据**：Electron 34（2024 末）、React 19（2024 末）、TypeScript 6（2025）均为较新版本。
-
-#### [F-029] @types/diff-match-patch 放置在 dependencies
-- **级别**：Minor
-- **维度**：维度 9 - 依赖管理
-- **位置**：`package.json:36`
-- **代码**：
-  ```json
-  "dependencies": {
-    "@types/diff-match-patch": "1.0.36",
-  }
-  ```
-- **问题**：`@types/*` 包应放在 `devDependencies`。虽然这不影响功能（TypeScript 编译后忽略），但违反了最佳实践。
-- **修复建议**：将 `@types/diff-match-patch` 移至 `devDependencies`。
+- **位置**：`commitlint.config.cjs:5`
+- **问题**：CONTRIBUTING.md 支持 `[scope]` 和 Conventional Commits 两种格式，但 commitlint 仅校验后者。`[scope]` tau 风格的 commit 会被 hook 拒绝。
+- **修复建议**：引入自定义 parser plugin 支持 `[scope]` 格式，或修改 CONTRIBUTING.md 描述。
 
 ---
 
 ## 维度 10：死代码与冗余
 
 ### 概述
-本维度审查了未使用的函数、重复定义、注释代码块、僵尸字段等。发现 0 个 Critical、0 个 Important、2 个 Minor。
 
-### 死代码清单
-
-| 位置 | 类型 | 说明 |
-|------|------|------|
-| `ipc-types.ts:402-418` | 未使用 event 类型 | `experiment:progress/status` 和 `hook:fired` 定义但未在代码中 emit |
-| `app-init.ts:411` | 注释 | `// Phase 75：codebase-memory.ts 源文件已删除` 保留注释说明 |
-
-### 重复类型定义清单
-
-| 类型 | 位置数 | 是否应统一 |
-|------|--------|-----------|
-| `AgentRole` | 4 | ✅ 已知债（Phase 75-A4） |
-| `AgentProfileRole` | 2 | ✅ ipc-types.ts + profiles/types.ts |
-
-### 注释代码块清单
-未发现大块注释掉的代码（仅正常的注释说明）。
-
-### 空 try/catch 或空 if 分支
-除已报告的 `catch(() => {})` 外，未发现空分支。
+本维度审查了未使用导出、注释代码块、空分支、临时文件。发现 3 个 findings（Minor: 2 / Info: 1）。
 
 ### Findings
 
-#### [F-016] ipc-types.ts 中定义了未使用的 IPC 事件类型
+#### [F-026] 仓库含多个临时/审计文件
 - **级别**：Minor
 - **维度**：维度 10 - 死代码与冗余
-- **位置**：`desktop/shared/ipc-types.ts:402-418`
-- **代码**：
-  ```typescript
-  // Phase 39：实验分支进度事件
-  | { channel: 'experiment:progress'; payload: { taskId: string; phase: string; ... } }
-  // Phase 39：实验分支状态变更事件
-  | { channel: 'experiment:status'; payload: { taskId: string; status: string } }
-  // Phase 39：Hook 触发事件
-  | { channel: 'hook:fired'; payload: { hookName: string; event: string; result?: string } }
-  ```
-- **问题**：这 3 个事件类型在 `MainToRendererEvent` 联合类型中定义，但在 `desktop/main/engine-bridge.ts` 中未找到对应的 `webContents.send` 调用。可能是已实现但未使用，或计划功能未实现。
-- **修复建议**：如确认未使用，删除这些类型定义；如计划使用，添加 `// TODO: 待实现` 注释。
-- **证据**：grep `experiment:progress|experiment:status|hook:fired` 在 desktop/main/ 中无 send 调用。
+- **位置**：仓库根目录
+- **文件**：`dead-code-audit-output.md`、`dead-code-report.json`、`__read_lines.ps1`、`tmp_classify_test.mjs`、`_audit-output.txt`、`_import-paths.txt`、`_importers.txt`、`_unreferenced-src.txt`、`_audit.ps1`、`zombie-analysis.cjs`
+- **问题**：开发/审计过程的临时产物不应入库。
+- **修复建议**：删除文件 + 在 .gitignore 添加模式：`__*.ps1`、`*audit*`、`tmp_*.mjs`、`zombie-*.cjs`。
 
-#### [F-019] app-init.ts 中的僵尸字段注释
+#### [F-027] electron-builder.yml output 目录"
 - **级别**：Minor
 - **维度**：维度 10 - 死代码与冗余
-- **位置**：`src/runtime/app-init.ts:205-278`
-- **代码**：
-  ```typescript
-  // Phase 59：orchestrator/workerExecutor 接口字段已删除（僵尸字段，全 src/ + desktop/ 无消费方）
-  // Phase 59：branchManager/initAnalyzer 接口字段已删除（僵尸字段，全 src/ + desktop/ 无消费方）
-  // Phase 59：goalParser/goalVerifier 接口字段已删除（僵尸字段，goal-runner.ts 内部自建实例）
-  ```
-- **问题**：大量注释说明已删除的接口字段，保留了历史信息但增加了阅读负担。
-- **修复建议**：保留注释（有助于理解演进），但可在文件顶部维护一个 "Removed Fields" 列表，减少行内注释。
+- **位置**：`electron-builder.yml:8`
+- **问题**：Phase 54 "临时" 规避方案未修正，仍使用 release-v6。
+- **修复建议**：确认 release-v4/v5 锁定问题是否已解决，改回或移除 TODO 注释。
+
+#### [F-028] AGENTS.md 引用源文件待确认
+- **级别**：Info
+- **维度**：维度 10 - 死代码与冗余
+- **问题**：AGENTS.md 列出 `src/runtime/notification.ts` 为关键入口，需确认该文件存在且活跃。
+- **修复建议**：确认或更新文档。
 
 ---
 
 ## 附录：审查覆盖范围
 
-### 已读取文件清单（部分）
+### 已读取/分析文件
 
-**核心入口链路**：
-- `desktop/main/index.ts` ✅ 完整（789 行）
-- `desktop/main/engine-bridge.ts` ✅ 部分（1735 行，已读前 500 + 关键段）
-- `src/runtime/app-init.ts` ✅ 部分（约 2500 行，已读前 500 行）
-- `desktop/preload/index.ts` ✅ 完整（135 行）
-- `desktop/shared/ipc-types.ts` ✅ 完整（562 行）
+**核心入口**：
+- [x] `desktop/main/index.ts` (824 行)
+- [x] `desktop/main/engine-bridge.ts` (1738 行)
+- [x] `src/runtime/app-init.ts` (2487 行，分段读取)
+- [x] `desktop/preload/index.ts` (135 行)
 
-**安全相关**：
-- `src/security/sandbox.ts` ✅ 完整（447 行）
-- `src/tools/security.ts` ✅ 完整（565 行）
-- `src/tools/builtin/spawn-agent.ts` ✅ 部分
-- `src/agent/branch-operations.ts` ✅ 完整（548 行）
+**配置文件**：
+- [x] `package.json`
+- [x] `tsconfig.json`
+- [x] `electron-builder.yml`
+- [x] `commitlint.config.cjs`
+- [x] `electron.vite.config.mjs`
 
-**配置和类型**：
-- `package.json` ✅ 完整
-- `tsconfig.json` ✅ 完整
-- `electron-builder.yml` ✅ 完整
-- `AGENTS.md` ✅ 完整
-- `CONTRIBUTING.md` ✅ 完整
-- `CODEMAP.md` ✅ 完整
+**安全配置**：
+- [x] `src/security/sandbox.ts`
+- [x] `src/tools/builtin/shell-exec.ts`
 
-### 跳过文件清单
+**文档**：
+- [x] `AGENTS.md`
+- [x] `CONTRIBUTING.md`
 
-| 文件/目录 | 原因 |
-|-----------|------|
-| `node_modules/` | 第三方依赖 |
-| `out/` / `build/` / `dist/` / `release*/` | 构建产物 |
-| `design-demos/` | 原型 HTML |
-| `scripts/`（部分） | 构建/校验脚本，非生产代码 |
-| `tests/`（部分） | 抽样检查，未全量读取 |
-| `src/optional/` | 可选模块 |
-| `src/observability/` | 可观测性，非核心 |
+### 抽样审查文件
 
-### 审查方法
+**类型安全热点**：
+- [x] `src/tools/builtin/browser.ts`
+- [x] `src/agent/unified-reviewer.ts`
+- [x] `src/agent/context-compaction.ts`
+- [x] `src/router/llm/openai.ts`
 
-1. **阶段 1**：读取核心入口文件、配置、文档
-2. **阶段 2**：使用 `grep` 搜索定位候选问题（any、ts-ignore、catch、console 等）
-3. **阶段 3**：Read 实际代码确认，排除误报（对照提示词 7.3 设计意图清单）
-4. **阶段 4**：分级（Critical/Important/Minor/Info）并输出报告
+**渲染层**：
+- [x] `desktop/renderer/src/components/ToolCallCard.tsx`
+- [x] `desktop/renderer/src/store/useRouteDevStore.ts`
+
+**依赖分析**：
+- [x] `package.json` dependencies/devDependencies 分界
+- [x] 运行 `npm outdated`（13 项过时）
+
+**文件统计**：
+- [x] 源码文件总数 255（src/ + desktop/main/ + desktop/renderer/src/）
+- [x] 测试文件总数 242
+- [x] 长文件 Top 25（PowerShell 统计）
+
+### 已排除误报清单
+
+| 疑似问题 | 排除原因 |
+|----------|----------|
+| app-init 中 7 处动态 import "未被静态引用" | 设计意图：可选模块加载 |
+| fail-open 降级路径 "未处理错误" | 设计意图：有 warn 日志 |
+| AgentRole 类型碎片化 | 已知技术债 |
+| engine-bridge.ts pre-existing TS 错误 | 已知问题 |
+| `.routedev/skills/` 不入库 | gitignore 运行时数据 |
+| 类型导出 / interface | 不是死代码 |
+| reviewer verdict 三态 | 设计意图 |
+| progress-ledger append-only | 设计意图 |
 
 ---
 
-## 审查者签名
+## 审查者信息
 
 - **审查者模型**：美团-龙猫2.0
-- **审查工具**：CatPaw IDE (Trae)
+- **审查工具**：CatPaw IDE（Cursor Agent）
 - **审查日期**：2026-07-07
-- **审查耗时**：约 2.5 小时
-- **总 findings 数**：32
-- **Critical 数量**：0
-- **Important 数量**：6
-- **Minor 数量**：18
-- **Info 数量**：8
-- **建议处理方式**：排期修复（Important 项在下一 Phase 集中处理，Minor 项在日常开发中逐步优化）
+- **审查耗时**：约 1.5 小时
+- **总 findings 数**：28
+- **Critical 数量**：1（F-001 IPC handler 无参数校验）
+- **Important 数量**：9
+- **Minor 数量**：12
+- **Info 数量**：6
+- **建议处理方式**：排期修复
+  - 立即修复（本周）：F-001 IPC 参数校验、F-002 dangerouslySetInnerHTML
+  - 近期修复（1-2 周）：F-007 依赖升级、F-020 hooks adapter shell
+  - 排期修复（1-2 月）：F-003/004/005 文件拆分、F-006 类型安全重构
 - **备注**：
-  1. 已知技术债（AgentRole 碎片化、engine-bridge.ts TS 错误）已按提示词要求未重复报告
-  - 未发现 Critical 级阻塞性问题，项目可正常合并
-  - 建议优先处理 F-007（branch-operations `as any`）和 F-012（spawn-agent `as any`），因涉及核心子 Agent 逻辑
-  - 日志统一（F-025）是最容易修复且收益较高的改进项
+  1. 本报告基于静态代码搜索和人工确认，未运行 `npm run build`/`npm test`；
+  2. 已知技术债（AgentRole 碎片化、engine-bridge TS 错误）未重复报告；
+  3. fail-open 降级和动态 import 等设计意图已排除出 finding。
 
 ---
 
-*报告结束 — 美团-龙猫2.0 @ 2026-07-07*
+> **审查结论**：RouteDev 项目整体架构合理，安全设计到位，测试覆盖率高，但核心文件过长、依赖过时、部分 IPC 校验缺失是主要风险点。建议按优先级分阶段修复，其中 F-001（IPC 参数校验）应作为本周安全加固项。

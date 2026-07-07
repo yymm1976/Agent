@@ -349,11 +349,17 @@ ipcMain.on('chat:send', (_event, payload: ChatSendPayload) => {
 
 // 聊天：确认/拒绝工具调用
 ipcMain.on('chat:confirm-tool', (_event, payload: ToolConfirmPayload) => {
+  if (!payload || typeof payload.approved !== 'boolean') {
+    return;
+  }
   engine?.resolveToolConfirm(payload.approved, payload.payload);
 });
 
 // Phase 54：计划编辑响应（StepEditor 确认/取消后回传）
 ipcMain.on('plan:edit-response', (_event, payload: import('../shared/ipc-types.js').PlanEditResponsePayload) => {
+  if (!payload || typeof payload.requestId !== 'string' || payload.requestId.length === 0 || payload.requestId.length > 256) {
+    return;
+  }
   engine?.resolvePlanEdit(payload.requestId, payload.steps);
 });
 
@@ -397,6 +403,10 @@ ipcMain.on('chat:stop', () => {
 
 // 聊天：同步当前对话历史，避免切换/分支后后台仍沿用旧对话上下文
 ipcMain.on('chat:sync-history', (_event, messages: import('../../src/router/types.js').LLMMessage[]) => {
+  if (!Array.isArray(messages) || messages.length > 10000) {
+    console.error('[chat:sync-history] 无效 messages');
+    return;
+  }
   engine?.syncConversationHistory(messages);
 });
 
@@ -431,11 +441,17 @@ ipcMain.handle('config:reload', async (): Promise<import('../../src/config/schem
 
 // 命令执行（用于 GUI 中的快捷命令，如 /clear、/status 等）
 ipcMain.handle('command:execute', async (_event, payload: CommandExecutePayload): Promise<unknown> => {
+  if (!payload || typeof payload.text !== 'string' || payload.text.length === 0 || payload.text.length > 10000) {
+    return { error: '无效的参数' };
+  }
   return engine?.executeCommand(payload.text) ?? { error: '引擎未初始化' };
 });
 
 // 工具执行（用于设置页中的测试按钮等）
 ipcMain.handle('tool:execute', async (_event, payload: ToolExecutePayload): Promise<unknown> => {
+  if (!payload || typeof payload.name !== 'string' || payload.name.length === 0 || payload.name.length > 256) {
+    return { error: '无效的参数' };
+  }
   return engine?.executeTool(payload.name, payload.args) ?? { error: '引擎未初始化' };
 });
 
@@ -737,6 +753,15 @@ ipcMain.handle('hook:toggle', async (_event, payload: { hookId: string; enabled:
 // 创建自定义 Hook（模板模式或自定义模式）
 // 参数 payload：{ templateId: string } 或 { name, event, code, description?, ... }
 ipcMain.handle('hook:create', async (_event, payload: unknown): Promise<{ success: boolean; hookId?: string; error?: string }> => {
+  if (!payload || typeof payload !== 'object') {
+    return { success: false, error: '无效的参数' };
+  }
+  const p = payload as { templateId?: string; name?: string };
+  const hasTemplateId = typeof p.templateId === 'string' && p.templateId.length > 0 && p.templateId.length <= 256;
+  const hasName = typeof p.name === 'string' && p.name.length > 0 && p.name.length <= 256;
+  if (!hasTemplateId && !hasName) {
+    return { success: false, error: '无效的参数' };
+  }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.createHook(payload as Parameters<typeof engine.createHook>[0]);
 });
@@ -777,6 +802,10 @@ ipcMain.handle('checkpoint:rollback', async (_event, checkpointId: string): Prom
 
 // 排队 follow-up 消息（fire-and-forget，无返回值）
 ipcMain.on('agent:followUp', (_event, content: string) => {
+  if (typeof content !== 'string' || content.length === 0 || content.length > 10000) {
+    console.warn('[agent:followUp] 无效 content，调用被忽略');
+    return;
+  }
   if (!engine) {
     console.warn('[agent:followUp] 引擎未初始化，调用被忽略');
     return;
@@ -785,6 +814,7 @@ ipcMain.on('agent:followUp', (_event, content: string) => {
 });
 
 // 清空所有队列（steering + follow-up）
+// 无参数 handler，仅校验 engine 是否初始化
 ipcMain.on('agent:clearAllQueues', () => {
   if (!engine) {
     console.warn('[agent:clearAllQueues] 引擎未初始化，调用被忽略');
@@ -795,6 +825,10 @@ ipcMain.on('agent:clearAllQueues', () => {
 
 // Phase 73 Part C 修复：设置 follow-up 出队模式（逐条 / 全部）
 ipcMain.on('agent:setFollowUpMode', (_event, mode: 'all' | 'one-at-a-time') => {
+  if (mode !== 'all' && mode !== 'one-at-a-time') {
+    console.warn('[agent:setFollowUpMode] 无效 mode，调用被忽略');
+    return;
+  }
   if (!engine) {
     console.warn('[agent:setFollowUpMode] 引擎未初始化，调用被忽略');
     return;

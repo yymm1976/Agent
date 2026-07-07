@@ -1,4 +1,6 @@
 node_modules/
+# pnpm 项目，禁止 npm lockfile（误操作产物）
+package-lock.json
 dist/
 *.log
 .env
@@ -32,12 +34,14 @@ tmp_*.mjs
 .routedev/
 _audit-output.txt
 _audit.ps1
+__*.ps1
 _import-paths.txt
 _importers.txt
 _unreferenced-src.txt
 imported.txt
 dead-code-audit-output.md
 dead-code-audit-script.cjs
+dead-code-report.json
 zombie-analysis.cjs
 scripts/config-audit.ts
 scripts/true-dead-audit.ts

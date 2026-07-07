@@ -5,7 +5,6 @@ asar: true
 asarUnpack:
   - node_modules/tiktoken/**/*
 directories:
-  # Phase 54：临时改为 release-v6 绕过 release-v4/v5 目录被锁定问题（TODO: 改回 release-v4）
   output: release-v6
   buildResources: build
 files:

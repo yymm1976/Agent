@@ -405,9 +405,13 @@ function CommandOutput({ command, result, status }: CommandOutputProps) {
             }`}
           >
             {showFull ? (
+              // SECURITY: fullHtml 来自 ansiToHtml()，该函数先调用 escapeHtml()
+              // 转义 & < > " ' 五个字符，再交给 ansi_up 仅添加 <span style> 标签。
+              // 输入已完全 sanitize，无原始用户内容到达 dangerouslySetInnerHTML。
               <span dangerouslySetInnerHTML={{ __html: fullHtml }} />
             ) : (
               <>
+                {/* SECURITY: headHtml 同上——ansiToHtml 先 escapeHtml 再 ansi_up，已防注入 */}
                 <span dangerouslySetInnerHTML={{ __html: headHtml }} />
                 {foldedCount > 0 && (
                   <>
@@ -422,6 +426,7 @@ function CommandOutput({ command, result, status }: CommandOutputProps) {
                     )}
                     {showTail && (
                       <>
+                        {/* SECURITY: tailHtml 同上——ansiToHtml 先 escapeHtml 再 ansi_up，已防注入 */}
                         <span dangerouslySetInnerHTML={{ __html: tailHtml }} />
                         <button
                           type="button"

@@ -57,13 +57,35 @@ export function configToDefinition(config: HookConfig): HookDefinition {
  *   - {{filePath}}：当前文件路径（来自工具上下文）
  *   - {{toolName}}：当前工具名
  *   - {{stepId}}：当前步骤 ID
+ *
+ * SECURITY：变量值来自工具上下文（可能源自用户/LLM 输入），在替换时
+ *           必须经过 shellEscape 转义，防止 `;`、`|`、`&`、`$()` 等
+ *           shell 元字符导致命令注入。命令模板本身来自可信的开发者配置
+ *           （HookConfigRegistry），不需要转义。
  */
 export function replaceVariables(template: string, ctx: HookContext): string {
   const ext = ctx as ExtendedHookContext;
   return template
-    .replace(/\{\{filePath\}\}/g, ext.filePath ?? '')
-    .replace(/\{\{toolName\}\}/g, ctx.toolName ?? '')
-    .replace(/\{\{stepId\}\}/g, ctx.stepId ?? '');
+    .replace(/\{\{filePath\}\}/g, shellEscape(ext.filePath ?? ''))
+    .replace(/\{\{toolName\}\}/g, shellEscape(ctx.toolName ?? ''))
+    .replace(/\{\{stepId\}\}/g, shellEscape(ctx.stepId ?? ''));
+}
+
+/**
+ * Shell 转义：将字符串安全地插入 shell 命令，防止命令注入
+ *
+ * - Unix（sh/bash）：用单引号包裹整个值，内部单引号用 `'\''` 转义。
+ *   单引号内的内容 100% 字面化——无展开、无元字符解释。
+ * - Windows（cmd.exe）：用双引号包裹，内部双引号用 `""` 转义。
+ *   双引号内 `& | < >` 等 shell 分隔符变为字面字符，阻断常见注入路径。
+ *   （`%var%` 展开仍可能发生，但仅能泄露环境变量，无法执行任意命令。）
+ */
+export function shellEscape(value: string): string {
+  if (value === '') return process.platform === 'win32' ? '""' : "''";
+  if (process.platform === 'win32') {
+    return '"' + value.replace(/"/g, '""') + '"';
+  }
+  return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
 /**
@@ -85,6 +107,11 @@ export function executeShellCommand(
   cwd?: string,
 ): Promise<HookResult> {
   return new Promise((resolve) => {
+    // SECURITY：shell:true 保留——hook 命令模板合法使用 shell 特性
+    // （管道 |、重定向 >>、逻辑链 &&、命令替换 $() 等，见 templates.ts）。
+    // 命令注入风险由 replaceVariables() 中的 shellEscape 消除：所有
+    // {{filePath}}/{{toolName}}/{{stepId}} 替换值在插入命令前已转义。
+    // 命令模板本身来自可信开发者配置（HookConfigRegistry），非用户输入。
     const child = spawn(command, { shell: true, timeout, cwd });
     let stdout = '';
     child.stdout.on('data', (d) => {

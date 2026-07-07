@@ -21,6 +21,56 @@ import { GoalVerifier, type AdversarialOptions } from './goal-verifier.js';
 import { WorkerExecutor } from './multi/worker-executor.js';
 import type { StepExecutionResult } from './task-orchestrator-types.js';
 import type { Blackboard } from './multi/blackboard.js';
+import { z } from 'zod';
+
+// ============================================================
+// F-006 修复：LLM/OCR JSON 响应 Zod schema 校验
+// 替代原先 (parsed as any).field 的弱类型访问
+// schema 宽松（passthrough + catch + default）：LLM 输出不可预测，
+// 校验失败时字段级降级，整体 safeParse 失败时返回安全默认值
+// ============================================================
+
+/** 单条审查问题的 schema（宽松：允许额外字段、未知值降级） */
+const ReviewIssueSchema = z.object({
+  severity: z
+    .union([
+      z.literal('critical'),
+      z.literal('important'),
+      z.literal('minor'),
+      z.literal('warning'),
+      z.literal('info'),
+    ])
+    .catch('info')
+    .default('info'),
+  file: z.string().catch('').default(''),
+  line: z.number().optional(),
+  description: z.string().catch('').default(''),
+}).passthrough();
+
+/** 审查结果整体的 schema（宽松：允许额外字段、字段缺失/类型不符时降级） */
+const ReviewResultSchema = z.object({
+  passed: z.boolean().catch(true).default(true),
+  issues: z.array(ReviewIssueSchema).catch([]).default([]),
+  summary: z.string().catch('').default(''),
+}).passthrough();
+
+/**
+ * 将 schema 解析后的 issue 映射为 CodeReviewIssue，
+ * 同时把 'important'→'warning'、'minor'→'info' 归一到接口允许的三态
+ */
+function normalizeReviewIssue(i: z.infer<typeof ReviewIssueSchema>): CodeReviewIssue {
+  const sev = i.severity;
+  const severity: 'critical' | 'warning' | 'info' =
+    sev === 'critical' ? 'critical' :
+    sev === 'warning' || sev === 'important' ? 'warning' :
+    'info'; // 'minor' | 'info'
+  return {
+    severity,
+    file: i.file,
+    line: i.line,
+    description: i.description,
+  };
+}
 
 /**
  * 代码审查结果
@@ -340,16 +390,23 @@ export class UnifiedReviewer {
         timeout: 60000,
         maxBuffer: 1024 * 1024,
       });
-      const parsed = JSON.parse(output);
+      const rawJson = JSON.parse(output);
+      const parsed = ReviewResultSchema.safeParse(rawJson);
+      if (!parsed.success) {
+        // F-006：schema 校验失败 → 降级为不阻塞流程的安全默认值
+        logger.warn('UnifiedReviewer: OCR 响应 schema 不匹配', { errors: parsed.error.issues });
+        return {
+          passed: true,
+          issues: [],
+          summary: 'OCR 响应 schema 校验失败，默认通过',
+          tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      }
+      const data = parsed.data;
       return {
-        passed: parsed.passed ?? true,
-        issues: (parsed.issues ?? []).map((i: any) => ({
-          severity: i.severity ?? 'info',
-          file: i.file ?? '',
-          line: i.line,
-          description: i.description ?? '',
-        })),
-        summary: parsed.summary ?? 'OCR 审查完成',
+        passed: data.passed,
+        issues: data.issues.map(normalizeReviewIssue),
+        summary: data.summary || 'OCR 审查完成',
         tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       };
     } catch (error) {
@@ -378,16 +435,23 @@ export class UnifiedReviewer {
           tokenUsage,
         };
       }
-      const parsed = JSON.parse(jsonMatch[0]);
+      const rawJson = JSON.parse(jsonMatch[0]);
+      const parsed = ReviewResultSchema.safeParse(rawJson);
+      if (!parsed.success) {
+        // F-006：schema 校验失败 → 降级为不阻塞流程的安全默认值
+        logger.warn('UnifiedReviewer: LLM 响应 schema 不匹配', { errors: parsed.error.issues });
+        return {
+          passed: true,
+          issues: [],
+          summary: '审查结果解析失败（schema 校验失败），默认通过',
+          tokenUsage,
+        };
+      }
+      const data = parsed.data;
       return {
-        passed: parsed.passed ?? true,
-        issues: (parsed.issues ?? []).map((i: any) => ({
-          severity: i.severity ?? 'info',
-          file: i.file ?? '',
-          line: i.line,
-          description: i.description ?? '',
-        })),
-        summary: parsed.summary ?? '审查完成',
+        passed: data.passed,
+        issues: data.issues.map(normalizeReviewIssue),
+        summary: data.summary || '审查完成',
         tokenUsage,
       };
     } catch {

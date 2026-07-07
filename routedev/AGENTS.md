@@ -56,11 +56,9 @@
 
 - **#133** AGENTS.md 瘦身后必须保留 Top 10 核心陷阱在正文，完整索引迁移至 SKILL.md
 - **#134** description lint 不能阻断开发流程（过渡期 warning，不返回 error）
-- **#135** ~~routedev exec 必须设总超时（默认 5 分钟），headless 下 always-ask 自动 deny~~ — **已废弃（CLI 退役，exec-runner.ts 已删除）**
 - **#136** 沙箱级判断必须在审批级之前（deny 优先于 never-ask）
 - **#137** /review 子代理必须用 read-only 沙箱（工具白名单不是确定性兜底）
 - **#138** Checkpoint 语义化摘要的 LLM 调用必须设超时（3 秒）与降级（返回原始 description）
-- **#139** ~~自定义命令的模板变量替换必须一次性（不递归，$1 中的 {{...}} 不展开）~~ — **已废弃（CLI 退役，custom-commands.ts 已删除）**
 - **#140** AGENTS.override.md 的语义是「跳过」而非「合并」（存在 override 时跳过 base）
 - **#141** GitHub Action 的 config 必须用 Base64 传输（避免 YAML 多行字符串转义问题）
 - **#142** 沙箱级切换需要刷新工具可用性缓存（避免残留的 deny/allow 状态）
@@ -80,3 +78,10 @@
 **`.routedev/skills/pitfalls-guide/SKILL.md`**
 
 涉及 PermissionEngine、AgentLoop、Checkpoint、Blackboard、HookRunner、MCPClientManager、ToolExecutor、TaskOrchestrator、ReadTracker、LoopDetection、ConflictDetector、DurableExecutor、WorkerExecutor、TraceCollector、ToolResultSanitizer、ScheduleEngine、Git Worktree、KnowledgeGraph、spawn_agent 等模块时，务必先查阅该 Skill 文件对应章节。
+
+## 附录：已退役陷阱（CLI 时期）
+
+> 以下陷阱随 CLI 退役而废弃，保留用于历史参考。
+
+- **#135** ~~routedev exec 必须设总超时（默认 5 分钟），headless 下 always-ask 自动 deny~~ — **已废弃（CLI 退役，exec-runner.ts 已删除）**
+- **#139** ~~自定义命令的模板变量替换必须一次性（不递归，$1 中的 {{...}} 不展开）~~ — **已废弃（CLI 退役，custom-commands.ts 已删除）**

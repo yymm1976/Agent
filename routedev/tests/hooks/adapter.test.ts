@@ -60,18 +60,40 @@ describe('HookConfig Adapter (Phase 39 Task 2)', () => {
     expect(typeof def.handler).toBe('function');
   });
 
-  it('2. replaceVariables 替换 {{filePath}}', () => {
+  it('2. replaceVariables 替换 {{filePath}}（shell-escaped）', () => {
     const ctx = makeContext();
     // filePath 不在标准 HookContext 中，通过扩展字段注入
     const extCtx = { ...ctx, filePath: '/src/index.ts' } as HookContext;
     const result = replaceVariables('prettier {{filePath}}', extCtx);
-    expect(result).toBe('prettier /src/index.ts');
+    // shellEscape 用引号包裹值，防止命令注入（Unix 单引号 / Windows 双引号）
+    const expected = process.platform === 'win32'
+      ? 'prettier "/src/index.ts"'
+      : "prettier '/src/index.ts'";
+    expect(result).toBe(expected);
   });
 
-  it('3. replaceVariables 替换 {{toolName}}', () => {
+  it('3. replaceVariables 替换 {{toolName}}（shell-escaped）', () => {
     const ctx = makeContext({ toolName: 'file_write' });
     const result = replaceVariables('工具 {{toolName}} 已执行', ctx);
-    expect(result).toBe('工具 file_write 已执行');
+    const expected = process.platform === 'win32'
+      ? '工具 "file_write" 已执行'
+      : "工具 'file_write' 已执行";
+    expect(result).toBe(expected);
+  });
+
+  it('3a. replaceVariables 对危险输入 shell-escape 防命令注入', () => {
+    // 验证含 shell 元字符的值被引号包裹，; 不会成为命令分隔符
+    const ctx = makeContext();
+    const extCtx = { ...ctx, filePath: 'safe; rm -rf /' } as HookContext;
+    const result = replaceVariables('prettier {{filePath}}', extCtx);
+    // 危险值必须被引号包裹，; 在引号内为字面字符
+    if (process.platform === 'win32') {
+      expect(result).toBe('prettier "safe; rm -rf /"');
+    } else {
+      expect(result).toBe("prettier 'safe; rm -rf /'");
+    }
+    // 确保未发生注入：原始分隔符不应裸露在引号外
+    expect(result).not.toBe('prettier safe; rm -rf /');
   });
 
   // ============================================================

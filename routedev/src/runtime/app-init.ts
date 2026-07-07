@@ -512,7 +512,7 @@ export function createAppDependencies(
           logger.debug('PrefixAwareCache injected', { via: 'setPrefixCache' });
         }
       })
-      .catch(() => { /* fail-open：缓存不可用时跳过 */ });
+      .catch((err) => { logger.warn('PrefixAwareCache fail-open', { error: err instanceof Error ? err.message : String(err) }); });
   }
 
   // ===== 辅助 Agent =====
@@ -598,7 +598,7 @@ export function createAppDependencies(
       registry.register(new BrowserTool());
       logger.debug('BrowserTool registered');
     })
-    .catch(() => { /* fail-open：browser 工具不可用时跳过 */ });
+    .catch((err) => { logger.warn('BrowserTool fail-open', { error: err instanceof Error ? err.message : String(err) }); });
   // P1-5：任务列表工具
   const todoStore = new TodoStore();
   registry.register(new TodoWriteTool(todoStore));
@@ -764,7 +764,7 @@ export function createAppDependencies(
           });
         }
       })
-      .catch(() => { /* fail-open：监控器不可用时跳过 */ });
+      .catch((err) => { logger.warn('BudgetMonitor fail-open', { error: err instanceof Error ? err.message : String(err) }); });
   }
 
   // P1-6：子 Agent 生成工具（需注入 spawnAgent 函数，依赖 agentLoop 和 primaryClient）
@@ -1516,7 +1516,7 @@ export function createAppDependencies(
           },
         });
       })
-      .catch(() => { /* fail-open：熔断器不可用时跳过 */ });
+      .catch((err) => { logger.warn('CircuitBreaker fail-open', { error: err instanceof Error ? err.message : String(err) }); });
   }
 
   // ===== 目标解析与验证（无状态） =====
@@ -1540,7 +1540,7 @@ export function createAppDependencies(
         // Phase 55：立即写入 ref，让 goal-runner 在 /goal 触发时能读取到实例
         dagEngineRef.current = engine;
       })
-      .catch(() => { /* fail-open：DAG 引擎不可用时跳过 */ });
+      .catch((err) => { logger.warn('DagEngine fail-open', { error: err instanceof Error ? err.message : String(err) }); });
   }
   // Phase 59：goalVerifier 实例化已删除（僵尸字段，goal-runner.ts 内部自建实例）
 
@@ -2416,7 +2416,7 @@ export function createAppDependencies(
             hasKnowledgeGraph: knowledgeGraph !== null,
           });
         })
-        .catch(() => { /* fail-open：unified-memory 模块不可用时跳过 */ });
+        .catch((err) => { logger.warn('UnifiedMemory fail-open', { error: err instanceof Error ? err.message : String(err) }); });
       logger.info('Phase 65: Memory system refactor enabled', {
         store: msCfg.store.enabled,
         hybridRetriever: msCfg.hybridRetriever.enabled,
