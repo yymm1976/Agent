@@ -134,7 +134,6 @@ Phase 50 将 41 项"已开发待集成"的资产接入生产代码执行链路�
 |------|--------|----------|
 | StrategySelector | `orchestrator.ts` plan 阶段 | `orchestrationIntegration.strategyEnabled` |
 | ExecutionStateGraph | `orchestrator.ts` execute 阶段 | `orchestrationIntegration.stateGraphEnabled` |
-| BranchOrchestrator | `orchestrator.ts` planBranches | `orchestrationIntegration.branchOrchestrationEnabled` |
 
 ### 6.3 子 Agent 委托体系接入（Task 3）
 

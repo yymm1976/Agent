@@ -58,15 +58,12 @@ orchestrationIntegration:
   strategyEnabled: false
   # 是否启用步骤级状态机管理
   stateGraphEnabled: false
-  # 是否启用并行分支任务调度
-  branchOrchestrationEnabled: false
 ```
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `strategyEnabled` | boolean | false | 开启后 `Orchestrator.plan` 按 GoalPlan 步骤数选择策略（≤2=sequential, 3-6=parallel, >6=adaptive） |
 | `stateGraphEnabled` | boolean | false | 开启后 `Orchestrator` 用 `ExecutionStateGraph` 管理步骤状态转换（pending→running→completed） |
-| `branchOrchestrationEnabled` | boolean | false | 开启后 `Orchestrator.planBranches` 调用 `BranchOrchestrator` 调度并行分支任务 |
 
 ### 2.3 delegationIntegration（Task 3：子 Agent 委托体系接入）
 
@@ -183,7 +180,6 @@ goalIntegration:
 orchestrationIntegration:
   strategyEnabled: false
   stateGraphEnabled: false
-  branchOrchestrationEnabled: false
 delegationIntegration:
   contextPackerEnabled: false
   delegationGateEnabled: false
@@ -204,7 +200,6 @@ goalIntegration:
 orchestrationIntegration:
   strategyEnabled: true
   stateGraphEnabled: true
-  branchOrchestrationEnabled: true
 delegationIntegration:
   contextPackerEnabled: true
   delegationGateEnabled: true

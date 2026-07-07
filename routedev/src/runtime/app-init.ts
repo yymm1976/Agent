@@ -1410,20 +1410,16 @@ export function createAppDependencies(
   }
 
   // ===== 多 Agent =====
-  // Phase 50 Task 2：orchestrationIntegration 开关开启时注入 StrategySelector/StateGraph/BranchOrchestrator
+  // Phase 50 Task 2：orchestrationIntegration 开关开启时注入 StrategySelector/StateGraph
   // 未开启任何开关时传 undefined（Orchestrator 内部回退到原行为）
   const orchestrationIntegrationCfg = config.orchestrationIntegration;
   const orchestrationIntegration: OrchestrationIntegrationOptions | undefined = (
     orchestrationIntegrationCfg?.strategyEnabled ||
-    orchestrationIntegrationCfg?.stateGraphEnabled ||
-    orchestrationIntegrationCfg?.branchOrchestrationEnabled
+    orchestrationIntegrationCfg?.stateGraphEnabled
   )
     ? {
         strategyEnabled: orchestrationIntegrationCfg?.strategyEnabled,
         stateGraphEnabled: orchestrationIntegrationCfg?.stateGraphEnabled,
-        branchOrchestrationEnabled: orchestrationIntegrationCfg?.branchOrchestrationEnabled,
-        // branchOrchestrator 实例需 ExperimentManager + RunnerFactory，这里不创建（生产 wiring 留给后续阶段）
-        // branchOrchestrationEnabled=true 时 Orchestrator.planBranches 会因 branchOrchestrator 缺失安全回退
       }
     : undefined;
   const orchestrator = new Orchestrator(primaryClient, config.router.classifierModel, orchestrationIntegration);
@@ -1445,7 +1441,6 @@ export function createAppDependencies(
     logger.info('Phase 54 Task 2: ContextPacker injected into WorkerExecutor', {
       strategyEnabled: !!orchestrationIntegrationCfg?.strategyEnabled,
       stateGraphEnabled: !!orchestrationIntegrationCfg?.stateGraphEnabled,
-      branchOrchestrationEnabled: !!orchestrationIntegrationCfg?.branchOrchestrationEnabled,
     });
   }
   logger.info('Phase 54: AgentProfileManager injected into WorkerExecutor (async loading)');

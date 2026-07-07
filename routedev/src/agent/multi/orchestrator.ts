@@ -13,7 +13,6 @@ import { ConflictDetector } from './conflict.js';
 // Phase 50 Task 2：接入多 Agent 编排核心模块（默认 enabled: false，开关在 config.orchestrationIntegration）
 import { StrategySelector } from './orchestrator-strategy.js';
 import { ExecutionStateGraph } from './state-graph.js';
-import type { BranchOrchestrator } from './branch-orchestrator.js';
 import { logger } from '../../utils/logger.js';
 
 // ============================================================
@@ -26,10 +25,6 @@ export interface OrchestrationIntegrationOptions {
   strategyEnabled?: boolean;
   /** stateGraphEnabled：ExecutionStateGraph 步骤状态管理 */
   stateGraphEnabled?: boolean;
-  /** branchOrchestrationEnabled：BranchOrchestrator 并行分支调度 */
-  branchOrchestrationEnabled?: boolean;
-  /** 注入的 BranchOrchestrator 实例（branchOrchestrationEnabled 时使用） */
-  branchOrchestrator?: BranchOrchestrator;
 }
 
 // ============================================================

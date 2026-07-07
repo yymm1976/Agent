@@ -1350,18 +1350,13 @@ export type GoalIntegrationConfig = z.infer<typeof GoalIntegrationConfigSchema>;
 
 /**
  * 多 Agent 编排接入配置（Phase 50 Task 2）
- * 控制 orchestrator.ts 中三个核心模块的渐进式接入，默认全部关闭
+ * 控制 orchestrator.ts 中核心模块的渐进式接入，默认全部关闭
  * - strategyEnabled：StrategySelector 按复杂度选择策略
  * - stateGraphEnabled：ExecutionStateGraph 步骤状态管理
- * - branchOrchestrationEnabled：BranchOrchestrator 并行分支调度
  */
 const OrchestrationIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   strategyEnabled: z.boolean().default(false),
   stateGraphEnabled: z.boolean().default(false),
-  // experimental: true — BranchOrchestrator 为未完成特性，生产 wiring 未接入
-  // （app-init.ts 不创建实例，new BranchOrchestrator 仅在 tests/ 中出现）
-  // config flag 与源文件 src/agent/multi/branch-orchestrator.ts 保留待后续阶段补全
-  branchOrchestrationEnabled: z.boolean().default(false),
 }));
 export type OrchestrationIntegrationConfig = z.infer<typeof OrchestrationIntegrationConfigSchema>;
 

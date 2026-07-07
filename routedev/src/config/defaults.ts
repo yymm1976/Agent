@@ -472,7 +472,6 @@ export const DEFAULT_CONFIG: AppConfig = {
   orchestrationIntegration: {
     strategyEnabled: false,
     stateGraphEnabled: false,
-    branchOrchestrationEnabled: false,
   },
   // Phase 50 Task 3：子 Agent 委托体系模块接入开关（默认全部 false）
   delegationIntegration: {

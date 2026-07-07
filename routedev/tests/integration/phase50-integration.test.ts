@@ -3,7 +3,7 @@
 //
 // 测试策略：
 //   1. Task 1：/goal 流程接入 GoalAuditor / GoalPersistence
-//   2. Task 2（≥4）：多 Agent 编排接入 StrategySelector / ExecutionStateGraph / BranchOrchestrator
+//   2. Task 2（≥4）：多 Agent 编排接入 StrategySelector / ExecutionStateGraph
 //   3. Task 3（≥6）：子 Agent 委托体系接入 ContextPacker / DelegationGate / DelegationEnforcer / SubAgentLifecycle / SubAgentScoreCardCollector
 //
 // 全部使用 mock 依赖，不调用真实 LLM。
@@ -198,7 +198,6 @@ describe('Phase 50 Task 2: 多 Agent 编排模块接入', () => {
     const orch = new Orchestrator(client, 'test-model', {
       strategyEnabled: true,
       stateGraphEnabled: false,
-      branchOrchestrationEnabled: false,
     });
     const goalPlan: GoalPlan = {
       id: 'plan-1',
@@ -222,7 +221,6 @@ describe('Phase 50 Task 2: 多 Agent 编排模块接入', () => {
     const orch = new Orchestrator(client, 'test-model', {
       strategyEnabled: true,
       stateGraphEnabled: false,
-      branchOrchestrationEnabled: false,
     });
     // 7 个步骤 → high complexity → adaptive → 继续 LLM 分析
     const goalPlan: GoalPlan = {
