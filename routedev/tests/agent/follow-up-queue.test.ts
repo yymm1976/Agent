@@ -1,12 +1,12 @@
 // tests/agent/follow-up-queue.test.ts
-// Phase 73 Part C：Steering / Follow-up 双消息队列单元测试
+// Phase 73 Part C：Follow-up 消息队列单元测试
 //
 // 覆盖验收标准：
 //   1. followUp() 把消息排入 follow-up 队列
 //   2. drainFollowUpQueue 'all' 模式返回全部并清空队列
 //   3. drainFollowUpQueue 'one-at-a-time' 模式仅返回第一条，剩余保留
 //   4. clearFollowUpQueue 清空 follow-up 队列
-//   5. clearAllQueues 同时清空 steering 与 follow-up 队列
+//   5. clearAllQueues 清空 follow-up 队列
 //   6. follow-up 消息通过 defaultConvertToLlm 转换为 user 消息（前缀 [后续任务]）
 //   7. getFollowUpQueue / removeFollowUp / getQueueStatus 辅助 API 行为正确
 
@@ -217,10 +217,10 @@ describe('Phase 73 Part C：follow-up 队列', () => {
   });
 
   describe('getQueueStatus 查询状态', () => {
-    it('初始状态两个队列都为空', () => {
+    it('初始状态队列为空', () => {
       const loop = createLoop();
       const status = loop.getQueueStatus();
-      expect(status).toEqual({ steering: 0, followUp: 0 });
+      expect(status).toEqual({ followUp: 0 });
     });
 
     it('反映 follow-up 队列长度变化', () => {
@@ -235,13 +235,6 @@ describe('Phase 73 Part C：follow-up 队列', () => {
       expect(loop.getQueueStatus().followUp).toBe(0);
     });
 
-    it('steering 队列无外部入队入口（steer() 已删除），恒为 0', () => {
-      const loop = createLoop();
-      // steer() 已删除，本地 steering 队列只能由 drainSteeringIntoMessages 内部消费
-      expect(loop.getQueueStatus().steering).toBe(0);
-      loop.clearSteeringQueue();
-      expect(loop.getQueueStatus().steering).toBe(0);
-    });
   });
 
   describe('defaultConvertToLlm 转换 follow-up 消息', () => {

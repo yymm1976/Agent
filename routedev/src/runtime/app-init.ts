@@ -409,9 +409,8 @@ export function createAppDependencies(
     return { store, persistentPath };
   })();
 
-  // Phase 59：codebaseMemory 实例化已删除（僵尸字段，无外部消费方）
-  // - 源文件 src/memory/codebase-memory.ts 保留
-  // - UnifiedMemoryStoreImpl 注入点改为 null（unified-memory.ts L207 在 codebaseMemory=null 时 return []，行为兼容）
+  // Phase 75：codebase-memory.ts 源文件已删除（Phase 59 删除实例化后沦为死代码，无外部消费方）
+  // - UnifiedMemoryStoreImpl 已移除 codebaseMemory 参数（构造函数签名简化）
 
   // Phase 73 Part D 修复：创建 BranchManager 实例，供 onCompaction 回调追加 CompactionNode
   // 此前 BranchManager 仅在测试中实例化，生产路径从未创建——导致 appendCompactionNode 沦为死代码
@@ -2374,17 +2373,16 @@ export function createAppDependencies(
         reorganizeRatio: msCfg.localMaintenance.reorganizeRatio,
         minAccessCount: msCfg.localMaintenance.minAccessCount,
       });
-      // [I-3] UnifiedMemoryStore 桥接 MemoryStore + KnowledgeGraph + CodebaseMemory（P0.2）
-      // Phase 59：codebaseMemory 僵尸字段已删，注入点改为 null（unified-memory.ts 内部对 null 已兼容）
+      // [I-3] UnifiedMemoryStore 桥接 MemoryStore + KnowledgeGraph（P0.2）
+      // Phase 75：codebase-memory.ts 源文件已删除（Phase 59 删除实例化后沦为死代码，无外部消费方）
       // 使用变量路径让 TypeScript 无法静态解析，避免模块缺失时 typecheck 失败
       const unifiedMemoryModulePath = '../memory/unified-memory.js';
       import(unifiedMemoryModulePath)
         .then(({ UnifiedMemoryStoreImpl }) => {
           const knowledgeGraph = contextManager?.getKnowledgeGraph?.() ?? null;
-          const unifiedMemory = new UnifiedMemoryStoreImpl(memoryStore, knowledgeGraph, null);
+          const unifiedMemory = new UnifiedMemoryStoreImpl(memoryStore, knowledgeGraph);
           logger.info('UnifiedMemoryStore initialized', {
             hasKnowledgeGraph: knowledgeGraph !== null,
-            hasCodebaseMemory: false,
           });
         })
         .catch(() => { /* fail-open：unified-memory 模块不可用时跳过 */ });

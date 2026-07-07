@@ -11,9 +11,32 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
 import { HashEmbedder, type Embedder } from '../skills/embedder.js';
 import { logger } from '../utils/logger.js';
+
+// DatabaseSync 类型降级：node:sqlite 在 Electron 中可能不可用（实验性模块被排除）
+// 定义本地接口描述用到的 DatabaseSync 方法，避免静态 import 导致 ERR_UNKNOWN_BUILTIN_MODULE
+interface DatabaseSyncLike {
+  exec(sql: string): void;
+  prepare(sql: string): {
+    run(...args: unknown[]): unknown;
+    get(...args: unknown[]): unknown;
+    all(...args: unknown[]): unknown[];
+  };
+  close(): void;
+}
+type DatabaseSyncConstructor = new (path: string) => DatabaseSyncLike;
+
+// 动态 require 避免静态 import 导致 Electron 启动失败（ERR_UNKNOWN_BUILTIN_MODULE）
+const requireFromESM = createRequire(import.meta.url);
+let DatabaseSyncCtor: DatabaseSyncConstructor | null = null;
+try {
+  const mod = requireFromESM('node:sqlite') as { DatabaseSync: DatabaseSyncConstructor };
+  DatabaseSyncCtor = mod.DatabaseSync;
+} catch {
+  // fail-open：node:sqlite 不可用（Electron 未包含实验性模块），降级为纯内存模式
+}
 
 /**
  * 记忆条目类型
@@ -63,7 +86,7 @@ export class MemoryStore {
   private embedder: Embedder | null = null;
   private initialized = false;
   /** SQLite 连接（dbPath 为真实路径时启用；null 表示纯内存模式） */
-  private db: DatabaseSync | null = null;
+  private db: DatabaseSyncLike | null = null;
   /** 是否启用 SQLite 持久化 */
   private persistent = false;
 
@@ -106,10 +129,17 @@ export class MemoryStore {
    */
   async initialize(): Promise<void> {
     if (this.persistent && this.config.dbPath) {
+      if (!DatabaseSyncCtor) {
+        // node:sqlite 不可用：降级为纯内存模式（fail-open）
+        logger.warn('MemoryStore: node:sqlite unavailable, fallback to memory mode');
+        this.persistent = false;
+        this.initialized = true;
+        return;
+      }
       try {
         // 确保目录存在
         fs.mkdirSync(path.dirname(this.config.dbPath), { recursive: true });
-        this.db = new DatabaseSync(this.config.dbPath);
+        this.db = new DatabaseSyncCtor(this.config.dbPath);
         this.db.exec('PRAGMA journal_mode = WAL');
         // 主表：记忆条目（按任务规格的表结构）
         this.db.exec(`

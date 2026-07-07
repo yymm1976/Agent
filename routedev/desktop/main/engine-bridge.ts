@@ -975,11 +975,11 @@ export class RouteDevEngine {
   /**
    * 查询队列状态（UI 展示用）
    *
-   * @returns steering 与 follow-up 队列当前长度（deps 未就绪时返回 0/0）
+   * @returns follow-up 队列当前长度（deps 未就绪时返回 0）
    */
-  getQueueStatus(): { steering: number; followUp: number } {
+  getQueueStatus(): { followUp: number } {
     if (!this.deps?.agentLoop) {
-      return { steering: 0, followUp: 0 };
+      return { followUp: 0 };
     }
     return this.deps.agentLoop.getQueueStatus();
   }

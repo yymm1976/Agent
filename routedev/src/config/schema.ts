@@ -1207,10 +1207,6 @@ const MemoryConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   sessionMemoryPersistent: z.boolean().optional(),
   /** SessionMemoryStore 持久化文件路径（相对工作目录，默认 .routedev/session-memory.jsonl） */
   sessionMemoryPath: z.string().optional(),
-  /** 是否启用 CodebaseMemory 代码库语义索引（默认 true，由 app-init.ts 在读取时 ?? true 兜底） */
-  codebaseMemoryEnabled: z.boolean().optional(),
-  /** CodebaseMemory 最大索引文件数（默认 500，由 app-init.ts 在读取时 ?? 500 兜底） */
-  codebaseMemoryMaxFiles: z.number().int().min(1).optional(),
 }));
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 

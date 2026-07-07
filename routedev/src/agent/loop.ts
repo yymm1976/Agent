@@ -142,18 +142,6 @@ export class ReActAgentLoop {
    */
   private steeringConsumer: (() => { content: string; mode: string }[] | null) | null = null;
   /**
-   * Phase 73 Part C：本 Loop 内部 steering 队列（与 steeringConsumer 共存）
-   *
-   * 设计动机：原 steer() 方法已删除（避免与 setSteeringConsumer 形成两套 steering 入口）。
-   * 当前生产路径统一通过 steeringConsumer 桥接 TaskOrchestrator，消息从外部队列取出。
-   * 本字段保留供 drainSteeringIntoMessages 合并消费，外部不再有直接入队入口。
-   *
-   * drainSteeringIntoMessages 会同时合并两个来源：
-   *   1. steeringConsumer 返回的外部队列消息（生产路径）
-   *   2. steeringQueue 中的本地消息（当前无外部入队入口，恒为空）
-   */
-  private steeringQueue: { content: string; mode: string; enqueuedAt: number }[] = [];
-  /**
    * Phase 73 Part C：follow-up 队列（Agent 完成当前工作后排队执行的后续任务）
    *
    * 与 steering 队列的差异：
@@ -300,20 +288,6 @@ export class ReActAgentLoop {
   }
 
   /**
-   * Phase 73 Part C：清空 steering 队列（本 Loop 内部暂存的 steering 消息）
-   *
-   * 注意：若通过 setSteeringConsumer 接入 TaskOrchestrator，外部队列状态在
-   * TaskOrchestrator 中，需通过其 reset() 清空。此方法仅清空 Loop 内部暂存。
-   *
-   * Phase 73 Part C 修复：原 steer() 方法已被删除（生产路径统一走 setSteeringConsumer
-   * 桥接，避免两套 steering 入口造成状态分裂）。本 Loop 内部 steeringQueue 仅由
-   * drainSteeringIntoMessages 在消费时清空，外部不再有直接入队入口。
-   */
-  clearSteeringQueue(): void {
-    this.steeringQueue = [];
-  }
-
-  /**
    * Phase 73 Part C：排队 follow-up 消息
    *
    * 调用方在 Agent 工作期间可排队后续任务，内层 ReAct 循环自然退出后，
@@ -364,13 +338,12 @@ export class ReActAgentLoop {
   }
 
   /**
-   * Phase 73 Part C：清空所有队列（steering + follow-up）
+   * Phase 73 Part C：清空所有队列（follow-up）
    *
    * 用于 stopGeneration / 会话重置 / 用户主动取消等场景，
    * 避免残留消息在下次 run() 时被错误注入。
    */
   clearAllQueues(): void {
-    this.clearSteeringQueue();
     // Phase 73 Part C 修复：复用 clearFollowUpQueue()，避免直接赋空绕过该方法
     this.clearFollowUpQueue();
   }
@@ -378,11 +351,10 @@ export class ReActAgentLoop {
   /**
    * Phase 73 Part C：查询队列状态（UI 展示用）
    *
-   * @returns steering 与 follow-up 队列当前长度
+   * @returns follow-up 队列当前长度
    */
-  getQueueStatus(): { steering: number; followUp: number } {
+  getQueueStatus(): { followUp: number } {
     return {
-      steering: this.steeringQueue.length,
       followUp: this.followUpQueue.length,
     };
   }
@@ -633,9 +605,8 @@ export class ReActAgentLoop {
   /**
    * C5 修复：从 Steering Queue 取出消息并注入 messages
    *
-   * Phase 73 Part C：合并两个来源——
-   *   1. steeringConsumer 返回的外部队列消息（接入 TaskOrchestrator 时，生产路径）
-   *   2. 本 Loop 内部 steeringQueue 中的消息（原 steer() 已删除，当前恒为空，保留以兼容未来扩展）
+   * Phase 73 Part C：来源为 steeringConsumer 返回的外部队列消息（接入 TaskOrchestrator 时，生产路径）。
+   * 原 steer() 已删除，本地转向队列已移除，不再有本地入队入口。
    *
    * @param modeFilter 筛选模式（'next_iteration' / 'immediate' / 'after_current_step'）；不传则取出全部
    * @returns 是否注入了消息
@@ -644,24 +615,12 @@ export class ReActAgentLoop {
     messages: LLMMessage[],
     modeFilter?: string,
   ): boolean {
-    // 来源 1：外部 consumer（TaskOrchestrator 等）
+    // 来源：外部 consumer（TaskOrchestrator 等）
     const externalDrained = this.steeringConsumer ? (this.steeringConsumer() ?? []) : [];
-    // 来源 2：本 Loop 内部 steeringQueue（按 modeFilter 过滤，取出后从队列中移除）
-    let internalDrained: { content: string; mode: string; enqueuedAt: number }[] = [];
-    if (this.steeringQueue.length > 0) {
-      if (modeFilter) {
-        internalDrained = this.steeringQueue.filter((m) => m.mode === modeFilter);
-        this.steeringQueue = this.steeringQueue.filter((m) => m.mode !== modeFilter);
-      } else {
-        internalDrained = this.steeringQueue;
-        this.steeringQueue = [];
-      }
-    }
-    const merged = [...externalDrained, ...internalDrained];
-    if (merged.length === 0) return false;
+    if (externalDrained.length === 0) return false;
     const filtered = modeFilter
-      ? merged.filter((m) => m.mode === modeFilter)
-      : merged;
+      ? externalDrained.filter((m) => m.mode === modeFilter)
+      : externalDrained;
     if (filtered.length === 0) return false;
     for (const msg of filtered) {
       messages.push({ role: 'user', content: `[用户转向指令] ${msg.content}` });

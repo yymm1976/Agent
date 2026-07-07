@@ -15,8 +15,31 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
 import type { LLMMessage } from '../router/types.js';
+
+// DatabaseSync 类型降级：node:sqlite 在 Electron 中可能不可用（实验性模块被排除）
+// 定义本地接口描述用到的 DatabaseSync 方法，避免静态 import 导致 ERR_UNKNOWN_BUILTIN_MODULE
+interface DatabaseSyncLike {
+  exec(sql: string): void;
+  prepare(sql: string): {
+    run(...args: unknown[]): unknown;
+    get(...args: unknown[]): unknown;
+    all(...args: unknown[]): unknown[];
+  };
+  close(): void;
+}
+type DatabaseSyncConstructor = new (path: string) => DatabaseSyncLike;
+
+// 动态 require 避免静态 import 导致 Electron 启动失败（ERR_UNKNOWN_BUILTIN_MODULE）
+const requireFromESM = createRequire(import.meta.url);
+let DatabaseSyncCtor: DatabaseSyncConstructor | null = null;
+try {
+  const mod = requireFromESM('node:sqlite') as { DatabaseSync: DatabaseSyncConstructor };
+  DatabaseSyncCtor = mod.DatabaseSync;
+} catch {
+  // fail-open：node:sqlite 不可用（Electron 未包含实验性模块），降级为内存 Map
+}
 
 export interface CCRRecord {
   hash: string;
@@ -65,7 +88,7 @@ export class CCRCache {
   private readonly maxSize: number;
   private readonly dbPath: string;
   /** SQLite 连接（fail-open：打开失败时为 null，降级到内存 Map） */
-  private db: DatabaseSync | null = null;
+  private db: DatabaseSyncLike | null = null;
   /** 内存降级缓存（仅在 SQLite 不可用时使用） */
   private fallbackMap = new Map<string, CCRRecord>();
   /** 是否已初始化表结构 */
@@ -83,10 +106,16 @@ export class CCRCache {
    */
   private init(): void {
     if (this.initialized) return;
+    if (!DatabaseSyncCtor) {
+      // node:sqlite 不可用：直接走内存降级（fail-open）
+      this.db = null;
+      this.initialized = true;
+      return;
+    }
     try {
       // 确保目录存在
       fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
-      const db = new DatabaseSync(this.dbPath);
+      const db = new DatabaseSyncCtor(this.dbPath);
       // 启用 WAL 提升并发读性能（虽然 DatabaseSync 同步，但仍可能有跨进程访问）
       db.exec('PRAGMA journal_mode = WAL');
       // ccr_cache 表：marker 字段实际是完整 hash（与原 API 语义一致）

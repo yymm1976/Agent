@@ -199,11 +199,6 @@ describe('需求 2: UnifiedMemoryStore 统一记忆接口', () => {
       expect(results[0].source).toBe('knowledge');
     });
 
-    it('14. retrieveFrom(codebase) 委托 CodebaseMemory（无实例时返回空）', async () => {
-      const unified = new UnifiedMemoryStoreImpl(store, graph, null);
-      const results = await unified.retrieveFrom('codebase', 'anything');
-      expect(results).toEqual([]);
-    });
   });
 
   describe('delete', () => {

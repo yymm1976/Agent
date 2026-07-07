@@ -771,7 +771,7 @@ ipcMain.on('agent:setFollowUpMode', (_event, mode: 'all' | 'one-at-a-time') => {
 
 // 查询队列状态（UI 展示用）
 ipcMain.handle('agent:queueStatus', async (): Promise<import('../shared/ipc-types.js').AgentQueueStatus> => {
-  if (!engine) return { steering: 0, followUp: 0 };
+  if (!engine) return { followUp: 0 };
   return engine.getQueueStatus();
 });
 

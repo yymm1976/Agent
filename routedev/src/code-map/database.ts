@@ -3,7 +3,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
 import type {
   CodeMapNode,
   CodeMapEdge,
@@ -13,12 +13,39 @@ import type {
 import type { PendingReference } from './extractor.js';
 import { camelSplitToFTS } from './camel-split-tokenizer.js';
 
-export type DB = DatabaseSync;
+// DatabaseSync 类型降级：node:sqlite 在 Electron 中可能不可用（实验性模块被排除）
+// 定义本地接口描述用到的 DatabaseSync 方法，避免静态 import 导致 ERR_UNKNOWN_BUILTIN_MODULE
+interface DatabaseSyncLike {
+  exec(sql: string): void;
+  prepare(sql: string): {
+    run(...args: unknown[]): unknown;
+    get(...args: unknown[]): unknown;
+    all(...args: unknown[]): unknown[];
+  };
+  close(): void;
+}
+type DatabaseSyncConstructor = new (path: string) => DatabaseSyncLike;
+
+// 动态 require 避免静态 import 导致 Electron 启动失败（ERR_UNKNOWN_BUILTIN_MODULE）
+const requireFromESM = createRequire(import.meta.url);
+let DatabaseSyncCtor: DatabaseSyncConstructor | null = null;
+try {
+  const mod = requireFromESM('node:sqlite') as { DatabaseSync: DatabaseSyncConstructor };
+  DatabaseSyncCtor = mod.DatabaseSync;
+} catch {
+  // fail-open：node:sqlite 不可用（Electron 未包含实验性模块），降级为 null
+}
+
+export type DB = DatabaseSyncLike;
 
 /** 初始化数据库（创建表 + 索引） */
 export function initDatabase(dbPath: string): DB {
+  if (!DatabaseSyncCtor) {
+    // node:sqlite 不可用：抛出有意义错误，调用方 try/catch 后降级（如 code-graph-query/repo-map）
+    throw new Error('node:sqlite 不可用：Electron 未包含实验性 node:sqlite 模块，code-map 功能无法使用');
+  }
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const db = new DatabaseSync(dbPath);
+  const db = new DatabaseSyncCtor(dbPath);
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
 

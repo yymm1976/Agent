@@ -18,6 +18,7 @@ export default defineConfig({
       target: 'node20',
       rollupOptions: {
         input: path.resolve(__dirname, 'desktop/main/index.ts'),
+        external: ['@xenova/transformers'],
         output: { format: 'es', entryFileNames: 'index.js' },
       },
     },

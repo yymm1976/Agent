@@ -1,5 +1,5 @@
 // src/memory/unified-memory.ts
-// 统一记忆接口：桥接 src/memory/（MemoryStore + CodebaseMemory）与 src/agent/memory/（KnowledgeGraph）
+// 统一记忆接口：桥接 src/memory/（MemoryStore）与 src/agent/memory/（KnowledgeGraph）
 //
 // 设计要点：
 //   - store：同时写入 MemoryStore 和 KnowledgeGraph（如果存在），fail-open
@@ -10,7 +10,6 @@
 
 import { MemoryStore, type MemoryEntry as StoreMemoryEntry } from './memory-store.js';
 import { KnowledgeGraph, type NodeType } from '../agent/memory/graph.js';
-import type { CodebaseMemory } from './codebase-memory.js';
 import { logger } from '../utils/logger.js';
 
 /** 统一记忆条目（跨子系统通用格式） */
@@ -32,7 +31,7 @@ export interface RetrieveOptions {
 }
 
 /** 记忆来源子系统标识 */
-export type MemorySource = 'memory' | 'knowledge' | 'codebase';
+export type MemorySource = 'memory' | 'knowledge';
 
 /** 统一记忆存储接口 */
 export interface UnifiedMemoryStore {
@@ -59,7 +58,6 @@ export class UnifiedMemoryStoreImpl implements UnifiedMemoryStore {
   constructor(
     private readonly memoryStore: MemoryStore,
     private readonly knowledgeGraph: KnowledgeGraph | null = null,
-    private readonly codebaseMemory: CodebaseMemory | null = null,
   ) {}
 
   /** 存储：同时写入 MemoryStore 和 KnowledgeGraph（如果存在） */
@@ -109,10 +107,6 @@ export class UnifiedMemoryStoreImpl implements UnifiedMemoryStore {
       case 'knowledge':
         await this.storeToGraph(key, value);
         break;
-      case 'codebase':
-        // CodebaseMemory 是基于文件扫描的只读索引，不支持任意 key-value 写入
-        logger.debug('UnifiedMemory: storeTo(codebase) is no-op (read-only index)', { key });
-        break;
     }
   }
 
@@ -124,8 +118,6 @@ export class UnifiedMemoryStoreImpl implements UnifiedMemoryStore {
         return this.retrieveFromMemory(query, limit);
       case 'knowledge':
         return this.retrieveFromGraph(query, limit);
-      case 'codebase':
-        return this.retrieveFromCodebase(query, limit);
     }
   }
 
@@ -195,28 +187,6 @@ export class UnifiedMemoryStoreImpl implements UnifiedMemoryStore {
       return recalled.map((r) => this.nodeToUnified(r.node, { score: r.score, path: r.path }));
     } catch (err) {
       logger.warn('UnifiedMemory: knowledgeGraph retrieve failed', {
-        query: query.slice(0, 50),
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return [];
-    }
-  }
-
-  /** 从 CodebaseMemory 语义检索（BM25 + 向量） */
-  private async retrieveFromCodebase(query: string, limit: number): Promise<MemoryEntry[]> {
-    if (!this.codebaseMemory) return [];
-    try {
-      const entries = await this.codebaseMemory.query(query, limit);
-      return entries.map((e) => ({
-        id: e.filePath,
-        type: 'codebase',
-        content: e.summary,
-        source: 'codebase',
-        timestamp: e.lastScanned,
-        metadata: { filePath: e.filePath },
-      }));
-    } catch (err) {
-      logger.warn('UnifiedMemory: codebaseMemory retrieve failed', {
         query: query.slice(0, 50),
         error: err instanceof Error ? err.message : String(err),
       });

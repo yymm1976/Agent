@@ -50,7 +50,7 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.5.0",
-    "electron": "^30.5.1",
+    "electron": "34.5.8",
     "electron-builder": "^25.1.8",
     "electron-updater": "^6.8.9",
     "electron-vite": "^2.3.0",

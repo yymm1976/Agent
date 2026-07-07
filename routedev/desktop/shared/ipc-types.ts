@@ -381,8 +381,6 @@ export interface PlanEditResponsePayload {
 
 /** 队列状态（IPC 传输用） */
 export interface AgentQueueStatus {
-  /** steering 队列当前长度（用户在 Agent 工作期间排队的中断指令数） */
-  steering: number;
   /** follow-up 队列当前长度（Agent 完成当前工作后排队执行的后续任务数） */
   followUp: number;
 }

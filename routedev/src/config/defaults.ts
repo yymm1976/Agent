@@ -411,15 +411,13 @@ export const DEFAULT_CONFIG: AppConfig = {
     autoPlay: false,
   },
   // Phase 45：记忆配置（推理/自动学习/注入阈值）
-  // Phase 71：新增持久化与 codebase-memory 开关
+  // Phase 71：新增持久化配置
   memory: {
     inference: true,
     autoLearn: true,
     injectThreshold: 0.7,
     sessionMemoryPersistent: true,
     sessionMemoryPath: '.routedev/session-memory.jsonl',
-    codebaseMemoryEnabled: true,
-    codebaseMemoryMaxFiles: 500,
   },
   // Phase 45：发现配置（功能发现/启动提示）
   discovery: {
