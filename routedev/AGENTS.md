@@ -6,9 +6,9 @@
 - **语言：** TypeScript 6.x（strict 模式，ESM）
 - **运行时：** Node.js 20+
 - **包管理：** pnpm 11+（workspace 已启用）
-- **UI：** Electron 33 + React 19.2.7（桌面 GUI）
+- **UI：** Electron 34 + React 19.2.7（桌面 GUI）
 - **测试：** Vitest 4.x（`pnpm test`）
-- **构建：** tsup 8.x（`pnpm build`）
+- **构建：** electron-vite 2.x（`pnpm build`）
 - **类型检查：** `pnpm typecheck`（tsc --noEmit）
 - **LLM SDK：** @anthropic-ai/sdk、openai
 - **其他：** zod（配置校验）、simple-git、winston、yaml、node:sqlite（CCR 持久化）

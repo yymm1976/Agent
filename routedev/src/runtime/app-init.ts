@@ -115,6 +115,7 @@ import { LoopDetectionMiddleware } from '../agent/middleware/loop-detection.js';
 import { MentionResolverMiddleware } from '../agent/middleware/mention-resolver.js';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
+import * as fs from 'node:fs';
 // Phase 52 Task 1/3/5/6/7/8/9/10：Phase 52 模块接入（按 config.phase52Integration 开关守护）
 import { SkillLifecycleManager } from '../skills/skill-lifecycle.js';
 import { createBoundedRecoveryManager } from '../agent/bounded-recovery.js';
@@ -279,6 +280,18 @@ export interface AppDependencies {
   // Phase 59：codebaseMemory 接口字段已删除（僵尸字段，deps.codebaseMemory 全 src/ + desktop/ 无消费方）
 }
 
+// ============================================================
+// 魔法数字常量（F-016 提取，避免散点字面量）
+// ============================================================
+/** ContextManager 压缩触发阈值（占 contextWindow 比例） */
+const COMPRESSION_THRESHOLD = 0.8;
+/** ContextCompactor 目标 token 数（占 contextWindow 比例） */
+const TARGET_TOKEN_RATIO = 0.6;
+/** L5 摘要输入截断长度（字符数） */
+const SUMMARY_INPUT_MAX_CHARS = 8000;
+/** MemoryRecallInjector 单次召回最大记忆条数（config.memory 无此字段） */
+const MAX_RECALL_MEMORIES = 5;
+
 /**
  * 创建 App 所需的全部服务依赖
  * 仅在组件首次渲染时调用一次（通过 useRef 持有返回值）
@@ -320,7 +333,7 @@ export function createAppDependencies(
   const contextManager = new ContextManager(
     {
       contextWindow: currentModelConfig?.contextWindow ?? 128000,
-      compressionThreshold: 0.8,
+      compressionThreshold: COMPRESSION_THRESHOLD,
       keepRecentMessages: 6,
       checkpointEnabled: config.checkpoint.enabled,
       cwd,
@@ -334,11 +347,11 @@ export function createAppDependencies(
   // - contextManager 持有 KnowledgeGraph，recallInjector 通过 graph.recall() 唤醒死数据
   // - 同时注入到 contextManager（统一入口）和 agentLoop（run() 中消费）
   // - injectThreshold 来自 config.memory.injectThreshold（默认 0.7）
-  // - maxMemories 用字面量 5（config.memory 无此字段）
+  // - maxMemories 用常量 MAX_RECALL_MEMORIES（config.memory 无此字段）
   const recallInjector = new MemoryRecallInjector(
     contextManager.getKnowledgeGraph(),
     config.memory?.injectThreshold ?? 0.7,
-    5,
+    MAX_RECALL_MEMORIES,
   );
   contextManager.setRecallInjector(recallInjector);
 
@@ -402,7 +415,7 @@ export function createAppDependencies(
     // P0-14：注册服务关闭钩子（集中式），进程退出前 flush 最终状态，避免 debounce 中的待写数据丢失
     // 优先级 100：session-memory 属于关键持久化，需先于 watcher/analytics 执行
     if (persistentPath) {
-      const handleClose = () => { store.close().catch(() => {}); };
+      const handleClose = () => { store.close().catch((err) => logger.warn('session-memory close failed', { error: String(err) })); };
       registerShutdownHook(100, 'session-memory', handleClose);
     }
     return { store, persistentPath };
@@ -416,7 +429,7 @@ export function createAppDependencies(
   const branchManager = new BranchManager();
 
   const contextCompactor = new ContextCompactor({
-    targetTokens: Math.floor((currentModelConfig?.contextWindow ?? 128000) * 0.6),
+    targetTokens: Math.floor((currentModelConfig?.contextWindow ?? 128000) * TARGET_TOKEN_RATIO),
     estimateTokens,
     summarize: checkpointClient
       ? async (messages: import('../router/types.js').LLMMessage[]) => {
@@ -424,7 +437,7 @@ export function createAppDependencies(
           const conversationText = messages
             .map(m => `${m.role}: ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`)
             .join('\n');
-          const summaryPrompt = `请将以下对话历史压缩为简洁摘要，保留关键决策、工具调用结果和未完成任务（< 500 字）：\n\n${conversationText.slice(0, 8000)}`;
+          const summaryPrompt = `请将以下对话历史压缩为简洁摘要，保留关键决策、工具调用结果和未完成任务（< 500 字）：\n\n${conversationText.slice(0, SUMMARY_INPUT_MAX_CHARS)}`;
           const result = await checkpointClient.complete({
             model: config.router.classifierModel,
             messages: [{ role: 'user', content: summaryPrompt }],
@@ -476,9 +489,9 @@ export function createAppDependencies(
             setActiveOtelExporter(exporter);
             logger.info('OtelExporter enabled', { endpoint: config.observability!.endpoint });
           })
-          .catch(() => { /* fail-open：integration 模块不可用时跳过 */ });
+          .catch((err) => { logger.warn('OtelExporter fail-open', { error: String(err) }); });
       })
-      .catch(() => { /* fail-open：exporter 模块不可用时跳过 */ });
+      .catch((err) => { logger.warn('OtelExporter fail-open', { error: String(err) }); });
   }
 
   // Phase 53 Task 8：前缀感知缓存（受 config.phase53Integration.prefixCache.enabled 守护，fail-open）
@@ -1930,8 +1943,6 @@ export function createAppDependencies(
           deps: {
             readSkillOrMacro: async (name: string, kind?: 'skill' | 'macro') => {
               try {
-                const path = require('node:path');
-                const fs = require('node:fs');
                 const dir = kind === 'macro' ? 'macros' : 'skills';
                 const file = path.join(cwd, '.routedev', dir, `${name}.md`);
                 return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : null;
@@ -1966,8 +1977,7 @@ export function createAppDependencies(
         // 注入 integrityManifest：导入完成后 record 输出文件 SHA-256，下次导入前 verify 跳过重复
         const pluginImporter = new pluginMod.ClaudePluginImporter(integrityManifest);
         const claudePluginDir = path.join(cwd, '.claude-plugin');
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const existsSync = require('node:fs').existsSync as (p: string) => boolean;
+        const existsSync = fs.existsSync;
         if (existsSync(claudePluginDir)) {
           try {
             const result = await pluginImporter.importFromPath(cwd, {
@@ -2426,7 +2436,7 @@ export function createAppDependencies(
       if (p68Cfg.provenanceGraph?.enabled) {
         const provenanceGraph = new ProvenanceGraph(p68Cfg.provenanceGraph.maxArtifacts);
         if (p68Cfg.provenanceGraph.persistPath) {
-          provenanceGraph.loadFromFile(p68Cfg.provenanceGraph.persistPath).catch(() => {});
+          provenanceGraph.loadFromFile(p68Cfg.provenanceGraph.persistPath).catch((err) => logger.warn('provenance-graph load failed', { error: String(err) }));
         }
         result.provenanceGraph = provenanceGraph;
       }

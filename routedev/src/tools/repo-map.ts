@@ -8,6 +8,7 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import { walkDir, isIgnoredPath } from './builtin/search-utils.js';
+import { logger } from '../utils/logger.js';
 
 /** 文件依赖条目 */
 export interface FileDependency {
@@ -493,8 +494,8 @@ export async function buildRepoMap(
       if (exports.length > 0 || signatures.length > 0 || dependencies.length > 0) {
         entries.push({ path: relativePath, exports, signatures, dependencies, language });
       }
-    } catch {
-      // 跳过无法读取的文件
+    } catch (err) {
+      logger.debug('repo-map operation failed', { error: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -551,8 +552,8 @@ export function saveCache(
       mtimes: mtimes ?? {},
     };
     fsSync.writeFileSync(cachePath, JSON.stringify(data, null, 2), 'utf-8');
-  } catch {
-    // 缓存写入失败不影响主流程
+  } catch (err) {
+    logger.debug('repo-map operation failed', { error: err instanceof Error ? err.message : String(err) });
   }
 }
 
@@ -588,8 +589,8 @@ export async function incrementalScan(
         cachedMtimes = data.mtimes ?? {};
       }
     }
-  } catch {
-    // 缓存损坏，全量扫描
+  } catch (err) {
+    logger.debug('repo-map operation failed', { error: err instanceof Error ? err.message : String(err) });
   }
 
   // 构建缓存索引：path → entry
@@ -617,7 +618,8 @@ export async function incrementalScan(
     let stat;
     try {
       stat = await fs.stat(filePath);
-    } catch {
+    } catch (err) {
+      logger.debug('repo-map operation failed', { error: err instanceof Error ? err.message : String(err) });
       continue;
     }
     const mtime = stat.mtimeMs;
@@ -641,8 +643,8 @@ export async function incrementalScan(
       if (exports.length > 0 || signatures.length > 0 || dependencies.length > 0) {
         result.push({ path: relativePath, exports, signatures, dependencies, language });
       }
-    } catch {
-      // 跳过无法读取的文件
+    } catch (err) {
+      logger.debug('repo-map operation failed', { error: err instanceof Error ? err.message : String(err) });
     }
   }
 

@@ -112,8 +112,9 @@ function safeWriteFile(filePath: string, content: string | Buffer): boolean {
       // 文件已存在且不是 symlink：用 'w' 直接打开（覆盖写）
       // 但 bundled skill 抽取应只写一次，存在即视为异常
       logger.warn(`safeWriteFile: 目标已存在，覆盖: ${filePath}`);
-    } catch (e: any) {
-      if (e.code !== 'ENOENT') throw e;
+    } catch (e: unknown) {
+      const isEnoent = e instanceof Error && (e as NodeJS.ErrnoException).code === 'ENOENT';
+      if (!isEnoent) throw e;
       // ENOENT 是预期情况，继续创建
     }
 
@@ -129,8 +130,9 @@ function safeWriteFile(filePath: string, content: string | Buffer): boolean {
         logger.error(`safeWriteFile: 父目录不是目录: ${parentDir}`);
         return false;
       }
-    } catch (e: any) {
-      if (e.code === 'ENOENT') {
+    } catch (e: unknown) {
+      const isEnoent = e instanceof Error && (e as NodeJS.ErrnoException).code === 'ENOENT';
+      if (isEnoent) {
         // 父目录不存在，递归创建（0o700）
         fs.mkdirSync(parentDir, { recursive: true, mode: SAFE_DIR_MODE });
       } else {
@@ -198,8 +200,9 @@ export function extractBundledSkill(
       if (!targetStats.isDirectory()) {
         throw new Error(`targetDir 不是目录: ${targetDir}`);
       }
-    } catch (e: any) {
-      if (e.code === 'ENOENT') {
+    } catch (e: unknown) {
+      const isEnoent = e instanceof Error && (e as NodeJS.ErrnoException).code === 'ENOENT';
+      if (isEnoent) {
         fs.mkdirSync(targetDir, { recursive: true, mode: SAFE_DIR_MODE });
         fs.chmodSync(targetDir, SAFE_DIR_MODE);
       } else {

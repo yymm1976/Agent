@@ -62,7 +62,8 @@ export async function checkSSRF(url: string): Promise<SSRFCheckResult> {
   let parsed: URL;
   try {
     parsed = new URL(url);
-  } catch {
+  } catch (err) {
+    logger.warn('Security check failed, fail-open', { error: err instanceof Error ? err.message : String(err) });
     return { allowed: false, reason: '无效的 URL 格式' };
   }
 
@@ -204,7 +205,8 @@ export function resolveSecurePath(
       };
     }
     return { allowed: true, realPath };
-  } catch {
+  } catch (err) {
+    logger.warn('Security check failed, fail-open', { error: err instanceof Error ? err.message : String(err) });
     // 文件不存在（新建文件场景），跳过 realpath 检查
     return { allowed: true, realPath: resolved };
   }

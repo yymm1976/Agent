@@ -49,6 +49,8 @@ routedev/
          └─ planning → 规划模式（/plan 命令）
 ```
 
+> **入口说明：** CLI 已在 Phase 72 退役，Electron 桌面端为主要入口。上述流水线在桌面端 chat 输入框中触发，`/goal`、`/plan` 等命令在桌面端 chat 中输入即可。
+
 ### 统一工作流编排（Phase 31）
 
 Phase 31 把三条互不相通的执行路径合并为一条智能流水线：
@@ -64,14 +66,14 @@ Phase 31 把三条互不相通的执行路径合并为一条智能流水线：
 
 ```powershell
 pnpm test              # 运行测试（Vitest）
-pnpm build             # 构建（tsup）
+pnpm build             # 构建（electron-vite）
 pnpm typecheck         # 类型检查（tsc --noEmit）
 pnpm tsx scripts/verify.ts  # 验收门检查
 ```
 
 ## 版本
 
-v2.3.0
+v4.5.4
 
 ## 许可证
 

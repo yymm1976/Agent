@@ -10,7 +10,7 @@ import { ModelRouter } from '../../src/router/router.js';
 import { buildRouterConfig } from '../../src/router/config.js';
 import { createAppDependencies } from '../../src/runtime/app-init.js';
 import type { AppDependencies } from '../../src/runtime/app-init.js';
-import type { ChatStreamPayload, MCPStatus, MCPConnectionResult, MCPInstallResult, MCPInstallPayload, SkillInstallPayload, AgentProfileInfo, AgentProfileDetail, ProfileSavePayload, ProfileOpResult, GoalEvent, PlanEditRequestPayload } from '../shared/ipc-types.js';
+import type { ChatStreamPayload, MCPStatus, MCPConnectionResult, MCPInstallResult, MCPInstallPayload, SkillInstallPayload, AgentProfileInfo, AgentProfileDetail, ProfileSavePayload, ProfileOpResult, GoalEvent, PlanEditRequestPayload, AgentProfileRole, AgentProfileOutputFormat } from '../shared/ipc-types.js';
 import type { TokenProfileSnapshot } from '../../src/agent/token-profiler.js';
 import { VisionAssistant, type ImageInput } from '../../src/agent/vision.js';
 import { notifyRoutingFallback } from '../../src/runtime/notification.js';
@@ -1154,8 +1154,8 @@ export class RouteDevEngine {
     try {
       const mod = await import('../../src/security/integrity-manifest.js');
       const manifestPath = cfg.integrityManifestPath
-        ? require('node:path').resolve(this.options.cwd, cfg.integrityManifestPath)
-        : require('node:path').join(this.options.cwd, '.routedev', 'integrity-manifest.json');
+        ? path.resolve(this.options.cwd, cfg.integrityManifestPath)
+        : path.join(this.options.cwd, '.routedev', 'integrity-manifest.json');
       const manifest = new mod.IntegrityManifest(manifestPath);
       await manifest.load();
       return manifest;
@@ -1240,12 +1240,17 @@ export class RouteDevEngine {
 
   /** AgentProfile -> AgentProfileDetail（含完整字段） */
   private toProfileDetail(profile: AgentProfile): AgentProfileDetail {
-    return profile as unknown as AgentProfileDetail;
+    // 字段集与 AgentProfile 一致；仅 role / outputFormat 因 IPC 侧枚举收窄需显式断言
+    return {
+      ...profile,
+      role: profile.role as AgentProfileRole,
+      outputFormat: profile.outputFormat as AgentProfileOutputFormat,
+    };
   }
 
   /** ProfileSavePayload -> AgentProfile（IPC 字段透传，类型已与 src 一致） */
   private fromSavePayload(payload: ProfileSavePayload): AgentProfile {
-    return payload as unknown as AgentProfile;
+    return { ...payload };
   }
 
   /** 列出所有 Profile（不含 systemPrompt） */

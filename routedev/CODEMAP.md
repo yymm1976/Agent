@@ -45,7 +45,7 @@
 ### src/agent/ — Agent 引擎层
 **职责：** ReAct 循环、目标分解与验证、分支管理、记忆维护、多 Agent 协作、工作模式、权限门控
 **关键文件：**
-- `loop.ts` — ReAct Agent Loop 核心引擎，不做路由和分类；集成中间件管线（417 行）
+- `loop.ts` — ReAct Agent Loop 核心引擎，不做路由和分类；集成中间件管线（2026-07-07 统计 1957 行）
 - `loop-config.ts` — Loop 的配置和事件类型（63 行）
 - `types.ts` — Agent 层核心类型：状态、ReAct 步骤、记忆、目标（127 行）
 - `middleware.ts` — Agent 中间件管线（五阶段：onAgent/onReasoning/onActing/onModelCall/onSystemPrompt）（58 行）
@@ -65,8 +65,8 @@
 - `vision.ts` — VisionAssistant：多模态视觉辅助（148 行）
 - `work-modes.ts` — WorkModeController + GuardedToolExecutorAdapter（build/plan/compose 三模式）（180 行）
 - `memory/checkpoint-writer.ts` — CheckpointWriter：独立记忆维护子 Agent（212 行）
-- `memory/context-manager.ts` — 上下文管理器：token 监控 → checkpoint → 压缩（578 行）；Phase 38 增强：知识图谱跨会话持久化（.routedev/memory/knowledge-graph.json）
-- `memory/graph.ts` — KnowledgeGraph：PPR + 双路径召回 + Label Propagation 社区检测 + 模式聚类 + 置信度评分（Phase 36 增强）（683 行）；Phase 38 增强：improve() 反馈 + forget() 遗忘 + recallV2() 多策略检索
+- `memory/context-manager.ts` — 上下文管理器：token 监控 → checkpoint → 压缩（2026-07-07 统计 877 行）；Phase 38 增强：知识图谱跨会话持久化（.routedev/memory/knowledge-graph.json）
+- `memory/graph.ts` — KnowledgeGraph：PPR + 双路径召回 + Label Propagation 社区检测 + 模式聚类 + 置信度评分（Phase 36 增强）（2026-07-07 统计 1160 行）；Phase 38 增强：improve() 反馈 + forget() 遗忘 + recallV2() 多策略检索
 - `memory/types.ts` — 增量 Checkpoint + 上下文压缩类型（110 行）
 - `memory/dream-to-graph.ts` — Dream → KnowledgeGraph 信息流：归纳三步（合并同类/冲突检测/时效淘汰）（Phase 36）（236 行）
 - `multi/blackboard.ts` — 公共黑板：Worker 间共享任务共识（105 行）
@@ -212,7 +212,7 @@
 - `main/updater.ts` — 自动更新（electron-updater）
 - `preload/index.ts` — preload 脚本，暴露安全 IPC API 给 renderer
 - `renderer/src/App.tsx` — React 主应用组件
-- `renderer/src/pages/SettingsPage.tsx` — 设置页面（12 个标签页，覆盖全部配置项）（Phase 33 后约 2500 行）
+- `renderer/src/pages/SettingsPage.tsx` — 设置页面（12 个标签页，覆盖全部配置项）（2026-07-07 统计 693 行）
 - `renderer/src/pages/settings-helpers.ts` — SettingsPage 纯函数辅助模块（Phase 33 Task 5 提取，可单测）
 - `renderer/src/pages/ChatPage.tsx` — 对话页面
 - `renderer/src/pages/TokenPage.tsx` — Token 用量页面

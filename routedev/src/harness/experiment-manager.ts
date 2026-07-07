@@ -232,14 +232,24 @@ export class ExperimentManager {
         maxBuffer: 10 * 1024 * 1024,
       });
       return { stdout: result.stdout, stderr: result.stderr };
-    } catch (error: any) {
+    } catch (error: unknown) {
       // execFile 在非零退出码时 reject，保留 stdout/stderr 供调用方使用
+      const errMsg = error instanceof Error ? error.message : String(error);
       const err = new Error(
-        `git ${args.join(' ')} failed: ${error.message ?? String(error)}`,
+        `git ${args.join(' ')} failed: ${errMsg}`,
       ) as Error & { stdout: string; stderr: string; code?: number | string };
-      err.stdout = error.stdout ?? '';
-      err.stderr = error.stderr ?? '';
-      err.code = error.code;
+      // execFile reject 的对象上有 stdout/stderr/code 属性（ExecFileException）
+      if (error !== null && typeof error === 'object') {
+        const e = error as { stdout?: unknown; stderr?: unknown; code?: unknown };
+        err.stdout = typeof e.stdout === 'string' ? e.stdout : '';
+        err.stderr = typeof e.stderr === 'string' ? e.stderr : '';
+        if (typeof e.code === 'string' || typeof e.code === 'number') {
+          err.code = e.code;
+        }
+      } else {
+        err.stdout = '';
+        err.stderr = '';
+      }
       throw err;
     }
   }
@@ -385,7 +395,7 @@ export class ExperimentManager {
       });
 
       return runResult;
-    } catch (error: any) {
+    } catch (error: unknown) {
       const duration = Math.round((Date.now() - startTime) / 1000);
       const errorMsg = error instanceof Error ? error.message : String(error);
       options?.onProgress?.({
@@ -572,10 +582,11 @@ export class ExperimentManager {
     // git add 已 checkout 的文件
     try {
       await this.execGit(['add', ...adoptedFiles]);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
       return {
         success: false,
-        message: `git add 失败: ${error.message ?? String(error)}`,
+        message: `git add 失败: ${msg}`,
       };
     }
 
@@ -589,12 +600,13 @@ export class ExperimentManager {
         '-m',
         `采纳实验 ${exp.id}（cherry-pick）: ${exp.name}（${fileSummary}）`,
       ]);
-    } catch (error: any) {
+    } catch (error: unknown) {
       // commit 失败可能是没有变更（文件内容与当前分支一致）
       // 此时仍视为成功（文件已 checkout 到工作区）
+      const msg = error instanceof Error ? error.message : String(error);
       logger.warn('cherry-pick: commit 失败（可能无变更）', {
         expId: exp.id,
-        error: error.message,
+        error: msg,
       });
     }
 
@@ -632,20 +644,22 @@ export class ExperimentManager {
     // git worktree remove <worktreePath> --force
     try {
       await this.execGit(['worktree', 'remove', exp.worktreePath, '--force']);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
       logger.warn('移除 worktree 失败', {
         worktreePath: exp.worktreePath,
-        error: error.message,
+        error: msg,
       });
     }
 
     // git branch -D <branch>
     try {
       await this.execGit(['branch', '-D', exp.branch]);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
       logger.warn('删除分支失败', {
         branch: exp.branch,
-        error: error.message,
+        error: msg,
       });
     }
 

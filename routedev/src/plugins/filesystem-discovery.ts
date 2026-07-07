@@ -9,6 +9,7 @@
 //   3. Skills 按需加载：description 作为路由提示，匹配时才注入，节省 token
 
 import fs from 'node:fs/promises';
+import * as fsSync from 'node:fs';
 import path from 'node:path';
 import { logger } from '../utils/logger.js';
 // P0-7：接入 SkillMdParser 消费 whenToUse/allowedTools/arguments 等新字段
@@ -253,7 +254,6 @@ export class SkillsRouter {
     if (!this.stateFilePath) return;
     try {
       // 同步读取，构造时调用
-      const fsSync = require('node:fs');
       if (!fsSync.existsSync(this.stateFilePath)) return;
       const raw = fsSync.readFileSync(this.stateFilePath, 'utf-8');
       const data: SkillStateFile = JSON.parse(raw);
@@ -274,10 +274,8 @@ export class SkillsRouter {
   private persistState(): void {
     if (!this.stateFilePath) return;
     try {
-      const fsSync = require('node:fs');
-      const pathSync = require('node:path');
       // 确保目录存在
-      const dir = pathSync.dirname(this.stateFilePath);
+      const dir = path.dirname(this.stateFilePath);
       if (!fsSync.existsSync(dir)) {
         fsSync.mkdirSync(dir, { recursive: true });
       }

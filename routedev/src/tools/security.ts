@@ -74,7 +74,8 @@ function matchGlob(filePath: string, pattern: string): boolean {
   try {
     const regex = globToRegExp(normalizedPattern);
     return regex.test(normalizedPath);
-  } catch {
+  } catch (err) {
+    logger.warn('Security check failed, fail-open', { error: err instanceof Error ? err.message : String(err) });
     // 正则编译失败时降级为简单后缀匹配
     if (pattern.startsWith('*.')) {
       return filePath.endsWith(pattern.slice(1));
@@ -238,7 +239,8 @@ export class SecurityChecker implements ISecurityChecker {
       }
 
       return { allowed: true, requiresConfirmation: false };
-    } catch {
+    } catch (err) {
+      logger.warn('Security check failed, fail-open', { error: err instanceof Error ? err.message : String(err) });
       return {
         allowed: false,
         reason: `无效的 URL: ${url}`,
@@ -432,7 +434,8 @@ export class SecurityChecker implements ISecurityChecker {
     let parsed: URL;
     try {
       parsed = new URL(url);
-    } catch {
+    } catch (err) {
+      logger.warn('Security check failed, fail-open', { error: err instanceof Error ? err.message : String(err) });
       return {
         allowed: false,
         reason: `无效的 URL: ${url}`,

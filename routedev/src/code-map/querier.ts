@@ -3,6 +3,7 @@
 
 import path from 'node:path';
 import fsp from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import type {
   CodeMapNode,
   CodeMapEdge,
@@ -752,7 +753,7 @@ function readSnippet(
   symbolName?: string,
 ): CodeSnippet | null {
   try {
-    const content = require('fs').readFileSync(fullPath, 'utf-8') as string;
+    const content = readFileSync(fullPath, 'utf-8');
     const lines = content.split('\n');
     const start = Math.max(0, startLine);
     const end = Math.min(lines.length - 1, endLine);

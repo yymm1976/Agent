@@ -5,6 +5,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from 'electron';
 import type { Tray } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import type {
   ChatSendPayload,
@@ -49,7 +50,6 @@ function isValidProjectCwd(target: string): boolean {
   const resolved = path.resolve(target);
   if (resolved === path.parse(resolved).root) return false;
   try {
-    const os = require('node:os');
     if (resolved === os.homedir()) return false;
   } catch { /* ignore */ }
   // 必须存在于磁盘且是目录
@@ -481,12 +481,18 @@ ipcMain.handle('mcp:install', async (_event, payload: MCPInstallPayload): Promis
 
 // 连接指定服务器
 ipcMain.handle('mcp:connect', async (_event, serverId: string): Promise<MCPConnectionResult> => {
+  if (typeof serverId !== 'string' || serverId.length === 0 || serverId.length > 256) {
+    return { success: false, error: '无效的参数' };
+  }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.connectServer(serverId);
 });
 
 // 断开指定服务器
 ipcMain.handle('mcp:disconnect', async (_event, serverId: string): Promise<MCPConnectionResult> => {
+  if (typeof serverId !== 'string' || serverId.length === 0 || serverId.length > 256) {
+    return { success: false, error: '无效的参数' };
+  }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.disconnectServer(serverId);
 });
@@ -500,10 +506,16 @@ ipcMain.handle('skill:list', async () => {
 });
 
 ipcMain.handle('skill:preview', async (_event, name: string) => {
+  if (typeof name !== 'string' || name.length === 0 || name.length > 256) {
+    return null;
+  }
   return engine?.previewSkill(name) ?? null;
 });
 
 ipcMain.handle('skill:toggle', async (_event, payload: { name: string; enabled: boolean }) => {
+  if (!payload || typeof payload.name !== 'string' || payload.name.length === 0 || payload.name.length > 256) {
+    return false;
+  }
   return engine?.toggleSkill(payload.name, payload.enabled) ?? false;
 });
 
@@ -513,6 +525,9 @@ ipcMain.handle('skill:create', async (_event, payload: import('../shared/ipc-typ
 });
 
 ipcMain.handle('skill:delete', async (_event, name: string) => {
+  if (typeof name !== 'string' || name.length === 0 || name.length > 256) {
+    return { success: false, error: '无效的参数' };
+  }
   return engine?.deleteSkill(name) ?? { success: false, error: '引擎未初始化' };
 });
 
@@ -677,18 +692,27 @@ ipcMain.handle('experiment:list', async (): Promise<ExperimentInfo[]> => {
 
 // 采纳实验分支
 ipcMain.handle('experiment:adopt', async (_event, experimentId: string): Promise<{ success: boolean; error?: string }> => {
+  if (typeof experimentId !== 'string' || experimentId.length === 0 || experimentId.length > 256) {
+    return { success: false, error: '无效的参数' };
+  }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.adoptExperiment(experimentId);
 });
 
 // 丢弃实验分支
 ipcMain.handle('experiment:discard', async (_event, experimentId: string): Promise<{ success: boolean; error?: string }> => {
+  if (typeof experimentId !== 'string' || experimentId.length === 0 || experimentId.length > 256) {
+    return { success: false, error: '无效的参数' };
+  }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.discardExperiment(experimentId);
 });
 
 // 获取实验分支 diff
 ipcMain.handle('experiment:get-diff', async (_event, experimentId: string): Promise<{ diff: string; filesChanged: number; error?: string }> => {
+  if (typeof experimentId !== 'string' || experimentId.length === 0 || experimentId.length > 256) {
+    return { diff: '', filesChanged: 0, error: '无效的参数' };
+  }
   if (!engine) return { diff: '', filesChanged: 0, error: '引擎未初始化' };
   return engine.getExperimentDiff(experimentId);
 });
@@ -703,6 +727,9 @@ ipcMain.handle('hook:list', async (): Promise<HookInfo[]> => {
 
 // 启用/禁用 Hook
 ipcMain.handle('hook:toggle', async (_event, payload: { hookId: string; enabled: boolean }): Promise<{ success: boolean; error?: string }> => {
+  if (!payload || typeof payload.hookId !== 'string' || payload.hookId.length === 0 || payload.hookId.length > 256) {
+    return { success: false, error: '无效的参数' };
+  }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.toggleHook(payload.hookId, payload.enabled);
 });
@@ -716,6 +743,9 @@ ipcMain.handle('hook:create', async (_event, payload: unknown): Promise<{ succes
 
 // 删除自定义 Hook
 ipcMain.handle('hook:delete', async (_event, hookId: string): Promise<{ success: boolean; error?: string }> => {
+  if (typeof hookId !== 'string' || hookId.length === 0 || hookId.length > 256) {
+    return { success: false, error: '无效的参数' };
+  }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.deleteHook(hookId);
 });
@@ -733,6 +763,9 @@ ipcMain.handle('checkpoint:list', async (_event, projectId?: string) => {
 
 // 回滚到指定检查点（破坏性操作，UI 层需在调用前弹出确认对话框）
 ipcMain.handle('checkpoint:rollback', async (_event, checkpointId: string): Promise<{ success: boolean; error?: string }> => {
+  if (typeof checkpointId !== 'string' || checkpointId.length === 0 || checkpointId.length > 256) {
+    return { success: false, error: '无效的参数' };
+  }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.rollbackCheckpoint(checkpointId);
 });
@@ -783,6 +816,9 @@ ipcMain.handle('agent:getFollowUpQueue', async (): Promise<import('../shared/ipc
 
 // 删除指定索引的 follow-up 消息（UI 单条删除）
 ipcMain.handle('agent:removeFollowUp', async (_event, index: number): Promise<boolean> => {
+  if (!Number.isInteger(index) || index < 0) {
+    return false;
+  }
   if (!engine) return false;
   return engine.removeFollowUp(index);
 });

@@ -237,12 +237,3 @@ describe('Phase 42 Integration - ExecutionStateGraph', () => {
     expect(graph.current()).toBe('completed');
   });
 });
-
-// ============================================================
-// 6. VariablePool 动态测试（Phase 46 已删除 blackboard-extension.ts）
-// ============================================================
-describe('Phase 42 Integration - VariablePool', () => {
-  it.skip('变量管理：set / get / resolve（模块已删除）', async () => {
-    // Phase 46 删除了 blackboard-extension.ts，此测试跳过
-  });
-});

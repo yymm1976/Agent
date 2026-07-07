@@ -116,37 +116,12 @@ describe('Phase 39 Integration - Defaults 默认值', () => {
 // 3. IPC 类型结构验证
 // ============================================================
 describe('Phase 39 Integration - IPC 类型', () => {
-  it('MainToRendererEvent 包含 experiment:progress 通道', () => {
-    const event: MainToRendererEvent = {
-      channel: 'experiment:progress',
-      payload: { taskId: 'exp-001', phase: 'running', message: '执行中', modifiedFiles: ['src/index.ts'], tokenUsage: 1000 },
-    };
-    expect(event.channel).toBe('experiment:progress');
-    expect(event.payload).toHaveProperty('taskId');
-  });
-
-  it('MainToRendererEvent 包含 experiment:status 通道', () => {
-    const event: MainToRendererEvent = {
-      channel: 'experiment:status',
-      payload: { taskId: 'exp-001', status: 'completed' },
-    };
-    expect(event.channel).toBe('experiment:status');
-  });
-
   it('MainToRendererEvent 包含 codemap:indexing 通道', () => {
     const event: MainToRendererEvent = {
       channel: 'codemap:indexing',
       payload: { progress: 0.5, fileCount: 100 },
     };
     expect(event.channel).toBe('codemap:indexing');
-  });
-
-  it('MainToRendererEvent 包含 hook:fired 通道', () => {
-    const event: MainToRendererEvent = {
-      channel: 'hook:fired',
-      payload: { hookName: 'eslint-check', event: 'post-tool-call', result: 'passed' },
-    };
-    expect(event.channel).toBe('hook:fired');
   });
 
   it('ExperimentInfo 类型结构正确', () => {

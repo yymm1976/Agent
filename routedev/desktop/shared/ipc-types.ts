@@ -405,12 +405,6 @@ export type MainToRendererEvent =
   | { channel: 'token:profile'; payload: TokenProfileSnapshot }
   | { channel: 'trace:event'; payload: TraceSpan }
   | { channel: 'config:reloaded'; payload: AppConfig }
-  // Phase 39：实验分支进度事件
-  | { channel: 'experiment:progress'; payload: { taskId: string; phase: string; message?: string; modifiedFiles?: string[]; tokenUsage?: number } }
-  // Phase 39：实验分支状态变更事件
-  | { channel: 'experiment:status'; payload: { taskId: string; status: string } }
-  // Phase 39：Hook 触发事件
-  | { channel: 'hook:fired'; payload: { hookName: string; event: string; result?: string } }
   // Phase 54：Goal 执行结构化事件（驱动 GoalExecutionCard 就地刷新）
   | { channel: 'goal:event'; payload: GoalEvent }
   // Phase 54：计划编辑请求（驱动 StepEditor 显示）
