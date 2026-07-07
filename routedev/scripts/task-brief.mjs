@@ -1,5 +1,6 @@
 // scripts/task-brief.mjs
 // Phase 75-A2：从 plan markdown 中抽取指定 task 全文，落盘为 brief 文件。
+// Phase 75-B5：自动 prepend Global Constraints 章节到 brief 开头（机械传播）。
 // 借鉴 Superpowers v6 的 scripts/task-brief（awk 实现），改为 Node ESM。
 // 设计意图：避免把 task 文本粘贴进 controller context，subagent 仅引用 brief 路径。
 //
@@ -19,6 +20,14 @@ const TASK_HEADING_RE = /^(#{2,3})\s+Task\s+(\d+)/;
 
 // 围栏行正则：以 ``` 开头即视为围栏边界（含 ```javascript 等带语言标记）。
 const FENCE_RE = /^```/;
+
+// Global Constraints heading 正则：## 或 ### 开头 + "Global Constraints"。
+// 兼容 plan 中 h2（## Global Constraints）与 h3（### Global Constraints）两种写法。
+const GLOBAL_CONSTRAINTS_HEADING_RE = /^(#{2,3})\s+Global\s+Constraints\s*$/;
+
+// 任意 markdown heading 正则（h1-h6）：用于检测 Global Constraints 章节边界。
+// 形如 `# X`、`## X`、`### X`（# 后须有非空内容）。
+const ANY_HEADING_RE = /^#{1,6}\s+\S/;
 
 /**
  * 从 plan 文本中抽取指定 task 的全文（含 task heading 行本身）。
@@ -71,6 +80,60 @@ function extractTaskBrief(content, taskNumber) {
 }
 
 /**
+ * 从 plan 文本中抽取 Global Constraints 章节内容（不含 heading 行本身）。
+ *
+ * Phase 75-B5：用于机械传播到每个 task brief 开头。
+ *
+ * 匹配规则：找到 `## Global Constraints` 或 `### Global Constraints` heading，
+ * 捕获其后续行直到遇到下一个任意级别的 heading 或 EOF。
+ * 围栏内的伪 heading 不算（防御代码块里的 # 开头行）。
+ *
+ * 向后兼容：plan 无 Global Constraints 章节 → 返回 null，调用方不 prepend。
+ *
+ * @param {string} content - plan markdown 全文
+ * @returns {string | null} 章节内容（trimEnd 后）；未找到返回 null
+ */
+function extractGlobalConstraints(content) {
+  const lines = content.split(/\r?\n/);
+  let inFence = false;
+  let found = false;
+  const captured = [];
+
+  for (const line of lines) {
+    // 围栏行：切换状态；若已在捕获模式，计入输出
+    if (FENCE_RE.test(line)) {
+      if (found) captured.push(line);
+      inFence = !inFence;
+      continue;
+    }
+
+    if (!inFence) {
+      if (!found) {
+        // 起始：检测 Global Constraints heading
+        if (GLOBAL_CONSTRAINTS_HEADING_RE.test(line)) {
+          found = true;
+          continue; // 跳过 heading 行本身（prepend 时用固定 ## 重发）
+        }
+      } else {
+        // 已在捕获中，遇到下一个 heading → 结束
+        if (ANY_HEADING_RE.test(line)) {
+          break;
+        }
+      }
+    }
+
+    // 捕获模式：原样保留当前行（围栏内行也照常保留）
+    if (found) {
+      captured.push(line);
+    }
+  }
+
+  if (!found) return null;
+  // 去除尾部空行，避免 prepend 时产生多余空行
+  return captured.join('\n').trimEnd();
+}
+
+/**
  * 主入口：解析参数、抽取 task、落盘。
  */
 function main() {
@@ -108,12 +171,27 @@ function main() {
     process.exit(1);
   }
 
+  // Phase 75-B5：机械传播 Global Constraints 到 brief 开头。
+  // 若 plan 含 Global Constraints 章节，prepend 到 brief；否则原样落盘（向后兼容）。
+  const globalConstraints = extractGlobalConstraints(content);
+  let finalBrief = brief;
+  if (globalConstraints !== null && globalConstraints.length > 0) {
+    finalBrief = [
+      '<!-- Global Constraints（机械传播自 plan，Phase 75-B5） -->',
+      '## Global Constraints',
+      globalConstraints,
+      '',
+      '---',
+      brief,
+    ].join('\n');
+  }
+
   // 落盘：文件名 task-<NN>-brief.md（N 零填充到 2 位）
   const paddedN = String(taskNumber).padStart(2, '0');
   const fileName = `task-${paddedN}-brief.md`;
   fs.mkdirSync(outputDir, { recursive: true });
   const outPath = path.join(outputDir, fileName);
-  fs.writeFileSync(outPath, brief, 'utf-8');
+  fs.writeFileSync(outPath, finalBrief, 'utf-8');
 
   // stdout 输出 brief 文件绝对路径，供调用方读取
   console.log(outPath);

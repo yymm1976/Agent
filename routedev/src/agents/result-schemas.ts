@@ -98,6 +98,11 @@ export type ExecutorResult = z.infer<typeof ExecutorResultSchema>;
 /**
  * Reviewer（审查者）结构化返回
  * 复用 StructuredReviewFeedback 风格，每条风险携带三条证据协议字段
+ *
+ * Phase 75-B3：新增三态 verdict + cannotVerifyItems（均为可选，向后兼容）
+ *   - verdict: 'clean' | 'issues-found' | 'cannot-verify'（Superpowers v6 三态）
+ *   - cannotVerifyItems: ⚠️ 项列表（需求在未变更代码或跨 task，上移 controller 校验）
+ * 旧字段 overallVerdict 保留，便于既有调用方平滑迁移；新代码应优先使用 verdict。
  */
 export const ReviewerResultSchema = z.object({
   /** 审查总结 */
@@ -123,8 +128,25 @@ export const ReviewerResultSchema = z.object({
       }),
     )
     .default([]),
-  /** 总体判定 */
+  /** 总体判定（旧字段，保留以向后兼容） */
   overallVerdict: z.enum(['pass', 'conditional', 'fail']),
+  /**
+   * 三态判定（Phase 75-B3，借鉴 Superpowers v6）
+   * - clean：spec compliance 通过，无阻塞或重要缺陷
+   * - issues-found：发现 critical/important findings，需 fix subagent 处理
+   * - cannot-verify：部分需求无法从 diff 单独验证（与 clean/issues-found 并列时，
+   *   controller 必须自行校验 ⚠️ items）
+   *
+   * 可选字段：未提供时回退到 overallVerdict 语义。
+   */
+  verdict: z.enum(['clean', 'issues-found', 'cannot-verify']).optional(),
+  /**
+   * ⚠️ Cannot verify 项列表（Phase 75-B3）
+   * 触发条件：需求存在于未变更代码、或跨多个 task。
+   * controller 收到后必须自行校验（因 controller 持有 plan 和跨 task 上下文）。
+   * 详见 prompts/manager.ts 的 reviewer.three-state 模板与 controller.rules 第 7 条。
+   */
+  cannotVerifyItems: z.array(z.string()).optional(),
 });
 export type ReviewerResult = z.infer<typeof ReviewerResultSchema>;
 
@@ -448,6 +470,9 @@ function formatExecutor(data: ExecutorResult): string {
 
 /**
  * 将 Reviewer 结构化结果格式化为父 Agent 可读文本
+ *
+ * Phase 75-B3：当三态 verdict 存在时优先输出 ✅/❌/⚠️ 三态，
+ * 并单独列出 cannotVerifyItems（⚠️ 上移 controller 处理）。
  */
 function formatReviewer(data: ReviewerResult): string {
   const lines: string[] = [`【审查总结】\n${data.summary}`];
@@ -466,6 +491,22 @@ function formatReviewer(data: ReviewerResult): string {
       if (r.suggestedFix) {
         lines.push(`   建议修复：${r.suggestedFix}`);
       }
+    });
+  }
+  // Phase 75-B3：三态 verdict 优先展示（若存在）
+  if (data.verdict) {
+    const symbol =
+      data.verdict === 'clean'
+        ? '✅'
+        : data.verdict === 'issues-found'
+          ? '❌'
+          : '⚠️';
+    lines.push(`【三态判定】${symbol} ${data.verdict}`);
+  }
+  if (data.cannotVerifyItems && data.cannotVerifyItems.length > 0) {
+    lines.push('【Cannot Verify（⚠️ 上移 controller）】');
+    data.cannotVerifyItems.forEach((item, i) => {
+      lines.push(`${i + 1}. ⚠️ ${item}`);
     });
   }
   lines.push(`【总体判定】${data.overallVerdict}`);

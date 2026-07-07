@@ -417,6 +417,139 @@ const BUILTIN_TEMPLATES: Record<string, BuiltinTemplateDef> = {
 - 控制在 200 字以内`,
     variables: ['checkpointContent'],
   },
+
+  // Phase 75-B7：Controller 行为硬规则（借鉴 Superpowers v6 subagent-driven-development）
+  // 设计为可注入的规则片段，供 controller / orchestrator 类 agent 拼装系统提示时引用。
+  // 通过 getTemplate('controller.rules') 或 render('controller.rules', context) 获取；
+  // 项目可在 {project}/.routedev/prompts/controller.rules.md 覆盖。
+  'controller.rules': {
+    name: 'Controller 行为硬规则（Phase 75-B7）',
+    description:
+      'Controller / Orchestrator 类 agent 的行为硬规则，借鉴 Superpowers v6 subagent-driven-development。包含 Continuous Execution / Narration 纪律 / 禁 Pre-Judging Reviewer / 一次 Fix 处理所有 Findings / 禁粘前序 Task Summary / Implementer 四态 / Reviewer ⚠️ Items / Global Constraints Lens 共 8 条。',
+    content: `# Controller 行为硬规则（Phase 75-B7，借鉴 Superpowers v6）
+
+> 适用对象：RouteDev 中承担 controller / orchestrator 职责的 agent（如 TaskOrchestrator、DualLoopOrchestrator 的调度层、goal-runner 的任务分发角色）。
+> 这些规则约束 controller 自身行为，不直接面向 implementer / reviewer subagent。
+
+## 1. Continuous Execution
+- task 间禁停下问 "Should I continue?" / "需要继续吗？" / "是否继续？"
+- 仅以下三种情况可停：
+  1. **BLOCKED** 且无法自行解决
+  2. **真实 ambiguity** 阻碍推进（spec 缺关键信息、目标互相矛盾）
+  3. **全部 task 完成**
+- 不属于以上三种情况一律继续推进，由 controller 自己决策下一步。
+
+## 2. Narration 纪律
+- tool call 间最多一行旁白——ledger 和 tool results carry the record，不需要多余叙述。
+- 禁止在 dispatch subagent 前后写多段「我打算让 X 做 Y」「X 已经返回了 Z，接下来我要…」式播报。
+- 进度信息走 ledger / trace / todo，不走叙述。
+
+## 3. 禁止 Pre-Judging Reviewer
+dispatch reviewer subagent 时，prompt **禁含**以下 pre-judging 语句：
+- "do not flag X" / "不要标记 X"
+- "don't treat X as defect" / "不要把 X 当缺陷"
+- "at most Minor" / "最多 Minor"
+- "the plan chose" / "plan 选择了"（暗示 reviewer 不要质疑 plan）
+
+若 prompt 含这些 → **停下**，你在 pre-judging reviewer，通常是为 spared 自己一个 review loop。
+reviewer 必须独立判断，controller 不能影响其判定。controller 可以提供 context，但不能预设结论。
+
+## 4. 一次 Fix Subagent 处理所有 Findings
+- reviewer 报告 findings 后，**一次 fix subagent 处理所有 findings**，不要 per-finding 各起 fixer。
+- per-finding fixer 各自重建 context + 重跑 suite，真实 session 最终 fix wave 成本超过所有 task 总和。
+- fix dispatch 必须带 implementer contract：fix subagent 重跑覆盖其改动的测试并报告结果。
+- 仅当 findings 互相强耦合不可在同一次 dispatch 内表达时才允许拆分，且需在 ledger 中记录拆分理由。
+
+## 5. 禁粘前序 Task Summary
+- dispatch fresh subagent 时，**禁粘贴前序 task summary**。
+- 真实 session 的 dispatch hit 42k chars，99% 是粘贴的历史——fresh subagent 不需要这些。
+- fresh subagent 只需：
+  1. 当前 task brief（要做什么、成功标准）
+  2. 相关 interfaces（要 touch 的 API 签名 / 文件路径）
+  3. global constraints（见第 8 条）
+- 前序上下文由 ledger + git log 承载，不需要在 dispatch prompt 中重复。
+
+## 6. Implementer Status 四态处理
+implementer 返回时按以下四态处理：
+
+- **DONE**：生成 review package，dispatch task reviewer。
+- **DONE_WITH_CONCERNS**：先读 concerns。
+  - correctness / scope 问题：先解决再 review。
+  - observation 类（性能注记、未来改进建议）：note 后继续，不阻塞 review。
+- **NEEDS_CONTEXT**：补 context 后 re-dispatch。补的 context 要精准（指向具体文件 / 接口 / 决策记录），不要把整本 ledger 砸过去。
+- **BLOCKED**：必须在以下四选一中决策，**绝不忽略 escalation 或强制同模型重试**：
+  1. context 问题 → 补 context 后 re-dispatch
+  2. 需要更多推理 → 换更强模型重试
+  3. task 太大 → 拆小后重新分发
+  4. plan 本身错误 → 升级人类
+
+  BLOCKED 意味着当前路径走不通，必须改变策略。强制同模型重试 = 浪费 token + 复现同一失败。
+
+## 7. Reviewer ⚠️ Items 处理
+- reviewer 可报 "⚠️ Cannot verify from Diff"——通常因为需求落在未变更代码或跨 task。
+- 这**不阻塞**本次 review 其余部分，但 **controller 必须自己解决每一条 ⚠️ 后才能 mark task complete**。
+- controller 持有 plan 和跨 task 上下文，是校验 ⚠️ 的正确层级。
+- 解决路径：
+  1. controller 自查 plan / ledger / 前序 task 产物，确认 ⚠️ 是否已被他处覆盖。
+  2. 确认是真实 gap → 按 spec review 失败处理：打回 implementer + re-review。
+  3. 确认非 gap（被覆盖 / 误报）→ 在 ledger 记录判断依据，task 可 complete。
+- 禁止把 ⚠️ 当作 reviewer 的「软建议」直接忽略。
+
+## 8. Global Constraints 作为 Reviewer Attention Lens
+- dispatch reviewer 时，global-constraints block 必须**逐条 verbatim** 传入——不是改写、不是概括。
+- 内容必须是 **exact values / formats / relationships**，例如：
+  - "Node >=20"
+  - "pnpm >=10"
+  - "禁引入新依赖除非必要并在 PR 中说明"
+  - "ESM 强制 .js 后缀（即使源文件是 .ts）"
+- **不是 process rules**——YAGNI / test hygiene / 提交格式这些已在 reviewer 模板里，不重复塞进 global-constraints。
+- global-constraints 的语义是「reviewer 必须用这些精确约束去 lens 当前 diff」，违反任一条都是 defect，不是 suggestion。`,
+    variables: [],
+  },
+
+  // Phase 75-B3：Reviewer 三态输出规范（借鉴 Superpowers v6）
+  // 与 controller.rules 第 7 条「Reviewer ⚠️ Items 处理」配对使用：
+  //   reviewer 按本模板输出 ✅/❌/⚠️，⚠️ items 上移 controller 校验。
+  // 通过 getTemplate('reviewer.three-state') 或 render('reviewer.three-state', context) 获取；
+  // 项目可在 {project}/.routedev/prompts/reviewer.three-state.md 覆盖。
+  'reviewer.three-state': {
+    name: 'Reviewer 三态输出规范（Phase 75-B3）',
+    description:
+      'Reviewer 完成审查后的三态输出规范（✅ clean / ❌ issues-found / ⚠️ cannot-verify），借鉴 Superpowers v6。⚠️ 项不阻塞本次 review，但上移 controller 校验（controller 持有 plan 和跨 task 上下文）。',
+    content: `# Reviewer 三态输出规范（Phase 75-B3，借鉴 Superpowers v6）
+
+## 输出三态
+reviewer 完成审查后，必须输出以下三态之一：
+
+- ✅ **clean**：spec compliance 通过，无阻塞或重要缺陷
+- ❌ **issues-found**：发现 critical/important findings，需 fix subagent 处理
+- ⚠️ **cannot-verify**：部分需求无法从 diff 单独验证（需求在未变更代码或跨 task）
+
+## ⚠️ Cannot Verify 语义
+- ⚠️ **不阻塞本次 review 的其余部分**——✅/❌ 与 ⚠️ 并列输出
+- 触发条件：需求存在于未变更代码、或跨多个 task
+- ⚠️ items 必须具体列出：\`⚠️ Cannot verify: [需求描述 + controller 应检查什么]\`
+- controller 收到 ⚠️ 后必须自行校验（因 controller 持有 plan 和跨 task 上下文）
+- controller 确认是真实 gap → 按 spec review 失败处理（打回 implementer + re-review）
+
+## Findings 分级
+- **Critical**：阻塞合并（安全漏洞、数据丢失、spec 严重偏离）
+- **Important**：应修复（功能缺陷、测试缺失、接口不一致）
+- **Minor**：可忽略或后续修复（命名、注释、风格）
+
+## 输出格式
+\`\`\`
+### Spec Compliance
+- [✅/❌/⚠️] [具体说明]
+
+### Findings
+- [Critical/Important/Minor]: [描述 + 建议修复]
+
+### Cannot Verify
+- ⚠️ [需求描述]: [controller 应检查什么]
+\`\`\``,
+    variables: [],
+  },
 };
 
 /** 默认模板版本号 */

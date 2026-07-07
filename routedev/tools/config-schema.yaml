@@ -1,0 +1,70 @@
+# Phase 75-B8：配置 schema 单一真相源（试点：model 模块）
+# 借鉴 tau tcc-gen：一份 schema 生成多端产物
+# 此文件是 model 配置的唯一真相源，生成器读取后产出 types/defaults/ui-fields
+#
+# 字段对齐现状：
+#   - contextWindow 默认 128000 对齐 settings-helpers.ts 中 EMPTY_MODEL.contextWindow
+#   - fallbackModelId 与 src/config/schema.ts 中 ModelConfig.fallbackModelId 语义一致
+#   - modelId / temperature / maxTokens 为运行时调用 LLM 的标准参数（OpenAI/Anthropic 兼容）
+
+module: model
+description: AI 模型配置（模型 ID、上下文窗口、温度等）
+
+fields:
+  - name: modelId
+    type: string
+    required: true
+    default: "gpt-4o-mini"
+    description: 主模型 ID
+    ui:
+      label: "主模型"
+      widget: text
+      placeholder: "gpt-4o-mini / claude-3-5-sonnet / ..."
+      order: 1
+
+  - name: fallbackModelId
+    type: string
+    required: false
+    default: "gpt-4o-mini"
+    description: 主模型不可用时的回退模型
+    ui:
+      label: "回退模型"
+      widget: text
+      order: 2
+
+  - name: contextWindow
+    type: number
+    required: true
+    default: 128000
+    description: 上下文窗口大小（token 数）
+    ui:
+      label: "上下文窗口"
+      widget: number
+      min: 1000
+      max: 1000000
+      order: 3
+
+  - name: temperature
+    type: number
+    required: false
+    default: 0.7
+    description: 采样温度（0-2）
+    ui:
+      label: "温度"
+      widget: number
+      min: 0
+      max: 2
+      step: 0.1
+      order: 4
+
+  - name: maxTokens
+    type: number
+    required: false
+    default: 4096
+    description: 单次响应最大 token 数
+    ui:
+      label: "最大响应 Token"
+      widget: number
+      min: 100
+      max: 100000
+      order: 5
