@@ -643,7 +643,22 @@ const OptimizationConfigSchema = z.object({
 export type OptimizationConfig = z.infer<typeof OptimizationConfigSchema>;
 
 // --- 调度器配置（Phase 37 Task 2）---
-// SchedulerConfigSchema 已删除：ScheduleEngine 空转引擎已移除（死代码清理）
+
+/**
+ * 调度器配置
+ * 控制定时任务引擎的启用状态、容量上限与默认时区
+ * 注：ScheduleEngine 空转引擎已移除（死代码清理），但 UI 仍保留配置入口，
+ *     后续接入真实调度器时直接复用此 schema
+ */
+const SchedulerConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 是否启用定时任务引擎（默认 true） */
+  enabled: z.boolean().default(true),
+  /** 调度器同时承载的任务上限（1-100，默认 20） */
+  maxTasks: z.number().int().min(1).max(100).default(20),
+  /** 未显式指定时区的定时任务使用的回退时区（IANA 时区名称，默认 'Asia/Shanghai'） */
+  defaultTimezone: z.string().default('Asia/Shanghai'),
+}));
+export type SchedulerConfig = z.infer<typeof SchedulerConfigSchema>;
 
 // --- 后台行为配置（Phase 37 Task 2） ---
 
@@ -1885,6 +1900,8 @@ export const AppConfigSchema = z.object({
   adversarial: z.preprocess((v) => v ?? {}, AdversarialConfigSchema),    // 对抗性验证（Phase 21 Task 4）
   ui: z.preprocess((v) => v ?? {}, UIConfigSchema),                       // UI/UX 设置（Phase 25）
   optimization: z.preprocess((v) => v ?? {}, OptimizationConfigSchema),   // 优化配置（Phase 30）
+  // Phase 37 Task 2：调度器配置（可选，未配置时使用默认值）
+  scheduler: SchedulerConfigSchema.optional(),
   agent: z.preprocess((v) => v ?? {}, AgentConfigSchema),                 // Agent 配置（Phase 38 Task 2）
   execution: z.preprocess((v) => v ?? {}, ExecutionConfigSchema),          // 执行配置（并发/熔断/检查点提示）
   middleware: z.preprocess((v) => v ?? {}, MiddlewareConfigSchema),        // 中间件配置（Phase 38 Task 1）

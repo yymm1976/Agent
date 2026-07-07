@@ -3,12 +3,29 @@
 // 所有配置构造与解析逻辑集中于此，便于单元测试
 
 import type {
+  AppConfig,
+  ProviderConfig,
+  ModelConfig,
+  RouterRule,
   MCPServerEntryConfig,
   ChannelEntryConfig,
   ChannelType,
 } from '../../../../src/config/schema.js';
 
 // ===== 通用解析 =====
+
+/**
+ * 深拷贝对象（使用 structuredClone 保留 undefined 字段）
+ * Phase 74-G：从 SettingsPage.tsx 迁移，供 useSettingsDraft 与 handleSave 共用
+ */
+export function deepClone<T>(obj: T): T {
+  // 使用 structuredClone 保留 undefined 字段，避免配置导入后字段丢失
+  if (typeof structuredClone === 'function') {
+    return structuredClone(obj);
+  }
+  // 降级：旧环境无 structuredClone 时仍用 JSON 方式
+  return JSON.parse(JSON.stringify(obj)) as T;
+}
 
 /**
  * 逗号分隔字符串转数组（过滤空值）
@@ -263,4 +280,146 @@ export function getAppVersion(): string {
     // 降级：如果 require 失败（如测试环境），返回占位值
     return '0.0.0';
   }
+}
+
+// ===== 配置常量（Phase 74-G：从 SettingsPage.tsx 迁移，供 hook 与组件共用） =====
+
+/** 空白 Provider 模板 */
+export const EMPTY_PROVIDER: ProviderConfig = {
+  id: '',
+  name: '',
+  protocol: 'openai',
+  baseUrl: 'https://api.openai.com/v1',
+  apiKey: '',
+  models: [],
+};
+
+/** 空白 Model 模板 */
+export const EMPTY_MODEL: ModelConfig = {
+  id: '',
+  name: '',
+  provider: '',
+  tier: 'medium',
+  contextWindow: 128000,
+  capabilities: [],
+  latencyMs: 0,
+  available: true,
+};
+
+/** 空白路由规则模板 */
+export const EMPTY_RULE: RouterRule = {
+  tier: 'simple',
+  modelId: '',
+};
+
+/**
+ * 子 Agent Profile UI 类型（与 src/agents/profiles/types.ts 中的 AgentProfile 对应，
+ * 此处仅用于 SettingsPage 展示与本地编辑，不直接依赖 src/ 类型避免跨工程导入）
+ */
+export interface AgentProfileUI {
+  id: string;
+  name: string;
+  role: 'researcher' | 'executor' | 'reviewer' | 'custom';
+  modelId: string;
+  description: string;
+  systemPrompt: string;
+  allowedTools: string[];
+  forbiddenTools: string[];
+  canChallenge: boolean;
+  challengeSeverity: 'blocking' | 'warning';
+  outputFormat: 'research_report' | 'code_change' | 'review_report' | 'custom';
+  maxTokens: number;
+  maxSteps: number;
+  isBuiltin: boolean;
+}
+
+/** 网络搜索引擎配置表（下拉选择式） */
+export const SEARCH_ENGINES = [
+  { id: 'glm', label: '智谱 GLM', keyField: 'glmApiKey', applyUrl: 'https://z.ai/manage-apikey', desc: 'z.ai，中国直连推荐' },
+  { id: 'metaso', label: '秘塔搜索', keyField: 'metasoApiKey', applyUrl: 'https://metaso.cn', desc: '中国直连' },
+  { id: 'baidu', label: '百度千帆', keyField: 'baiduApiKey', applyUrl: 'https://console.bce.baidu.com/qianfan', desc: '中国直连' },
+  { id: 'searxng', label: 'SearXNG', keyField: 'searxngEndpoint', applyUrl: 'https://github.com/searxng/searxng', desc: '自托管，填 URL 而非 Key' },
+  { id: 'tavily', label: 'Tavily', keyField: 'tavilyApiKey', applyUrl: 'https://tavily.com', desc: '专为 AI Agent 设计，需翻墙' },
+  { id: 'bing', label: 'Bing', keyField: 'bingApiKey', applyUrl: 'https://portal.azure.com', desc: 'Azure 门户获取，需翻墙' },
+  { id: 'perplexity', label: 'Perplexity', keyField: 'perplexityApiKey', applyUrl: 'https://perplexity.ai/settings/api', desc: 'AI 原生搜索，需翻墙' },
+  { id: 'exa', label: 'Exa', keyField: 'exaApiKey', applyUrl: 'https://exa.ai', desc: 'AI 原生搜索，需翻墙' },
+  { id: 'brave', label: 'Brave', keyField: 'braveApiKey', applyUrl: 'https://brave.com/search/api/', desc: '隐私优先，需翻墙' },
+] as const;
+
+// ===== 保存前清理 =====
+
+/**
+ * 保存前清理 draft：过滤空 provider/model、修复路由规则 modelId、过滤 fallbackChain
+ * Phase 74-G：从 SettingsPage.handleSave 抽离的纯函数（原 L1048-1103）
+ *
+ * 清理逻辑：
+ * 1. 过滤掉 apiKey 为空的 provider，name 为空时自动用 id 作为 name
+ * 2. 过滤掉每个 provider 下 id 为空的 model，name 为空时自动用 id
+ * 3. 修复路由规则：将 unconfigured 或不存在的 modelId 替换为已配置的模型
+ * 4. 过滤 fallbackChain：仅保留指向已配置模型的 id（UI draft 保留空项避免编辑被打断）
+ *
+ * @param draft 原始 draft 配置（不会被修改）
+ * @returns 清理后的 draft，可直接传给 saveConfig
+ */
+export function cleanDraftForSave(draft: AppConfig): AppConfig {
+  // 保存前清理：过滤掉 apiKey 为空的 provider（apiKey 是最关键字段）
+  // name 为空时自动用 id 作为 name，避免用户只填了部分字段导致被过滤
+  const validProviders: ProviderConfig[] = draft.providers
+    .filter((p) => p.apiKey.trim())
+    .map((p) => ({
+      ...p,
+      id: p.id.trim(),
+      name: p.name.trim() || p.id.trim(),
+      apiKey: p.apiKey.trim(),
+      baseUrl: p.baseUrl.trim(),
+    }));
+  // 过滤掉每个 provider 下空的 model（id 为空），name 为空时自动用 id
+  const cleanedProviders = validProviders.map((p) => ({
+    ...p,
+    models: p.models
+      .filter((m) => m.id.trim())
+      .map((m) => ({
+        ...m,
+        id: m.id.trim(),
+        name: m.name.trim() || m.id.trim(),
+        provider: p.id,
+      })),
+  }));
+  // 修复路由规则：将 unconfigured 或不存在的 modelId 替换为已配置的模型
+  // 避免保存后路由器找不到可用模型导致对话失败
+  const configuredModelIds = new Set(cleanedProviders.flatMap((p) => p.models.map((m) => m.id)));
+  const tierToFirstModel = new Map<string, string>();
+  const allModelIds = cleanedProviders.flatMap((p) => p.models.map((m) => m.id));
+  for (const p of cleanedProviders) {
+    for (const m of p.models) {
+      if (m.tier && !tierToFirstModel.has(m.tier)) {
+        tierToFirstModel.set(m.tier, m.id);
+      }
+    }
+  }
+  const cleanedRules: RouterRule[] = draft.router.rules.map((rule) => {
+    let modelId = rule.modelId;
+    let fallbackModelId = rule.fallbackModelId;
+    // 修复主模型
+    if (!modelId || modelId === 'unconfigured' || !configuredModelIds.has(modelId)) {
+      const replacement = tierToFirstModel.get(rule.tier) ?? allModelIds[0];
+      if (replacement) {
+        modelId = replacement;
+      }
+    }
+    // 修复 fallback 模型
+    if (fallbackModelId && (fallbackModelId === 'unconfigured' || !configuredModelIds.has(fallbackModelId))) {
+      fallbackModelId = allModelIds.find((id) => id !== modelId) ?? undefined;
+    }
+    return { ...rule, modelId, fallbackModelId };
+  });
+  // 保存到磁盘时过滤空字符串；但 UI draft 保留空项，避免刚点击“添加降级模型”就被自动保存清掉
+  const cleanedFallbackChain = (draft.router.fallbackChain ?? [])
+    .map((id) => id.trim())
+    .filter((id) => id && configuredModelIds.has(id));
+  return {
+    ...draft,
+    providers: cleanedProviders,
+    router: { ...draft.router, rules: cleanedRules, fallbackChain: cleanedFallbackChain },
+  };
 }

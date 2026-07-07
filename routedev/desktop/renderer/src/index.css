@@ -34,6 +34,36 @@
   --rd-warning: #fbbf24;
   --rd-success: #34d399;
   --rd-success-foreground: #ffffff;
+
+  /* === 设计 Token（Phase 74-E-min） === */
+  /* 字号 token（基于 Tailwind 默认值） */
+  --rd-text-xs: 0.75rem;      /* 12px */
+  --rd-text-sm: 0.875rem;     /* 14px */
+  --rd-text-base: 1rem;       /* 16px */
+  --rd-text-lg: 1.125rem;     /* 18px */
+  --rd-text-xl: 1.25rem;      /* 20px */
+
+  /* 间距 token */
+  --rd-space-1: 0.25rem;
+  --rd-space-2: 0.5rem;
+  --rd-space-3: 0.75rem;
+  --rd-space-4: 1rem;
+  --rd-space-6: 1.5rem;
+  --rd-space-8: 2rem;
+
+  /* 状态色 token（用于 StatusBadge 等组件） */
+  --rd-status-success: #10b981;  /* green-500 */
+  --rd-status-error: #ef4444;    /* red-500 */
+  --rd-status-pending: #6b7280;  /* gray-500 */
+  --rd-status-running: #3b82f6;  /* blue-500 */
+
+  /* 工具色 token（用于 ToolIcon 等） */
+  --rd-tool-file: #3b82f6;       /* blue-500 */
+  --rd-tool-shell: #10b981;      /* green-500 */
+  --rd-tool-agent: #8b5cf6;      /* violet-500 */
+  --rd-tool-web: #06b6d4;        /* cyan-500 */
+  --rd-tool-mcp: #f97316;        /* orange-500 */
+  --rd-tool-default: #6b7280;    /* gray-500 */
 }
 
 /* === 白色主题（默认） === */
@@ -164,14 +194,29 @@
     @apply bg-rd-background text-rd-text antialiased;
   }
 
-  /* 滚动条：完全隐藏但保留滚动能力（页面仍可滚动，只是不显示右侧滚动条） */
+  /* 滚动条：细半透明条（用户痛点 #7：原完全隐藏导致看不到滚动位置） */
   ::-webkit-scrollbar {
-    display: none;
+    width: 6px;
+    height: 6px;
   }
 
-  /* Firefox：隐藏滚动条 */
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(128, 128, 128, 0.3);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(128, 128, 128, 0.5);
+  }
+
+  /* Firefox：细半透明条 */
   * {
-    scrollbar-width: none;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(128, 128, 128, 0.3) transparent;
   }
 }
 
