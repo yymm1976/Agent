@@ -1,12 +1,17 @@
 // desktop/renderer/src/components/ToolCallCard.tsx
-// 工具调用展示：Trae Work 风格 —— 一行摘要 + 可展开深色详情块
-// 合并工具与命令为“动作”层；第三层详情用投影浮层；命令输出支持两层折叠
+// Phase 74-A：工具调用展示——Hybrid 风格（折叠态 Card + 展开态 Terminal）
+// 保留现有弱边框美学；增强项：A1 ANSI / A2 头尾保留 / A3 行级 diff / A4 accept-reject /
+//   A5 StatusBadge / A6 关键参数预览 / A7 ToolIcon 着色 / A8 shimmer 边框
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Loader2, CheckCircle, XCircle, Wrench, FileText, FolderSearch, FileEdit, FilePlus,
   Terminal, Search, ListChecks, Bot, ChevronDown, ChevronRight,
 } from 'lucide-react';
+import { StatusBadge } from './ui/status-badge';
+import { ToolIcon, type ToolType } from './ui/tool-icon';
+import { ansiToHtml, splitHeadTail } from './tool/ansi-renderer';
+import { computeLineDiff, summarizeDiff, type DiffLine } from './tool/line-diff';
 
 export type ToolCallStatus = 'running' | 'completed' | 'error';
 
@@ -40,7 +45,24 @@ const TOOL_LABELS: Record<string, string> = {
   repo_map: '仓库地图',
 };
 
-/** 工具图标映射 */
+/** 工具名 → ToolType 映射（用于 ToolIcon 着色） */
+const TOOL_TYPE_MAP: Record<string, ToolType> = {
+  file_read: 'file_read',
+  list_directory: 'file_read',
+  file_write: 'file_write',
+  file_edit: 'file_edit',
+  shell_exec: 'shell_exec',
+  code_search: 'web_search',
+  file_search: 'web_search',
+  web_search: 'web_search',
+  web_fetch: 'web_fetch',
+  spawn_agent: 'spawn_agent',
+  todo_write: 'unknown',
+  notes: 'unknown',
+  repo_map: 'unknown',
+};
+
+/** 旧版图标映射（保留兼容，新代码用 ToolIcon） */
 const TOOL_ICONS: Record<string, React.ReactNode> = {
   file_read: <FileText size={13} />,
   list_directory: <FolderSearch size={13} />,
@@ -60,9 +82,14 @@ export function getToolLabel(toolName: string): string {
   return TOOL_LABELS[toolName] ?? toolName;
 }
 
-/** 获取工具图标 */
+/** 获取工具图标（保留兼容） */
 export function getToolIcon(toolName: string): React.ReactNode {
   return TOOL_ICONS[toolName] ?? <Wrench size={13} />;
+}
+
+/** 获取工具的 ToolType（用于 ToolIcon 着色） */
+function getToolType(toolName: string): ToolType {
+  return TOOL_TYPE_MAP[toolName] ?? 'unknown';
 }
 
 /** 格式化工具结果为字符串 */
@@ -92,7 +119,7 @@ function getResultText(result: unknown): string {
 }
 
 /**
- * 从工具参数中提取动作摘要（用于第二层一行摘要）
+ * 从工具参数中提取动作摘要（用于折叠态一行预览）
  */
 export function getToolActionSummary(toolName: string, args?: Record<string, unknown>): string {
   if (!args) return '';
@@ -146,6 +173,48 @@ export function getToolActionSummary(toolName: string, args?: Record<string, unk
   }
 }
 
+/**
+ * Phase 74-A6：折叠态关键参数预览（独立于 actionSummary，更短）
+ * 返回 { key, value } 结构，UI 渲染为 `<key>: <value>` 等宽字体
+ */
+function getKeyParamPreview(
+  toolName: string,
+  args?: Record<string, unknown>
+): { key: string; value: string } | null {
+  if (!args) return null;
+  switch (toolName) {
+    case 'file_read':
+    case 'file_write':
+    case 'file_edit':
+    case 'list_directory': {
+      const p = getPathFromArgs(args);
+      return p ? { key: 'path:', value: p } : null;
+    }
+    case 'shell_exec': {
+      const cmd = (args.command as string) || '';
+      if (!cmd) return null;
+      const firstLine = cmd.split('\n')[0];
+      return { key: 'cmd:', value: firstLine.length > 50 ? `${firstLine.slice(0, 50)}...` : firstLine };
+    }
+    case 'code_search':
+    case 'file_search':
+    case 'web_search': {
+      const q = (args.query as string) || (args.pattern as string) || '';
+      return q ? { key: 'q:', value: q } : null;
+    }
+    case 'web_fetch': {
+      const u = (args.url as string) || '';
+      return u ? { key: 'url:', value: u } : null;
+    }
+    case 'spawn_agent': {
+      const desc = (args.description as string) || (args.task as string) || '';
+      return desc ? { key: 'task:', value: desc.slice(0, 50) } : null;
+    }
+    default:
+      return null;
+  }
+}
+
 /** 获取工具状态文案 */
 function getToolStatusText(toolName: string, status: ToolCallStatus): string {
   const label = TOOL_LABELS[toolName] ?? toolName;
@@ -159,7 +228,27 @@ function getToolStatusText(toolName: string, status: ToolCallStatus): string {
   }
 }
 
-/** 状态配置 */
+/** StatusBadge variant 映射（74-A5：复用 E1 StatusBadge） */
+function statusToBadgeVariant(status: ToolCallStatus): 'success' | 'error' | 'running' | 'pending' {
+  switch (status) {
+    case 'running':
+      return 'running';
+    case 'completed':
+      return 'success';
+    case 'error':
+      return 'error';
+  }
+}
+
+/** 状态文案 + 可选计数（用于聚合行） */
+function getStatusBadgeText(status: ToolCallStatus, toolName: string, count?: number): string {
+  if (count !== undefined) {
+    return `${count}`;
+  }
+  return getToolStatusText(toolName, status);
+}
+
+/** 旧版状态配置（保留兼容，新代码用 StatusBadge） */
 function getStatusConfig(status: ToolCallStatus): {
   icon: React.ReactNode;
   colorClass: string;
@@ -181,44 +270,123 @@ function getStatusConfig(status: ToolCallStatus): {
   return configs[status];
 }
 
-/** 文件编辑差异：深色背景 + 红绿删增 */
-function FileEditDiff({ args }: { args: Record<string, unknown> }) {
+// ============================================================
+// Phase 74-A3：行级 diff 视图（带行号 + accept/reject）
+// ============================================================
+
+interface FileEditDiffProps {
+  args: Record<string, unknown>;
+  /** 74-A4：accept/reject 回调（可选，未提供则不显示按钮） */
+  onAccept?: () => void;
+  onReject?: () => void;
+  /** 已应用/已拒绝状态（按钮置灰） */
+  applied?: boolean;
+  rejected?: boolean;
+}
+
+function FileEditDiff({ args, onAccept, onReject, applied, rejected }: FileEditDiffProps) {
   const oldString = (args.oldString as string) || (args.old_string as string) || '';
   const newString = (args.newString as string) || (args.new_string as string) || '';
   const filePath = getPathFromArgs(args);
 
+  // useMemo 避免每次渲染重算 diff
+  const diffLines = useMemo(() => computeLineDiff(oldString, newString), [oldString, newString]);
+  const summary = useMemo(() => summarizeDiff(diffLines), [diffLines]);
+
   return (
     <div className="space-y-2">
       {filePath && (
-        <div className="text-xs text-rd-textSubtle">{filePath}</div>
-      )}
-      {oldString && (
-        <div>
-          <pre className="overflow-x-auto rounded-md bg-rd-danger/10 p-2 font-mono text-xs text-rd-danger line-through opacity-80">
-            {oldString}
-          </pre>
+        <div className="flex items-center gap-2 text-xs text-rd-textSubtle">
+          <span>{filePath}</span>
+          <span className="text-rd-success">+{summary.added}</span>
+          <span className="text-rd-danger">-{summary.removed}</span>
         </div>
       )}
-      {newString && (
-        <div>
-          <pre className="overflow-x-auto rounded-md bg-rd-success/10 p-2 font-mono text-xs text-rd-success">
-            {newString}
-          </pre>
+      {diffLines.length > 0 && (
+        <div className="overflow-hidden rounded-md border border-rd-border bg-rd-background font-mono text-xs">
+          {diffLines.map((line, idx) => (
+            <DiffLineView key={idx} line={line} />
+          ))}
+        </div>
+      )}
+      {/* 74-A4：accept/reject 按钮 */}
+      {(onAccept || onReject) && (
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onReject}
+            disabled={applied || rejected}
+            aria-label="拒绝此修改"
+            className={`rounded border px-2 py-1 text-xs transition-colors ${
+              rejected
+                ? 'border-rd-danger/30 bg-rd-danger/10 text-rd-danger opacity-60'
+                : 'border-rd-border text-rd-textMuted hover:border-rd-danger/30 hover:text-rd-danger'
+            }`}
+          >
+            {rejected ? '已拒绝' : '拒绝'}
+          </button>
+          <button
+            type="button"
+            onClick={onAccept}
+            disabled={applied || rejected}
+            aria-label="采纳此修改"
+            className={`rounded border px-2 py-1 text-xs transition-colors ${
+              applied
+                ? 'border-rd-success/30 bg-rd-success/10 text-rd-success opacity-60'
+                : 'border-rd-border text-rd-textMuted hover:border-rd-success/30 hover:text-rd-success'
+            }`}
+          >
+            {applied ? '已采纳' : '采纳'}
+          </button>
         </div>
       )}
     </div>
   );
 }
 
-/** 命令输出：默认折叠，展开后显示前 5 行，再次点击展开全部 */
-function CommandOutput({ command, result, status }: { command: string; result: string; status: ToolCallStatus }) {
-  const [expandedAll, setExpandedAll] = useState(false);
-  const lines = result ? result.split('\n') : [];
-  const previewLines = 5;
-  const hasMore = lines.length > previewLines;
-  const displayText = expandedAll
-    ? result
-    : lines.slice(0, previewLines).join('\n') + (hasMore ? '\n...' : '');
+/** 单行 diff 视图 */
+function DiffLineView({ line }: { line: DiffLine }) {
+  const bgClass =
+    line.type === 'add'
+      ? 'bg-rd-success/8 text-rd-success'
+      : line.type === 'del'
+      ? 'bg-rd-danger/8 text-rd-danger line-through opacity-80'
+      : 'text-rd-textMuted';
+  const sign = line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ';
+  return (
+    <div className={`flex px-2 py-px ${bgClass}`}>
+      <span className="w-10 shrink-0 select-none pr-2 text-right text-rd-textSubtle">
+        {line.oldLn ?? ''}
+      </span>
+      <span className="w-10 shrink-0 select-none pr-2 text-right text-rd-textSubtle">
+        {line.newLn ?? ''}
+      </span>
+      <span className="shrink-0 pr-2 select-none">{sign}</span>
+      <span className="whitespace-pre">{line.text}</span>
+    </div>
+  );
+}
+
+// ============================================================
+// Phase 74-A1/A2：命令输出——ANSI 解析 + 头尾保留
+// ============================================================
+
+interface CommandOutputProps {
+  command: string;
+  result: string;
+  status: ToolCallStatus;
+}
+
+function CommandOutput({ command, result, status }: CommandOutputProps) {
+  const [showFull, setShowFull] = useState(false);
+  const [showTail, setShowTail] = useState(false);
+
+  // 头尾切分
+  const { head, tail, foldedCount } = useMemo(() => splitHeadTail(result, 3, 5), [result]);
+  // ANSI 解析（只在需要显示的段做）
+  const headHtml = useMemo(() => ansiToHtml(head), [head]);
+  const tailHtml = useMemo(() => ansiToHtml(tail), [tail]);
+  const fullHtml = useMemo(() => ansiToHtml(result), [result]);
 
   return (
     <div className="space-y-2">
@@ -228,23 +396,63 @@ function CommandOutput({ command, result, status }: { command: string; result: s
           {command}
         </pre>
       </div>
-      {displayText && (
+      {result && (
         <div>
           <div className="mb-1 text-xs text-rd-textSubtle">输出</div>
           <pre
-            className={`max-h-60 overflow-auto rounded-md p-2 font-mono text-xs ${
+            className={`max-h-80 overflow-auto rounded-md border border-rd-border p-2 font-mono text-xs ${
               status === 'error' ? 'bg-rd-danger/10 text-rd-danger' : 'bg-rd-background text-rd-textMuted'
             }`}
           >
-            {displayText}
+            {showFull ? (
+              <span dangerouslySetInnerHTML={{ __html: fullHtml }} />
+            ) : (
+              <>
+                <span dangerouslySetInnerHTML={{ __html: headHtml }} />
+                {foldedCount > 0 && (
+                  <>
+                    {!showTail && (
+                      <button
+                        type="button"
+                        onClick={() => setShowTail(true)}
+                        className="my-1 block w-full rounded border border-rd-border bg-rd-surface px-2 py-px text-center text-rd-textSubtle hover:text-rd-primary"
+                      >
+                        ⋯ 折叠 {foldedCount} 行 · 点击展开尾部
+                      </button>
+                    )}
+                    {showTail && (
+                      <>
+                        <span dangerouslySetInnerHTML={{ __html: tailHtml }} />
+                        <button
+                          type="button"
+                          onClick={() => setShowTail(false)}
+                          className="my-1 block w-full text-center text-rd-textSubtle hover:text-rd-primary"
+                        >
+                          ⋯ 收起尾部
+                        </button>
+                      </>
+                    )}
+                  </>
+                )}
+              </>
+            )}
           </pre>
-          {hasMore && (
+          {!showFull && (
             <button
               type="button"
-              onClick={() => setExpandedAll((v) => !v)}
+              onClick={() => setShowFull(true)}
               className="mt-1 text-xs text-rd-primary hover:text-rd-primaryHover"
             >
-              {expandedAll ? '收起' : '展开全部'}
+              展开全部
+            </button>
+          )}
+          {showFull && (
+            <button
+              type="button"
+              onClick={() => setShowFull(false)}
+              className="mt-1 text-xs text-rd-primary hover:text-rd-primaryHover"
+            >
+              收起
             </button>
           )}
         </div>
@@ -323,37 +531,64 @@ export function ToolCallDetail({ toolName, status, args, result }: Omit<ToolCall
   );
 }
 
-/** 单个工具摘要行 */
-function ToolCallSummary({
-  toolName,
-  status,
-  args,
-  onClick,
-}: {
+// ============================================================
+// 74-A5/A6/A7/A8：折叠态摘要行——StatusBadge + 关键参数 + ToolIcon + shimmer
+// ============================================================
+
+interface ToolCallSummaryProps {
   toolName: string;
   status: ToolCallStatus;
   args?: Record<string, unknown>;
   onClick?: () => void;
-}) {
-  const config = getStatusConfig(status);
+}
+
+function ToolCallSummary({ toolName, status, args, onClick }: ToolCallSummaryProps) {
+  const toolType = getToolType(toolName);
   const actionSummary = getToolActionSummary(toolName, args);
   const statusText = getToolStatusText(toolName, status);
+  const paramPreview = getKeyParamPreview(toolName, args);
+  const isRunning = status === 'running';
+
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-center gap-2 py-1 text-left transition-colors hover:text-rd-text"
+      aria-label={`${TOOL_LABELS[toolName] ?? toolName} · ${statusText}`}
+      className={`group flex w-full items-center gap-2 rounded-md border px-2 py-1 text-left transition-all ${
+        isRunning
+          ? 'border-rd-primary/40 bg-rd-surface shadow-[0_0_0_1px_var(--rd-primary),0_0_12px_rgba(139,141,255,0.15)] animate-pulse'
+          : 'border-rd-border bg-rd-surface hover:border-rd-borderHover hover:bg-rd-surfaceHover'
+      }`}
     >
-      <span className="shrink-0 text-rd-textSubtle">{getToolIcon(toolName)}</span>
-      <span className="min-w-0 flex-1 truncate text-xs text-rd-textMuted">
-        {status === 'running' ? statusText : (actionSummary || statusText)}
+      {/* 74-A7：ToolIcon 着色 */}
+      <ToolIcon toolType={toolType} size="sm" />
+      <span className="shrink-0 text-xs font-medium text-rd-text">
+        {TOOL_LABELS[toolName] ?? toolName}
       </span>
-      <span className={`shrink-0 ${config.colorClass}`}>{config.icon}</span>
+      {/* 74-A6：关键参数预览（等宽字体） */}
+      {paramPreview && (
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-rd-textMuted">
+          <span className="text-rd-textSubtle">{paramPreview.key}</span>{' '}
+          {paramPreview.value}
+        </span>
+      )}
+      {!paramPreview && (
+        <span className="min-w-0 flex-1 truncate text-xs text-rd-textMuted">
+          {status === 'running' ? statusText : (actionSummary || statusText)}
+        </span>
+      )}
+      {/* 74-A5：StatusBadge */}
+      <StatusBadge variant={statusToBadgeVariant(status)} size="sm" showIcon>
+        {getStatusBadgeText(status, toolName)}
+      </StatusBadge>
     </button>
   );
 }
 
-/** 聚合动作摘要行：用于第二层“动作”层，按工具名聚合 */
+// ============================================================
+// 聚合动作摘要行：用于第二层"动作"层，按工具名聚合
+// ============================================================
+
 export function ActionSummaryRow({
   toolName,
   items,
@@ -364,11 +599,12 @@ export function ActionSummaryRow({
   const [expanded, setExpanded] = useState(false);
   if (items.length === 0) return null;
 
-  const icon = getToolIcon(toolName);
+  const toolType = getToolType(toolName);
   const runningCount = items.filter((i) => i.status === 'running').length;
   const errorCount = items.filter((i) => i.status === 'error').length;
+  const completedCount = items.filter((i) => i.status === 'completed').length;
   const overallStatus: ToolCallStatus = runningCount > 0 ? 'running' : errorCount > 0 ? 'error' : 'completed';
-  const config = getStatusConfig(overallStatus);
+  const hasRunning = runningCount > 0;
 
   // 聚合摘要
   const paths = items.map((i) => getPathFromArgs(i.args)).filter(Boolean);
@@ -387,16 +623,33 @@ export function ActionSummaryRow({
     summary = `${getToolLabel(toolName)} ${items.length} 次`;
   }
 
+  // 74-A5：聚合状态徽章文案
+  const badgeText = hasRunning
+    ? `${runningCount}/${items.length}`
+    : errorCount > 0
+    ? `✗ ${errorCount}`
+    : `✓ ${completedCount}`;
+
   return (
     <div>
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 py-1 text-left transition-colors hover:text-rd-text"
+        aria-label={`${getToolLabel(toolName)} · ${items.length} 项 · ${summary}`}
+        className={`group flex w-full items-center gap-2 rounded-md border px-2 py-1 text-left transition-all ${
+          hasRunning
+            ? 'border-rd-primary/40 bg-rd-surface shadow-[0_0_0_1px_var(--rd-primary),0_0_12px_rgba(139,141,255,0.15)] animate-pulse'
+            : 'border-rd-border bg-rd-surface hover:border-rd-borderHover hover:bg-rd-surfaceHover'
+        }`}
       >
-        <span className="shrink-0 text-rd-textSubtle">{icon}</span>
+        <ToolIcon toolType={toolType} size="sm" />
+        <span className="shrink-0 text-xs font-medium text-rd-text">
+          {getToolLabel(toolName)}
+        </span>
         <span className="min-w-0 flex-1 truncate text-xs text-rd-textMuted">{summary}</span>
-        <span className={`shrink-0 ${config.colorClass}`}>{config.icon}</span>
+        <StatusBadge variant={statusToBadgeVariant(overallStatus)} size="sm" showIcon>
+          {badgeText}
+        </StatusBadge>
         {expanded
           ? <ChevronDown size={12} className="shrink-0 text-rd-textSubtle" />
           : <ChevronRight size={12} className="shrink-0 text-rd-textSubtle" />}
@@ -419,7 +672,10 @@ export function ActionSummaryRow({
   );
 }
 
-/** 子 Agent 名称行：机器人头像 + 名称 + 可折叠 */
+// ============================================================
+// 子 Agent 名称行：机器人头像 + 名称 + 可折叠
+// ============================================================
+
 export function SubAgentRow({
   item,
 }: {
@@ -428,20 +684,24 @@ export function SubAgentRow({
   const [expanded, setExpanded] = useState(false);
   const desc = (item.args?.description as string) || (item.args?.task as string) || '子 Agent';
   const name = desc.length > 40 ? `${desc.slice(0, 40)}...` : desc;
-  const config = getStatusConfig(item.status);
 
   return (
     <div>
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 py-1 text-left transition-colors hover:text-rd-text"
+        aria-label={`子 Agent · ${name} · ${getToolStatusText(item.toolName, item.status)}`}
+        className={`group flex w-full items-center gap-2 rounded-md border px-2 py-1 text-left transition-all ${
+          item.status === 'running'
+            ? 'border-rd-primary/40 bg-rd-surface shadow-[0_0_0_1px_var(--rd-primary),0_0_12px_rgba(139,141,255,0.15)] animate-pulse'
+            : 'border-rd-border bg-rd-surface hover:border-rd-borderHover hover:bg-rd-surfaceHover'
+        }`}
       >
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-rd-surfaceHighlight text-rd-textSubtle">
-          <Bot size={11} />
-        </span>
+        <ToolIcon toolType="spawn_agent" size="sm" />
         <span className="min-w-0 flex-1 truncate text-xs text-rd-text">{name}</span>
-        <span className={`shrink-0 ${config.colorClass}`}>{config.icon}</span>
+        <StatusBadge variant={statusToBadgeVariant(item.status)} size="sm" showIcon>
+          {getToolStatusText(item.toolName, item.status)}
+        </StatusBadge>
         {expanded
           ? <ChevronDown size={12} className="shrink-0 text-rd-textSubtle" />
           : <ChevronRight size={12} className="shrink-0 text-rd-textSubtle" />}
@@ -460,7 +720,10 @@ export function SubAgentRow({
   );
 }
 
-/** 单个工具调用卡片（保留兼容，目前主要在独立 system 消息中使用） */
+// ============================================================
+// 单个工具调用卡片（保留兼容）
+// ============================================================
+
 export function ToolCallCard({
   toolName,
   status,

@@ -1,0 +1,2430 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="black">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Phase 74 合并原型 · RouteDev 工作台</title>
+<style>
+  /* ============== 设计 Token（与 index.css 对齐） ============== */
+  :root {
+    --rd-font-size: 14px;
+    --rd-background: #0b0d10;
+    --rd-surface: #111418;
+    --rd-surface-hover: #181c22;
+    --rd-surface-highlight: #202631;
+    --rd-border: #14181d;
+    --rd-border-hover: #1c2128;
+    --rd-tree-line: #1c1f25;
+    --rd-primary: #8b8dff;
+    --rd-primary-hover: #a5a6ff;
+    --rd-primary-foreground: #ffffff;
+    --rd-text: #f4f6fa;
+    --rd-text-muted: #8b94a3;
+    --rd-text-subtle: #5f6878;
+    --rd-danger: #fb7185;
+    --rd-warning: #fbbf24;
+    --rd-success: #34d399;
+    --rd-status-success: #10b981;
+    --rd-status-error: #ef4444;
+    --rd-status-pending: #6b7280;
+    --rd-status-running: #3b82f6;
+    --rd-tool-file: #3b82f6;
+    --rd-tool-shell: #10b981;
+    --rd-tool-agent: #8b5cf6;
+    --rd-tool-web: #06b6d4;
+    --rd-tool-mcp: #f97316;
+    --rd-tool-default: #6b7280;
+    --font-mono: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font-sans);
+    font-size: var(--rd-font-size);
+    background: var(--rd-background);
+    color: var(--rd-text);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 滚动条 */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(139,148,163,0.25); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(139,148,163,0.4); }
+
+  /* ============== 顶部标题栏 ============== */
+  .page-header {
+    padding: 24px 32px 16px;
+    border-bottom: 1px solid var(--rd-border);
+    background: linear-gradient(180deg, var(--rd-surface) 0%, var(--rd-background) 100%);
+  }
+  .page-header h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--rd-text);
+    margin-bottom: 4px;
+  }
+  .page-header .meta {
+    font-size: 12px;
+    color: var(--rd-text-muted);
+  }
+  .page-header .meta strong { color: var(--rd-primary); font-weight: 500; }
+  .page-header .legend {
+    display: flex;
+    gap: 16px;
+    margin-top: 12px;
+    font-size: 11px;
+    color: var(--rd-text-subtle);
+  }
+  .page-header .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .page-header .legend .dot {
+    width: 8px; height: 8px;
+    border-radius: 2px;
+    display: inline-block;
+  }
+
+  /* ============== Section 通用 ============== */
+  .section {
+    padding: 32px;
+    border-bottom: 1px solid var(--rd-border);
+  }
+  .section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--rd-text);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-title .tag {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: var(--rd-primary);
+    color: var(--rd-primary-foreground);
+    font-weight: 500;
+  }
+  .section-desc {
+    font-size: 12px;
+    color: var(--rd-text-muted);
+    margin-bottom: 20px;
+    line-height: 1.6;
+  }
+
+  /* ============== 工作台主视图 ============== */
+  .workspace {
+    display: grid;
+    grid-template-columns: 260px 1fr 340px;
+    height: 720px;
+    background: var(--rd-surface);
+    border: 1px solid var(--rd-border);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  }
+
+  /* ---- 左侧：项目/会话列表 ---- */
+  .sidebar-left {
+    background: var(--rd-background);
+    border-right: 1px solid var(--rd-border);
+    display: flex;
+    flex-direction: column;
+  }
+  .sidebar-left .header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--rd-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .sidebar-left .header .title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--rd-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .icon-btn {
+    width: 22px; height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    color: var(--rd-text-subtle);
+    cursor: pointer;
+  }
+  .icon-btn:hover {
+    background: var(--rd-surface-hover);
+    color: var(--rd-text);
+  }
+  .icon-btn svg { width: 14px; height: 14px; }
+
+  .search-trigger {
+    margin: 8px 8px 4px;
+    padding: 6px 10px;
+    background: var(--rd-surface);
+    border: 1px solid var(--rd-border);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--rd-text-subtle);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .search-trigger:hover { border-color: var(--rd-border-hover); color: var(--rd-text-muted); }
+  .search-trigger svg { width: 12px; height: 12px; }
+  .search-trigger .kbd {
+    margin-left: auto;
+    font-size: 10px;
+    padding: 1px 5px;
+    border: 1px solid var(--rd-border);
+    border-radius: 3px;
+    background: var(--rd-background);
+    color: var(--rd-text-subtle);
+    font-family: var(--font-mono);
+  }
+
+  .conv-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+  .conv-item {
+    padding: 8px 12px 8px 16px;
+    border-left: 2px solid transparent;
+    cursor: pointer;
+  }
+  .conv-item:hover { background: var(--rd-surface-hover); }
+  .conv-item.active {
+    background: var(--rd-surface-highlight);
+    border-left-color: var(--rd-primary);
+  }
+  .conv-item .name {
+    font-size: 13px;
+    color: var(--rd-text);
+    margin-bottom: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .conv-item .sub {
+    font-size: 11px;
+    color: var(--rd-text-subtle);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .conv-item .sub .branch-mark {
+    color: var(--rd-primary);
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }
+  .conv-item .sub .dot {
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--rd-success);
+  }
+
+  /* ---- 中间：聊天主区 ---- */
+  .chat-main {
+    display: flex;
+    flex-direction: column;
+    background: var(--rd-background);
+    min-width: 0;
+  }
+  .chat-header {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--rd-border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--rd-surface);
+  }
+  .chat-header .title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--rd-text);
+  }
+  .chat-header .title-sub {
+    font-size: 11px;
+    color: var(--rd-text-subtle);
+    margin-left: 4px;
+  }
+  .chat-header .spacer { flex: 1; }
+  .chat-header .actions { display: flex; gap: 4px; }
+
+  .chat-stream {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 0;
+  }
+  .msg-group {
+    padding: 0 24px;
+    margin-bottom: 24px;
+  }
+  .msg-group.fork-point {
+    border-left: 2px solid var(--rd-primary);
+    margin-left: 22px;
+    padding-left: 22px;
+  }
+
+  /* 消息气泡 */
+  .bubble {
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.65;
+    margin-bottom: 12px;
+    max-width: 100%;
+  }
+  .bubble.user {
+    background: var(--rd-surface-highlight);
+    color: var(--rd-text);
+  }
+  .bubble.assistant {
+    background: transparent;
+    color: var(--rd-text);
+  }
+  .bubble .role {
+    font-size: 10px;
+    color: var(--rd-text-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+  .bubble code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 1px 5px;
+    background: var(--rd-surface);
+    border-radius: 3px;
+    color: var(--rd-primary);
+  }
+
+  /* ---- 分支切换器（74-D 推荐方向：箭头式） ---- */
+  .branch-switcher {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 4px;
+    background: var(--rd-surface);
+    border: 1px solid var(--rd-border);
+    border-radius: 4px;
+    font-size: 11px;
+    margin: 4px 0 8px;
+    color: var(--rd-text-muted);
+  }
+  .branch-switcher .branch-icon {
+    color: var(--rd-primary);
+    display: inline-flex;
+  }
+  .branch-switcher .branch-icon svg { width: 12px; height: 12px; }
+  .branch-switcher .arrow {
+    width: 18px; height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    color: var(--rd-text-muted);
+    cursor: pointer;
+  }
+  .branch-switcher .arrow:hover { background: var(--rd-surface-hover); color: var(--rd-text); }
+  .branch-switcher .arrow.disabled { opacity: 0.3; cursor: not-allowed; }
+  .branch-switcher .arrow svg { width: 11px; height: 11px; }
+  .branch-switcher .pos {
+    font-family: var(--font-mono);
+    color: var(--rd-text);
+    padding: 0 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .branch-switcher .pos .total { color: var(--rd-text-subtle); }
+
+  /* ---- 工具卡片（74-A 推荐方向：Hybrid） ---- */
+  .tool-card {
+    margin: 8px 0 12px;
+    border: 1px solid var(--rd-border);
+    border-radius: 6px;
+    background: var(--rd-surface);
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+  .tool-card:hover { border-color: var(--rd-border-hover); }
+  .tool-card.running {
+    border-color: var(--rd-status-running);
+    box-shadow: 0 0 0 1px var(--rd-status-running) inset, 0 0 12px rgba(59,130,246,0.15);
+    animation: shimmer 2s ease-in-out infinite;
+  }
+  @keyframes shimmer {
+    0%, 100% { box-shadow: 0 0 0 1px var(--rd-status-running) inset, 0 0 8px rgba(59,130,246,0.1); }
+    50% { box-shadow: 0 0 0 1px var(--rd-status-running) inset, 0 0 16px rgba(59,130,246,0.25); }
+  }
+
+  .tool-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .tool-card-header:hover { background: var(--rd-surface-hover); }
+  .tool-icon-box {
+    width: 20px; height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+  .tool-icon-box svg { width: 13px; height: 13px; }
+  .tool-icon-box.file { background: rgba(59,130,246,0.12); color: var(--rd-tool-file); }
+  .tool-icon-box.shell { background: rgba(16,185,129,0.12); color: var(--rd-tool-shell); }
+  .tool-icon-box.agent { background: rgba(139,92,246,0.12); color: var(--rd-tool-agent); }
+  .tool-icon-box.web { background: rgba(6,182,212,0.12); color: var(--rd-tool-web); }
+  .tool-icon-box.mcp { background: rgba(249,115,22,0.12); color: var(--rd-tool-mcp); }
+
+  .tool-card-header .label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--rd-text);
+    flex-shrink: 0;
+  }
+  .tool-card-header .param {
+    font-size: 11px;
+    color: var(--rd-text-muted);
+    font-family: var(--font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .tool-card-header .param .key { color: var(--rd-text-subtle); }
+
+  /* 状态徽章（74-E StatusBadge） */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 600;
+    border: 1px solid;
+    font-variant-numeric: tabular-nums;
+  }
+  .badge svg { width: 10px; height: 10px; }
+  .badge.success { color: var(--rd-status-success); border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.08); }
+  .badge.error { color: var(--rd-status-error); border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.08); }
+  .badge.running { color: var(--rd-status-running); border-color: rgba(59,130,246,0.3); background: rgba(59,130,246,0.08); }
+  .badge.pending { color: var(--rd-status-pending); border-color: rgba(107,114,128,0.3); background: rgba(107,114,128,0.08); }
+  .badge.running svg { animation: spin 1.2s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .tool-card-header .chevron {
+    color: var(--rd-text-subtle);
+    transition: transform 0.15s;
+  }
+  .tool-card-header .chevron svg { width: 12px; height: 12px; }
+  .tool-card.expanded .tool-card-header .chevron { transform: rotate(90deg); }
+
+  .tool-card-body {
+    border-top: 1px solid var(--rd-border);
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  /* 命令输出（74-A1/A2：ANSI + 头尾保留） */
+  .cmd-output {
+    background: var(--rd-background);
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--rd-text-muted);
+    border: 1px solid var(--rd-border);
+  }
+  .cmd-output .ansi-red { color: var(--rd-danger); }
+  .cmd-output .ansi-green { color: var(--rd-success); }
+  .cmd-output .ansi-yellow { color: var(--rd-warning); }
+  .cmd-output .ansi-cyan { color: #67e8f9; }
+  .cmd-output .ansi-dim { color: var(--rd-text-subtle); }
+  .cmd-output .folded {
+    text-align: center;
+    color: var(--rd-text-subtle);
+    padding: 2px 0;
+    font-style: italic;
+    cursor: pointer;
+  }
+  .cmd-output .folded:hover { color: var(--rd-primary); }
+
+  /* file_edit 行级 diff（74-A3） */
+  .diff {
+    background: var(--rd-background);
+    border-radius: 4px;
+    border: 1px solid var(--rd-border);
+    overflow: hidden;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.55;
+  }
+  .diff .hunk-header {
+    padding: 4px 10px;
+    color: var(--rd-text-subtle);
+    background: var(--rd-surface);
+    border-bottom: 1px solid var(--rd-border);
+    font-size: 10px;
+  }
+  .diff .line {
+    padding: 0 10px;
+    display: flex;
+    white-space: pre;
+  }
+  .diff .line .ln {
+    width: 28px;
+    color: var(--rd-text-subtle);
+    user-select: none;
+    flex-shrink: 0;
+    text-align: right;
+    padding-right: 8px;
+  }
+  .diff .line.add { background: rgba(16,185,129,0.08); color: var(--rd-success); }
+  .diff .line.del { background: rgba(239,68,68,0.08); color: var(--rd-danger); }
+  .diff .line.ctx { color: var(--rd-text-muted); }
+  .diff-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    justify-content: flex-end;
+  }
+  .diff-btn {
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    border: 1px solid var(--rd-border);
+    background: var(--rd-surface);
+    color: var(--rd-text-muted);
+    cursor: pointer;
+    font-family: var(--font-sans);
+  }
+  .diff-btn:hover { border-color: var(--rd-border-hover); color: var(--rd-text); }
+  .diff-btn.accept { color: var(--rd-success); border-color: rgba(16,185,129,0.3); }
+  .diff-btn.accept:hover { background: rgba(16,185,129,0.08); }
+  .diff-btn.reject { color: var(--rd-danger); border-color: rgba(239,68,68,0.3); }
+  .diff-btn.reject:hover { background: rgba(239,68,68,0.08); }
+
+  /* sub_agent 卡片（74-A 子 Agent 进度可视化） */
+  .sub-agent-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .sub-agent-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    background: var(--rd-background);
+    border-radius: 4px;
+    border: 1px solid var(--rd-border);
+  }
+  .sub-agent-row .name {
+    font-size: 11px;
+    color: var(--rd-text);
+    flex: 1;
+    font-weight: 500;
+  }
+  .sub-agent-row .task {
+    font-size: 10px;
+    color: var(--rd-text-muted);
+    font-family: var(--font-mono);
+  }
+  .sub-agent-row .progress {
+    width: 60px;
+    height: 3px;
+    background: var(--rd-surface-highlight);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .sub-agent-row .progress .bar {
+    height: 100%;
+    background: var(--rd-primary);
+    border-radius: 2px;
+  }
+
+  /* ExecutionProcess 折叠树（74-A9：思考层 + 动作层） */
+  .exec-process {
+    margin: 4px 0 12px;
+    font-size: 12px;
+  }
+  .exec-entry {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    cursor: pointer;
+    color: var(--rd-text-muted);
+  }
+  .exec-entry .chev { color: var(--rd-text-subtle); display: inline-flex; }
+  .exec-entry .chev svg { width: 11px; height: 11px; }
+  .exec-entry.expanded .chev { transform: rotate(90deg); }
+  .exec-entry .summary { flex: 1; }
+  .exec-entry .summary strong { color: var(--rd-text); font-weight: 500; }
+  .exec-body {
+    margin-left: 14px;
+    border-left: 1px solid var(--rd-tree-line);
+    padding-left: 12px;
+    margin-top: 2px;
+  }
+  .exec-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 3px 0;
+    color: var(--rd-text-muted);
+    font-size: 11px;
+    line-height: 1.55;
+  }
+  .exec-step .icon { display: inline-flex; margin-top: 1px; color: var(--rd-text-subtle); }
+  .exec-step .icon svg { width: 12px; height: 12px; }
+  .exec-step.thinking .icon { color: var(--rd-tool-agent); }
+  .exec-step.action .icon { color: var(--rd-tool-shell); }
+  .exec-step .status { color: var(--rd-text-subtle); margin-left: auto; font-size: 10px; }
+  .exec-step .status.ok { color: var(--rd-success); }
+  .exec-step .status.err { color: var(--rd-danger); }
+  .exec-step .status.run { color: var(--rd-primary); }
+
+  /* ---- 输入区 + 队列（74-B 推荐方向：内联分区） ---- */
+  .chat-footer {
+    border-top: 1px solid var(--rd-border);
+    background: var(--rd-surface);
+    padding: 8px 16px 12px;
+  }
+
+  .queue-section {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .queue-block {
+    flex: 1;
+    background: var(--rd-background);
+    border: 1px solid var(--rd-border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .queue-block.followup { border-left: 2px solid var(--rd-primary); }
+  .queue-block.pending { border-left: 2px solid var(--rd-warning); }
+  .queue-block .head {
+    padding: 5px 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--rd-text-muted);
+    background: var(--rd-surface);
+    border-bottom: 1px solid var(--rd-border);
+  }
+  .queue-block .head svg { width: 12px; height: 12px; }
+  .queue-block.followup .head svg { color: var(--rd-primary); }
+  .queue-block.pending .head svg { color: var(--rd-warning); }
+  .queue-block .head .label { font-weight: 500; color: var(--rd-text); }
+  .queue-block .head .count {
+    font-family: var(--font-mono);
+    color: var(--rd-text-subtle);
+    font-size: 10px;
+  }
+  .queue-block .head .mode {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--rd-text-subtle);
+  }
+  .queue-block .head .mode .active {
+    color: var(--rd-primary);
+    background: rgba(139,141,255,0.1);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  .queue-block .items {
+    padding: 4px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 80px;
+    overflow-y: auto;
+  }
+  .queue-block .items.empty {
+    padding: 8px 10px;
+    color: var(--rd-text-subtle);
+    font-size: 11px;
+    font-style: italic;
+    text-align: center;
+  }
+  .queue-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    border-radius: 3px;
+    background: var(--rd-surface);
+    font-size: 11px;
+    color: var(--rd-text);
+  }
+  .queue-item .idx {
+    font-family: var(--font-mono);
+    color: var(--rd-text-subtle);
+    font-size: 10px;
+    width: 16px;
+  }
+  .queue-item .text {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .queue-item .x {
+    width: 16px; height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    color: var(--rd-text-subtle);
+    cursor: pointer;
+  }
+  .queue-item .x:hover { background: var(--rd-surface-hover); color: var(--rd-danger); }
+  .queue-item .x svg { width: 10px; height: 10px; }
+
+  .input-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    background: var(--rd-background);
+    border: 1px solid var(--rd-border);
+    border-radius: 8px;
+    padding: 8px 10px;
+  }
+  .input-row:focus-within { border-color: var(--rd-primary); }
+  .input-row textarea {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--rd-text);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    resize: none;
+    min-height: 22px;
+    max-height: 120px;
+    line-height: 1.5;
+  }
+  .input-row textarea::placeholder { color: var(--rd-text-subtle); }
+  .input-row .send-btn {
+    width: 28px; height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: var(--rd-primary);
+    color: var(--rd-primary-foreground);
+    cursor: pointer;
+  }
+  .input-row .send-btn svg { width: 14px; height: 14px; }
+  .input-row .send-btn:hover { background: var(--rd-primary-hover); }
+  .input-row .send-btn:disabled {
+    background: var(--rd-surface-highlight);
+    color: var(--rd-text-subtle);
+    cursor: not-allowed;
+  }
+  .input-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 6px;
+    font-size: 10px;
+    color: var(--rd-text-subtle);
+  }
+  .input-meta .autonomy {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border: 1px solid var(--rd-border);
+    border-radius: 3px;
+  }
+  .input-meta .autonomy svg { width: 10px; height: 10px; }
+
+  /* ---- 右侧：产物面板（74-F） ---- */
+  .sidebar-right {
+    background: var(--rd-background);
+    border-left: 1px solid var(--rd-border);
+    display: flex;
+    flex-direction: column;
+  }
+  .artifact-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--rd-border);
+    background: var(--rd-surface);
+  }
+  .artifact-tab {
+    flex: 1;
+    padding: 8px 12px;
+    font-size: 11px;
+    color: var(--rd-text-muted);
+    text-align: center;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    font-weight: 500;
+  }
+  .artifact-tab.active {
+    color: var(--rd-text);
+    border-bottom-color: var(--rd-primary);
+  }
+  .artifact-tab .badge-num {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 0 5px;
+    background: var(--rd-surface-highlight);
+    border-radius: 8px;
+    font-size: 9px;
+    color: var(--rd-text-muted);
+  }
+  .artifact-tab.active .badge-num { background: var(--rd-primary); color: var(--rd-primary-foreground); }
+
+  .artifact-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .artifact-card {
+    background: var(--rd-surface);
+    border: 1px solid var(--rd-border);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    overflow: hidden;
+  }
+  .artifact-card .head {
+    padding: 6px 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-bottom: 1px solid var(--rd-border);
+    background: var(--rd-surface-highlight);
+  }
+  .artifact-card .head .icon {
+    width: 14px; height: 14px;
+    color: var(--rd-tool-file);
+  }
+  .artifact-card .head .name {
+    flex: 1;
+    font-size: 11px;
+    color: var(--rd-text);
+    font-family: var(--font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .artifact-card .head .ver {
+    font-size: 9px;
+    color: var(--rd-text-subtle);
+    font-family: var(--font-mono);
+  }
+  .artifact-card .head .actions { display: flex; gap: 2px; }
+  .artifact-card .head .actions .icon-btn { width: 18px; height: 18px; }
+  .artifact-card .head .actions .icon-btn svg { width: 11px; height: 11px; }
+  .artifact-card .preview {
+    padding: 8px 10px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1.5;
+    color: var(--rd-text-muted);
+    max-height: 140px;
+    overflow: hidden;
+    position: relative;
+  }
+  .artifact-card .preview .fade {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 32px;
+    background: linear-gradient(180deg, transparent, var(--rd-surface));
+    pointer-events: none;
+  }
+  .artifact-card .preview .kw { color: var(--rd-primary); }
+  .artifact-card .preview .str { color: var(--rd-success); }
+  .artifact-card .preview .com { color: var(--rd-text-subtle); }
+
+  /* ============== 变体探索区 ============== */
+  .variants-grid {
+    display: grid;
+    gap: 16px;
+  }
+  .variants-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  .variant-card {
+    background: var(--rd-surface);
+    border: 1px solid var(--rd-border);
+    border-radius: 6px;
+    padding: 12px;
+  }
+  .variant-card.recommended {
+    border-color: var(--rd-primary);
+    box-shadow: 0 0 0 1px var(--rd-primary) inset;
+  }
+  .variant-card .v-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--rd-text);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .variant-card .v-title .star {
+    color: var(--rd-primary);
+    font-size: 10px;
+  }
+  .variant-card .v-desc {
+    font-size: 11px;
+    color: var(--rd-text-muted);
+    margin-bottom: 10px;
+    line-height: 1.5;
+  }
+  .variant-card .v-demo {
+    background: var(--rd-background);
+    border: 1px solid var(--rd-border);
+    border-radius: 4px;
+    padding: 10px;
+    font-size: 11px;
+  }
+
+  /* 74-D 分支切换器变体 */
+  .branch-tab-style {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    background: var(--rd-background);
+    border: 1px solid var(--rd-border);
+    border-radius: 4px;
+  }
+  .branch-tab-style .tab {
+    padding: 3px 10px;
+    border-radius: 3px;
+    font-size: 11px;
+    color: var(--rd-text-muted);
+    cursor: pointer;
+  }
+  .branch-tab-style .tab.active { background: var(--rd-primary); color: var(--rd-primary-foreground); }
+
+  .branch-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--rd-text-muted);
+    background: var(--rd-background);
+    border: 1px solid var(--rd-border);
+    border-radius: 4px;
+    padding: 4px 8px;
+  }
+  .branch-breadcrumb .crumb { color: var(--rd-text-subtle); }
+  .branch-breadcrumb .crumb.active { color: var(--rd-primary); font-weight: 500; }
+  .branch-breadcrumb .sep { color: var(--rd-text-subtle); }
+
+  /* 74-B 队列变体 */
+  .queue-float-demo {
+    position: relative;
+    height: 100px;
+    background: var(--rd-background);
+    border: 1px solid var(--rd-border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .queue-float-demo .input-mock {
+    position: absolute;
+    bottom: 8px; left: 8px; right: 8px;
+    height: 22px;
+    background: var(--rd-surface);
+    border: 1px solid var(--rd-border);
+    border-radius: 4px;
+  }
+  .queue-float-demo .float-popup {
+    position: absolute;
+    bottom: 38px; right: 12px;
+    width: 180px;
+    background: var(--rd-surface-highlight);
+    border: 1px solid var(--rd-primary);
+    border-radius: 6px;
+    padding: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  .queue-float-demo .float-popup .ftitle {
+    font-size: 10px;
+    color: var(--rd-primary);
+    font-weight: 500;
+    margin-bottom: 4px;
+  }
+  .queue-float-demo .float-popup .fitem {
+    font-size: 10px;
+    color: var(--rd-text);
+    padding: 2px 0;
+    border-bottom: 1px solid var(--rd-border);
+  }
+
+  /* 74-H 搜索变体 */
+  .search-topbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: var(--rd-background);
+    border: 1px solid var(--rd-border);
+    border-radius: 4px;
+  }
+  .search-topbar svg { width: 12px; height: 12px; color: var(--rd-text-subtle); }
+  .search-topbar input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--rd-text);
+    font-size: 11px;
+    font-family: var(--font-sans);
+  }
+  .search-topbar .kbd {
+    font-size: 9px;
+    padding: 1px 4px;
+    border: 1px solid var(--rd-border);
+    border-radius: 2px;
+    color: var(--rd-text-subtle);
+    font-family: var(--font-mono);
+  }
+
+  .search-cmdk {
+    background: var(--rd-surface-highlight);
+    border: 1px solid var(--rd-primary);
+    border-radius: 8px;
+    padding: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  .search-cmdk .input {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--rd-border);
+    margin-bottom: 6px;
+  }
+  .search-cmdk .input svg { width: 12px; height: 12px; color: var(--rd-primary); }
+  .search-cmdk .input span { color: var(--rd-text); font-size: 11px; }
+  .search-cmdk .input .cursor { color: var(--rd-primary); animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .search-cmdk .result {
+    padding: 4px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    color: var(--rd-text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .search-cmdk .result.active { background: var(--rd-primary); color: var(--rd-primary-foreground); }
+  .search-cmdk .result .src { color: var(--rd-text-subtle); font-size: 9px; }
+  .search-cmdk .result.active .src { color: rgba(255,255,255,0.7); }
+
+  /* 注释标签 */
+  .annot {
+    display: inline-block;
+    padding: 1px 6px;
+    background: rgba(139,141,255,0.12);
+    color: var(--rd-primary);
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 500;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+
+  /*/* === 74-A 扩展：工具×状态矩阵 === */
+  .matrix-grid {
+    display: grid;
+    grid-template-columns: 100px repeat(4, 1fr);
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .matrix-grid .col-head, .matrix-grid .row-head {
+    font-size: 10px;
+    color: var(--rd-text-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 6px 4px;
+    text-align: center;
+    font-weight: 600;
+  }
+  .matrix-grid .row-head {
+    text-align: left;
+    color: var(--rd-text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+  }
+  .matrix-grid .row-head .tool-icon-box { width: 16px; height: 16px; }
+  .matrix-grid .row-head .tool-icon-box svg { width: 10px; height: 10px; }
+  .matrix-grid .cell {
+    padding: 4px;
+  }
+  .matrix-grid .cell .tool-card { margin: 0; min-width: 0; }
+  .matrix-grid .cell .tool-card-header { padding: 5px 6px; gap: 4px; }
+  .matrix-grid .cell .tool-card-header .label { font-size: 10px; }
+  .matrix-grid .cell .tool-card-header .param { font-size: 9px; }
+  .matrix-grid .cell .badge { font-size: 9px; padding: 1px 5px; }
+  .matrix-grid .cell .badge svg { width: 8px; height: 8px; }
+  .matrix-grid .cell .tool-icon-box { width: 16px; height: 16px; }
+  .matrix-grid .cell .tool-icon-box svg { width: 10px; height: 10px; }
+
+  /* === 74-B 扩展：队列状态变体 === */
+  .queue-state-row {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .queue-state-card {
+    background: var(--rd-background);
+    border: 1px solid var(--rd-border);
+    border-radius: 6px;
+    padding: 10px;
+  }
+  .queue-state-card .label {
+    font-size: 10px;
+    color: var(--rd-text-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+    font-weight: 600;
+  }
+
+  /* === 74-D 扩展：分支树变体 === */
+  .branch-tree-demo {
+    background: var(--rd-background);
+    border: 1px solid var(--rd-border);
+    border-radius: 4px;
+    padding: 12px;
+    font-size: 11px;
+    color: var(--rd-text-muted);
+    font-family: var(--font-mono);
+    line-height: 1.8;
+  }
+  .branch-tree-demo .node { display: flex; align-items: center; gap: 4px; }
+  .branch-tree-demo .node.active { color: var(--rd-primary); font-weight: 500; }
+  .branch-tree-demo .node .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--rd-text-subtle); }
+  .branch-tree-demo .node.active .dot { background: var(--rd-primary); }
+  .branch-tree-demo .pipe { color: var(--rd-tree-line); }
+  .branch-tree-demo .branch-tag { color: var(--rd-primary); font-size: 10px; }
+
+  /* === 74-F 扩展：面板状态 === */
+  .panel-state-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .panel-state-card {
+    background: var(--rd-background);
+    border: 1px solid var(--rd-border);
+    border-radius: 6px;
+    padding: 10px;
+    min-height: 140px;
+  }
+  .panel-state-card .label {
+    font-size: 10px;
+    color: var(--rd-text-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+  .empty-state {
+    text-align: center;
+    padding: 20px 8px;
+    color: var(--rd-text-subtle);
+    font-size: 11px;
+    font-style: italic;
+  }
+  .empty-state .ic { color: var(--rd-text-subtle); margin-bottom: 6px; }
+  .empty-state .ic svg { width: 24px; height: 24px; }
+
+  /* === 74-H 扩展：搜索结果变体 === */
+  .search-result-variant {
+    background: var(--rd-background);
+    border: 1px solid var(--rd-border);
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 11px;
+  }
+  .search-result-variant .group-label {
+    font-size: 9px;
+    color: var(--rd-text-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 6px 0 4px;
+    font-weight: 600;
+  }
+  .search-result-variant .group-label:first-child { margin-top: 0; }
+  .search-result-variant .result-item {
+    padding: 4px 6px;
+    border-radius: 3px;
+    color: var(--rd-text-muted);
+    font-size: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .search-result-variant .result-item.active { background: var(--rd-primary); color: var(--rd-primary-foreground); }
+  .search-result-variant .result-item .title { color: var(--rd-text); font-size: 11px; }
+  .search-result-variant .result-item.active .title { color: var(--rd-primary-foreground); }
+  .search-result-variant .result-item .snippet { color: var(--rd-text-subtle); font-size: 9px; }
+  .search-result-variant .result-item.active .snippet { color: rgba(255,255,255,0.7); }
+  .search-result-variant mark { background: rgba(139,141,255,0.25); color: var(--rd-primary); padding: 0 2px; border-radius: 2px; }
+  .search-result-variant .result-item.active mark { background: rgba(255,255,255,0.25); color: var(--rd-primary-foreground); }
+
+  /* SVG icon 通用 */
+  .ic { display: inline-flex; vertical-align: middle; }
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     顶部说明
+     ============================================================ -->
+<div class="page-header">
+  <h1>Phase 74 合并原型 · RouteDev 工作台</h1>
+  <div class="meta">方向 <strong>B · Structured-Panel</strong> · 高密度信息型 · 暗色 · 单 accent 色 · 反 AI slop · 覆盖 74-A/B/D/F/H 五个视觉子 Phase</div>
+  <div class="legend">
+    <span><span class="dot" style="background:var(--rd-tool-file)"></span>file 工具</span>
+    <span><span class="dot" style="background:var(--rd-tool-shell)"></span>shell 工具</span>
+    <span><span class="dot" style="background:var(--rd-tool-agent)"></span>agent 工具</span>
+    <span><span class="dot" style="background:var(--rd-primary)"></span>主色（accent）</span>
+    <span><span class="dot" style="background:var(--rd-status-success)"></span>success</span>
+    <span><span class="dot" style="background:var(--rd-status-running)"></span>running</span>
+    <span><span class="dot" style="background:var(--rd-status-error)"></span>error</span>
+  </div>
+</div>
+
+<!-- ============================================================
+     Section 1：完整工作台主视图（推荐方向）
+     ============================================================ -->
+<div class="section">
+  <div class="section-title">
+    完整工作台主视图 <span class="tag">推荐</span>
+    <span class="annot">74-A + 74-B + 74-D + 74-F + 74-H 全部集成</span>
+  </div>
+  <div class="section-desc">
+    下方为 RouteDev 主工作台的高保真原型，方向 B（Structured-Panel）为视觉基底：左侧项目列表（含分支标识 74-D）+ 中间聊天流（工具卡片 74-A + 分支切换器 74-D + 思考动作分层 74-A9）+ 右侧产物面板（74-F）+ 底部输入区与双队列分区（74-B）。顶部搜索触发器为 74-H 推荐入口。
+  </div>
+
+  <div class="workspace">
+
+    <!-- ===== 左侧：项目/会话列表 ===== -->
+    <div class="sidebar-left">
+      <div class="header">
+        <span class="title">会话</span>
+        <span class="icon-btn" title="新建会话">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        </span>
+      </div>
+
+      <!-- 74-H 推荐入口：搜索触发器（侧边栏内嵌） -->
+      <div class="search-trigger" title="跨对话搜索（74-H）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <span>搜索对话内容...</span>
+        <span class="kbd">⌘K</span>
+      </div>
+
+      <div class="conv-list">
+        <div class="conv-item active">
+          <div class="name">Phase 74 前端交互优化</div>
+          <div class="sub">
+            <span class="dot"></span>
+            <span>3 分钟前 · 28 条</span>
+          </div>
+        </div>
+        <div class="conv-item">
+          <div class="name">死代码清理核验</div>
+          <div class="sub">
+            <span class="branch-mark">⎇ main</span>
+            <span>1 小时前 · 15 条</span>
+          </div>
+        </div>
+        <div class="conv-item">
+          <div class="name">BM25Index 调研</div>
+          <div class="sub">
+            <span class="branch-mark">⎇ fork@msg-12</span>
+            <span>2 小时前 · 8 条</span>
+          </div>
+        </div>
+        <div class="conv-item">
+          <div class="name">SettingsPage 拆分</div>
+          <div class="sub">
+            <span class="dot" style="background:var(--rd-text-subtle)"></span>
+            <span>昨天 · 47 条</span>
+          </div>
+        </div>
+        <div class="conv-item">
+          <div class="name">Hook 事件系统</div>
+          <div class="sub">
+            <span class="dot" style="background:var(--rd-text-subtle)"></span>
+            <span>昨天 · 22 条</span>
+          </div>
+        </div>
+        <div class="conv-item">
+          <div class="name">MCP catalog 集成</div>
+          <div class="sub">
+            <span class="dot" style="background:var(--rd-text-subtle)"></span>
+            <span>3 天前 · 31 条</span>
+          </div>
+        </div>
+        <div class="conv-item">
+          <div class="name">虚拟滚动性能基座</div>
+          <div class="sub">
+            <span class="dot" style="background:var(--rd-text-subtle)"></span>
+            <span>3 天前 · 12 条</span>
+          </div>
+        </div>
+        <div class="conv-item">
+          <div class="name">Branch 树结构调研</div>
+          <div class="sub">
+            <span class="dot" style="background:var(--rd-text-subtle)"></span>
+            <span>4 天前 · 19 条</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 中间：聊天主区 ===== -->
+    <div class="chat-main">
+
+      <!-- 顶部 Header -->
+      <div class="chat-header">
+        <span class="title">Phase 74 前端交互优化</span>
+        <span class="title-sub">· 28 条消息</span>
+        <div class="spacer"></div>
+        <div class="actions">
+          <span class="icon-btn" title="搜索">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          </span>
+          <span class="icon-btn" title="检查点">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg>
+          </span>
+          <span class="icon-btn" title="导出">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          </span>
+        </div>
+      </div>
+
+      <!-- 聊天流 -->
+      <div class="chat-stream">
+
+        <!-- 用户消息 -->
+        <div class="msg-group">
+          <div class="bubble user">
+            <div class="role">你</div>
+            把 ToolCallCard 升级一下，加上 ANSI 解析和行级 diff
+          </div>
+        </div>
+
+        <!-- 助手消息 + ExecutionProcess（74-A9 思考动作分层） -->
+        <div class="msg-group">
+          <div class="bubble assistant">
+            <div class="role">RouteDev</div>
+            我来重构 ToolCallCard。计划分三步：先抽象 StatusBadge 和 ToolIcon，再升级 CommandOutput 加 ANSI 解析与头尾保留，最后给 FileEditDiff 加行级 diff 和 accept/reject 按钮。
+          </div>
+
+          <!-- ExecutionProcess 折叠树 -->
+          <div class="exec-process">
+            <div class="exec-entry expanded">
+              <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+              <span class="summary"><strong>思考 · 3 步</strong> · 2 完成 · 1 进行中</span>
+              <span class="badge running"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>运行中</span>
+            </div>
+            <div class="exec-body">
+              <div class="exec-step thinking">
+                <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/></svg></span>
+                <span>分析 ToolCallCard 现状：折叠态信息密度低，参数不可见，无 ANSI 解析</span>
+                <span class="status ok">✓</span>
+              </div>
+              <div class="exec-step thinking">
+                <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/></svg></span>
+                <span>**Markdown 解析**支持 · 折叠态加状态徽章 + 关键参数预览</span>
+                <span class="status ok">✓</span>
+              </div>
+              <div class="exec-step thinking">
+                <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/></svg></span>
+                <span>设计 token 落地：复用 <code>--rd-tool-*</code> 与 <code>--rd-status-*</code></span>
+                <span class="status run">···</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 工具卡片 1：file_read（已完成） -->
+          <div class="tool-card expanded">
+            <div class="tool-card-header">
+              <span class="tool-icon-box file">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></svg>
+              </span>
+              <span class="label">读取文件</span>
+              <span class="param"><span class="key">path:</span> routedev/desktop/renderer/src/components/ToolCallCard.tsx</span>
+              <span class="badge success"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>461 行</span>
+              <span class="chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+            </div>
+            <div class="tool-card-body">
+              <div class="cmd-output">
+                <span class="ansi-dim">// 现状：折叠态仅显示「执行了 3 条命令」无状态徽章</span><br>
+                <span class="ansi-dim">// 展开态命令输出仅 5 行预览，无 ANSI 解析</span><br>
+                <span class="ansi-dim">// file_edit diff 无行级高亮，无 accept/reject 按钮</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 工具卡片 2：shell_exec（运行中 + shimmer 边框） -->
+          <div class="tool-card running">
+            <div class="tool-card-header">
+              <span class="tool-icon-box shell">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+              </span>
+              <span class="label">执行命令</span>
+              <span class="param"><span class="key">cmd:</span> npx tsc --noEmit -p desktop/tsconfig.desktop.json</span>
+              <span class="badge running"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>运行中</span>
+              <span class="chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+            </div>
+          </div>
+
+          <!-- 工具卡片 3：file_edit（已完成 + 行级 diff + accept/reject） -->
+          <div class="tool-card expanded">
+            <div class="tool-card-header">
+              <span class="tool-icon-box file">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+              </span>
+              <span class="label">编辑文件</span>
+              <span class="param"><span class="key">path:</span> components/ToolCallCard.tsx · <span class="key">+12 -5</span></span>
+              <span class="badge success"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>已应用</span>
+              <span class="chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+            </div>
+            <div class="tool-card-body">
+              <div class="diff">
+                <div class="hunk-header">@@ -42,7 +42,12 @@ function ToolCallCard() {</div>
+                <div class="line ctx"><span class="ln">42</span><span>  const status = tool.status;</span></div>
+                <div class="line del"><span class="ln">43</span><span>-  return &lt;button className="text-xs text-rd-textMuted"&gt;{summary}&lt;/button&gt;;</span></div>
+                <div class="line add"><span class="ln">43</span><span>+  return (</span></div>
+                <div class="line add"><span class="ln">44</span><span>+    &lt;div className="tool-card"&gt;</span></div>
+                <div class="line add"><span class="ln">45</span><span>+      &lt;ToolIcon toolType={tool.type} /&gt;</span></div>
+                <div class="line add"><span class="ln">46</span><span>+      &lt;StatusBadge variant={status} /&gt;</span></div>
+                <div class="line add"><span class="ln">47</span><span>+      &lt;span className="param"&gt;{tool.params}&lt;/span&gt;</span></div>
+                <div class="line ctx"><span class="ln">48</span><span>    &lt;/div&gt;</span></div>
+              </div>
+              <div class="diff-actions">
+                <button class="diff-btn reject">拒绝</button>
+                <button class="diff-btn accept">采纳</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 工具卡片 4：spawn_agent（运行中 + 子 Agent 进度可视化） -->
+          <div class="tool-card expanded running">
+            <div class="tool-card-header">
+              <span class="tool-icon-box agent">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4M8 16h.01M16 16h.01"/></svg>
+              </span>
+              <span class="label">子 Agent</span>
+              <span class="param"><span class="key">task:</span> 验证 11 个 chat 子组件类型一致性</span>
+              <span class="badge running"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>3/5</span>
+              <span class="chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+            </div>
+            <div class="tool-card-body">
+              <div class="sub-agent-progress">
+                <div class="sub-agent-row">
+                  <span class="tool-icon-box file" style="width:18px;height:18px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></span>
+                  <span class="name">InputArea</span>
+                  <span class="task">type-check</span>
+                  <span class="badge success" style="font-size:9px;padding:1px 5px">✓</span>
+                </div>
+                <div class="sub-agent-row">
+                  <span class="tool-icon-box file" style="width:18px;height:18px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></span>
+                  <span class="name">ExecutionProcess</span>
+                  <span class="task">type-check</span>
+                  <span class="badge success" style="font-size:9px;padding:1px 5px">✓</span>
+                </div>
+                <div class="sub-agent-row">
+                  <span class="tool-icon-box file" style="width:18px;height:18px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></span>
+                  <span class="name">MessageBubble</span>
+                  <span class="task">type-check</span>
+                  <span class="badge success" style="font-size:9px;padding:1px 5px">✓</span>
+                </div>
+                <div class="sub-agent-row">
+                  <span class="tool-icon-box file" style="width:18px;height:18px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></span>
+                  <span class="name">ToolConfirmDialog</span>
+                  <span class="task">running</span>
+                  <div class="progress"><div class="bar" style="width:65%"></div></div>
+                </div>
+                <div class="sub-agent-row">
+                  <span class="tool-icon-box file" style="width:18px;height:18px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></span>
+                  <span class="name">FollowUpQueue</span>
+                  <span class="task">pending</span>
+                  <span class="badge pending" style="font-size:9px;padding:1px 5px">…</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- fork 点 + 分支切换器（74-D） -->
+        <div class="msg-group fork-point">
+          <div class="branch-switcher" title="分支切换器（74-D 推荐方向：箭头式）">
+            <span class="branch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1 .4-1 1v2"/></svg></span>
+            <span class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></span>
+            <span class="pos">2<span class="total">/3</span></span>
+            <span class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+          </div>
+          <div class="bubble assistant">
+            <div class="role">RouteDev · 分支 2</div>
+            也可以采用 Hybrid 风格——折叠态用 Card 美学（圆角+边框），展开态用 Terminal 美学（等宽+暗底），兼顾视觉舒适与信息密度。
+          </div>
+        </div>
+
+      </div>
+
+      <!-- 底部：输入区 + 双队列（74-B 推荐方向：内联分区） -->
+      <div class="chat-footer">
+
+        <!-- 双队列分区（74-B3） -->
+        <div class="queue-section">
+          <!-- 排队队列（pending） -->
+          <div class="queue-block pending">
+            <div class="head">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>
+              <span class="label">待发送</span>
+              <span class="count">2</span>
+              <span class="mode">输入即加入</span>
+            </div>
+            <div class="items">
+              <div class="queue-item">
+                <span class="idx">1</span>
+                <span class="text">顺便把 ExecutionProcess 的 Markdown 解析也加上</span>
+                <span class="x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+              </div>
+              <div class="queue-item">
+                <span class="idx">2</span>
+                <span class="text">检查一下 74-I 无障碍审计清单</span>
+                <span class="x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+              </div>
+            </div>
+          </div>
+          <!-- follow-up 队列 -->
+          <div class="queue-block followup">
+            <div class="head">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+              <span class="label">Agent 完成后接续</span>
+              <span class="count">1</span>
+              <span class="mode">模式：<span class="active">逐条</span> · 全部</span>
+            </div>
+            <div class="items">
+              <div class="queue-item">
+                <span class="idx">1</span>
+                <span class="text">改完后跑一遍 npx tsc --noEmit 验证</span>
+                <span class="x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 输入框 -->
+        <div class="input-row">
+          <textarea placeholder="输入消息，或按 Enter 发送 · Shift+Enter 换行..."></textarea>
+          <button class="send-btn" title="发送">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+          </button>
+        </div>
+        <div class="input-meta">
+          <span class="autonomy">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6M4.22 19.78l4.24-4.24M15.54 8.46l4.24-4.24"/></svg>
+            自主度：协作
+          </span>
+          <span>·</span>
+          <span>Model: GLM-5.2</span>
+          <span>·</span>
+          <span>Context: 12.4k / 128k</span>
+          <span style="margin-left:auto">Enter 发送 · Shift+Enter 换行</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 右侧：产物面板（74-F） ===== -->
+    <div class="sidebar-right">
+      <div class="artifact-tabs">
+        <div class="artifact-tab active">产物 <span class="badge-num">3</span></div>
+        <div class="artifact-tab">检查点 <span class="badge-num">5</span></div>
+        <div class="artifact-tab">上下文 <span class="badge-num">12k</span></div>
+      </div>
+      <div class="artifact-list">
+
+        <div class="artifact-card">
+          <div class="head">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            <span class="name">ToolCallCard.tsx</span>
+            <span class="ver">v3</span>
+            <div class="actions">
+              <span class="icon-btn" title="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
+              <span class="icon-btn" title="在编辑器打开"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>
+            </div>
+          </div>
+          <div class="preview">
+<span class="com">// 74-A 工具卡片重构</span><br>
+<span class="kw">import</span> { StatusBadge } <span class="kw">from</span> <span class="str">'@/ui/status-badge'</span><br>
+<span class="kw">import</span> { ToolIcon } <span class="kw">from</span> <span class="str">'@/ui/tool-icon'</span><br>
+<span class="kw">import</span> { FoldableSection } <span class="kw">from</span> <span class="str">'@/ui/foldable-section'</span><br>
+<span class="kw">import</span> { ansiToHtml } <span class="kw">from</span> <span class="str">'ansi_up'</span><br>
+<span class="kw">import</span> { diff } <span class="kw">from</span> <span class="str">'diff-match-patch'</span><br>
+<br>
+<span class="kw">export function</span> ToolCallCard({ tool }: Props) {<br>
+&nbsp;&nbsp;<span class="kw">return</span> (<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&lt;FoldableSection header={...}&gt;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;ToolIcon toolType={tool.type} /&gt;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;StatusBadge variant={tool.status} /&gt;<br>
+            <div class="fade"></div>
+          </div>
+        </div>
+
+        <div class="artifact-card">
+          <div class="head">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            <span class="name">status-badge.tsx</span>
+            <span class="ver">v1</span>
+            <div class="actions">
+              <span class="icon-btn" title="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
+              <span class="icon-btn" title="在编辑器打开"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>
+            </div>
+          </div>
+          <div class="preview">
+<span class="com">// 74-E-min 基础组件</span><br>
+<span class="kw">export function</span> StatusBadge({ variant, size, showIcon }) {<br>
+&nbsp;&nbsp;<span class="kw">const</span> color = <span class="str">`var(--rd-status-${variant})`</span><br>
+&nbsp;&nbsp;<span class="kw">return</span> (<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&lt;span className=<span class="str">"badge"</span> style={{ color }}&gt;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{showIcon &amp;&amp; &lt;Icon variant={variant} /&gt;}<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{children}<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&lt;/span&gt;<br>
+&nbsp;&nbsp;)<br>
+}<br>
+            <div class="fade"></div>
+          </div>
+        </div>
+
+        <div class="artifact-card">
+          <div class="head">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            <span class="name">foldable-section.tsx</span>
+            <span class="ver">v1</span>
+            <div class="actions">
+              <span class="icon-btn" title="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
+              <span class="icon-btn" title="在编辑器打开"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>
+            </div>
+          </div>
+          <div class="preview">
+<span class="com">// 受控/非受控两用</span><br>
+<span class="kw">export function</span> FoldableSection({ header, children, ...rest }) {<br>
+&nbsp;&nbsp;<span class="kw">const</span> [open, setOpen] = useControllableState(rest)<br>
+&nbsp;&nbsp;<span class="kw">return</span> (<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&lt;div className=<span class="str">"rd-foldable"</span>&gt;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;div role=<span class="str">"button"</span> tabIndex={0}<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;aria-expanded={open}<br>
+            <div class="fade"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============================================================
+     Section 2：74-A 工具卡片变体
+     ============================================================ -->
+<div class="section">
+  <div class="section-title">74-A 工具卡片 <span class="tag">3 变体</span></div>
+  <div class="section-desc">
+    工具卡片是用户感知最强的视觉要素。三版变体覆盖纯 Terminal 派（等宽+暗底+无圆角）、纯 Card 派（圆角+边框+留白）、Hybrid 派（折叠态 Card 美学 + 展开态 Terminal 美学）。推荐 <strong>Hybrid</strong>：兼顾视觉舒适与信息密度，符合 RouteDev 高密度信息型定位。
+  </div>
+
+  <div class="variants-row">
+
+    <!-- 变体 1：Terminal -->
+    <div class="variant-card">
+      <div class="v-title">A1 · Terminal</div>
+      <div class="v-desc">纯等宽+暗底+无圆角，工具调用即命令行输出。极致信息密度，但视觉硬核。</div>
+      <div class="v-demo">
+        <div style="background:#000;color:#0f0;padding:8px;font-family:var(--font-mono);font-size:10px;border-radius:0">
+          <div style="color:#6a6a6a">$ <span style="color:#0f0">file_edit</span> ToolCallCard.tsx</div>
+          <div style="color:#fff">[<span style="color:#0f0">✓</span> 461 行] <span style="color:#888">+12 -5</span></div>
+          <div style="color:#6a6a6a;margin-top:4px">@@ -42,7 +42,12 @@</div>
+          <div style="color:#888">  const status = tool.status;</div>
+          <div style="color:#f55">-  return &lt;button&gt;...&lt;/button&gt;;</div>
+          <div style="color:#0f0">+  return &lt;div className="tool-card"&gt;</div>
+          <div style="color:#0f0">+    &lt;ToolIcon /&gt;&lt;StatusBadge /&gt;</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 变体 2：Card（推荐基础） -->
+    <div class="variant-card">
+      <div class="v-title">A2 · Card</div>
+      <div class="v-desc">圆角+边框+留白+状态徽章+图标着色。视觉友好，但命令输出/ diff 等高密度场景略散。</div>
+      <div class="v-demo">
+        <div style="background:var(--rd-surface);border:1px solid var(--rd-border);border-radius:8px;padding:8px">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            <span style="width:18px;height:18px;border-radius:4px;background:rgba(59,130,246,0.12);color:var(--rd-tool-file);display:inline-flex;align-items:center;justify-content:center;font-size:9px">📄</span>
+            <span style="font-size:11px;color:var(--rd-text);font-weight:500">编辑文件</span>
+            <span style="font-size:10px;color:var(--rd-text-muted);font-family:var(--font-mono)">ToolCallCard.tsx</span>
+            <span style="margin-left:auto;font-size:9px;color:var(--rd-status-success);border:1px solid rgba(16,185,129,0.3);padding:1px 5px;border-radius:99px">✓ 已应用</span>
+          </div>
+          <div style="font-size:10px;color:var(--rd-text-muted);padding:4px 6px;background:var(--rd-background);border-radius:4px">
+            <div style="color:var(--rd-text-subtle);font-size:9px">@@ -42,7 +42,12 @@</div>
+            <div style="color:var(--rd-danger)">- return &lt;button&gt;...</div>
+            <div style="color:var(--rd-success)">+ return &lt;div ...&gt;</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 变体 3：Hybrid（推荐） -->
+    <div class="variant-card recommended">
+      <div class="v-title">A3 · Hybrid <span class="star">★ 推荐</span></div>
+      <div class="v-desc">折叠态用 Card 美学（圆角+边框+徽章+参数预览），展开态切换 Terminal 美学（等宽+暗底+全宽 diff/cmd）。主视图采用此方案。</div>
+      <div class="v-demo">
+        <div style="background:var(--rd-surface);border:1px solid var(--rd-border);border-radius:6px;overflow:hidden">
+          <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--rd-surface)">
+            <span style="width:18px;height:18px;border-radius:4px;background:rgba(59,130,246,0.12);color:var(--rd-tool-file);display:inline-flex;align-items:center;justify-content:center;font-size:9px">📄</span>
+            <span style="font-size:10px;color:var(--rd-text);font-weight:500">编辑文件</span>
+            <span style="font-size:10px;color:var(--rd-text-muted);font-family:var(--font-mono);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">ToolCallCard.tsx · +12 -5</span>
+            <span style="font-size:9px;color:var(--rd-status-success);border:1px solid rgba(16,185,129,0.3);padding:1px 5px;border-radius:99px">✓</span>
+          </div>
+          <div style="background:var(--rd-background);padding:6px 8px;font-family:var(--font-mono);font-size:9px;border-top:1px solid var(--rd-border)">
+            <div style="color:var(--rd-text-subtle)">@@ -42,7 +42,12 @@</div>
+            <div style="color:var(--rd-text-muted)">  const status = tool.status;</div>
+            <div style="color:var(--rd-danger)">- return &lt;button&gt;...&lt;/button&gt;;</div>
+            <div style="color:var(--rd-success)">+ return &lt;div className="tool-card"&gt;</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 74-A 扩展：4 工具 × 4 状态完整矩阵（采用 Hybrid 风格） -->
+  <div style="margin-top:24px">
+    <div class="v-title" style="font-size:13px;color:var(--rd-text);margin-bottom:6px">74-A 扩展 · 4 工具 × 4 状态折叠态矩阵（Hybrid 风格）</div>
+    <div class="v-desc" style="font-size:11px;color:var(--rd-text-muted);margin-bottom:8px">
+      完整展示 4 种代表性工具（file_read / file_edit / shell_exec / spawn_agent）在 4 种状态（success / error / running / pending）下的折叠态表现。所有组合共用 Hybrid 风格基底。
+    </div>
+    <div class="matrix-grid">
+      <div></div>
+      <div class="col-head">success ✓</div>
+      <div class="col-head">error ✗</div>
+      <div class="col-head">running ⟳</div>
+      <div class="col-head">pending ⋯</div>
+
+      <!-- file_read -->
+      <div class="row-head">
+        <span class="tool-icon-box file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+        file_read
+      </div>
+      <div class="cell">
+        <div class="tool-card"><div class="tool-card-header">
+          <span class="tool-icon-box file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+          <span class="label">读取</span><span class="param">ToolCallCard.tsx</span>
+          <span class="badge success"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>461 行</span>
+        </div></div>
+      </div>
+      <div class="cell">
+        <div class="tool-card"><div class="tool-card-header">
+          <span class="tool-icon-box file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+          <span class="label">读取</span><span class="param">不存在的文件</span>
+          <span class="badge error"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>ENOENT</span>
+        </div></div>
+      </div>
+      <div class="cell">
+        <div class="tool-card running"><div class="tool-card-header">
+          <span class="tool-icon-box file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+          <span class="label">读取</span><span class="param">大文件...</span>
+          <span class="badge running"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>读取中</span>
+        </div></div>
+      </div>
+      <div class="cell">
+        <div class="tool-card"><div class="tool-card-header">
+          <span class="tool-icon-box file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+          <span class="label">读取</span><span class="param">等待中...</span>
+          <span class="badge pending"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/></svg>排队</span>
+        </div></div>
+      </div>
+
+      <!-- file_edit -->
+      <div class="row-head">
+        <span class="tool-icon-box file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+        file_edit
+      </div>
+      <div class="cell">
+        <div class="tool-card"><div class="tool-card-header">
+          <span class="tool-icon-box file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+          <span class="label">编辑</span><span class="param">+12 -5</span>
+          <span class="badge success"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>已应用</span>
+        </div></div>
+      </div>
+      <div class="cell">
+        <div class="tool-card"><div class="tool-card-header">
+          <span class="tool-icon-box file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+          <span class="label">编辑</span><span class="param">冲突</span>
+          <span class="badge error"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>冲突</span>
+        </div></div>
+      </div>
+      <div class="cell">
+        <div class="tool-card running"><div class="tool-card-header">
+          <span class="tool-icon-box file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+          <span class="label">编辑</span><span class="param">写入中...</span>
+          <span class="badge running"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>写入</span>
+        </div></div>
+      </div>
+      <div class="cell">
+        <div class="tool-card"><div class="tool-card-header">
+          <span class="tool-icon-box file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+          <span class="label">编辑</span><span class="param">待确认</span>
+          <span class="badge pending"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/></svg>待确认</span>
+        </div></div>
+      </div>
+
+      <!-- shell_exec -->
+      <div class="row-head">
+        <span class="tool-icon-box shell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg></span>
+        shell_exec
+      </div>
+      <div class="cell">
+        <div class="tool-card"><div class="tool-card-header">
+          <span class="tool-icon-box shell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg></span>
+          <span class="label">命令</span><span class="param">tsc --noEmit</span>
+          <span class="badge success"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>exit 0</span>
+        </div></div>
+      </div>
+      <div class="cell">
+        <div class="tool-card"><div class="tool-card-header">
+          <span class="tool-icon-box shell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg></span>
+          <span class="label">命令</span><span class="param">gradlew build</span>
+          <span class="badge error"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>exit 1</span>
+        </div></div>
+      </div>
+      <div class="cell">
+        <div class="tool-card running"><div class="tool-card-header">
+          <span class="tool-icon-box shell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg></span>
+          <span class="label">命令</span><span class="param">npm install</span>
+          <span class="badge running"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>12s</span>
+        </div></div>
+      </div>
+      <div class="cell">
+        <div class="tool-card"><div class="tool-card-header">
+          <span class="tool-icon-box shell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg></span>
+          <span class="label">命令</span><span class="param">待授权</span>
+          <span class="badge pending"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/></svg>待授权</span>
+        </div></div>
+      </div>
+
+      <!-- spawn_agent -->
+      <div class="row-head">
+        <span class="tool-icon-box agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4M8 16h.01M16 16h.01"/></svg></span>
+        spawn_agent
+      </div>
+      <div class="cell">
+        <div class="tool-card"><div class="tool-card-header">
+          <span class="tool-icon-box agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4M8 16h.01M16 16h.01"/></svg></span>
+          <span class="label">子Agent</span><span class="param">5/5 完成</span>
+          <span class="badge success"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>5/5</span>
+        </div></div>
+      </div>
+      <div class="cell">
+        <div class="tool-card"><div class="tool-card-header">
+          <span class="tool-icon-box agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4M8 16h.01M16 16h.01"/></svg></span>
+          <span class="label">子Agent</span><span class="param">超时</span>
+          <span class="badge error"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>超时</span>
+        </div></div>
+      </div>
+      <div class="cell">
+        <div class="tool-card running"><div class="tool-card-header">
+          <span class="tool-icon-box agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4M8 16h.01M16 16h.01"/></svg></span>
+          <span class="label">子Agent</span><span class="param">3/5 运行</span>
+          <span class="badge running"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>3/5</span>
+        </div></div>
+      </div>
+      <div class="cell">
+        <div class="tool-card"><div class="tool-card-header">
+          <span class="tool-icon-box agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4M8 16h.01M16 16h.01"/></svg></span>
+          <span class="label">子Agent</span><span class="param">待派发</span>
+          <span class="badge pending"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/></svg>待派发</span>
+        </div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     Section 3：74-B 队列 UI 变体
+     ============================================================ -->
+<div class="section">
+  <div class="section-title">74-B 双队列 UI <span class="tag">3 变体</span></div>
+  <div class="section-desc">
+    follow-up 与排队队列需视觉明确分区。三版变体：侧边栏式（左栏常驻）/浮层式（输入框上方 hover 触发）/内联分区式（输入区上方常驻）。推荐 <strong>内联分区</strong>：与现有 ChatPage 布局契合，零空间浪费，两种队列色条区分（pending=黄，follow-up=主色）。
+  </div>
+
+  <div class="variants-row">
+
+    <!-- 变体 1：侧边栏 -->
+    <div class="variant-card">
+      <div class="v-title">B1 · 侧边栏式</div>
+      <div class="v-desc">左侧栏常驻一栏，显示双队列状态。空间占用大，但始终可见。</div>
+      <div class="v-demo" style="padding:0;overflow:hidden">
+        <div style="display:grid;grid-template-columns:80px 1fr;height:120px">
+          <div style="background:var(--rd-background);border-right:1px solid var(--rd-border);padding:6px">
+            <div style="font-size:9px;color:var(--rd-text-subtle);text-transform:uppercase;margin-bottom:4px">队列</div>
+            <div style="font-size:9px;color:var(--rd-warning);margin-bottom:3px">⏱ 待发送 2</div>
+            <div style="font-size:9px;color:var(--rd-primary)">⎇ 接续 1</div>
+          </div>
+          <div style="background:var(--rd-surface);padding:6px;display:flex;flex-direction:column;justify-content:flex-end">
+            <div style="background:var(--rd-background);border:1px solid var(--rd-border);height:24px;border-radius:4px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 变体 2：浮层 -->
+    <div class="variant-card">
+      <div class="v-title">B2 · 浮层式</div>
+      <div class="v-desc">输入框右下角按钮触发，浮层弹出队列列表。空间省但发现性低。</div>
+      <div class="v-demo" style="padding:0">
+        <div class="queue-float-demo">
+          <div class="float-popup">
+            <div class="ftitle">⎇ 接续队列 · 1 项</div>
+            <div class="fitem">1. 改完后跑一遍 tsc 验证</div>
+            <div class="fitem" style="border-bottom:none">2. 检查 74-I 清单</div>
+          </div>
+          <div class="input-mock"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 变体 3：内联分区（推荐） -->
+    <div class="variant-card recommended">
+      <div class="v-title">B3 · 内联分区 <span class="star">★ 推荐</span></div>
+      <div class="v-desc">输入区上方常驻分区，pending 左侧黄色色条 + follow-up 左侧主色色条。空状态时显示引导文案。主视图采用此方案。</div>
+      <div class="v-demo" style="padding:6px">
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <div style="flex:1;background:var(--rd-background);border:1px solid var(--rd-border);border-left:2px solid var(--rd-warning);border-radius:4px;padding:4px 6px">
+            <div style="font-size:9px;color:var(--rd-warning);font-weight:500">⏱ 待发送 · 2</div>
+            <div style="font-size:9px;color:var(--rd-text-muted);margin-top:2px">1. 顺便把 ExecutionProcess...</div>
+          </div>
+          <div style="flex:1;background:var(--rd-background);border:1px solid var(--rd-border);border-left:2px solid var(--rd-primary);border-radius:4px;padding:4px 6px">
+            <div style="font-size:9px;color:var(--rd-primary);font-weight:500">⎇ 接续 · 1</div>
+            <div style="font-size:9px;color:var(--rd-text-muted);margin-top:2px">1. 改完后跑一遍 tsc 验证</div>
+          </div>
+        </div>
+        <div style="background:var(--rd-background);border:1px solid var(--rd-border);height:22px;border-radius:4px"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 74-B 扩展：4 种队列状态变体（采用内联分区） -->
+  <div style="margin-top:24px">
+    <div class="v-title" style="font-size:13px;color:var(--rd-text);margin-bottom:6px">74-B 扩展 · 4 种队列状态变体（内联分区风格）</div>
+    <div class="v-desc" style="font-size:11px;color:var(--rd-text-muted);margin-bottom:8px">
+      完整展示双队列在 4 种状态下的表现：① 空队列（引导文案）② 单条（默认）③ 多条溢出（max-h 滚动）④ 运行中禁用（视觉降级 + 提示）。
+    </div>
+    <div class="queue-state-row">
+
+      <!-- 状态 1：空队列 -->
+      <div class="queue-state-card">
+        <div class="label">状态 1 · 空队列（引导文案）</div>
+        <div style="display:flex;gap:6px">
+          <div style="flex:1;background:var(--rd-surface);border:1px solid var(--rd-border);border-left:2px solid var(--rd-warning);border-radius:4px;padding:6px">
+            <div style="font-size:9px;color:var(--rd-warning);font-weight:500;margin-bottom:2px">⏱ 待发送 · 0</div>
+            <div style="font-size:9px;color:var(--rd-text-subtle);font-style:italic;text-align:center;padding:4px 0">输入即加入</div>
+          </div>
+          <div style="flex:1;background:var(--rd-surface);border:1px solid var(--rd-border);border-left:2px solid var(--rd-primary);border-radius:4px;padding:6px">
+            <div style="font-size:9px;color:var(--rd-primary);font-weight:500;margin-bottom:2px">⎇ 接续 · 0</div>
+            <div style="font-size:9px;color:var(--rd-text-subtle);font-style:italic;text-align:center;padding:4px 0">Agent 工作时输入即可加入</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 状态 2：单条 -->
+      <div class="queue-state-card">
+        <div class="label">状态 2 · 单条（默认）</div>
+        <div style="display:flex;gap:6px">
+          <div style="flex:1;background:var(--rd-surface);border:1px solid var(--rd-border);border-left:2px solid var(--rd-warning);border-radius:4px;padding:4px 6px">
+            <div style="font-size:9px;color:var(--rd-warning);font-weight:500">⏱ 待发送 · 1</div>
+            <div style="font-size:9px;color:var(--rd-text);padding:2px 0">1. 跑一遍 tsc 验证</div>
+          </div>
+          <div style="flex:1;background:var(--rd-surface);border:1px solid var(--rd-border);border-left:2px solid var(--rd-primary);border-radius:4px;padding:4px 6px">
+            <div style="font-size:9px;color:var(--rd-primary);font-weight:500">⎇ 接续 · 1</div>
+            <div style="font-size:9px;color:var(--rd-text);padding:2px 0">1. 检查 74-I 清单</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 状态 3：多条溢出 -->
+      <div class="queue-state-card">
+        <div class="label">状态 3 · 多条溢出（max-h 滚动）</div>
+        <div style="display:flex;gap:6px">
+          <div style="flex:1;background:var(--rd-surface);border:1px solid var(--rd-border);border-left:2px solid var(--rd-warning);border-radius:4px;padding:4px 6px;max-height:80px;overflow-y:auto">
+            <div style="font-size:9px;color:var(--rd-warning);font-weight:500;margin-bottom:2px">⏱ 待发送 · 4</div>
+            <div style="font-size:9px;color:var(--rd-text);padding:1px 0">1. 任务一</div>
+            <div style="font-size:9px;color:var(--rd-text);padding:1px 0">2. 任务二</div>
+            <div style="font-size:9px;color:var(--rd-text);padding:1px 0">3. 任务三</div>
+            <div style="font-size:9px;color:var(--rd-text);padding:1px 0">4. 任务四</div>
+          </div>
+          <div style="flex:1;background:var(--rd-surface);border:1px solid var(--rd-border);border-left:2px solid var(--rd-primary);border-radius:4px;padding:4px 6px">
+            <div style="font-size:9px;color:var(--rd-primary);font-weight:500">⎇ 接续 · 2</div>
+            <div style="font-size:9px;color:var(--rd-text);padding:1px 0">1. 接续任务一</div>
+            <div style="font-size:9px;color:var(--rd-text);padding:1px 0">2. 接续任务二</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 状态 4：运行中禁用 -->
+      <div class="queue-state-card">
+        <div class="label">状态 4 · 运行中禁用（视觉降级）</div>
+        <div style="display:flex;gap:6px;opacity:0.55">
+          <div style="flex:1;background:var(--rd-surface);border:1px solid var(--rd-border);border-left:2px solid var(--rd-text-subtle);border-radius:4px;padding:4px 6px">
+            <div style="font-size:9px;color:var(--rd-text-subtle);font-weight:500">⏱ 待发送 · 2（暂停）</div>
+            <div style="font-size:9px;color:var(--rd-text-muted);padding:1px 0">1. 等待 Agent 完成...</div>
+            <div style="font-size:9px;color:var(--rd-text-muted);padding:1px 0">2. 等待 Agent 完成...</div>
+          </div>
+          <div style="flex:1;background:var(--rd-surface);border:1px solid var(--rd-border);border-left:2px solid var(--rd-text-subtle);border-radius:4px;padding:4px 6px">
+            <div style="font-size:9px;color:var(--rd-text-subtle);font-weight:500">⎇ 接续 · 1（暂停）</div>
+            <div style="font-size:9px;color:var(--rd-text-muted);padding:1px 0">1. 等待 Agent 完成...</div>
+          </div>
+        </div>
+        <div style="font-size:9px;color:var(--rd-text-subtle);margin-top:4px;text-align:center">⏸ Agent 运行中，队列暂停消费</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     Section 4：74-D 分支切换器变体
+     ============================================================ -->
+<div class="section">
+  <div class="section-title">74-D 分支切换器 <span class="tag">3 变体</span></div>
+  <div class="section-desc">
+    分支切换器需轻量、低视觉占用。三版变体：箭头式（ChatGPT 风格 &lt; 2/3 &gt;）/Tab 式（多个分支平铺）/面包屑式（main &gt; fork@msg-12 &gt; branch-2）。推荐 <strong>箭头式</strong>：占用最小，发现性最强，符合用户已有 ChatGPT 习惯。
+  </div>
+
+  <div class="variants-row">
+
+    <!-- 变体 1：箭头式（推荐） -->
+    <div class="variant-card recommended">
+      <div class="v-title">D1 · 箭头式 <span class="star">★ 推荐</span></div>
+      <div class="v-desc">ChatGPT 风格 &lt; 2/3 &gt;，fork 点上方内联展示。占用最小，发现性强。主视图采用此方案。</div>
+      <div class="v-demo" style="padding:14px 10px">
+        <div class="branch-switcher" style="margin:0">
+          <span class="branch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1 .4-1 1v2"/></svg></span>
+          <span class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></span>
+          <span class="pos">2<span class="total">/3</span></span>
+          <span class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 变体 2：Tab 式 -->
+    <div class="variant-card">
+      <div class="v-title">D2 · Tab 式</div>
+      <div class="v-desc">多个分支平铺为 Tab，分支多时拥挤。适合分支数 ≤3 时。</div>
+      <div class="v-demo" style="padding:14px 10px">
+        <div class="branch-tab-style">
+          <span class="tab">main</span>
+          <span class="tab active">branch-2</span>
+          <span class="tab">branch-3</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 变体 3：面包屑式 -->
+    <div class="variant-card">
+      <div class="v-title">D3 · 面包屑式</div>
+      <div class="v-desc">展示分支血缘链路，但占用空间大，分支深时溢出。</div>
+      <div class="v-demo" style="padding:14px 10px">
+        <div class="branch-breadcrumb">
+          <span class="crumb">main</span>
+          <span class="sep">›</span>
+          <span class="crumb">fork@msg-12</span>
+          <span class="sep">›</span>
+          <span class="crumb active">branch-2</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 74-D 扩展：分支树视图变体（左侧栏展开） -->
+  <div style="margin-top:24px">
+    <div class="v-title" style="font-size:13px;color:var(--rd-text);margin-bottom:6px">74-D 扩展 · 分支树视图变体（左侧栏展开分支血缘）</div>
+    <div class="v-desc" style="font-size:11px;color:var(--rd-text-muted);margin-bottom:8px">
+      在 3 种切换器风格之外，补充分支树视图变体：左侧栏可展开为分支血缘树，显示 main + 各 fork 分支的派生关系。当前激活分支高亮，点击节点跳转。
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
+
+      <!-- 树视图 A：紧凑列表式 -->
+      <div class="variant-card">
+        <div class="v-title">D4 · 紧凑列表式</div>
+        <div class="v-desc">左侧栏展开，分支按派生顺序列表展示，缩进表示血缘层级。</div>
+        <div class="branch-tree-demo">
+          <div class="node"><span class="dot"></span>main <span class="branch-tag">← 当前</span></div>
+          <div class="node" style="margin-left:12px"><span class="pipe">├─</span><span class="dot"></span>fork@msg-12</div>
+          <div class="node active" style="margin-left:24px"><span class="pipe">├─</span><span class="dot"></span>branch-2 <span class="branch-tag">← 查看</span></div>
+          <div class="node" style="margin-left:24px"><span class="pipe">└─</span><span class="dot"></span>branch-3</div>
+          <div class="node" style="margin-left:12px"><span class="pipe">└─</span><span class="dot"></span>fork@msg-28</div>
+        </div>
+      </div>
+
+      <!-- 树视图 B：可视化树 -->
+      <div class="variant-card">
+        <div class="v-title">D5 · 可视化树</div>
+        <div class="v-desc">SVG 风格分支血缘图，节点 + 连线，类似 Git Graph。</div>
+        <div class="branch-tree-demo" style="font-family:var(--font-sans)">
+          <svg viewBox="0 0 280 130" style="width:100%;height:130px">
+            <!-- 连线 -->
+            <line x1="20" y1="20" x2="20" y2="110" stroke="#1c1f25" stroke-width="1.5"/>
+            <line x1="20" y1="40" x2="60" y2="40" stroke="#1c1f25" stroke-width="1.5"/>
+            <line x1="60" y1="40" x2="60" y2="90" stroke="#1c1f25" stroke-width="1.5"/>
+            <line x1="60" y1="60" x2="100" y2="60" stroke="#8b8dff" stroke-width="1.5"/>
+            <line x1="60" y1="80" x2="100" y2="80" stroke="#1c1f25" stroke-width="1.5"/>
+            <line x1="20" y1="100" x2="60" y2="100" stroke="#1c1f25" stroke-width="1.5"/>
+            <!-- 节点 -->
+            <circle cx="20" cy="20" r="5" fill="#6b7280"/>
+            <text x="32" y="24" fill="#f4f6fa" font-size="10">main</text>
+            <circle cx="20" cy="40" r="3" fill="#6b7280"/>
+            <circle cx="60" cy="40" r="5" fill="#6b7280"/>
+            <text x="72" y="44" fill="#8b94a3" font-size="10">fork@msg-12</text>
+            <circle cx="60" cy="60" r="3" fill="#6b7280"/>
+            <circle cx="100" cy="60" r="5" fill="#8b8dff"/>
+            <text x="112" y="64" fill="#8b8dff" font-size="10" font-weight="500">branch-2 ★</text>
+            <circle cx="60" cy="80" r="3" fill="#6b7280"/>
+            <circle cx="100" cy="80" r="5" fill="#6b7280"/>
+            <text x="112" y="84" fill="#8b94a3" font-size="10">branch-3</text>
+            <circle cx="60" cy="100" r="5" fill="#6b7280"/>
+            <text x="72" y="104" fill="#8b94a3" font-size="10">fork@msg-28</text>
+          </svg>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     Section 5：74-F 产物面板（单方案，无变体）
+     ============================================================ -->
+<div class="section">
+  <div class="section-title">74-F 产物面板 <span class="tag">单方案</span></div>
+  <div class="section-desc">
+    file_write/file_edit 产物在右侧固定面板实时预览，按版本 tab 切换。支持 copy / download / open-in-editor。同一文件多次编辑折叠为版本栈，最新版本置顶。设计语言：低饱和度卡片 + 文件图标着色（与 74-A ToolIcon 复用色 token）+ 等宽字体预览 + 渐隐遮罩提示可滚。主视图右侧即为该方案。
+  </div>
+
+  <div class="variant-card" style="max-width:340px">
+    <div class="v-title">F1 · 右侧固定面板</div>
+    <div class="v-desc">340px 宽，tabs 切换「产物 / 检查点 / 上下文」。每个产物卡片含：文件名 + 版本号 + 复制/在编辑器打开 + 代码预览（带语法着色 + 渐隐遮罩）。</div>
+    <div class="v-demo" style="padding:8px">
+      <div class="artifact-card" style="margin-bottom:0">
+        <div class="head">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+          <span class="name">ToolCallCard.tsx</span>
+          <span class="ver">v3</span>
+        </div>
+        <div class="preview" style="max-height:90px">
+<span class="kw">import</span> { StatusBadge } <span class="kw">from</span> <span class="str">'@/ui/status-badge'</span><br>
+<span class="kw">import</span> { ToolIcon } <span class="kw">from</span> <span class="str">'@/ui/tool-icon'</span><br>
+<span class="kw">export function</span> ToolCallCard({ tool }) {<br>
+&nbsp;&nbsp;<span class="kw">return</span> (&lt;FoldableSection&gt;...<br>
+          <div class="fade"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 74-F 扩展：4 种面板状态 -->
+  <div style="margin-top:24px">
+    <div class="v-title" style="font-size:13px;color:var(--rd-text);margin-bottom:6px">74-F 扩展 · 4 种面板状态变体</div>
+    <div class="v-desc" style="font-size:11px;color:var(--rd-text-muted);margin-bottom:8px">
+      完整展示产物面板在 4 种状态下的表现：① 空状态（无产物）② 单文件多版本（版本栈）③ 多文件列表（横向滚动 tab）④ 不同类型预览（代码 / HTML / Markdown）。
+    </div>
+    <div class="panel-state-grid">
+
+      <!-- 状态 1：空状态 -->
+      <div class="panel-state-card">
+        <div class="label">状态 1 · 空状态（无产物）</div>
+        <div class="empty-state">
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
+          <div>Agent 尚未生成产物</div>
+          <div style="font-size:10px;margin-top:4px;color:var(--rd-text-subtle)">file_write / file_edit 后将自动出现在此</div>
+        </div>
+      </div>
+
+      <!-- 状态 2：单文件多版本 -->
+      <div class="panel-state-card">
+        <div class="label">状态 2 · 单文件多版本（版本栈）</div>
+        <div class="artifact-card" style="margin-bottom:6px">
+          <div class="head" style="padding:4px 8px">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
+            <span class="name" style="font-size:10px">ToolCallCard.tsx</span>
+            <span class="ver">v3 ★</span>
+          </div>
+        </div>
+        <div class="artifact-card" style="margin-bottom:6px;opacity:0.6">
+          <div class="head" style="padding:4px 8px">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
+            <span class="name" style="font-size:10px">ToolCallCard.tsx</span>
+            <span class="ver">v2</span>
+          </div>
+        </div>
+        <div class="artifact-card" style="margin-bottom:0;opacity:0.4">
+          <div class="head" style="padding:4px 8px">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
+            <span class="name" style="font-size:10px">ToolCallCard.tsx</span>
+            <span class="ver">v1</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 状态 3：多文件列表 -->
+      <div class="panel-state-card">
+        <div class="label">状态 3 · 多文件列表</div>
+        <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap">
+          <span style="font-size:9px;padding:2px 6px;background:var(--rd-primary);color:var(--rd-primary-foreground);border-radius:3px">ToolCallCard.tsx</span>
+          <span style="font-size:9px;padding:2px 6px;background:var(--rd-surface-highlight);color:var(--rd-text-muted);border-radius:3px">status-badge.tsx</span>
+          <span style="font-size:9px;padding:2px 6px;background:var(--rd-surface-highlight);color:var(--rd-text-muted);border-radius:3px">foldable-section.tsx</span>
+          <span style="font-size:9px;padding:2px 6px;background:var(--rd-surface-highlight);color:var(--rd-text-muted);border-radius:3px">+2</span>
+        </div>
+        <div class="artifact-card" style="margin-bottom:0">
+          <div class="head" style="padding:4px 8px">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
+            <span class="name" style="font-size:10px">ToolCallCard.tsx</span>
+            <span class="ver">v3</span>
+          </div>
+          <div class="preview" style="padding:4px 8px;max-height:60px;font-size:9px">
+<span class="kw">import</span> { StatusBadge } <span class="kw">from</span> <span class="str">'@/ui/...'</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 状态 4：不同类型预览 -->
+      <div class="panel-state-card">
+        <div class="label">状态 4 · 不同类型预览（HTML/Markdown）</div>
+        <div style="display:flex;gap:4px;margin-bottom:6px">
+          <span style="font-size:9px;padding:2px 6px;background:var(--rd-primary);color:var(--rd-primary-foreground);border-radius:3px">代码</span>
+          <span style="font-size:9px;padding:2px 6px;background:var(--rd-surface-highlight);color:var(--rd-text-muted);border-radius:3px">HTML</span>
+          <span style="font-size:9px;padding:2px 6px;background:var(--rd-surface-highlight);color:var(--rd-text-muted);border-radius:3px">Markdown</span>
+        </div>
+        <!-- HTML 预览样式示例 -->
+        <div style="background:#fff;color:#000;padding:6px 8px;border-radius:3px;font-size:9px;line-height:1.5">
+          <strong style="color:#4f46e5">Phase 74 原型</strong>
+          <div style="color:#374151;margin-top:2px">这是一个 HTML 产物预览示例</div>
+          <button style="font-size:8px;padding:1px 4px;background:#4f46e5;color:#fff;border:none;border-radius:2px;margin-top:2px">点击</button>
+        </div>
+        <div style="font-size:9px;color:var(--rd-text-subtle);margin-top:6px;text-align:center">⬇ 切换 Markdown 预览将渲染为格式化文本</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     Section 6：74-H 跨对话搜索变体
+     ============================================================ -->
+<div class="section">
+  <div class="section-title">74-H 跨对话搜索 <span class="tag">3 变体</span></div>
+  <div class="section-desc">
+    跨对话搜索入口设计。三版变体：顶部搜索栏（常驻 header）/命令面板 ⌘K（弹窗，支持动作）/侧边栏折叠式（左侧栏顶部触发器 + 结果侧滑）。推荐 <strong>侧边栏触发器 + ⌘K 命令面板</strong>：低占用 + 高发现性 + 符合开发者习惯。
+  </div>
+
+  <div class="variants-row">
+
+    <!-- 变体 1：顶部搜索栏 -->
+    <div class="variant-card">
+      <div class="v-title">H1 · 顶部搜索栏</div>
+      <div class="v-desc">header 常驻搜索框。发现性最强但占用顶部空间。</div>
+      <div class="v-demo">
+        <div class="search-topbar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input placeholder="搜索对话内容..." value="ToolCallCard" readonly>
+          <span class="kbd">↵</span>
+        </div>
+        <div style="font-size:10px;color:var(--rd-text-subtle);margin-top:6px">3 个会话 · 12 条结果</div>
+      </div>
+    </div>
+
+    <!-- 变体 2：命令面板 ⌘K（推荐） -->
+    <div class="variant-card recommended">
+      <div class="v-title">H2 · 命令面板 ⌘K <span class="star">★ 推荐</span></div>
+      <div class="v-desc">⌘K 触发命令面板，搜索 + 跳转 + 动作三合一。开发者习惯，零常驻空间。主视图左侧栏顶部触发器 + ⌘K 双入口。</div>
+      <div class="v-demo">
+        <div class="search-cmdk">
+          <div class="input">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <span>ToolCallCard<span class="cursor">|</span></span>
+          </div>
+          <div class="result active">
+            <span>📄 ToolCallCard.tsx · 461 行</span>
+            <span class="src">Phase 74 前端交互优化</span>
+          </div>
+          <div class="result">
+            <span>💬 "把 ToolCallCard 升级..."</span>
+            <span class="src">死代码清理核验</span>
+          </div>
+          <div class="result">
+            <span>🔍 "ToolCallCard 折叠态..."</span>
+            <span class="src">SettingsPage 拆分</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 变体 3：侧边栏折叠 -->
+    <div class="variant-card">
+      <div class="v-title">H3 · 侧边栏折叠</div>
+      <div class="v-desc">左侧栏顶部触发器，结果在侧滑面板展开。与 74-D 项目列表共用空间。</div>
+      <div class="v-demo">
+        <div style="display:grid;grid-template-columns:80px 1fr;gap:6px;height:100px">
+          <div style="background:var(--rd-background);border:1px solid var(--rd-border);border-radius:4px;padding:4px">
+            <div style="font-size:9px;color:var(--rd-primary);display:flex;align-items:center;gap:3px">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:9px;height:9px"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+              搜索
+            </div>
+          </div>
+          <div style="background:var(--rd-surface);border:1px solid var(--rd-border);border-radius:4px;padding:6px;font-size:10px;color:var(--rd-text-muted)">
+            <div style="color:var(--rd-text);font-weight:500;margin-bottom:3px">结果 · 3 个会话</div>
+            <div style="color:var(--rd-primary);font-size:9px">📄 ToolCallCard.tsx</div>
+            <div style="color:var(--rd-text-subtle);font-size:9px">Phase 74 前端...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 74-H 扩展：3 种搜索结果展示变体 -->
+  <div style="margin-top:24px">
+    <div class="v-title" style="font-size:13px;color:var(--rd-text);margin-bottom:6px">74-H 扩展 · 3 种搜索结果展示变体</div>
+    <div class="v-desc" style="font-size:11px;color:var(--rd-text-muted);margin-bottom:8px">
+      在 3 种入口风格之外，补充搜索结果展示的 3 种变体：① 高亮匹配（关键词标红）② 分组结果（按会话/文件/消息分组）③ 空结果（引导建议）。
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+
+      <!-- 变体 1：高亮匹配 -->
+      <div>
+        <div style="font-size:11px;color:var(--rd-text);font-weight:500;margin-bottom:6px">H4 · 高亮匹配</div>
+        <div class="search-result-variant">
+          <div class="result-item active">
+            <div class="title">📄 <mark>ToolCallCard</mark>.tsx · 461 行</div>
+            <div class="snippet">...重构 <mark>ToolCallCard</mark>，加入 ANSI 解析...</div>
+          </div>
+          <div class="result-item">
+            <div class="title">💬 "把 <mark>ToolCallCard</mark> 升级一下"</div>
+            <div class="snippet">...工具调用从"一行小字"升级为...</div>
+          </div>
+          <div class="result-item">
+            <div class="title">🔍 <mark>ToolCallCard</mark> 折叠态信息密度</div>
+            <div class="snippet">...折叠态仅显示「执行了 3 条命令」...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 变体 2：分组结果 -->
+      <div>
+        <div style="font-size:11px;color:var(--rd-text);font-weight:500;margin-bottom:6px">H5 · 分组结果</div>
+        <div class="search-result-variant">
+          <div class="group-label">会话 · 2</div>
+          <div class="result-item">
+            <div class="title">Phase 74 前端交互优化</div>
+            <div class="snippet">3 个匹配 · 3 分钟前</div>
+          </div>
+          <div class="result-item">
+            <div class="title">死代码清理核验</div>
+            <div class="snippet">1 个匹配 · 1 小时前</div>
+          </div>
+          <div class="group-label">文件 · 3</div>
+          <div class="result-item">
+            <div class="title">📄 ToolCallCard.tsx</div>
+            <div class="snippet">components/ · 461 行</div>
+          </div>
+          <div class="result-item">
+            <div class="title">📄 status-badge.tsx</div>
+            <div class="snippet">components/ui/ · 89 行</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 变体 3：空结果 -->
+      <div>
+        <div style="font-size:11px;color:var(--rd-text);font-weight:500;margin-bottom:6px">H6 · 空结果（引导建议）</div>
+        <div class="search-result-variant">
+          <div class="empty-state" style="padding:14px 4px">
+            <div class="ic" style="margin-bottom:4px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></div>
+            <div style="font-size:11px">未找到「xyzabc」</div>
+            <div style="font-size:9px;margin-top:6px;color:var(--rd-text-subtle);line-height:1.6">
+              建议：<br>
+              · 检查拼写<br>
+              · 尝试更短的关键词<br>
+              · 使用 <code style="font-family:var(--font-mono);color:var(--rd-primary)">file:</code> 前缀搜文件<br>
+              · 使用 <code style="font-family:var(--font-mono);color:var(--rd-primary)">from:</code> 限定会话
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     Section 7：决策汇总
+     ============================================================ -->
+<div class="section" style="border-bottom:none">
+  <div class="section-title">决策汇总 <span class="tag">待用户确认</span></div>
+  <div class="section-desc">
+    下方为推荐组合。用户可整体采纳，也可逐项混搭（如「74-A Hybrid + 74-B 侧边栏式 + 74-D Tab 式 + 74-H 顶部搜索栏」）。
+  </div>
+
+  <div style="background:var(--rd-surface);border:1px solid var(--rd-primary);border-radius:8px;padding:16px;font-size:12px;line-height:1.8">
+    <div><strong style="color:var(--rd-primary)">74-A 工具卡片</strong> · A3 Hybrid（折叠态 Card + 展开态 Terminal）<span class="annot">主视图采用</span></div>
+    <div><strong style="color:var(--rd-primary)">74-B 双队列 UI</strong> · B3 内联分区（pending 黄色色条 + follow-up 主色色条）<span class="annot">主视图采用</span></div>
+    <div><strong style="color:var(--rd-primary)">74-D 分支切换器</strong> · D1 箭头式（&lt; 2/3 &gt;，fork 点内联）<span class="annot">主视图采用</span></div>
+    <div><strong style="color:var(--rd-primary)">74-F 产物面板</strong> · F1 右侧固定面板（340px，3 tab，版本栈）<span class="annot">主视图采用</span></div>
+    <div><strong style="color:var(--rd-primary)">74-H 跨对话搜索</strong> · H2 ⌘K 命令面板 + 侧边栏触发器双入口<span class="annot">主视图采用</span></div>
+    <div><strong style="color:var(--rd-primary)">74-I 无障碍审计</strong> · 收尾阶段统一执行（aria-label / 键盘导航 / focus-visible）</div>
+  </div>
+
+  <div style="margin-top:16px;padding:12px;background:var(--rd-surface-highlight);border-radius:6px;font-size:11px;color:var(--rd-text-muted);line-height:1.7">
+    <strong style="color:var(--rd-text)">视觉 DNA：</strong>暗色基底（#0b0d10）· 单 accent 色（#8b8dff）· 状态色编码（success/error/running/pending）· 工具色编码（file 蓝/shell 绿/agent 紫/web 青/mcp 橙）· lucide 线性图标（12-14px）· 等宽字体用于代码与参数 · 反 AI slop（无紫渐变/无 emoji 图标/无圆角卡片+左 border accent）
+  </div>
+</div>
+
+</body>
+</html>

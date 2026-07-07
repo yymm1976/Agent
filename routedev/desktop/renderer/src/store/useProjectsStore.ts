@@ -13,6 +13,14 @@ export interface Conversation {
   messages: ChatMessage[];
   createdAt: number;
   updatedAt: number;
+  /** Phase 74-D：派生关系——记录本对话从哪个源对话的哪条消息 fork 出来
+   *  用于分支可视化（BranchSwitcher 在 fork 点显示 < 2/3 > 切换器）
+   *  undefined 表示这是原始对话（非 fork 产物） */
+  forkedFrom?: {
+    projectId: string;
+    convId: string;
+    upToMessageId: string;
+  };
 }
 
 export interface Project {
@@ -313,6 +321,12 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
       messages: forkedMessages,
       createdAt: now,
       updatedAt: now,
+      // Phase 74-D：记录派生关系，供 BranchSwitcher 在 fork 点显示切换器
+      forkedFrom: {
+        projectId: sourceProjectId,
+        convId: sourceConvId,
+        upToMessageId,
+      },
     };
     const projects = get().projects.map((p) =>
       p.id === destProjectId

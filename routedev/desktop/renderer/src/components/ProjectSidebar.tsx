@@ -7,10 +7,11 @@ import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Settings, Plus, ChevronRight, ChevronDown, Folder, FolderOpen, MessageSquare,
-  Trash2, Edit3, Sparkles, PanelLeftClose, Archive, FolderSearch,
+  Trash2, Edit3, Sparkles, PanelLeftClose, Archive, FolderSearch, Search,
 } from 'lucide-react';
 import { useProjectsStore } from '../store/useProjectsStore.js';
 import { Button } from './ui/button.js';
+import { SearchCommandPalette } from './SearchCommandPalette.js';
 
 interface ProjectSidebarProps {
   onOpenSettings: () => void;
@@ -52,6 +53,20 @@ export function ProjectSidebar({ onOpenSettings, onOpenNewTask, onNavigateToChat
   const [rename, setRename] = useState<RenameState | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
+  // Phase 74-H2：搜索命令面板开关状态
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  // Phase 74-H2：全局 ⌘K/Ctrl+K 快捷键触发搜索命令面板
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // 拖拽状态
   const [dragType, setDragType] = useState<'project' | 'conversation' | null>(null);
@@ -231,6 +246,22 @@ export function ProjectSidebar({ onOpenSettings, onOpenNewTask, onNavigateToChat
           className="flex h-9 w-9 items-center justify-center rounded-lg text-rd-textMuted transition hover:bg-rd-surfaceHover hover:text-rd-primary"
         >
           <PanelLeftClose size={16} />
+        </button>
+      </div>
+
+      {/* Phase 74-H2：搜索触发器（侧边栏双入口之一，另一个是 ⌘K 快捷键） */}
+      <div className="shrink-0 px-3 pb-2">
+        <button
+          type="button"
+          onClick={() => setSearchOpen(true)}
+          title="搜索对话（⌘K）"
+          className="flex w-full items-center gap-2 rounded-md border border-rd-border bg-rd-background px-2.5 py-1.5 text-xs text-rd-textSubtle transition hover:bg-rd-surfaceHover hover:border-rd-borderHover"
+        >
+          <Search size={13} />
+          <span className="flex-1 text-left">搜索对话...</span>
+          <kbd className="rounded border border-rd-border bg-rd-surface px-1 py-0.5 text-[10px] text-rd-textSubtle">
+            ⌘K
+          </kbd>
         </button>
       </div>
 
@@ -462,6 +493,16 @@ export function ProjectSidebar({ onOpenSettings, onOpenNewTask, onNavigateToChat
         </div>,
         document.body,
       )}
+
+      {/* Phase 74-H2：搜索命令面板（⌘K 触发，双入口之一） */}
+      <SearchCommandPalette
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onNavigate={(projectId, convId) => {
+          selectConversation(projectId, convId);
+          onNavigateToChat();
+        }}
+      />
     </div>
   );
 }

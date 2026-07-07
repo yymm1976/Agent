@@ -2,17 +2,22 @@
 // 消息列表：按 taskId 分组渲染 TaskBlock + 独立消息 MessageBubble
 // 封装消息回调（复制/删除/重试/分叉）+ ref 管理 + fallback 复制
 // Phase 74-C：从 ChatPage.tsx 抽离，保持渲染结果完全一致
+// Phase 74-D：在 fork 点（有分支派生的消息）上方内联渲染 BranchSwitcher
 
 import { useRef, useCallback, useMemo } from 'react';
 import type { ChatMessage } from '../../store/useRouteDevStore.js';
+import type { Conversation } from '../../store/useProjectsStore.js';
 import type { OutputStyle } from '../ToolCallCard.js';
 import { TaskBlock } from './TaskBlock.js';
 import { MessageBubble } from './MessageBubble.js';
+import { BranchSwitcher } from './BranchSwitcher.js';
 
 export function MessageList({
   messages,
   isProcessing,
   outputStyle,
+  conversations,
+  onSwitchBranch,
   deleteMessage,
   retryMessage,
   currentProjectId,
@@ -22,6 +27,10 @@ export function MessageList({
   messages: ChatMessage[];
   isProcessing: boolean;
   outputStyle?: OutputStyle;
+  /** Phase 74-D：同项目所有对话（用于查询 fork 点 + 构建分支组） */
+  conversations: Conversation[];
+  /** Phase 74-D：切换到目标分支对话 */
+  onSwitchBranch: (targetConvId: string) => void;
   deleteMessage: (messageId: string) => void;
   retryMessage: (messageId: string) => void;
   currentProjectId: string | null;
@@ -110,6 +119,41 @@ export function MessageList({
     return groups;
   }, [messages]);
 
+  // Phase 74-D：fork 点分支组构建
+  // 对给定消息 ID，返回从该消息 fork 出去的所有分支（含当前对话自身）
+  // 仅当当前对话是源对话（非 fork 产物）且该消息有 fork 产物时返回分支组
+  const getBranchGroup = useCallback((msgId: string): {
+    branches: Conversation[];
+    currentBranch: number;
+    branchTitles: string[];
+  } | null => {
+    if (!currentConversationId) return null;
+    const currentConv = conversations.find((c) => c.id === currentConversationId);
+    if (!currentConv) return null;
+    // 当前对话是 fork 产物时不显示切换器（fork 产物中消息 ID 已重新生成，无法定位 fork 点）
+    if (currentConv.forkedFrom) return null;
+    // 找到所有从当前对话的这条消息 fork 出去的对话
+    const forkedConvs = conversations.filter(
+      (c) => c.forkedFrom?.convId === currentConversationId && c.forkedFrom?.upToMessageId === msgId,
+    );
+    if (forkedConvs.length === 0) return null;
+    // 分支组 = [当前对话（源）] + [fork 产物们]，按 createdAt 排序
+    const branches = [currentConv, ...forkedConvs].sort((a, b) => a.createdAt - b.createdAt);
+    const currentBranch = branches.findIndex((c) => c.id === currentConversationId);
+    const branchTitles = branches.map((c) => c.title);
+    return { branches, currentBranch, branchTitles };
+  }, [conversations, currentConversationId]);
+
+  // Phase 74-D：分支切换——根据方向找到目标分支对话
+  const handleSwitchBranch = useCallback((direction: 'prev' | 'next', msgId: string) => {
+    const group = getBranchGroup(msgId);
+    if (!group) return;
+    const { branches, currentBranch } = group;
+    const targetIdx = direction === 'prev' ? currentBranch - 1 : currentBranch + 1;
+    if (targetIdx < 0 || targetIdx >= branches.length) return;
+    onSwitchBranch(branches[targetIdx].id);
+  }, [getBranchGroup, onSwitchBranch]);
+
   return (
     <>
       {messageGroups.map((group) => {
@@ -130,19 +174,34 @@ export function MessageList({
           );
         }
         // 无 taskId 的独立消息：保持原有渲染
-        return group.msgs.map((msg) => (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            messageRef={setMessageRef(msg.id)}
-            outputStyle={outputStyle}
-            disabled={isProcessing}
-            onCopy={() => handleCopy(msg)}
-            onDelete={() => handleMsgDelete(msg)}
-            onRetry={() => handleRetry(msg)}
-            onFork={() => handleFork(msg)}
-          />
-        ));
+        return group.msgs.map((msg) => {
+          // Phase 74-D：检查该消息是否是 fork 点（有分支派生）
+          const branchGroup = getBranchGroup(msg.id);
+          return (
+          <div key={msg.id}>
+            {branchGroup && branchGroup.branches.length > 1 && (
+              <div className="my-1 flex justify-center">
+                <BranchSwitcher
+                  branches={branchGroup.branches.length}
+                  currentBranch={branchGroup.currentBranch}
+                  onSwitch={(dir) => handleSwitchBranch(dir, msg.id)}
+                  branchTitles={branchGroup.branchTitles}
+                />
+              </div>
+            )}
+            <MessageBubble
+              message={msg}
+              messageRef={setMessageRef(msg.id)}
+              outputStyle={outputStyle}
+              disabled={isProcessing}
+              onCopy={() => handleCopy(msg)}
+              onDelete={() => handleMsgDelete(msg)}
+              onRetry={() => handleRetry(msg)}
+              onFork={() => handleFork(msg)}
+            />
+          </div>
+          );
+        });
       })}
     </>
   );

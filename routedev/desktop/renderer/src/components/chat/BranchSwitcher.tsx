@@ -1,7 +1,8 @@
 // desktop/renderer/src/components/chat/BranchSwitcher.tsx
-// 分支切换器占位组件
-// Phase 74-C：为 74-D（对话分支完整实现）预留接口
-// 当前仅渲染 < > 箭头 + "分支 X/Y" 文本，74-D 阶段替换为完整实现
+// Phase 74-D：分支切换器（D1 箭头式）
+// ChatGPT 风格 < 2/3 >，fork 点上方内联展示
+// 保留现有弱边框美学：border-rd-border + bg-rd-surface + hover:bg-rd-surfaceHover
+// 视觉：GitFork 图标 + 当前位置（粗体）+ /总数（浅色）+ 左右箭头
 
 import { ChevronLeft, ChevronRight, GitFork } from 'lucide-react';
 
@@ -9,6 +10,7 @@ export function BranchSwitcher({
   branches,
   currentBranch,
   onSwitch,
+  branchTitles,
 }: {
   /** 分支总数 */
   branches: number;
@@ -16,29 +18,47 @@ export function BranchSwitcher({
   currentBranch: number;
   /** 切换分支回调：'prev' 上一条，'next' 下一条 */
   onSwitch: (direction: 'prev' | 'next') => void;
+  /** 可选：各分支标题（用于 tooltip 悬停提示） */
+  branchTitles?: string[];
 }) {
+  // 仅在分支数 > 1 时渲染
   if (branches <= 1) return null;
+
+  const prevDisabled = currentBranch <= 0;
+  const nextDisabled = currentBranch >= branches - 1;
+  // 悬停提示：显示当前分支标题（如有）
+  const currentTitle = branchTitles?.[currentBranch];
+  const tooltip = currentTitle
+    ? `分支 ${currentBranch + 1}/${branches}：${currentTitle}`
+    : `分支 ${currentBranch + 1}/${branches}`;
+
   return (
-    <div className="flex items-center gap-1 text-xs text-rd-textSubtle">
-      <GitFork size={12} />
+    <div
+      className="inline-flex items-center gap-0.5 rounded-md border border-rd-border bg-rd-surface px-1 py-0.5 text-xs"
+      title={tooltip}
+    >
+      <GitFork size={11} className="mr-0.5 text-rd-primary" aria-hidden="true" />
       <button
         type="button"
         onClick={() => onSwitch('prev')}
-        disabled={currentBranch <= 0}
-        title="上一个分支"
-        className="flex h-5 w-5 items-center justify-center rounded transition hover:bg-rd-surfaceHover hover:text-rd-text disabled:opacity-30"
+        disabled={prevDisabled}
+        aria-label="上一个分支"
+        className="flex h-5 w-5 items-center justify-center rounded transition hover:bg-rd-surfaceHover hover:text-rd-text disabled:opacity-30 disabled:hover:bg-transparent"
       >
-        <ChevronLeft size={14} />
+        <ChevronLeft size={13} />
       </button>
-      <span className="tabular-nums">分支 {currentBranch + 1}/{branches}</span>
+      <span className="tabular-nums px-1 text-rd-textMuted" aria-live="polite">
+        <span className="font-semibold text-rd-text">{currentBranch + 1}</span>
+        <span className="text-rd-textSubtle">/{branches}</span>
+      </span>
       <button
         type="button"
         onClick={() => onSwitch('next')}
-        disabled={currentBranch >= branches - 1}
-        title="下一个分支"
-        className="flex h-5 w-5 items-center justify-center rounded transition hover:bg-rd-surfaceHover hover:text-rd-text disabled:opacity-30"
+        disabled={nextDisabled}
+        aria-label="下一个分支"
+        className="flex h-5 w-5 items-center justify-center rounded transition hover:bg-rd-surfaceHover hover:text-rd-text disabled:opacity-30 disabled:hover:bg-transparent"
       >
-        <ChevronRight size={14} />
+        <ChevronRight size={13} />
       </button>
     </div>
   );

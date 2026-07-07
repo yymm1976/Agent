@@ -15,7 +15,7 @@ import type { AppConfig, AutonomyMode } from '../../../../src/config/schema.js';
 import type { TokenProfileSnapshot } from '../../../../src/agent/token-profiler.js';
 import type { ConfigSaveResult, FollowUpItem, FollowUpMode } from '../../../shared/ipc-types.js';
 import { NeuralNetworkBackground } from '../components/NeuralNetworkBackground.js';
-import { CheckpointTimeline } from '../components/CheckpointTimeline.js';
+import { ArtifactPanel } from '../components/ArtifactPanel.js';
 import { StepEditor } from '../components/StepEditor.js';
 import { Badge } from '../components/ui/badge.js';
 import { Card } from '../components/ui/card.js';
@@ -63,6 +63,7 @@ export function ChatPage({
   const currentProjectId = useProjectsStore((s) => s.currentProjectId);
   const currentConversationId = useProjectsStore((s) => s.currentConversationId);
   const forkConversationFromMessage = useProjectsStore((s) => s.forkConversationFromMessage);
+  const selectConversation = useProjectsStore((s) => s.selectConversation);
   const currentProject = projects.find((p) => p.id === currentProjectId);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -241,16 +242,22 @@ export function ChatPage({
             <MessageList messages={messages} isProcessing={isProcessing} outputStyle={outputStyle}
               deleteMessage={deleteMessage} retryMessage={retryMessage}
               currentProjectId={currentProjectId} currentConversationId={currentConversationId}
-              forkConversationFromMessage={forkConversationFromMessage} />
+              forkConversationFromMessage={forkConversationFromMessage}
+              conversations={currentProject?.conversations ?? []}
+              onSwitchBranch={(targetConvId) => {
+                if (currentProjectId) selectConversation(currentProjectId, targetConvId);
+              }} />
           )}
         </div>
 
         <ScrollToBottom visible={showScrollBottom} onClick={jumpToBottom} rightOffset={showCheckpointPanel} />
 
         {showCheckpointPanel && (
-          <div className="relative flex w-80 shrink-0 flex-col border-l border-rd-border bg-rd-surface">
-            <CheckpointTimeline projectId={currentProjectId ?? undefined} />
-          </div>
+          <ArtifactPanel
+            messages={messages}
+            projectId={currentProjectId ?? undefined}
+            tokenSnapshots={tokenSnapshots}
+          />
         )}
       </div>
 
@@ -270,18 +277,21 @@ export function ChatPage({
       {/* Phase 54：计划编辑器 */}
       <StepEditor />
 
-      {/* 排队队列 */}
-      <PendingQueue items={queue} expanded={queueExpanded}
-        onToggle={() => setQueueExpanded(!queueExpanded)} onRemove={removeQueueItem}
-        onStartEdit={startEditQueueItem} editingIndex={editingQueueIdx}
-        editingValue={editingQueueValue} onEditChange={setEditingQueueValue}
-        onConfirmEdit={confirmEditQueueItem} onCancelEdit={() => setEditingQueueIdx(null)} />
+      {/* Phase 74-B2：双队列触发器行（浮层式，胶囊触发器水平排列在输入区上方） */}
+      {(queue.length > 0 || followUpQueue.length > 0) && (
+        <div className="flex shrink-0 items-center gap-2 px-4 py-1.5">
+          <PendingQueue items={queue} expanded={queueExpanded}
+            onToggle={() => setQueueExpanded(!queueExpanded)} onRemove={removeQueueItem}
+            onStartEdit={startEditQueueItem} editingIndex={editingQueueIdx}
+            editingValue={editingQueueValue} onEditChange={setEditingQueueValue}
+            onConfirmEdit={confirmEditQueueItem} onCancelEdit={() => setEditingQueueIdx(null)} />
 
-      {/* follow-up 队列 */}
-      <FollowUpQueue items={followUpQueue} expanded={followUpExpanded}
-        onToggle={() => setFollowUpExpanded(!followUpExpanded)}
-        mode={followUpMode} onModeChange={handleFollowUpModeChange}
-        onRemove={removeFollowUpItem} />
+          <FollowUpQueue items={followUpQueue} expanded={followUpExpanded}
+            onToggle={() => setFollowUpExpanded(!followUpExpanded)}
+            mode={followUpMode} onModeChange={handleFollowUpModeChange}
+            onRemove={removeFollowUpItem} />
+        </div>
+      )}
 
       {/* 输入区 */}
       <InputArea isProcessing={isProcessing} autonomyMode={autonomyMode}
