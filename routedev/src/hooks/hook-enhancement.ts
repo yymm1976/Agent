@@ -3,7 +3,6 @@
 //
 // 当前保留：
 //   - 安全审查增强：检测危险命令、base64 编码、管道链（analyzeCommand 等静态方法）
-//   - 函数型 Hook 静态校验：validateFunctionHook（静态分析 Hook 源码，不持有运行时状态）
 //
 // 已删除的死代码：
 //   - 试用模式（startTrial/checkTrialStatus/promoteToEnabled/disableForAnomaly/recordTrigger/shouldExecuteBlock）
@@ -18,20 +17,7 @@
 import { logger } from '../utils/logger.js';
 
 // ============================================================
-// /goal 生命周期新事件
-// ============================================================
-
-export type GoalHookEvent =
-  | 'post-plan'
-  | 'pre-step-execution'
-  | 'post-step-execution'
-  | 'pre-adopt'
-  | 'on-goal-complete'
-  | 'on-goal-failed'
-  | 'on-goal-paused';
-
-// ============================================================
-// 函数型 Hook 接口（仅供 validateFunctionHook 静态校验使用）
+// 函数型 Hook 接口
 // ============================================================
 
 /** Hook 执行上下文（受限 API） */
@@ -85,41 +71,6 @@ const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; risk: string }> = [
 // ============================================================
 
 export class HookEnhancementManager {
-  /**
-   * 静态分析函数型 Hook：检查是否包含文件系统写操作
-   *
-   * @returns 警告列表（空数组表示无警告）
-   */
-  static validateFunctionHook(fn: FunctionHook): string[] {
-    const warnings: string[] = [];
-    const src = fn.toString();
-
-    // 检测文件系统写操作
-    const writePatterns: Array<{ pattern: RegExp; risk: string }> = [
-      { pattern: /fs\.writeFile\b/, risk: '检测到 fs.writeFile 写文件操作' },
-      { pattern: /fs\.appendFile\b/, risk: '检测到 fs.appendFile 追加写操作' },
-      { pattern: /fs\.mkdir\b/, risk: '检测到 fs.mkdir 创建目录操作' },
-      { pattern: /fs\.unlink\b/, risk: '检测到 fs.unlink 删除文件操作' },
-      { pattern: /fs\.rmdir\b/, risk: '检测到 fs.rmdir 删除目录操作' },
-      { pattern: /fs\.rename\b/, risk: '检测到 fs.rename 重命名操作' },
-      { pattern: /fs\.chmod\b/, risk: '检测到 fs.chmod 修改权限操作' },
-      { pattern: /fs\.rm\b/, risk: '检测到 fs.rm 删除操作' },
-      { pattern: /writeFileSync\b/, risk: '检测到 writeFileSync 同步写操作' },
-      { pattern: /child_process\b/, risk: '检测到 child_process 子进程调用' },
-      { pattern: /execSync\b/, risk: '检测到 execSync 同步执行命令' },
-      { pattern: /spawnSync\b/, risk: '检测到 spawnSync 同步派生进程' },
-      { pattern: /process\.exit\b/, risk: '检测到 process.exit 退出进程' },
-    ];
-
-    for (const { pattern, risk } of writePatterns) {
-      if (pattern.test(src)) {
-        warnings.push(risk);
-      }
-    }
-
-    return warnings;
-  }
-
   // ============================================================
   // 安全审查增强
   // ============================================================

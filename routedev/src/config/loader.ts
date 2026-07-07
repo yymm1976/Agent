@@ -290,15 +290,6 @@ export function loadConfig(options?: {
 }
 
 /**
- * 加载合并后的配置（公共 API）
- * 三层合并：default → global → project
- * @param projectPath 项目路径(可选)
- */
-export async function loadMergedConfig(projectPath?: string): Promise<AppConfig> {
-  return loadConfig({ projectPath });
-}
-
-/**
  * 深度合并多个配置对象(公共 API)
  * 借鉴 ohmypi deepMerge 语义:
  *   - 对象:递归合并

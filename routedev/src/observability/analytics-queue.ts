@@ -135,19 +135,6 @@ export function attachAnalyticsSink(sink: AnalyticsSink): void {
 }
 
 /**
- * P0-11：卸载 analytics sink（用于测试或运行时切换）
- *
- * 卸载后新事件继续入队但不 flush，直到重新 attach
- */
-export function detachAnalyticsSink(): void {
-  if (!state.sink) return;
-  logger.info(`analytics-queue: sink 已卸载: ${state.sink.name ?? 'unnamed'}`, {
-    pendingEvents: state.eventQueue.length,
-  });
-  state.sink = null;
-}
-
-/**
  * P0-11：调度一次排空任务
  *
  * 优先使用 queueMicrotask（最快，不阻塞当前事件循环 tick）
@@ -211,27 +198,4 @@ export async function forceFlushNow(): Promise<void> {
     return;
   }
   await flushQueue();
-}
-
-/**
- * P0-11：获取 analytics 队列状态（用于 /trace otel 或健康检查）
- */
-export function getAnalyticsQueueStatus(): {
-  sinkAttached: boolean;
-  sinkName: string | null;
-  pendingEvents: number;
-  droppedCount: number;
-  totalFlushed: number;
-  totalErrors: number;
-  capacity: number;
-} {
-  return {
-    sinkAttached: state.sink !== null,
-    sinkName: state.sink?.name ?? null,
-    pendingEvents: state.eventQueue.length,
-    droppedCount: state.droppedCount,
-    totalFlushed: state.totalFlushed,
-    totalErrors: state.totalErrors,
-    capacity: QUEUE_CAPACITY,
-  };
 }

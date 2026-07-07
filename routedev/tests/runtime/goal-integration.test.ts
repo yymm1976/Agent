@@ -87,7 +87,6 @@ function createMockDeps(requestPlanEditResult: PlanStep[] | null) {
       pendingConfirmRef: { current: null },
       abortControllerRef: { current: null },
       currentPlanRef: { current: null as GoalPlan | null },
-      awaitingGoalConfirmRef: { current: null },
       addSystemMessage,
       requestPlanEdit,
       setIsProcessing,

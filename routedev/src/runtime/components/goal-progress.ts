@@ -6,7 +6,7 @@ import type { GoalPlan, GoalStep, StepStatus } from '../../agent/goal-types.js';
 import { renderProgressBar } from './progress-bar-text.js';
 
 /** 步骤状态 → 可视化图标（与 Phase 25 设计规范对齐） */
-export const GOAL_STATUS_ICON: Record<StepStatus, string> = {
+const GOAL_STATUS_ICON: Record<StepStatus, string> = {
   pending: '⬚',
   in_progress: '🔄',
   completed: '✅',
@@ -15,7 +15,7 @@ export const GOAL_STATUS_ICON: Record<StepStatus, string> = {
 };
 
 /** 步骤状态 → 中文标签 */
-export const GOAL_STATUS_LABEL: Record<StepStatus, string> = {
+const GOAL_STATUS_LABEL: Record<StepStatus, string> = {
   pending: '待执行',
   in_progress: '进行中',
   completed: '完成',
@@ -36,7 +36,7 @@ export function formatDuration(ms: number): string {
 }
 
 /** 估算剩余时间：基于已完成步骤的平均耗时 × 剩余步骤数 */
-export function estimateEta(plan: GoalPlan, now = Date.now()): string {
+function estimateEta(plan: GoalPlan, now = Date.now()): string {
   const completedSteps = plan.steps.filter(
     s => s.status === 'completed' && s.startedAt !== undefined && s.completedAt !== undefined,
   );
@@ -51,7 +51,7 @@ export function estimateEta(plan: GoalPlan, now = Date.now()): string {
 }
 
 /** 计算已完成的步骤数 */
-export function countCompleted(plan: GoalPlan): number {
+function countCompleted(plan: GoalPlan): number {
   return plan.steps.filter(s => s.status === 'completed').length;
 }
 

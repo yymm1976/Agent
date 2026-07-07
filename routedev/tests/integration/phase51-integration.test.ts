@@ -4,7 +4,7 @@
 // 测试策略：
 //   场景 1 (Task 2/3/4)：端到端委托流程——classifyTask → decideDelegation → canDelegate → createChildRegistry → createSubAgentSession → extractFinalAnswer → validateSubAgentResult
 //   场景 2 (Task 1/7)：Reviewer 分级全流程——assessRisk → determineReviewerTier → getReviewPassesForTier → validateReviewFeedback
-//   场景 3 (Task 8)：配置三层合并——deepMergeConfig 默认 / loadMergedConfig 优先级
+//   场景 3 (Task 8)：配置三层合并——deepMergeConfig 默认 / loadConfig 优先级
 //   场景 4 (Task 9)：错误受众分层——ToolExecutionError + formatErrorForUser/Dev + ErrorDisplaySchema
 //
 // 全部使用 mock 依赖，不调用真实 LLM 或文件系统。

@@ -104,19 +104,6 @@ export function registerShutdownHook(
 }
 
 /**
- * P0-14：取消已注册的 shutdown hook（用于动态卸载模块）
- *
- * @param name hook 名称
- * @returns 是否成功取消（不存在时返回 false）
- */
-export function unregisterShutdownHook(name: string): boolean {
-  const idx = state.hooks.findIndex(h => h.name === name);
-  if (idx === -1) return false;
-  state.hooks.splice(idx, 1);
-  return true;
-}
-
-/**
  * P0-14：安装信号监听器（惰性调用，仅首次注册 hook 时触发）
  *
  * 监听：
@@ -223,53 +210,4 @@ export async function triggerShutdown(reason: ShutdownReason): Promise<void> {
   }
 }
 
-/**
- * P0-14：手动触发 shutdown（用于 /quit 命令或 UI 关闭按钮）
- */
-export async function shutdown(reason: ShutdownReason = 'manual'): Promise<void> {
-  await triggerShutdown(reason);
-}
 
-/**
- * P0-14：配置 shutdown 超时时间
- *
- * @param ms 超时毫秒数（默认 5000）
- */
-export function setShutdownTimeoutMs(ms: number): void {
-  if (typeof ms !== 'number' || ms < 100) {
-    logger.warn(`graceful-shutdown: 超时时间 ${ms} 无效，保持默认 ${state.timeoutMs}`);
-    return;
-  }
-  state.timeoutMs = ms;
-}
-
-/**
- * P0-14：设置 shutdown 退出码
- *
- * @param code 退出码（默认 0）
- */
-export function setShutdownExitCode(code: number): void {
-  state.exitCode = code;
-}
-
-/**
- * P0-14：获取已注册的 shutdown hook 列表（用于调试/UI 显示）
- */
-export function listShutdownHooks(): Array<{
-  priority: ShutdownPriority;
-  name: string;
-  registeredAt: number;
-}> {
-  return state.hooks.map(h => ({
-    priority: h.priority,
-    name: h.name,
-    registeredAt: h.registeredAt,
-  }));
-}
-
-/**
- * P0-14：检查是否正在 shutdown（用于阻止 shutdown 期间的新任务）
- */
-export function isShuttingDown(): boolean {
-  return state.shuttingDown;
-}

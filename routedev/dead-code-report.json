@@ -1,5 +1,5 @@
 {
-  "totalExports": 1402,
+  "totalExports": 1389,
   "deadExports": [
     {
       "file": "src/agent/bounded-recovery.ts",
@@ -9,6 +9,11 @@
     {
       "file": "src/agent/branch-operations.ts",
       "name": "ActionResult",
+      "type": "interface"
+    },
+    {
+      "file": "src/agent/branch.ts",
+      "name": "BaseNode",
       "type": "interface"
     },
     {
@@ -40,16 +45,6 @@
       "file": "src/agent/circuit-breaker.ts",
       "name": "CircuitStats",
       "type": "interface"
-    },
-    {
-      "file": "src/agent/complexity-analyzer.ts",
-      "name": "createTaskComplexityAnalyzer",
-      "type": "function"
-    },
-    {
-      "file": "src/agent/complexity-analyzer.ts",
-      "name": "MODIFY_KEYWORDS",
-      "type": "reexport"
     },
     {
       "file": "src/agent/content-deduplicator.ts",
@@ -247,6 +242,11 @@
       "type": "interface"
     },
     {
+      "file": "src/agent/message-types.ts",
+      "name": "CustomAgentMessages",
+      "type": "interface"
+    },
+    {
       "file": "src/agent/micro-summary.ts",
       "name": "MicroSummary",
       "type": "interface"
@@ -337,11 +337,6 @@
       "type": "interface"
     },
     {
-      "file": "src/agent/requirements-gatherer.ts",
-      "name": "createRequirementsGatherer",
-      "type": "function"
-    },
-    {
       "file": "src/agent/state-migration.ts",
       "name": "StateMigrationInput",
       "type": "interface"
@@ -350,6 +345,21 @@
       "file": "src/agent/state-migration.ts",
       "name": "StateMigrationResult",
       "type": "interface"
+    },
+    {
+      "file": "src/agent/task-orchestrator-types.ts",
+      "name": "StepComplexity",
+      "type": "interface"
+    },
+    {
+      "file": "src/agent/task-orchestrator-types.ts",
+      "name": "ClarifyingQuestion",
+      "type": "interface"
+    },
+    {
+      "file": "src/agent/task-orchestrator-types.ts",
+      "name": "RequirementsEvent",
+      "type": "type"
     },
     {
       "file": "src/agent/unified-reviewer.ts",
@@ -1137,13 +1147,8 @@
       "type": "interface"
     },
     {
-      "file": "src/memory/codebase-memory.ts",
-      "name": "CodebaseEntry",
-      "type": "interface"
-    },
-    {
-      "file": "src/memory/codebase-memory.ts",
-      "name": "CodebaseMemoryOptions",
+      "file": "src/memory/hybrid-retriever.ts",
+      "name": "HybridRetrieverConfig",
       "type": "interface"
     },
     {
@@ -1209,11 +1214,6 @@
     {
       "file": "src/observability/otel-exporter.ts",
       "name": "OtelExporterStatus",
-      "type": "interface"
-    },
-    {
-      "file": "src/observability/trajectory-aggregator.ts",
-      "name": "AggregatedMetrics",
       "type": "interface"
     },
     {
@@ -1364,6 +1364,11 @@
     {
       "file": "src/router/tracker.ts",
       "name": "TokenUsageRecord",
+      "type": "interface"
+    },
+    {
+      "file": "src/router/tracker.ts",
+      "name": "TokenStats",
       "type": "interface"
     },
     {
@@ -1928,6 +1933,11 @@
     },
     {
       "file": "desktop/shared/ipc-types.ts",
+      "name": "AgentQueueStatus",
+      "type": "interface"
+    },
+    {
+      "file": "desktop/shared/ipc-types.ts",
       "name": "AgentProfileRole",
       "type": "type"
     },
@@ -2001,21 +2011,6 @@
     {
       "file": "src/agent/completion-gate.ts",
       "name": "TEST_TIMEOUT",
-      "type": "reexport"
-    },
-    {
-      "file": "src/agent/complexity-analyzer.ts",
-      "name": "TaskComplexityAnalyzer",
-      "type": "class"
-    },
-    {
-      "file": "src/agent/complexity-analyzer.ts",
-      "name": "SIMPLE_READ_KEYWORDS",
-      "type": "reexport"
-    },
-    {
-      "file": "src/agent/complexity-analyzer.ts",
-      "name": "COMPLEX_KEYWORDS",
       "type": "reexport"
     },
     {
@@ -2207,11 +2202,6 @@
       "file": "src/agent/quantitative-gate.ts",
       "name": "GateDecision",
       "type": "type"
-    },
-    {
-      "file": "src/agent/requirements-gatherer.ts",
-      "name": "RequirementsGatherer",
-      "type": "class"
     },
     {
       "file": "src/agent/reviewer-tier-evaluator.ts",
@@ -2614,11 +2604,6 @@
       "type": "interface"
     },
     {
-      "file": "src/observability/trajectory-exporter.ts",
-      "name": "TrajectoryExporter",
-      "type": "class"
-    },
-    {
       "file": "src/plugins/filesystem-discovery.ts",
       "name": "parseAgentYAML",
       "type": "function"
@@ -2757,11 +2742,6 @@
       "file": "src/skills/skill-lifecycle.ts",
       "name": "SkillExecutionRecord",
       "type": "interface"
-    },
-    {
-      "file": "src/skills/skill-schema-validator.ts",
-      "name": "SKILL_JSON_SCHEMA",
-      "type": "const"
     },
     {
       "file": "src/tools/builtin/browser.ts",

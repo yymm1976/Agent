@@ -124,7 +124,6 @@ function createGoalRunnerMockDeps(overrides: Record<string, unknown> = {}) {
       pendingConfirmRef: { current: null },
       abortControllerRef: { current: null },
       currentPlanRef: { current: null as GoalPlan | null },
-      awaitingGoalConfirmRef: { current: null },
       addSystemMessage,
       requestPlanEdit,
       setIsProcessing,

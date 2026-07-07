@@ -748,7 +748,6 @@ export class RouteDevEngine {
         // Phase 54 修复：用共享 abortControllerRef，stopGeneration 可中止 GoalRunner
         abortControllerRef: this.abortControllerRef,
         currentPlanRef: { current: null },
-        awaitingGoalConfirmRef: { current: null },
         // addSystemMessage：把 GoalRunner 的系统消息通过 IPC 推送到渲染进程
         // Phase 54：过滤进度文本（已被 GoalExecutionCard 取代），保留错误/用法类文本
         addSystemMessage: (content: string) => {
@@ -797,8 +796,7 @@ export class RouteDevEngine {
         setIsProcessing: () => { /* engine 自己管理 done 事件，此处空实现 */ },
         nextId: () => `goal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         // Phase 54 Task 1/4：多 Agent 编排 + 统一审查器
-        orchestrator: this.deps.orchestrator,
-        workerExecutor: this.deps.workerExecutor,
+        // Phase 58：orchestrator/workerExecutor 已删除（executeWorkerStep 死方法清理）
         blackboard: this.deps.blackboard,
         unifiedReviewer: this.deps.unifiedReviewer,
         // Phase 50/32：Goal 流程核心模块

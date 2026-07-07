@@ -46,11 +46,9 @@ import { notifyRoutingFallback } from './notification.js';
 // Phase 71：Plan diff + 遗漏点分析——保存 plan 修订历史
 import { toDiffPlanStep } from '../agent/plan-diff.js';
 // Phase 54 Task 1/4：多 Agent 编排 + 统一审查器接入
-import type { Orchestrator } from '../agent/multi/orchestrator.js';
-import type { WorkerExecutor } from '../agent/multi/worker-executor.js';
+// Phase 58：Orchestrator/WorkerExecutor/WorkerTask 等已删除（executeWorkerStep 死方法清理）
 import type { Blackboard } from '../agent/multi/blackboard.js';
 import type { UnifiedReviewer } from '../agent/unified-reviewer.js';
-import type { WorkerTask, WorkerResult, WorkerRole } from '../agent/multi/types.js';
 import type { StepExecutionResult } from '../agent/task-orchestrator-types.js';
 // Phase 55 Task 11：CompositionalRouter（组合式路由器，跨领域任务分解 + Skill 检索）
 import type { CompositionalRouterInstance } from './app-init.js';
@@ -86,8 +84,6 @@ export interface GoalRunnerDeps {
   abortControllerRef: { current: AbortController | null };
   /** 当前计划 ref（会被读写） */
   currentPlanRef: { current: GoalPlan | null };
-  /** 目标确认 pending ref（会被读写） */
-  awaitingGoalConfirmRef: { current: { resolve: (approved: boolean) => void; plan: GoalPlan } | null };
   /** 添加系统消息 */
   addSystemMessage: (content: string) => void;
   /** 请求用户编辑计划步骤（Phase 20：返回修改后的步骤或 null 表示取消） */
@@ -104,14 +100,10 @@ export interface GoalRunnerDeps {
   goalAuditor?: GoalAuditor;
   goalPersistence?: GoalPersistence;
   // Phase 59：goalPromptBuilder 已删除（批次1 无价值 Integration）
+  // Phase 58：orchestrator/workerExecutor 接口字段已删除（executeWorkerStep 死方法清理）
   /**
-   * Phase 54 Task 1：多 Agent 编排实例（可选，三者同时注入后 /goal 走多 Agent 路径）
-   * - orchestrator：分析依赖图 + 生成并行组 + 分配角色
-   * - workerExecutor：4 角色 Worker 执行（coder/searcher/tester/reviewer）+ 异常隔离
-   * - blackboard：跨 Worker 共享状态（currentGoal/completedSteps/projectFacts）
+   * Phase 54 Task 1：跨 Worker 共享状态（currentGoal/completedSteps/projectFacts）
    */
-  orchestrator?: Orchestrator;
-  workerExecutor?: WorkerExecutor;
   blackboard?: Blackboard;
   /**
    * Phase 54 Task 4：统一审查器（可选，注入后 verifyPlan 调用 review() 获得 reviewerResult）
@@ -222,7 +214,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     completionGate,
     goalAuditor, goalPersistence,
     // Phase 54 Task 1/4：多 Agent 编排 + 统一审查器
-    orchestrator, workerExecutor, blackboard, unifiedReviewer,
+    // Phase 58：orchestrator/workerExecutor 已删除（executeWorkerStep 死方法清理）
+    blackboard, unifiedReviewer,
     // Phase 58：统一路径路由器 + DAG 引擎（可选注入，未注入时降级到 single）
     pathRouter, difficultyAssessor, stateMigration, dagEngine, compositionalRouter,
     // Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，通过 ref 延迟绑定）
@@ -1974,230 +1967,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
 
   // Phase 58：executePlanWithMultiAgent（legacy 路径）已删除
   // 原 Phase 54 Task 1 多 Agent 编排执行函数已移除，未注入 pathRouter 时回退到 single 路径
-
-  /**
-   * Phase 54 Task 1：执行单个 Worker 步骤
-   * 构建 WorkerTask（注入 Blackboard 快照）→ 调用 WorkerExecutor.execute() → 更新 GoalStep + Blackboard
-   *
-   * @param plan 目标计划（用于更新 step 状态）
-   * @param step 当前步骤
-   * @param dep 依赖信息（含角色分配、likelyFiles）
-   */
-  async function executeWorkerStep(
-    plan: GoalPlan,
-    step: GoalStep,
-    dep: { role: WorkerRole; rolePrompt: string; likelyFiles: string[]; stepId: number; dependsOn: number[] },
-  ): Promise<WorkerResult> {
-    // 检查中断
-    if (abortControllerRef.current?.signal.aborted) {
-      return {
-        stepId: step.id,
-        role: dep.role,
-        success: false,
-        conclusion: '用户中断',
-        modifiedFiles: [],
-        tokenUsage: { inputTokens: 0, outputTokens: 0 },
-      };
-    }
-
-    // 步骤执行前自动创建检查点（与串行路径保持一致）
-    if (config.checkpoint.enabled) {
-      const checkpoint = await checkpointManager.create({
-        description: `步骤 ${step.id} 前快照: ${step.description.slice(0, 40)}`,
-        stepId: step.id,
-        goalId: plan.id,
-        isAutoCreated: true,
-      });
-      if (checkpoint) {
-        addSystemMessage(`💾 检查点已创建: cp-${checkpoint.id} (${checkpoint.filesSnapshot.length} 个文件)`);
-      }
-    }
-
-    step.status = 'in_progress';
-    step.startedAt = Date.now();
-    addSystemMessage(`▶ [${dep.role}] 步骤 ${step.id}/${plan.steps.length}: ${step.description}`);
-    // Phase 54：step_update running + agent_activity（gid 来自 createGoalRunner 顶部）
-    emit({ type: 'step_update', goalId: gid, stepId: step.id, status: 'running' });
-    emit({
-      type: 'agent_activity',
-      goalId: gid,
-      stepId: step.id,
-      role: dep.role,
-      activity: `步骤 ${step.id}/${plan.steps.length}: ${step.description}`,
-      timestamp: Date.now(),
-    });
-
-    try {
-      const classifyResult = await classifier.classify({ query: step.description });
-      const routeDecision = await modelRouter.route(classifyResult);
-      const stepFallbackNotice = notifyRoutingFallback(routeDecision);
-      if (stepFallbackNotice) addSystemMessage(stepFallbackNotice);
-      const client = clientManager.get(routeDecision.providerId);
-      if (!client || !client.isReady()) {
-        step.status = 'failed';
-        step.error = `提供商 ${routeDecision.providerId} 不可用`;
-        addSystemMessage(`❌ 步骤 ${step.id} 失败: ${step.error}`);
-        return {
-          stepId: step.id,
-          role: dep.role,
-          success: false,
-          conclusion: step.error,
-          modifiedFiles: [],
-          tokenUsage: { inputTokens: 0, outputTokens: 0 },
-        };
-      }
-
-      // 构建 WorkerTask：注入 Blackboard 快照（Worker 通过快照读取已完成步骤的结论）
-      const workerTask: WorkerTask = {
-        stepId: step.id,
-        description: step.description,
-        role: dep.role,
-        rolePrompt: dep.rolePrompt,
-        blackboardSnapshot: blackboard!.getSnapshot(),
-        // Phase 55 Task 15 修复：传入 goalId 让 WorkerExecutor 记录 Worker 级别缓存命中
-        // 缺失时 WorkerExecutor 跳过 recordWorkerCacheHit()（向后兼容）
-        goalId: gid,
-      };
-
-      const stepAbort = new AbortController();
-      abortControllerRef.current = stepAbort;
-
-      // 调用 WorkerExecutor.execute()——内部会注入角色 system prompt + Blackboard 上下文
-      // 若 contextPacker 已注入（Task 2），还会调用 pack() 生成结构化上下文包（选择性传递可视化）
-      // Phase 54 修复：工具确认尊重自主度模式——auto/semi 直接批准（requireToolConfirmation=false），
-      // manual 才弹确认。原缺陷：Worker 总是等待用户确认，Electron 端无对应 UI 导致卡死
-      // 修复：executeWorkerStep 是顶层函数，访问不到 handleGoalCommand 内的 autonomyBehavior，
-      // 在此用 config 直接判定（与 AUTONOMY_BEHAVIOR 定义一致）
-      const mode = (config.autonomy?.defaultMode ?? 'semi') as AutonomyMode;
-      const requireToolConfirm = AUTONOMY_BEHAVIOR[mode].requireToolConfirmation;
-      const workerResult = await workerExecutor!.execute(
-        workerTask,
-        client,
-        routeDecision,
-        conversationHistoryRef.current,
-        systemPromptRef.current,
-        stepAbort.signal,
-        async (toolName, args) => {
-          // auto/semi 模式：直接批准（与 sendChat 的 onConfirmTool 逻辑一致）
-          if (!requireToolConfirm && toolName !== 'ask_user') {
-            return true;
-          }
-          // manual 模式：设置 pendingConfirmRef 等待用户确认
-          return new Promise<boolean>(resolve => {
-            pendingConfirmRef.current = {
-            resolve: (r) => resolve(typeof r === 'boolean' ? r : r.approved),
-            toolName,
-          };
-            const argsStr = JSON.stringify(args, null, 2).slice(0, 200);
-            addSystemMessage(`⚠️  [${dep.role}] 步骤 ${step.id} · 工具 ${toolName} 需要确认 [y/n]\n参数: ${argsStr}`);
-          });
-        },
-      );
-
-      // 记录 token（任务级预算追踪 + 日预算累加）
-      const totalTokens = workerResult.tokenUsage.inputTokens + workerResult.tokenUsage.outputTokens;
-      if (totalTokens > 0) {
-        tracker.record(
-          {
-            inputTokens: workerResult.tokenUsage.inputTokens,
-            outputTokens: workerResult.tokenUsage.outputTokens,
-            totalTokens,
-          },
-          {
-            modelId: routeDecision.model.id,
-            agentId: `worker-${dep.role}`,
-            stepId: `step-${step.id}`,
-          },
-        );
-        const taskStatus = tracker.recordTaskUsage({
-          inputTokens: workerResult.tokenUsage.inputTokens,
-          outputTokens: workerResult.tokenUsage.outputTokens,
-          totalTokens,
-        });
-        if (taskStatus === 'exceeded') {
-          addSystemMessage('⏹ 任务级 Token 预算已耗尽，goal 执行中止');
-          plan.status = 'failed';
-        }
-        if (setTodayTokensUsed) {
-          setTodayTokensUsed(prev => prev + totalTokens);
-        }
-        if (!tracker.checkBudget()) {
-          addSystemMessage('⏹ Token 日预算已耗尽，goal 执行中止');
-          plan.status = 'failed';
-        }
-      }
-
-      // 用户中断
-      if (stepAbort.signal.aborted) {
-        step.status = 'failed';
-        step.error = '用户中断';
-        gateManager.updateGate(`step-${step.id}`, 'failed', step.error);
-        addSystemMessage(`⏸ [${dep.role}] 步骤 ${step.id} 已中断`);
-        plan.status = 'failed';
-        return workerResult;
-      }
-
-      if (workerResult.success) {
-        step.status = 'completed';
-        step.completedAt = Date.now();
-        step.result = workerResult.conclusion.slice(0, 200);
-        step.modifiedFiles = workerResult.modifiedFiles;
-        // 写入 Blackboard：后续 Worker 通过 getSnapshot() 读取（独立上下文 + 选择性传递）
-        blackboard!.addCompletedStep(step.id, dep.role, workerResult.conclusion);
-        gateManager.updateGate(`step-${step.id}`, 'passed', step.result);
-        addSystemMessage(`✅ [${dep.role}] 步骤 ${step.id} 完成`);
-        // Phase 54：step_update completed + agent_activity
-        emit({
-          type: 'step_update',
-          goalId: gid,
-          stepId: step.id,
-          status: 'completed',
-          durationMs: step.startedAt ? Date.now() - step.startedAt : undefined,
-        });
-        emit({
-          type: 'agent_activity',
-          goalId: gid,
-          stepId: step.id,
-          role: dep.role,
-          activity: `[${dep.role}] 步骤 ${step.id} 完成`,
-          timestamp: Date.now(),
-        });
-      } else {
-        step.status = 'failed';
-        step.completedAt = Date.now();
-        step.error = workerResult.conclusion;
-        plan.status = 'failed';
-        gateManager.updateGate(`step-${step.id}`, 'failed', step.error);
-        addSystemMessage(`❌ [${dep.role}] 步骤 ${step.id} 失败: ${workerResult.conclusion}`);
-        // Phase 54：step_update failed
-        emit({
-          type: 'step_update',
-          goalId: gid,
-          stepId: step.id,
-          status: 'failed',
-          error: step.error,
-          durationMs: step.startedAt ? Date.now() - step.startedAt : undefined,
-        });
-      }
-
-      addSystemMessage(renderGoalProgressText(plan));
-      return workerResult;
-    } catch (error) {
-      step.status = 'failed';
-      step.completedAt = Date.now();
-      step.error = error instanceof Error ? error.message : String(error);
-      gateManager.updateGate(`step-${step.id}`, 'failed', step.error);
-      addSystemMessage(`❌ [${dep.role}] 步骤 ${step.id} 异常: ${step.error}`);
-      return {
-        stepId: step.id,
-        role: dep.role,
-        success: false,
-        conclusion: step.error,
-        modifiedFiles: [],
-        tokenUsage: { inputTokens: 0, outputTokens: 0 },
-      };
-    }
-  }
+  // Phase 58：executeWorkerStep 已删除（原唯一调用者 executePlanWithMultiAgent 在 Phase 58 移除）
 
   /**
    * Phase 54 Task 4：调用 UnifiedReviewer 获取 reviewerResult
