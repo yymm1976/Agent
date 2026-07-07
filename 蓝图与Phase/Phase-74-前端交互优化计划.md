@@ -325,37 +325,237 @@ accept/reject 不是纯前端改动。需要：
 
 ---
 
+### Phase 74-G：SettingsPage 主体拆分（P4，原 Phase 75 范围移入）
+
+**目标**：5465 行主体拆分为 ≤400 行的编排页 + 独立 Tab 组件 + 状态 hook，与 74-C 同构但独立执行
+
+**为什么从 Phase 75 移入**：用户明确要求不留技术债到下一 Phase。SettingsPage 已部分拆分（11 个 Tab 抽出），但主体仍含 5343 行主组件 + 110 行 ArchivedConversationsPanel，单文件行数远超健康阈值。继续推迟只会让债务滚雪球。
+
+**前提**：74-E-min 完成（StatusBadge / FoldableSection 可被新 Tab 复用）；与 74-C/A/B/D/F 完全独立，可在任意阶段并行启动
+
+**实测结构分析**（基于子 Agent 调研，2026-07-07）：
+
+| 区段 | 行号范围 | 行数 | 职责 |
+|------|----------|------|------|
+| import + 类型 + 常量 | 1–216 | 216 | 28 个 Tab id 联合类型、AgentProfileUI、3 个内置 Profile、9 个搜索引擎等 |
+| 主组件 `SettingsPage` | 218–5561 | 5343 | 40 个 useState + 10 个 useEffect + 50 个 update* 函数 + 15 个 IPC handler + 28 个 Tab 内容 JSX |
+| └ 状态声明 | 219–290 | 72 | 40 个 useState + 4 个 useRef，**0 个 useMemo/0 个 useCallback** |
+| └ 副作用 | 293–373 | 81 | 10 个 useEffect（自动保存 700ms 防抖 / 主题预览 / Tab 懒加载） |
+| └ Skills/Hooks 异步 handler | 376–562 | 187 | 11 个 handler 直接调 `window.routedev.skill.* / hook.*` |
+| └ `update*` 系列 patch 函数 | 564–1002 | 439 | 50 个 `setDraft({ ...draft, xxx: { ...patch } })` 样板 |
+| └ handleExport/Import/Save | 1014–1160 | 147 | 含 58 行清理逻辑（过滤空 provider/model、修复路由规则） |
+| └ mainTabs/advancedTabs 定义 | 1142–1176 | 35 | 20 + 10 个 Tab 元数据 |
+| └ 渲染 JSX | 1178–5560 | 4382 | header(25) + toast(18) + nav(60) + 28 个 Tab 内容区 |
+| 底部 `ArchivedConversationsPanel` | 5563–5673 | 110 | 独立 function，已与主组件解耦，仅物理位置同文件 |
+
+**现有 11 个抽离 Tab 调用模式**：全部 "props 传整个 draft + updateDraft 回调"，无各自 hook 订阅，无 `React.memo`。新抽 Tab 沿用此契约，渐进迁移。
+
+**拆分方案**：
+
+```
+desktop/renderer/src/
+├── pages/
+│   └── SettingsPage.tsx           — 仅保留布局编排 + Tab 路由 + 全局状态注入（目标 ≤ 400 行）
+├── components/settings/
+│   ├── [现有 11 个 SettingsXxxTab.tsx 保持不变]
+│   ├── SettingsHeader.tsx          — 顶部工具栏（标题+关闭+导入/导出+saving 指示，~30 行）
+│   ├── SettingsNav.tsx             — 左侧 Tab 导航（mainTabs + advancedTabs 折叠，~100 行）
+│   ├── SaveToast.tsx               — 保存提示浮层（3s 消失，~25 行）
+│   ├── SettingsProvidersTab.tsx    — 模型配置（~220 行）+ ModelEditorModal.tsx
+│   ├── SettingsRouterTab.tsx       — 路由规则（~240 行）
+│   ├── SettingsSecurityTab.tsx     — 安全设置（~460 行，最大块之一）
+│   ├── SettingsCommandsTab.tsx     — 命令与工具黑白名单（~220 行）
+│   ├── SettingsOptimizationTab.tsx — 可观测性（~180 行）
+│   ├── SettingsExecutionTab.tsx    — 执行配置（~170 行）
+│   ├── SettingsMemoryTab.tsx       — 记忆与检查点（~290 行）
+│   ├── SettingsMcpTab.tsx          — MCP + 插件市场（~430 行）+ McpMarketModal.tsx
+│   ├── SettingsSkillsTab.tsx       — Skills 管理（~310 行）+ SkillAiGenerateDialog.tsx
+│   ├── SettingsChannelsTab.tsx     — 渠道集成（~300 行）+ ChannelCredsEditor.tsx
+│   ├── SettingsAppearanceTab.tsx   — 外观（~310 行）
+│   ├── SettingsHooksTab.tsx        — Hooks 管理（~140 行）+ HookAiGenerateDialog.tsx
+│   ├── SettingsCodemapTab.tsx      — 代码地图（~130 行）
+│   ├── SettingsPoliciesTab.tsx     — 策略引擎（~120 行）
+│   ├── SettingsSubAgentsTab.tsx    — 子 Agent Profile（~550 行，最大块，可再拆 ProfileCard/GateRules）
+│   ├── SettingsArchivedTab.tsx     — 归档对话（物理迁移 ArchivedConversationsPanel，~110 行）
+│   └── [小块合并] SettingsAboutTab.tsx + SettingsSoundsTab.tsx + SettingsExpertiseTab.tsx + SettingsMarketTab.tsx（各 50–95 行）
+└── hooks/
+    ├── useSettingsDraft.ts         — 50 个 update* 函数收到此 hook，返回 { draft, setDraft, updateDraft, updateProvider, ... }（~450 行）
+    ├── useSkillsManager.ts         — Skills 7 个异步 handler 封装 window.routedev.skill.*（~90 行）
+    ├── useHooksManager.ts          — Hooks 5 个异步 handler 封装 window.routedev.hook.*（~120 行）
+    ├── useMcpCatalog.ts            — MCP catalog 3 个 handler 封装（~60 行）
+    └── useAutoSave.ts              — 自动保存 700ms 防抖 + 主题预览 + Tab 懒加载副作用（~80 行）
+```
+
+**纯函数迁移到 settings-helpers.ts**（已有 266 行，继续扩展）：
+
+| # | 改动 | 说明 |
+|---|------|------|
+| G-H1 | `cleanDraftForSave(draft)` | 从 handleSave 抽出 58 行清理逻辑（过滤空 provider/model、修复路由规则 modelId、过滤 fallbackChain），最易单测 |
+| G-H2 | `constructProviderEntry / constructModelEntry` | Provider/Model 表单→config 构造（与现有 constructMcpServer 同模式） |
+| G-H3 | `validateDraft(draft)` | 保存前校验（provider 必填 name、model 必填 modelId 等） |
+
+**改动清单**：
+
+| # | 改动 | 文件 | 优先级 |
+|---|------|------|--------|
+| G1 | 物理迁移 `ArchivedConversationsPanel` 到独立文件 | 新建 SettingsArchivedTab.tsx | P0（最易，已自包含） |
+| G2 | 抽 `cleanDraftForSave` 纯函数到 settings-helpers | settings-helpers.ts | P0（最易单测） |
+| G3 | 抽 `useSettingsDraft` hook（50 个 update* 函数） | hooks/useSettingsDraft.ts | P0（消除 439 行样板） |
+| G4 | 抽 `useAutoSave` hook（自动保存 + 主题预览 + Tab 懒加载） | hooks/useAutoSave.ts | P1 |
+| G5 | 抽 `useSkillsManager` / `useHooksManager` / `useMcpCatalog` | hooks/*.ts | P1（封装 15 处 IPC） |
+| G6 | 抽 `SettingsHeader` / `SettingsNav` / `SaveToast` 三件套 | components/settings/*.tsx | P1（消除 138 行布局内联） |
+| G7 | 抽 7 个大型 Tab（subagents/security/mcp/skills/appearance/channels/memory，共 ~2595 行） | components/settings/*.tsx | P1（抽完后主体减半） |
+| G8 | 抽 8 个中小型 Tab（providers/router/commands/optimization/execution/hooks/codemap/policies） | components/settings/*.tsx | P2 |
+| G9 | 抽 4 个小块 Tab（sounds/about/expertise/market） | components/settings/*.tsx | P2（可合并到一个 SettingsMiscTabs.tsx） |
+| G10 | 11 个现有 Tab 复用 74-E-min 的 StatusBadge / FoldableSection | components/settings/SettingsXxxTab.tsx | P2（与 74-E-min 联动） |
+
+**huashu 验证方式**：拆分是纯重构，不涉及视觉变化，无需 huashu 原型。但拆分后应立即跑一轮视觉回归截图对比（与 74-C 的 C-V3 同模式）。
+
+**预计影响**：SettingsPage.tsx 从 5465 行降至 ≤ 400 行；新增 19+ 个 Tab 组件 + 5 个 hook + settings-helpers 扩展 ~100 行。总代码行数因样板消除略减（预估 -300 行）。
+
+**风险与缓解**：
+
+| 风险 | 缓解 |
+|------|------|
+| 50 个 update* 函数迁移到 hook 后行为变化 | 抽离后逐函数对比 `setDraft` 调用前后状态，保留旧函数签名向后兼容 |
+| 15 处 window.routedev.* 调用迁移到 hook 后时机变化 | hook 内 useEffect 依赖数组严格对齐原 SettingsPage，不引入新触发点 |
+| 大量 Tab 抽离后 Tab 切换视觉抖动 | 沿用现有 `absolute inset-0 overflow-y-auto` 容器，保持切换动画一致 |
+| ArchivedConversationsPanel 物理迁移后 zustand store 引用断裂 | 仅改 import 路径，不改 store 订阅逻辑 |
+
+---
+
+### Phase 74-H：跨对话搜索（P2 #17，原 Phase 75+ 范围移入）
+
+**目标**：在 ProjectSidebar 加搜索框，支持跨项目/跨对话的关键词搜索 + 结果列表 + 高亮跳转
+
+**为什么从 Phase 75+ 移入**：用户明确要求不留技术债到下一 Phase。调研确认此功能可纯渲染层实现，零新增依赖、零 IPC 改动、零主进程修改，工作量 1–2 人日。
+
+**前提**：与 74-D 的对话列表增强（D2/D5）协同，建议在 74-D 完成后启动；不依赖 74-C
+
+**实测基础设施分析**（基于子 Agent 调研，2026-07-07）：
+
+| 项 | 现状 | 评估 |
+|----|------|------|
+| 数据源 | `useProjectsStore.projects[].conversations[].messages[]` 已在渲染层内存（localStorage 反序列化） | ✅ 就绪 |
+| 检索算法 | `src/memory/bm25-index.ts`（Phase 65，138 行）含 CJK bigram 分词 + 标准 BM25 公式 | ✅ 可复用 |
+| UI 落点 | ProjectSidebar.tsx 顶部"设置/标题/缩进"行下方天然有插入空间 | ✅ 清晰 |
+| IPC 通道 | 无 `conversation:search` 通道，但**纯渲染层实现不需要** | ✅ 零改动 |
+| npm 包 | 未安装 lunr/fuse.js/flexsearch，但 BM25Index 已自研 | ✅ 零新增 |
+
+**拆分方案**：
+
+```
+desktop/renderer/src/
+├── store/
+│   └── useSearchStore.ts          — 新建搜索 store（搜索结果状态 + searchConversations action，~120 行）
+├── components/
+│   └── SearchInput.tsx            — 搜索输入框 + 200ms debounce + 结果列表渲染（~180 行）
+└── [复用] src/memory/bm25-index.ts — 直接 import BM25Index + tokenize（不动）
+```
+
+**改动清单**：
+
+| # | 改动 | 文件 | 依赖 |
+|---|------|------|------|
+| H1 | 新建 `useSearchStore`：定义 `SearchResultHit` 类型 + `searchConversations(query, options)` action | store/useSearchStore.ts | 无 |
+| H2 | 实现 BM25 索引 + 搜索：遍历 projects → conversations → messages，拼装 `BM25Doc[]`，索引 + search top 50 | store/useSearchStore.ts | bm25-index.ts |
+| H3 | snippet 截取：命中前后 60 字上下文，`String.prototype.split` + `RegExp.escape` | store/useSearchStore.ts | 无 |
+| H4 | ProjectSidebar 顶部插入搜索输入框（聚焦+有内容时替换 projects.map 为搜索结果列表） | components/ProjectSidebar.tsx | E6 Input 组件（已有） |
+| H5 | 搜索结果项渲染：`项目名 / 对话标题` + `<mark>` 高亮 snippet | components/ProjectSidebar.tsx | 无 |
+| H6 | 点击结果 → `selectConversation(projectId, convId)` + `onNavigateToChat()` + 清空搜索 | components/ProjectSidebar.tsx | 无 |
+| H7 | 200ms debounce（useEffect + setTimeout，不引入 lodash） | components/ProjectSidebar.tsx | 无 |
+| H8 | 索引缓存：`useMemo` 缓存 BM25Index 实例，仅在 projects 变化时重建 | store/useSearchStore.ts | 无 |
+
+**降级方案**：若 BM25 索引性能不达预期（>1000 对话时），降级为 `content.toLowerCase().includes(query.toLowerCase())` 纯字符串匹配。
+
+**无障碍要求**：
+
+- 搜索输入框 `role="searchbox"` + `aria-label="搜索对话"`
+- 结果列表 `role="listbox"`，每项 `role="option"` + `aria-selected`
+- 输入框支持 `Esc` 清空、`↑↓` 选择、`Enter` 跳转
+
+**huashu 验证方式**：用 huashu-design 做 3 版搜索 UI（顶部搜索栏 / 命令面板式 ⌘K / 侧边栏折叠式）
+
+**预计影响**：ProjectSidebar.tsx 从 432 行增至 ~500 行（+搜索 UI）；新建 useSearchStore.ts ~120 行；零新增依赖。
+
+**范围限定（Phase 74 不做）**：
+
+- ❌ 不搜 `branch-persistence.ts` 落盘的 `tree.jsonl`（需新增 IPC + 数据源映射，留给后续）
+- ❌ 不做 Web Worker 异步索引（当前规模无必要）
+- ❌ 不做中文分词增强（jieba-wasm 等，CJK bigram 已够用）
+- ❌ 不迁移 localStorage 到主进程文件存储（独立基础设施演进项）
+
+---
+
+### Phase 74-I：完整无障碍审计与修复（P3，原 Phase 75 范围移入）
+
+**目标**：对 74-A/B/D/F/G/H 新增的所有交互元素做完整 ARIA 审计 + 键盘导航验证 + 屏幕阅读器测试
+
+**为什么从 Phase 75 移入**：74 各子 Phase 已在改动清单中标注"基本 ARIA"，但分散实现易遗漏。统一审计作为收尾步骤，确保整个 Phase 74 交付物达到 WCAG 2.1 AA 基线。
+
+**前提**：74-A/B/D/F/G/H 全部完成
+
+**改动清单**：
+
+| # | 改动 | 范围 | 验证方式 |
+|---|------|------|----------|
+| I1 | 审计 74-A 工具卡片的 accept/reject/折叠/状态徽章 ARIA | ToolCallCard.tsx 及子组件 | 键盘 Tab 遍历 + NVDA/VoiceOver 朗读 |
+| I2 | 审计 74-B 队列条目的 role/键盘导航/Delete 键 | FollowUpQueue.tsx / PendingQueue.tsx | 同上 |
+| I3 | 审计 74-D 分支切换器与对话列表的 aria-selected/aria-current | BranchSwitcher.tsx / ProjectSidebar.tsx | 同上 |
+| I4 | 审计 74-F ArtifactPanel 的 role="region" + 版本 Tab 的 role="tablist" | ArtifactPanel.tsx | 同上 |
+| I5 | 审计 74-G SettingsPage 拆分后 28 个 Tab 的 role="tab" + role="tabpanel" | SettingsPage.tsx + 19+ Tab 组件 | 同上 |
+| I6 | 审计 74-H 搜索框的 role="searchbox" + 结果列表 role="listbox" | ProjectSidebar.tsx | 同上 |
+| I7 | 全局焦点管理：模态/抽屉打开时焦点陷阱（focus trap）、关闭时焦点回归 | Dialog.tsx / ArtifactPanel.tsx / 各 Modal | Tab 循环验证 |
+| I8 | 全局颜色对比度验证（状态色 vs 背景至少 4.5:1） | index.css + 所有状态徽章 | axe-core 或 Lighthouse Accessibility 报告 |
+| I9 | 键盘快捷键一致性（Esc 关闭、Enter 确认、Space 切换） | 全局 | 键盘走查 |
+
+**工具支持**：
+
+- 自动扫描：`@axe-core/playwright` 或 Lighthouse Accessibility audit
+- 手动验证：NVDA（Windows）/ VoiceOver（macOS）屏幕阅读器朗读
+- 键盘走查：纯键盘完成所有核心流程（发送消息 / 切换 Tab / accept diff / 搜索对话 / 切换分支）
+
+**预计影响**：新增/修复 ARIA 属性约 50 处；可能新增 1–2 个 focus trap 工具组件；无功能变化。
+
+---
+
 ## 四、执行优先级与依赖关系
 
 ```
-Phase 74-C（ChatPage 拆分 + 性能基座）
-    ↓
-Phase 74-E-min（最小设计 Token 集）← 与 74-C 并行
-    ↓
-Phase 74-A（工具卡片重构）+ Phase 74-B（队列 UI 重构）← 并行，均在独立组件上操作
+Phase 74-C（ChatPage 拆分 + 性能基座）          Phase 74-G（SettingsPage 主体拆分）
+    ↓                                                ↓
+Phase 74-E-min（最小设计 Token 集）              74-G 独立于 C/A/B/D/F，可与任意阶段并行
+    ↓                                            前提仅 74-E-min（StatusBadge/FoldableSection 复用）
+Phase 74-A（工具卡片重构）+ Phase 74-B（队列 UI 重构）← 并行
     ↓
 Phase 74-D（分支可视化）+ Phase 74-E 完整版（设计系统补全）← 并行
-    ↓
-Phase 74-F（产物面板）
+    ↓                                                ↓
+Phase 74-H（跨对话搜索，依赖 74-D 的对话列表增强）   Phase 74-F（产物面板）
+    ↓                                                ↓
+                   Phase 74-I（完整无障碍审计，收尾）
 ```
 
 **推荐执行顺序**：
 
-1. **74-C + 74-E-min**（并行：拆巨石 + 出最小设计 token）— 建基础
+1. **74-C + 74-E-min + 74-G**（三并行：拆 ChatPage 巨石 + 出最小设计 token + 拆 SettingsPage 巨石）— 建基础，三块互不阻塞
 2. **74-A + 74-B**（并行：工具卡片 + 队列 UI）— 最高用户感知 ROI
-3. **74-D + 74-E 完整版**（并行：分支可视化 + 设计系统补全）— 差异化功能
-4. **74-F**（产物面板）— 锦上添花
+3. **74-D + 74-E 完整版 + 74-F**（并行：分支可视化 + 设计系统补全 + 产物面板）— 差异化功能
+4. **74-H**（跨对话搜索，依赖 74-D 完成）— P2 收尾
+5. **74-I**（完整无障碍审计）— 全 Phase 收尾，确保 WCAG 2.1 AA 基线
 
 **每步前置条件检查**：
 
 | 步骤 | 前置条件 | 验证方式 |
 |------|----------|----------|
 | 74-C | ChatPage.tsx 构建通过 + 应用启动正常 | `npm run build` + 手动启动验证 |
-| 74-E-min | 74-C 拆分完成 | 组件文件存在 + import 无报错 |
+| 74-E-min | 74-C 拆分完成（实际可独立启动，仅 StatusBadge/FoldableSection 需先出） | 组件文件存在 + import 无报错 |
+| 74-G | 74-E-min 完成（StatusBadge/FoldableSection 可复用）；与 74-C 完全独立 | SettingsPage 构建通过 |
 | 74-A | 74-C 完成 + A4 后端 IPC 就绪 | IPC handler 单元测试通过 |
 | 74-B | 74-C 完成 | FollowUpQueue.tsx / PendingQueue.tsx 独立存在 |
 | 74-D | 74-C 完成 + BranchSwitcher 占位就绪 | 占位组件可渲染 |
 | 74-F | 74-A 完成 + FoldableSection 可用 | ArtifactPanel 挂载无报错 |
+| 74-H | 74-D 完成（D2 对话列表增强 + D5 分支标识就绪，便于搜索结果跳转后展示完整信息） | ProjectSidebar 搜索框可输入并返回结果 |
+| 74-I | 74-A/B/D/F/G/H 全部完成 | 自动扫描 + 手动键盘走查通过 |
 
 ---
 
@@ -387,6 +587,27 @@ Phase 74-F（产物面板）
    - 箭头式：`< 分支 2/3 >`（ChatGPT 风格）
    - Tab 式：`[原始] [分支 1] [分支 2]`（Cursor 风格）
    - 面包屑式：`对话 > 分支 2 > 当前`
+
+### 5.4 SettingsPage 拆分视觉回归（Phase 74-G）
+
+74-G 是纯重构不涉及视觉变化，**无需 huashu 原型**。但需做视觉回归验证：
+
+1. 拆分前截图 28 个 Tab 的关键状态（默认值 / 已填写 / 校验错误 / 加载中）
+2. 拆分后逐 Tab 对比截图，差异仅允许来自 StatusBadge / FoldableSection 复用后的统一化
+3. 重点关注：Tab 切换动画、自动保存 toast、Header 工具栏位置
+
+### 5.5 跨对话搜索原型（Phase 74-H）
+
+1. 用 huashu-design 做 3 种搜索 UI：
+   - 顶部搜索栏：ProjectSidebar 顶部固定输入框，结果替换对话列表
+   - 命令面板式：⌘K 唤起居中浮层，结果下拉列表（VS Code 风格）
+   - 侧边栏折叠式：搜索按钮展开侧边搜索面板
+2. 包含：空输入 / 1 条结果 / 10+ 条结果 / 无结果 4 种状态
+3. 高亮样式：`<mark>` 黄色背景 + 命中前后 60 字 snippet
+
+### 5.6 无障碍审计（Phase 74-I）
+
+74-I 是审计修复而非新设计，**无需 huashu 原型**。验证方式见 74-I 改动清单的"验证方式"列（axe-core 自动扫描 + NVDA/VoiceOver 手动朗读 + 键盘走查）。
 
 ---
 
@@ -425,20 +646,24 @@ Phase 74-F（产物面板）
 
 | 指标 | 现状（v3 实测） | 目标 |
 |------|------|------|
-| ChatPage.tsx 行数 | 1652 | ≤ 300（拆分后） |
-| renderer 总文件数 | 49 | 60+（含拆分+新增） |
+| ChatPage.tsx 行数 | 1652 | ≤ 300（74-C 拆分后） |
+| SettingsPage.tsx 行数 | 5465 | ≤ 400（74-G 拆分后） |
+| renderer 总文件数 | 49 | 80+（含 74-C/G 拆分 + 74-A/B/D/F/H 新增） |
 | shadcn/ui 组件数 | 11 | 18+（补齐 Tooltip/Dropdown/Toast/Tabs/Popover/Skeleton） |
-| settings/ Tab 子组件数 | 11（已抽离） | 11（保持，复用 E1/E2 抽象） |
+| settings/ Tab 子组件数 | 11（已抽离） | 30+（74-G 抽出 19+ 个新 Tab） |
+| settings/ 自定义 hook 数 | 0 | 5（useSettingsDraft/useAutoSave/useSkillsManager/useHooksManager/useMcpCatalog） |
 | 工具卡片信息密度（折叠态可见字段） | 1（摘要文字） | 4+（摘要+状态徽章+参数预览+工具图标） |
 | ANSI 颜色支持 | 否 | 是 |
 | 行级 diff | 否 | 是 |
 | accept/reject 按钮 | 否 | 是 |
 | 分支可视化 | 否 | 是（`< >` 箭头，对话分支非多Agent分支） |
+| 跨对话搜索 | 否 | 是（BM25 + 高亮 + 跳转） |
 | 主题跟随系统 | 否 | 是 |
 | 滚动条可见 | 否 | 是（细半透明） |
 | 产物预览面板 | 否 | 是 |
 | 长对话（200+ 消息）滚动帧率 | 未测量（全量渲染） | ≥ 30fps（虚拟滚动启用后） |
 | 流式输出时不必要 re-render | 全树 re-render | 仅目标子组件 re-render（selector 优化后） |
+| WCAG 2.1 AA 基线达成 | 否 | 是（74-I 审计后） |
 
 ---
 
@@ -452,17 +677,25 @@ Phase 74-F（产物面板）
 | huashu 原型与 React 实现差距 | 原型仅验证视觉方向，实现时以现有 Tailwind + shadcn 体系为准 |
 | 用户可能不满意方向 B | 三套方向原型先行，用户选定后再实现 |
 | A4/F4/B7 需要后端 IPC | 在每个前端 Phase 开工前，先完成后端 IPC 部分（预估 A4 ~100 行、B7 ~30 行、F4 ~20 行） |
-| SettingsPage.tsx 5465 行（已拆出 11 个 Tab，主体仍为巨石；本轮不处理） | 记录为 Phase 75 范围，本轮不触碰 SettingsPage 主体代码；74-E-min 抽象的 StatusBadge/FoldableSection 可顺带被 settings/ Tab 复用 |
+| SettingsPage.tsx 5465 行（已拆出 11 个 Tab，主体仍为巨石） | 74-G 拆分与 74-C 同构但独立执行；优先抽 ArchivedConversationsPanel/cleanDraftForSave/useSettingsDraft 三件套，主体立即减半 |
+| 74-G 50 个 update* 函数迁移风险 | 抽离后逐函数对比 setDraft 调用前后状态，保留旧函数签名向后兼容；先抽 useSettingsDraft hook 再拆 Tab，避免接口爆炸 |
+| 74-H localStorage 单 key 配额（5–10MB）长对话被截断 | 与搜索无关，是已存在的基础设施短板；搜索不依赖主进程数据；74-H 范围限定不迁移 localStorage |
+| 74-I 完整无障碍审计耗时 | 分两阶段：先 axe-core 自动扫描出报告（1 天），再手动修复高优先级问题（1–2 天）；低优先级可延后但需记录 |
 
 ---
 
 ## 九、Phase 74 范围外（记录备忘）
 
+> v3 修订：原计划列入 Phase 75/75+ 的三项技术债（SettingsPage 主体拆分 / 跨对话搜索 / 完整无障碍审计）已全部移入 Phase 74（74-G / 74-H / 74-I）。本节仅保留真正需要后续 Phase 处理的基础设施演进项。
+
 | 项目 | 说明 | 计划处理 |
 |------|------|----------|
-| SettingsPage.tsx 5465 行主体 | 已拆出 11 个 Tab 至 components/settings/，主体仍含布局+状态+表单逻辑混杂；改动频率低、用户感知弱 | Phase 75 |
-| 完整无障碍审计 | 新增交互元素在 74 内做基本 ARIA，全量审计延后 | Phase 75 |
-| 跨对话搜索（P2 #17） | 需要全文索引基础设施 | Phase 75+ |
+| localStorage 单 key 配额演进 | 渲染层 localStorage（5–10MB）长对话被截断，应迁移到主进程文件存储或 IndexedDB | Phase 76+（独立基础设施演进项，不阻塞 74-H 搜索功能） |
+| 搜索 branch-persistence.ts 落盘的 tree.jsonl | 74-H 仅搜渲染层 useProjectsStore；搜 Agent 重度任务的分支树历史需新增 IPC + 数据源映射 | Phase 76+（74-H 已预留扩展点） |
+| Web Worker 异步搜索索引 | 74-H 同步 BM25 索引在 1000+ 对话时可能卡 UI；当前规模无必要 | 按需，达到 500 对话阈值时启动 |
+| 中文分词增强（jieba-wasm） | 74-H 复用的 BM25Index 用 CJK bigram，长中文查询精度有损 | 按需，根据用户反馈启动 |
+| SettingsPage 拆分后的性能优化（useMemo/useCallback/React.memo） | 74-G 优先完成结构拆分，性能优化（避免 draft 引用变化全 Tab 重渲染）作为后续增强 | Phase 76+ |
+| 完整无障碍审计的剩余低优先级问题 | 74-I 聚焦高优先级 ARIA + 键盘导航；颜色对比度、屏幕阅读器边缘 case 等低优先级项延后 | Phase 76+ |
 
 ---
 
@@ -483,10 +716,35 @@ Phase 74-F（产物面板）
 
 4. **74-E-min 额外收益补充**：当前 `components/settings/` 下已有 11 个 SettingsXxxTab.tsx 子组件，E1/E2 抽象完成后可顺带让这些 Tab 复用 StatusBadge / FoldableSection，统一内联实现。
 
-5. **P4 第 28 项更新**：SettingsPage.tsx 已部分拆分（11 个 Tab），主体仍为巨石，Phase 75 处理主体进一步拆分。
+5. **P4 第 28 项更新**：SettingsPage.tsx 已部分拆分（11 个 Tab），主体仍为巨石，原计划 Phase 75 处理。
 
 6. **成功度量表更新**：增加"settings/ Tab 子组件数"指标，明确分支可视化指对话分支。
 
+### v3.1 修订追加（同日，用户要求"不留技术债到 Phase 75"）
+
+7. **新增 Phase 74-G：SettingsPage 主体拆分**（原 Phase 75 范围移入）：
+   - 基于子 Agent 调研，实测 5465 行主体含 40 个 useState + 10 个 useEffect + 50 个 update* 函数 + 15 处 IPC + 28 个 Tab 内容 JSX
+   - 拆分方案：≤400 行编排页 + 19+ 个新 Tab 组件 + 5 个自定义 hook + settings-helpers 扩展
+   - 优先级：P0 三件套（ArchivedConversationsPanel 物理迁移 + cleanDraftForSave 纯函数 + useSettingsDraft hook）→ P1 七大 Tab 抽离 → P2 中小 Tab + 现有 Tab 复用
+
+8. **新增 Phase 74-H：跨对话搜索**（原 Phase 75+ 范围移入）：
+   - 子 Agent 调研确认：数据源（useProjectsStore）+ 算法（BM25Index，Phase 65 已自研）+ UI 落点（ProjectSidebar 顶部）全部就绪
+   - 零新增依赖、零 IPC 改动、零主进程修改，工作量 1–2 人日
+   - 范围限定：不搜 tree.jsonl、不做 Web Worker、不做中文分词增强、不迁移 localStorage
+
+9. **新增 Phase 74-I：完整无障碍审计与修复**（原 Phase 75 范围移入）：
+   - 收尾步骤，对 74-A/B/D/F/G/H 全部新增交互元素做 ARIA 审计 + 键盘导航 + 屏幕阅读器测试
+   - 工具：axe-core 自动扫描 + NVDA/VoiceOver 手动朗读 + 键盘走查
+   - 目标：WCAG 2.1 AA 基线
+
+10. **执行优先级图重画**：从"4 步串并行"扩展为"5 步串并行"，74-G 与 74-C/E-min 三并行启动，74-H 依赖 74-D，74-I 作为全 Phase 收尾。
+
+11. **成功度量表扩展**：增加 SettingsPage 行数、settings/ Tab 子组件数、自定义 hook 数、跨对话搜索、WCAG 2.1 AA 基线 5 项指标。
+
+12. **风险表扩展**：增加 74-G 50 个 update* 函数迁移风险、74-H localStorage 配额、74-I 审计耗时 3 项风险与缓解措施。
+
+13. **Phase 74 范围外章节重写**：原 3 项技术债已全部移入 Phase 74，本节仅保留真正需要后续 Phase 处理的基础设施演进项（localStorage 演进、tree.jsonl 搜索、Web Worker、jieba-wasm、SettingsPage 性能优化、无障碍低优先级问题）。
+
 ---
 
-*本计划基于：竞品调研（12 产品）× 项目现状（49 文件/约 15544 行，2026-07-07 实测）× Skills 市场（frontend-design + ui-ux-pro-max）× huashu-design 方法论综合制定。v2 修订：优化执行顺序（先拆后改）、提前设计 token、补充后端 IPC 依赖、补充性能指标、补充无障碍要求。v3 修订：基于死代码清理后的实测数据重新校准行数与文件数、明确分支定义、修正 74-C 拆分方案、补充 settings/ Tab 复用收益。*
+*本计划基于：竞品调研（12 产品）× 项目现状（49 文件/约 15544 行，2026-07-07 实测）× Skills 市场（frontend-design + ui-ux-pro-max）× huashu-design 方法论综合制定。v2 修订：优化执行顺序（先拆后改）、提前设计 token、补充后端 IPC 依赖、补充性能指标、补充无障碍要求。v3 修订：基于死代码清理后的实测数据重新校准行数与文件数、明确分支定义、修正 74-C 拆分方案、补充 settings/ Tab 复用收益。v3.1 修订：应用户要求"不留技术债到 Phase 75"，将原 Phase 75/75+ 的三项技术债（SettingsPage 拆分 / 跨对话搜索 / 完整无障碍审计）全部移入 Phase 74（74-G / 74-H / 74-I），新增 9 个子 Phase 改动清单与依赖关系。*
