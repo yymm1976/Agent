@@ -45,41 +45,6 @@ export class RouteDevError extends Error {
     // 维持正确的原型链（ES5 target 兼容）
     Object.setPrototypeOf(this, new.target.prototype);
   }
-
-  /** 用户友好消息（message + details，不含 dev） */
-  toUserMessage(): string {
-    return this.details ? `${this.message}\n\n${this.details}` : this.message;
-  }
-
-  /** 开发者消息（含 dev 信息） */
-  toDevMessage(): string {
-    const parts = [this.toUserMessage()];
-    if (this.dev) {
-      parts.push(`\n[Dev] ${this.dev}`);
-    }
-    return parts.join('');
-  }
-}
-
-/**
- * 工具执行错误
- * 携带工具名和原始错误信息
- */
-export class ToolExecutionError extends RouteDevError {
-  readonly toolName: string;
-
-  constructor(
-    toolName: string,
-    message: string,
-    options?: {
-      details?: string;
-      dev?: string;
-      cause?: unknown;
-    },
-  ) {
-    super(`工具 ${toolName} 执行失败: ${message}`, 'TOOL_EXECUTION_ERROR', options);
-    this.toolName = toolName;
-  }
 }
 
 /**
@@ -101,51 +66,4 @@ export class ConfigValidationError extends RouteDevError {
     super(`配置验证失败 [${field}]: ${message}`, 'CONFIG_VALIDATION_ERROR', options);
     this.field = field;
   }
-}
-
-/**
- * 类型守卫：判断错误是否为 RouteDevError 体系
- */
-export function isRouteDevError(err: unknown): err is RouteDevError {
-  return err instanceof RouteDevError;
-}
-
-// ============================================================
-// 双受众错误格式化工具函数（Phase 51 Task 9）
-// ============================================================
-
-/**
- * 将任意错误格式化为用户可见消息
- * - RouteDevError：调用 toUserMessage()（message + details，不含 dev）
- * - 普通 Error：返回 message
- * - 其他：String(err)
- *
- * 安全保证：永远不会返回 dev 字段内容，可在 UI 直接渲染
- */
-export function formatErrorForUser(err: unknown): string {
-  if (err instanceof RouteDevError) {
-    return err.toUserMessage();
-  }
-  if (err instanceof Error) {
-    return err.message;
-  }
-  return String(err);
-}
-
-/**
- * 将任意错误格式化为开发者可见消息
- * - RouteDevError：调用 toDevMessage()（含 dev 信息）
- * - 普通 Error：message + 堆栈（若有）
- * - 其他：String(err)
- *
- * 注意：返回内容可能包含路径、堆栈等内部细节，仅在开发模式渲染
- */
-export function formatErrorForDev(err: unknown): string {
-  if (err instanceof RouteDevError) {
-    return err.toDevMessage();
-  }
-  if (err instanceof Error) {
-    return err.stack ? `${err.message}\n${err.stack}` : err.message;
-  }
-  return String(err);
 }

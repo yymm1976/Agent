@@ -371,7 +371,7 @@ export class HookRunner {
 
     // P0-15：新事件分类法桥接——触发旧事件后，同步触发映射的新事件
     // 让注册到新 27 种事件类型的处理器也能接收生命周期信号
-    // 映射关系见 LEGACY_HOOK_EVENT_MAP（如 'pre-tool-call' → 'PreToolUse'）
+    // 映射关系由 legacyToNewEvent 实现（如 'pre-tool-call' → 'PreToolUse'）
     const newEventType = legacyToNewEvent(event);
     if (newEventType) {
       const newResult = await this.fireNew(newEventType, context);

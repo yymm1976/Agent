@@ -19,17 +19,6 @@ export function createEmbedder(provider: 'openai' | 'hash', _apiKey?: string): S
 }
 
 /**
- * L2 归一化（ACRouter 专用）
- */
-export function l2Normalize(vec: number[]): number[] {
-  let norm = 0;
-  for (const v of vec) norm += v * v;
-  norm = Math.sqrt(norm);
-  if (norm === 0) return vec;
-  return vec.map(v => v / norm);
-}
-
-/**
  * 余弦相似度（ACRouter 专用）
  */
 export function cosineSimilarity(a: number[], b: number[]): number {

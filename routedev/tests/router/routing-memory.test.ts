@@ -6,7 +6,7 @@ import { RoutingMemory } from '../../src/router/routing-memory.js';
 import type { NeighborModelStats } from '../../src/router/routing-memory.js';
 import { RoutingHistory } from '../../src/router/routing-history.js';
 import type { RoutingRecord } from '../../src/router/routing-history.js';
-import { HashEmbedder, cosineSimilarity, l2Normalize } from '../../src/router/embedder.js';
+import { HashEmbedder, cosineSimilarity } from '../../src/router/embedder.js';
 
 function makeRecord(overrides: Partial<RoutingRecord> = {}): RoutingRecord {
   return {
@@ -303,33 +303,6 @@ describe('RoutingMemory', () => {
 
     it('零向量应返回 0', () => {
       expect(cosineSimilarity([0, 0, 0], [1, 2, 3])).toBe(0);
-    });
-  });
-
-  describe('l2Normalize 工具函数', () => {
-    it('归一化后模长应为 1', () => {
-      const norm = l2Normalize([3, 4]);
-      expect(Math.sqrt(norm[0]! ** 2 + norm[1]! ** 2)).toBeCloseTo(1.0, 10);
-    });
-
-    it('零向量应原样返回', () => {
-      const result = l2Normalize([0, 0, 0]);
-      expect(result).toEqual([0, 0, 0]);
-    });
-
-    it('已是单位向量的输入应保持不变', () => {
-      const v = [1, 0, 0];
-      const result = l2Normalize(v);
-      expect(result[0]).toBeCloseTo(1, 10);
-      expect(result[1]).toBeCloseTo(0, 10);
-      expect(result[2]).toBeCloseTo(0, 10);
-    });
-
-    it('应保持方向比例', () => {
-      const result = l2Normalize([2, 0, 0]);
-      expect(result[0]).toBeCloseTo(1, 10);
-      expect(result[1]).toBeCloseTo(0, 10);
-      expect(result[2]).toBeCloseTo(0, 10);
     });
   });
 

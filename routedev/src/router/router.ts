@@ -15,7 +15,7 @@ import type {
   RouteDecision,
 } from './types.js';
 import type { ClassificationResult } from './types.js';
-import type { ProviderConfig, ExecutionConfig, ReasoningMode } from '../config/schema.js';
+import type { ProviderConfig, ExecutionConfig } from '../config/schema.js';
 import type { PluginRegistry } from '../plugins/registry.js';
 import type { DeterministicClassificationResult } from './classifier.js';
 import { TokenTracker } from './tracker.js';
@@ -153,8 +153,6 @@ export class ModelRouter {
   private pluginRegistry?: PluginRegistry;
   /** I8 修复：熔断器实例，按模型 ID 跟踪连续失败，熔断后短期拒绝调用 */
   private circuitBreaker: CircuitBreaker;
-  /** Phase 42：推理模式（fast/balanced/accurate），影响 tier 选择 */
-  private reasoningMode: ReasoningMode;
 
   constructor(
     config: RouterConfig,
@@ -163,14 +161,11 @@ export class ModelRouter {
     pluginRegistry?: PluginRegistry,
     /** I8 修复：可选传入执行配置，用于初始化熔断器参数；不传则用默认值 */
     executionConfig?: ExecutionConfig,
-    /** Phase 42：推理模式，控制 tier 上下限 */
-    reasoningMode?: ReasoningMode,
   ) {
     this.config = config;
     this.tracker = tracker;
     this.providers = providers;
     this.pluginRegistry = pluginRegistry;
-    this.reasoningMode = reasoningMode ?? 'balanced';
     // I8 修复：初始化熔断器，使用 optional chaining + 默认值，未传 executionConfig 时用默认值
     this.circuitBreaker = new CircuitBreaker({
       enabled: executionConfig?.circuitBreaker ?? true,
@@ -182,33 +177,11 @@ export class ModelRouter {
   }
 
   /**
-   * Phase 42：设置推理模式
-   * 支持运行时切换 fast / balanced / accurate
-   */
-  setReasoningMode(mode: ReasoningMode): void {
-    this.reasoningMode = mode;
-    logger.info('Reasoning mode updated', { mode });
-  }
-
-  /**
    * Phase 42：根据推理模式限制 tier 选择范围
-   * - fast：限制最高 tier 为 medium（省钱模式）
-   * - balanced：保持原 tier
-   * - accurate：限制最低 tier 为 medium（高质量模式）
+   * 死代码清理：reasoningMode 配置未接入后端（buildRouterConfig 不读，构造函数不接收），
+   * 故原 fast/accurate 分支为死代码。保留方法本身（route() 仍调用），简化为直接返回原 tier。
    */
   private clampTier(tier: ScenarioTier): ScenarioTier {
-    const tierOrder: ScenarioTier[] = ['simple', 'medium', 'complex', 'reasoning'];
-    const index = tierOrder.indexOf(tier);
-    if (this.reasoningMode === 'fast') {
-      // 最高 tier 不超过 medium
-      const clamped = Math.min(index, tierOrder.indexOf('medium'));
-      return tierOrder[clamped];
-    }
-    if (this.reasoningMode === 'accurate') {
-      // 最低 tier 不低于 medium
-      const clamped = Math.max(index, tierOrder.indexOf('medium'));
-      return tierOrder[clamped];
-    }
     return tier;
   }
 
@@ -418,17 +391,11 @@ export class ModelRouter {
     }
 
     // Phase 42：根据推理模式调整 tier
+    // 死代码清理：reasoningMode 未接入后端，clampTier 为恒等映射，保留 clampedClassification 以最小化改动
     const clampedClassification: ClassificationResult = {
       ...classification,
       tier: this.clampTier(classification.tier),
     };
-    if (clampedClassification.tier !== classification.tier) {
-      logger.info('Tier clamped by reasoning mode', {
-        originalTier: classification.tier,
-        clampedTier: clampedClassification.tier,
-        reasoningMode: this.reasoningMode,
-      });
-    }
 
     // Phase 27 Task 2：先询问 RouterPlugin
     const pluginResult = await this.tryPluginRoute(clampedClassification);

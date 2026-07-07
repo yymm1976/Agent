@@ -112,8 +112,7 @@ export interface GoalRunnerDeps {
   unifiedReviewer?: UnifiedReviewer;
   /** Phase 58：统一路径路由器（合并原 executionRouter + levelPathRouter） */
   pathRouter?: PathRouter;
-  difficultyAssessor?: DifficultyAssessor;
-  stateMigration?: StateMigration;
+  // Phase 59：difficultyAssessor/stateMigration 接口字段已删除（接线冗余，goal-runner 内部直接 new）
   /**
    * Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，通过 ref 延迟绑定）
    * app-init.ts 中 DualLoopOrchestrator 在动态 import 的 .then() 回调内创建，
@@ -217,7 +216,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     // Phase 58：orchestrator/workerExecutor 已删除（executeWorkerStep 死方法清理）
     blackboard, unifiedReviewer,
     // Phase 58：统一路径路由器 + DAG 引擎（可选注入，未注入时降级到 single）
-    pathRouter, difficultyAssessor, stateMigration, dagEngine, compositionalRouter,
+    pathRouter, dagEngine, compositionalRouter,
     // Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，通过 ref 延迟绑定）
     dualLoopOrchestratorRef,
     nextId,
@@ -421,11 +420,11 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
 
     const difficultyRoutingConfig = config.goal?.difficultyRouting;
     const difficultyAssessment = difficultyRoutingConfig?.enabled
-      ? await (difficultyAssessor ?? new DifficultyAssessor({
+      ? await new DifficultyAssessor({
           llmClient: client,
           modelId: routeDecision.model.id,
           confidenceThreshold: difficultyRoutingConfig.confidenceThreshold,
-        })).assess(enrichedDescription)
+        }).assess(enrichedDescription)
       : undefined;
 
     const plan = await parser.parse(enrichedDescription, {
@@ -439,7 +438,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     if (difficultyAssessment) {
       plan.difficultyAssessment = difficultyRoutingConfig?.refineLevelAtExecution === false
         ? difficultyAssessment
-        : (difficultyAssessor ?? new DifficultyAssessor()).refineAssessment(difficultyAssessment, plan);
+        : new DifficultyAssessor().refineAssessment(difficultyAssessment, plan);
     }
 
     // Phase 20：通过 StepEditor 让用户编辑计划步骤
@@ -1117,7 +1116,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
           unresolvedBlockers: plan.steps.filter(step => step.status === 'failed' && step.error).length,
         });
         if (suggestion) {
-          const migration = (stateMigration ?? new StateMigration()).migrate({ plan, suggestion });
+          const migration = new StateMigration().migrate({ plan, suggestion });
           // Phase 71：保存修订历史（before=迁移前 steps，after=迁移后 steps）
           savePlanRevision(plan.steps, migration.plan.steps, 'dynamic_level_switch');
           plan.steps = migration.plan.steps;

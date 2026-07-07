@@ -15,8 +15,7 @@ import { CheckpointManager } from '../../src/harness/checkpoint-manager.js';
 import { ContextManager } from '../../src/agent/memory/context-manager.js';
 // Phase 57：VisionAssistant import 已移除（visionAssistant 改为可选，测试不再断言其类型）
 import { Blackboard } from '../../src/agent/multi/blackboard.js';
-import { Orchestrator } from '../../src/agent/multi/orchestrator.js';
-import { WorkerExecutor } from '../../src/agent/multi/worker-executor.js';
+// Phase 59：Orchestrator/WorkerExecutor import 已移除（接口字段已删除，不再断言类型）
 import { TraceCollector } from '../../src/harness/trace-collector.js';
 import { AuditLogger } from '../../src/harness/audit-logger.js';
 import { PromptTemplateManager } from '../../src/prompts/manager.js';
@@ -224,8 +223,7 @@ describe('createAppDependencies', () => {
       expect(deps.skillsRouter).toBeInstanceOf(SkillsRouter);
       expect(deps.filesystemDiscovery).toBeInstanceOf(FilesystemDiscovery);
       // 多 Agent
-      expect(deps.orchestrator).toBeInstanceOf(Orchestrator);
-      expect(deps.workerExecutor).toBeInstanceOf(WorkerExecutor);
+      // Phase 59：orchestrator/workerExecutor 字段已从 AppDependencies 移除（僵尸字段，实例化代码保留供闭包引用）
       // 记忆与上下文
       expect(deps.checkpointManager).toBeInstanceOf(CheckpointManager);
       expect(deps.contextManager).toBeInstanceOf(ContextManager);
@@ -451,7 +449,8 @@ describe('createAppDependencies', () => {
         'registry', 'mcpManager', 'securityChecker', 'toolExecutor', 'adapter',
         'workModeController', 'guardedAdapter', 'agentLoop',
         'middlewarePipeline', 'pluginRegistry', 'skillsRouter', 'filesystemDiscovery',
-        'permissionEngine', 'orchestrator', 'workerExecutor',
+        'permissionEngine',
+        // Phase 59：orchestrator/workerExecutor 字段已从 AppDependencies 移除（僵尸字段）
         'checkpointManager', 'checkpointWriter', 'contextManager',
         // Phase 57：visionAssistant 改为可选（config.vision.enabled=false 时为 undefined），不再断言
         // Phase 59：branchManager/initAnalyzer/goalParser/goalVerifier/requirementsGatherer/complexityAnalyzer 已删除（僵尸字段）

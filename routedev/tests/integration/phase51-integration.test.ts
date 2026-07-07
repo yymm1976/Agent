@@ -5,7 +5,7 @@
 //   场景 1 (Task 2/3/4)：端到端委托流程——classifyTask → decideDelegation → canDelegate → createChildRegistry → createSubAgentSession → extractFinalAnswer → validateSubAgentResult
 //   场景 2 (Task 1/7)：Reviewer 分级全流程——assessRisk → determineReviewerTier → getReviewPassesForTier → validateReviewFeedback
 //   场景 3 (Task 8)：配置三层合并——deepMergeConfig 默认 / loadConfig 优先级
-//   场景 4 (Task 9)：错误受众分层——ToolExecutionError + formatErrorForUser/Dev + ErrorDisplaySchema
+//   场景 4 (Task 9)：错误受众分层——ErrorDisplaySchema
 //
 // 全部使用 mock 依赖，不调用真实 LLM 或文件系统。
 
@@ -51,12 +51,7 @@ import {
 import { AgentActivityStore, splitModelLabel, buildLineage } from '../../src/agents/activity-store.js';
 
 // 错误体系
-import {
-  RouteDevError,
-  ToolExecutionError,
-  formatErrorForUser,
-  formatErrorForDev,
-} from '../../src/utils/errors.js';
+// 注：errors.ts 中的 ToolExecutionError/formatErrorForUser/formatErrorForDev 已作为死代码清理
 
 // 配置合并
 import { deepMergeConfig, loadConfig } from '../../src/config/loader.js';
@@ -511,42 +506,6 @@ describe('Phase 51 场景 4: 错误受众分层', () => {
     vi.clearAllMocks();
   });
 
-  it('4.1 ToolExecutionError 携带 details 与 dev 信息', () => {
-    const err = new ToolExecutionError('shell_exec', '命令执行失败', {
-      details: '退出码 127，命令不存在',
-      dev: 'PATH 中缺少 /usr/local/bin，spawn 失败',
-    });
-    expect(err.toolName).toBe('shell_exec');
-    expect(err.details).toBe('退出码 127，命令不存在');
-    expect(err.dev).toBe('PATH 中缺少 /usr/local/bin，spawn 失败');
-    expect(err.code).toBe('TOOL_EXECUTION_ERROR');
-  });
-
-  it('4.2 error.toUserMessage() 不含 dev 信息', () => {
-    const err = new ToolExecutionError('shell_exec', '命令执行失败', {
-      details: '退出码 127',
-      dev: 'PATH 中缺少 /usr/local/bin（dev only）',
-    });
-    const userMsg = err.toUserMessage();
-    expect(userMsg).toContain('命令执行失败');
-    expect(userMsg).toContain('退出码 127');
-    // 严禁泄露 dev 信息
-    expect(userMsg).not.toContain('PATH 中缺少');
-    expect(userMsg).not.toContain('[Dev]');
-  });
-
-  it('4.3 error.toDevMessage() 含 dev 信息', () => {
-    const err = new ToolExecutionError('shell_exec', '命令执行失败', {
-      details: '退出码 127',
-      dev: 'PATH 中缺少 /usr/local/bin',
-    });
-    const devMsg = err.toDevMessage();
-    expect(devMsg).toContain('[Dev]');
-    expect(devMsg).toContain('PATH 中缺少 /usr/local/bin');
-    // 同时也包含用户可见部分
-    expect(devMsg).toContain('命令执行失败');
-  });
-
   it('4.4 ErrorDisplaySchema.parse({}) → showDevDetails=false（默认值）', () => {
     // 空对象预处理后走 schema 默认
     const parsed = ErrorDisplaySchema.parse({});
@@ -564,43 +523,6 @@ describe('Phase 51 场景 4: 错误受众分层', () => {
     // preprocess(v => v ?? {}, ...) 把 undefined 转为 {}
     const parsed = ErrorDisplaySchema.parse(undefined);
     expect(parsed.showDevDetails).toBe(false);
-  });
-
-  it('4.7 formatErrorForUser 与 formatErrorForDev 输出分层', () => {
-    const err = new ToolExecutionError('file_write', '写入失败', {
-      details: '磁盘已满',
-      dev: 'inode 耗尽，建议清理 /tmp',
-    });
-    const userMsg = formatErrorForUser(err);
-    const devMsg = formatErrorForDev(err);
-    // 用户消息只含 message + details
-    expect(userMsg).toContain('写入失败');
-    expect(userMsg).toContain('磁盘已满');
-    expect(userMsg).not.toContain('inode');
-    // 开发者消息含 dev 部分
-    expect(devMsg).toContain('[Dev]');
-    expect(devMsg).toContain('inode 耗尽');
-  });
-
-  it('4.8 完整链路：构造错误 → 解析 ErrorDisplaySchema → 按模式格式化', () => {
-    // 1. 构造带 dev 信息的错误
-    const err = new ToolExecutionError('file_write', '写入失败', {
-      details: '磁盘已满',
-      dev: 'inode 耗尽',
-    });
-    // 2. 解析 ErrorDisplaySchema（用户模式：showDevDetails=false）
-    const userMode = ErrorDisplaySchema.parse({ showDevDetails: false });
-    // 3. 按用户模式渲染：不应含 dev
-    if (userMode.showDevDetails === false) {
-      const text = formatErrorForUser(err);
-      expect(text).not.toContain('inode');
-    }
-    // 4. 开发模式：应含 dev
-    const devMode = ErrorDisplaySchema.parse({ showDevDetails: true });
-    if (devMode.showDevDetails === true) {
-      const text = formatErrorForDev(err);
-      expect(text).toContain('inode');
-    }
   });
 });
 

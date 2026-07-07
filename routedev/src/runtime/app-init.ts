@@ -74,7 +74,7 @@ import { BranchManager } from '../agent/branch.js';
 import { estimateTokens } from '../utils/token-estimate.js';
 import { VisionAssistant } from '../agent/vision.js';
 import { Blackboard } from '../agent/multi/blackboard.js';
-import { Orchestrator, type OrchestrationIntegrationOptions } from '../agent/multi/orchestrator.js';
+import type { OrchestrationIntegrationOptions } from '../agent/multi/orchestrator.js';
 // Phase 50 Task 1：Goal 流程核心模块（按 config.goalIntegration 渐进接入）
 import { GoalAuditor } from '../agent/goal-audit.js';
 import { GoalPersistence } from '../agent/goal-persistence.js';
@@ -202,8 +202,7 @@ export interface AppDependencies {
   /** Phase 37：文件系统发现器（发现/创建/删除 Skill 文件） */
   filesystemDiscovery: FilesystemDiscovery;
   // 多 Agent
-  orchestrator: Orchestrator;
-  workerExecutor: WorkerExecutor;
+  // Phase 59：orchestrator/workerExecutor 接口字段已删除（僵尸字段，全 src/ + desktop/ 无消费方）
   // 记忆与上下文
   checkpointManager: CheckpointManager;
   contextManager: ContextManager;
@@ -1422,7 +1421,7 @@ export function createAppDependencies(
         stateGraphEnabled: orchestrationIntegrationCfg?.stateGraphEnabled,
       }
     : undefined;
-  const orchestrator = new Orchestrator(primaryClient, config.router.classifierModel, orchestrationIntegration);
+  // Phase 59：orchestrator 实例化已删除（僵尸字段，仅返回对象消费，返回字段已移除）
   // Phase 54 Task 2：orchestrationIntegration 任一开关开启时创建 ContextPacker 并注入 WorkerExecutor
   // 注入后 WorkerExecutor.execute() 会调用 pack() 生成结构化上下文包（选择性传递可视化）
   // 未开启任一开关时 contextPacker 为 undefined，WorkerExecutor 回退到 filterContext（零回归）
@@ -2265,8 +2264,7 @@ export function createAppDependencies(
     agentLoop,
     skillsRouter,
     filesystemDiscovery,
-    orchestrator,
-    workerExecutor,
+    // Phase 59：orchestrator/workerExecutor 返回字段已删除（僵尸字段，实例化代码保留供闭包引用）
     checkpointManager,
     contextManager,
     visionAssistant,
