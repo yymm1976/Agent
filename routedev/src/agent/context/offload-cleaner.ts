@@ -23,7 +23,7 @@ const ORPHAN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
  * @param offloadDir offload 根目录（如 '.routedev/offload'）
  * @param sessionId 会话 ID
  */
-export function cleanSessionOffload(offloadDir: string, sessionId: string): void {
+function cleanSessionOffload(offloadDir: string, sessionId: string): void {
   try {
     const sessionDir = path.join(offloadDir, sessionId);
     if (!existsSync(sessionDir)) return;
@@ -46,7 +46,7 @@ export function cleanSessionOffload(offloadDir: string, sessionId: string): void
  * @param offloadDir offload 根目录
  * @param maxAgeMs 最大保留时长，默认 7 天
  */
-export function cleanOrphanOffload(
+function cleanOrphanOffload(
   offloadDir: string,
   maxAgeMs: number = ORPHAN_MAX_AGE_MS,
 ): void {

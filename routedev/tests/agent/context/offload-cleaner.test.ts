@@ -6,8 +6,6 @@ import * as os from 'node:os';
 import * as fs from 'node:fs';
 import { ToolOutputPipeline } from '../../../src/agent/context/tool-output-pipeline.js';
 import {
-  cleanSessionOffload,
-  cleanOrphanOffload,
   registerOffloadCleaner,
 } from '../../../src/agent/context/offload-cleaner.js';
 
@@ -113,52 +111,6 @@ describe('offload-cleaner + Budget Offload 集成', () => {
     expect(result.output.length).toBeLessThan(longContent.length);
   });
 
-  // 用例 4：清理指定 sessionId 的 offload 文件
-  it('cleanSessionOffload 应清理指定 session 的 offload 目录', () => {
-    const sessionId = 'session-to-clean';
-    const sessionDir = path.join(offloadRoot, sessionId);
-    fs.mkdirSync(sessionDir, { recursive: true });
-    fs.writeFileSync(path.join(sessionDir, 'read-1.txt'), 'content-1');
-    fs.writeFileSync(path.join(sessionDir, 'exec-2.txt'), 'content-2');
-
-    // 清理前目录存在
-    expect(fs.existsSync(sessionDir)).toBe(true);
-
-    cleanSessionOffload(offloadRoot, sessionId);
-
-    // 清理后目录不存在
-    expect(fs.existsSync(sessionDir)).toBe(false);
-
-    // 其他 session 不受影响
-    const otherSession = path.join(offloadRoot, 'other-session');
-    fs.mkdirSync(otherSession, { recursive: true });
-    fs.writeFileSync(path.join(otherSession, 'data.txt'), 'keep-me');
-    cleanSessionOffload(offloadRoot, sessionId);
-    expect(fs.existsSync(otherSession)).toBe(true);
-  });
-
-  // 用例 5：清理 7 天前的孤儿文件
-  it('cleanOrphanOffload 应清理超过 7 天的孤儿目录', () => {
-    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-    const oldSession = path.join(offloadRoot, 'old-session');
-    const freshSession = path.join(offloadRoot, 'fresh-session');
-    fs.mkdirSync(oldSession, { recursive: true });
-    fs.mkdirSync(freshSession, { recursive: true });
-    fs.writeFileSync(path.join(oldSession, 'a.txt'), 'old');
-    fs.writeFileSync(path.join(freshSession, 'b.txt'), 'fresh');
-
-    // 把 oldSession 的 mtime 改成 8 天前
-    const oldTime = new Date(Date.now() - eightDaysMs(sevenDaysMs));
-    fs.utimesSync(oldSession, oldTime, oldTime);
-
-    cleanOrphanOffload(offloadRoot);
-
-    // 老目录被清理
-    expect(fs.existsSync(oldSession)).toBe(false);
-    // 新目录保留
-    expect(fs.existsSync(freshSession)).toBe(true);
-  });
-
   // 用例 6：清理钩子异常不导致进程崩溃
   it('registerOffloadCleaner 钩子异常不应导致进程崩溃', () => {
     // 用一个不可能存在的根目录注册钩子
@@ -174,22 +126,5 @@ describe('offload-cleaner + Budget Offload 集成', () => {
       // 反注册以隔离测试（避免污染进程级钩子）
       dispose();
     }).not.toThrow();
-
-    // 验证 cleanSessionOffload 对不存在目录也不抛
-    expect(() => {
-      cleanSessionOffload(badDir, 'non-existent-session');
-    }).not.toThrow();
-
-    // 验证 cleanOrphanOffload 对"offloadDir 是文件"这种异常场景也不抛
-    const fileAsDir = path.join(offloadRoot, 'iam-a-file');
-    fs.writeFileSync(fileAsDir, 'not a directory');
-    expect(() => {
-      cleanOrphanOffload(fileAsDir);
-    }).not.toThrow();
   });
 });
-
-// 构造 8 天的毫秒数（略大于 7 天阈值，确保触发清理）
-function eightDaysMs(sevenDaysMs: number): number {
-  return sevenDaysMs + 24 * 60 * 60 * 1000;
-}

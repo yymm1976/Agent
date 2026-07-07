@@ -115,14 +115,4 @@ export class PlanState {
     plan.updatedAt = Date.now();
     this.vfs.write(PLAN_PATH, JSON.stringify(plan, null, 2));
   }
-
-  /** 标记指定步骤为 completed（清空 failureReason） */
-  markCompleted(stepId: string): void {
-    this.updateStep(stepId, { status: 'completed', failureReason: undefined });
-  }
-
-  /** 标记指定步骤为 failed，并记录失败原因 */
-  markFailed(stepId: string, reason: string): void {
-    this.updateStep(stepId, { status: 'failed', failureReason: reason });
-  }
 }

@@ -707,40 +707,6 @@ export const DEFAULT_CONFIG: AppConfig = {
       renderEveryTurn: true,
     },
   },
-  skillRouting: {
-    enabled: true,
-    sad: {
-      enabled: true,
-      maxIterations: 1,
-      convergenceTau: 0.6,
-      inputSideFeedback: true,
-    },
-    biEncoder: {
-      enabled: true,
-      modelId: 'Xenova/all-MiniLM-L6-v2',
-      topK: 10,
-      minScore: 0.2,
-      backend: 'memory' as const,
-    },
-    granularityAudit: {
-      enabled: true,
-    },
-    compatibilityScorer: {
-      enabled: true,
-      pruneThreshold: 0.15,
-      weights: {
-        ioType: 0.4,
-        categoryJaccard: 0.3,
-        keywordCoOccur: 0.3,
-      },
-    },
-    contextOptimizer: {
-      enabled: true,
-      perSubTaskTopK: 3,
-      maxTotalSkills: 8,
-      maxTokens: 1200,
-    },
-  },
   // Phase 65：记忆系统四模块重构（v4.6.4）
   // Phase 71 Task D5：embeddingProvider 从 'hash' 升级为 'bi-encoder'（真实语义 provider）
   // 消费链：app-init.ts L2638 读 msCfg.store.embeddingProvider → 传入 MemoryStore 构造

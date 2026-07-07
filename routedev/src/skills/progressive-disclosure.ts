@@ -56,11 +56,3 @@ export function applyDisclosure(content: string, level: DisclosureLevel): string
       return content;
   }
 }
-
-/**
- * 便捷函数：计算披露级别并应用
- */
-export function disclose(content: string, ctx: DisclosureContext): string {
-  const level = computeDisclosureLevel(ctx);
-  return applyDisclosure(content, level);
-}

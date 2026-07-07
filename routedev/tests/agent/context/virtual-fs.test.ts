@@ -69,19 +69,6 @@ describe('VirtualFS', () => {
     expect(vfs.exists('/')).toBe(true);
   });
 
-  it('mkdir 创建目录后 exists 返回 true', () => {
-    const vfs = createVFS();
-    vfs.mkdir('/workspace');
-    expect(vfs.exists('/workspace')).toBe(true);
-  });
-
-  it('mkdir 不覆盖已存在的同名节点', () => {
-    const vfs = createVFS();
-    vfs.write('/slot', 'file-content');
-    vfs.mkdir('/slot'); // 已存在 file，不应覆盖
-    expect(vfs.read('/slot')).toBe('file-content');
-  });
-
   it('路径规范化：Windows 反斜杠转换为 posix 斜杠', () => {
     const vfs = createVFS();
     vfs.write('a\\b\\c.md', 'content');
@@ -133,7 +120,6 @@ describe('VirtualFS', () => {
     expect(() => vfs.list('')).not.toThrow();
     expect(() => vfs.delete('')).not.toThrow();
     expect(() => vfs.exists('')).not.toThrow();
-    expect(() => vfs.mkdir('')).not.toThrow();
     expect(vfs.read('')).toBeNull();
     expect(vfs.list('')).toEqual([]);
     expect(vfs.exists('')).toBe(false);

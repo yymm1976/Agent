@@ -164,17 +164,6 @@ export class VirtualFS {
     if (normalized === '/') return true; // 根目录隐式存在
     return this.nodes.has(normalized);
   }
-
-  /**
-   * 创建目录
-   * 路径非法时静默忽略；已存在同名节点时不覆盖
-   */
-  mkdir(path: string): void {
-    const normalized = this.normalizePath(path);
-    if (normalized === null || normalized === '/') return;
-    if (this.nodes.has(normalized)) return;
-    this.nodes.set(normalized, { type: 'dir' });
-  }
 }
 
 /**

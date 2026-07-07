@@ -143,50 +143,6 @@ export class SecurityAuditPanel {
   clear(): void {
     this.events = [];
   }
-
-  /**
-   * 导出为文本报告
-   *
-   * 格式：
-   *   ====== 安全审计报告 ======
-   *   生成时间: 2026-07-04T12:34:56.789Z
-   *   总事件: N | 拦截: N | 放行: N | 警告: N
-   *   按来源: path-guard=N, sandbox=N, ...
-   *   按级别: info=N, warn=N, error=N, critical=N
-   *   ------ 最近事件 ------
-   *   [timestamp] LEVEL source/action target — reason
-   *   ...
-   */
-  exportReport(): string {
-    const summary = this.getSummary();
-    const lines: string[] = [];
-
-    lines.push('====== 安全审计报告 ======');
-    lines.push(`生成时间: ${new Date().toISOString()}`);
-    lines.push(
-      `总事件: ${summary.total} | 拦截: ${summary.blocked} | 放行: ${summary.allowed} | 警告: ${summary.warned}`,
-    );
-
-    const sourceEntries = Object.entries(summary.bySource).sort((a, b) => b[1] - a[1]);
-    lines.push(
-      `按来源: ${sourceEntries.map(([k, v]) => `${k}=${v}`).join(', ') || '(无)'}`,
-    );
-
-    const levelEntries = Object.entries(summary.byLevel);
-    lines.push(
-      `按级别: ${levelEntries.map(([k, v]) => `${k}=${v}`).join(', ') || '(无)'}`,
-    );
-
-    lines.push('------ 最近事件（最多 50 条） ------');
-    const recent = this.events.slice(-50);
-    for (const e of recent) {
-      const ts = new Date(e.timestamp).toISOString();
-      const reason = e.reason ? ` — ${e.reason}` : '';
-      lines.push(`[${ts}] ${e.level.toUpperCase()} ${e.source}/${e.action}: ${e.target}${reason}`);
-    }
-
-    return lines.join('\n');
-  }
 }
 
 // ============================================================

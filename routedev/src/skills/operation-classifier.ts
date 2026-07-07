@@ -44,24 +44,3 @@ export function classifyOperation(signal: OperationSignal, sessionId: string): O
     sessionId,
   };
 }
-
-export interface RegimeTransition {
-  beforeSchema: string[];
-  afterSchema: string[];
-  trigger: OperationClassification;
-  claim: string;
-}
-
-export function buildRegimeTransition(
-  beforeSchema: string[],
-  afterSchema: string[],
-  trigger: OperationClassification,
-): RegimeTransition {
-  const added = afterSchema.filter((t) => !beforeSchema.includes(t));
-  return {
-    beforeSchema: [...beforeSchema],
-    afterSchema: [...afterSchema],
-    trigger,
-    claim: `体制扩展：新增类型 [${added.join(', ')}]，由 ${trigger.reason} 触发`,
-  };
-}

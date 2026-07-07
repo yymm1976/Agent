@@ -7,7 +7,6 @@
 //   - getSummary 统计正确（blocked/allowed/warned、bySource、byLevel）
 //   - clear 清空事件
 //   - maxEvents 上限触发 FIFO 淘汰
-//   - exportReport 输出文本格式正确
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SecurityAuditPanel } from '../../src/security/audit-panel.js';
@@ -200,48 +199,6 @@ describe('SecurityAuditPanel', () => {
       expect(events.length).toBe(1000);
       // 最旧的 5 条被淘汰，最早保留的是 t5
       expect(events[0]!.target).toBe('t5');
-    });
-  });
-
-  // ============================================================
-  // exportReport
-  // ============================================================
-  describe('exportReport', () => {
-    it('exportReport 应包含报告标题与统计', () => {
-      panel.log({ level: 'warn', source: 'sandbox', action: 'blocked', target: 'rm -rf /', reason: '危险' });
-
-      const report = panel.exportReport();
-      expect(report).toContain('安全审计报告');
-      expect(report).toContain('总事件: 1');
-      expect(report).toContain('拦截: 1');
-      expect(report).toContain('按来源: sandbox=1');
-      expect(report).toContain('按级别: warn=1');
-      expect(report).toContain('rm -rf /');
-      expect(report).toContain('sandbox/blocked');
-    });
-
-    it('exportReport 空面板也应输出基本结构', () => {
-      const report = panel.exportReport();
-      expect(report).toContain('安全审计报告');
-      expect(report).toContain('总事件: 0');
-      expect(report).toContain('按来源: (无)');
-      expect(report).toContain('最近事件');
-    });
-
-    it('exportReport 最多展示 50 条最近事件', () => {
-      for (let i = 0; i < 60; i++) {
-        panel.log({
-          level: 'info',
-          source: 'a',
-          action: 'logged',
-          target: `t${i}`,
-        });
-      }
-      const report = panel.exportReport();
-      // 报告应包含 "最多 50 条" 提示
-      expect(report).toContain('最多 50 条');
-      // 不应包含 t0..t9（已被截断）
-      expect(report).not.toContain('target=t0');
     });
   });
 });

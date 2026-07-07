@@ -144,25 +144,3 @@ export function validateSkillTools(toolNames: string[]): SkillToolsValidation {
 
   return { valid, invalid, warnings };
 }
-
-// ============================================================
-// 反向映射（RouteDev → Claude Code，供调试/日志）
-// ============================================================
-
-/**
- * 反向查询：RouteDev 工具名 → Claude Code 工具名
- *
- * 主要用于日志/调试，不在导入主流程中使用
- */
-export function reverseMapToolName(routedevName: string): string | null {
-  if (typeof routedevName !== 'string' || routedevName.length === 0) return null;
-  for (const [claudeName, devName] of Object.entries(TOOL_NAME_MAP)) {
-    if (devName === routedevName) return claudeName;
-  }
-  return null;
-}
-
-/** 暴露映射表副本（供测试与文档生成使用） */
-export function getToolNameMap(): Record<string, string> {
-  return { ...TOOL_NAME_MAP };
-}

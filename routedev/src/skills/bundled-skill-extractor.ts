@@ -248,26 +248,3 @@ export function extractBundledSkill(
 
   return promise;
 }
-
-/**
- * 清理已抽取的文件（用于回滚或卸载）
- *
- * 注意：仅删除 targetDir 内的文件，不删除 targetDir 本身
- */
-export function cleanupExtractedFiles(targetDir: string, paths: string[]): void {
-  for (const p of paths) {
-    // 安全校验：必须位于 targetDir 内
-    const rel = path.relative(targetDir, p);
-    if (rel.startsWith('..') || path.isAbsolute(rel)) {
-      logger.warn(`cleanupExtractedFiles: 跳过越界路径: ${p}`);
-      continue;
-    }
-    try {
-      fs.unlinkSync(p);
-    } catch (e) {
-      logger.warn(`cleanupExtractedFiles: 删除失败: ${p}`, {
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }
-}

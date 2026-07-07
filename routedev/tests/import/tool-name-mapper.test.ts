@@ -8,17 +8,13 @@
 //   4. mapToolNames 去重
 //   5. validateSkillTools 对未映射工具生成 warning
 //   6. validateSkillTools 已映射工具进入 valid
-//   7. reverseMapToolName 反查
-//   8. 空输入与非法输入边界
-//   9. getToolNameMap 返回副本不可影响内部
+//   7. 空输入与非法输入边界
 
 import { describe, it, expect } from 'vitest';
 import {
   mapToolName,
   mapToolNames,
   validateSkillTools,
-  reverseMapToolName,
-  getToolNameMap,
 } from '../../src/import/tool-name-mapper.js';
 
 // ============================================================
@@ -142,51 +138,5 @@ describe('validateSkillTools：Skill 工具校验', () => {
       invalid: [],
       warnings: [],
     });
-  });
-});
-
-// ============================================================
-// reverseMapToolName 反向映射
-// ============================================================
-
-describe('reverseMapToolName：反向映射', () => {
-  it('RouteDev 工具名反查到 Claude Code 工具名', () => {
-    expect(reverseMapToolName('read_file')).toBe('Read');
-    expect(reverseMapToolName('list_directory')).toBe('Glob');
-    expect(reverseMapToolName('execute_command')).toBe('Bash');
-  });
-
-  it('未知 RouteDev 工具名返回 null', () => {
-    expect(reverseMapToolName('unknown_tool')).toBeNull();
-    expect(reverseMapToolName('')).toBeNull();
-  });
-});
-
-// ============================================================
-// getToolNameMap 映射表副本
-// ============================================================
-
-describe('getToolNameMap：映射表副本', () => {
-  it('返回包含全部 8 个映射的副本', () => {
-    const map = getToolNameMap();
-    expect(map.Read).toBe('read_file');
-    expect(map.Glob).toBe('list_directory');
-    expect(map.Grep).toBe('search_code');
-    expect(map.Write).toBe('file_write');
-    expect(map.Edit).toBe('file_edit');
-    expect(map.Bash).toBe('execute_command');
-    expect(map.WebFetch).toBe('web_fetch');
-    expect(map.WebSearch).toBe('web_search');
-    expect(Object.keys(map)).toHaveLength(8);
-  });
-
-  it('返回的是副本，修改不影响内部状态', () => {
-    const map1 = getToolNameMap();
-    map1.Read = 'tampered';
-    map1.NewEntry = 'new';
-
-    const map2 = getToolNameMap();
-    expect(map2.Read).toBe('read_file'); // 未被篡改
-    expect(map2).not.toHaveProperty('NewEntry');
   });
 });

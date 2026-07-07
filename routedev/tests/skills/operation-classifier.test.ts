@@ -4,9 +4,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyOperation,
-  buildRegimeTransition,
 } from '../../src/skills/operation-classifier.js';
-import type { OperationSignal, OperationClassification } from '../../src/skills/operation-classifier.js';
+import type { OperationSignal } from '../../src/skills/operation-classifier.js';
 
 describe('classifyOperation (Phase 68 Task 1)', () => {
   it('ccrHit=true, no dagComposed, no regimeExtended → retrieval', () => {
@@ -92,58 +91,5 @@ describe('classifyOperation (Phase 68 Task 1)', () => {
 
     expect(result.kind).toBe('discovery');
     expect(result.reason).toContain('[]');
-  });
-});
-
-describe('buildRegimeTransition (Phase 68 Task 1)', () => {
-  it('correctly computes added types and builds claim', () => {
-    const before = ['TypeA', 'TypeB'];
-    const after = ['TypeA', 'TypeB', 'TypeC', 'TypeD'];
-    const trigger: OperationClassification = {
-      kind: 'discovery',
-      reason: 'test reason',
-      timestamp: Date.now(),
-      sessionId: 's9',
-    };
-
-    const result = buildRegimeTransition(before, after, trigger);
-
-    expect(result.beforeSchema).toEqual(['TypeA', 'TypeB']);
-    expect(result.afterSchema).toEqual(['TypeA', 'TypeB', 'TypeC', 'TypeD']);
-    expect(result.trigger).toBe(trigger);
-    expect(result.claim).toContain('TypeC');
-    expect(result.claim).toContain('TypeD');
-    expect(result.claim).toContain('test reason');
-  });
-
-  it('does not mutate input arrays', () => {
-    const before = ['X'];
-    const after = ['X', 'Y'];
-    const trigger: OperationClassification = {
-      kind: 'search',
-      reason: 'r',
-      timestamp: 0,
-      sessionId: 's10',
-    };
-
-    buildRegimeTransition(before, after, trigger);
-
-    expect(before).toEqual(['X']);
-    expect(after).toEqual(['X', 'Y']);
-  });
-
-  it('no added types → claim with empty brackets', () => {
-    const before = ['A', 'B'];
-    const after = ['A', 'B'];
-    const trigger: OperationClassification = {
-      kind: 'retrieval',
-      reason: 'same',
-      timestamp: 0,
-      sessionId: 's11',
-    };
-
-    const result = buildRegimeTransition(before, after, trigger);
-
-    expect(result.claim).toContain('[]');
   });
 });

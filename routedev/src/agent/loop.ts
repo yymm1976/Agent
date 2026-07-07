@@ -312,7 +312,7 @@ export class ReActAgentLoop {
   /**
    * Phase 73 Part C：清空 follow-up 队列
    */
-  clearFollowUpQueue(): void {
+  private clearFollowUpQueue(): void {
     this.followUpQueue = [];
   }
 

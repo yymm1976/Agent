@@ -87,33 +87,6 @@ describe('PlanState', () => {
     expect(got!.steps.map((s) => s.id)).toEqual(['s1', 's3']);
   });
 
-  it('markCompleted 标记步骤为 completed（清空 failureReason）', () => {
-    const vfs = createVFS();
-    const state = new PlanState(vfs);
-    const plan = makePlan();
-    plan.steps[1].status = 'failed';
-    plan.steps[1].failureReason = '之前失败';
-    state.setPlan(plan);
-
-    state.markCompleted('s2');
-    const got = state.getPlan();
-
-    expect(got!.steps[1].status).toBe('completed');
-    expect(got!.steps[1].failureReason).toBeUndefined();
-  });
-
-  it('markFailed 标记步骤为 failed 并记录原因', () => {
-    const vfs = createVFS();
-    const state = new PlanState(vfs);
-    state.setPlan(makePlan());
-
-    state.markFailed('s2', '依赖工具调用失败');
-    const got = state.getPlan();
-
-    expect(got!.steps[1].status).toBe('failed');
-    expect(got!.steps[1].failureReason).toBe('依赖工具调用失败');
-  });
-
   it('getPlan 无 plan 时返回 null', () => {
     const vfs = createVFS();
     const state = new PlanState(vfs);
@@ -138,8 +111,6 @@ describe('PlanState', () => {
       state.updateStep('s1', { status: 'completed' });
       state.addStep({ id: 's1', description: 'x', status: 'pending' });
       state.removeStep('s1');
-      state.markCompleted('s1');
-      state.markFailed('s1', 'x');
     }).not.toThrow();
 
     // 仍然无 plan
@@ -155,8 +126,6 @@ describe('PlanState', () => {
     expect(() => {
       state.updateStep('not-exist', { status: 'completed' });
       state.removeStep('not-exist');
-      state.markCompleted('not-exist');
-      state.markFailed('not-exist', 'x');
     }).not.toThrow();
 
     const got = state.getPlan();

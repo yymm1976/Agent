@@ -277,7 +277,7 @@ const SecurityConfigSchema = z.object({
   /** 速率限制 Map 上限（条目数） */
   rateLimitMaxSize: z.number().int().min(100).default(10000),
   /** 开发模式认证：开发环境下是否要求认证 */
-  devModeAuth: z.boolean().default(false),
+  devModeAuth: z.boolean().default(true),
   /** Phase 47 Task 4：沙箱级 — 决定工具能做多少（默认 workspace-write） */
   sandbox: SandboxLevelSchema.default('workspace-write'),
   /** Phase 47 Task 4：审批级覆盖 — 按工具类别覆盖默认审批级（可选，部分覆盖） */
@@ -1550,7 +1550,7 @@ export type SkillLifecycleConfig = z.infer<typeof SkillLifecycleConfigSchema>;
  */
 const BoundedRecoveryConfigSchema = z.object({
   /** 是否启用有界局部恢复 */
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
   /** 最大回溯步数（含失败步骤本身，1-10，默认 3） */
   maxBacktrack: z.number().int().min(1).max(10).default(3),
   /** 是否启用工件绑定（注册 StepArtifact 以追踪依赖） */
@@ -1711,7 +1711,7 @@ export type BudgetMonitorConfig = z.infer<typeof BudgetMonitorConfigSchema>;
  */
 const DagEngineConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用 DAG 工作流（默认 false，向后兼容） */
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
   /** 最大并行度（1-10） */
   maxParallel: z.number().int().min(1).max(10).default(3),
   /** 重试上限（0-5） */
@@ -1727,7 +1727,7 @@ export type DagEngineConfig = z.infer<typeof DagEngineConfigSchema>;
  */
 const CircuitBreakerConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用熔断器（默认 false，向后兼容） */
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
   /** 连续失败 N 次后熔断 */
   failureThreshold: z.number().int().min(1).default(5),
   /** 熔断后多久尝试恢复（毫秒） */
@@ -1785,7 +1785,7 @@ export type Phase53IntegrationConfig = z.infer<typeof Phase53IntegrationConfigSc
  */
 const ClosedLoopRoutingConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 总开关（默认关闭） */
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
   /** RoutingHistory 配置 */
   history: z.preprocess((v) => v ?? {}, z.object({
     maxRecords: z.number().int().default(20000),
@@ -1970,7 +1970,7 @@ export const AppConfigSchema = z.object({
   // Phase 62：动态工作流模式与隔离治理——已删除（ExecutionOrchestrator 死代码清理）
   // Phase 63：上下文状态外部化（Harness-1 论文落地）
   stateExternalization: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     kSentenceCompression: z.preprocess((v) => v ?? {}, z.object({
       enabled: z.boolean().default(false),
       k: z.number().int().min(1).max(10).default(4),
@@ -1993,44 +1993,9 @@ export const AppConfigSchema = z.object({
       renderEveryTurn: z.boolean().default(true),
     })),
   })),
-  // Phase 64：组合技能 SAD 迭代分解（v4.6.3）
-  skillRouting: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
-    sad: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      maxIterations: z.number().int().min(1).max(5).default(1),
-      convergenceTau: z.number().min(0).max(1).default(0.6),
-      inputSideFeedback: z.boolean().default(true),
-    })),
-    biEncoder: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      modelId: z.string().default('Xenova/all-MiniLM-L6-v2'),
-      topK: z.number().int().min(1).max(50).default(10),
-      minScore: z.number().min(0).max(1).default(0.2),
-      backend: z.enum(['memory', 'hnswlib']).default('memory'),
-    })),
-    granularityAudit: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-    })),
-    compatibilityScorer: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      pruneThreshold: z.number().min(0).max(1).default(0.15),
-      weights: z.preprocess((v) => v ?? {}, z.object({
-        ioType: z.number().min(0).max(1).default(0.4),
-        categoryJaccard: z.number().min(0).max(1).default(0.3),
-        keywordCoOccur: z.number().min(0).max(1).default(0.3),
-      })),
-    })),
-    contextOptimizer: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
-      perSubTaskTopK: z.number().int().min(1).max(10).default(3),
-      maxTotalSkills: z.number().int().min(1).max(30).default(8),
-      maxTokens: z.number().int().min(200).max(5000).default(1200),
-    })),
-  })),
   // Phase 65：记忆系统重构（v4.6.4）
   memorySystem: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     store: z.preprocess((v) => v ?? {}, z.object({
       enabled: z.boolean().default(false),
       dbPath: z.string().default('.routedev/memory.db'),
@@ -2097,7 +2062,7 @@ export const AppConfigSchema = z.object({
       minToolCallsForChain: z.number().int().min(2).default(3),
     })),
     autoCompactGuardian: z.preprocess((v) => v ?? {}, z.object({
-      enabled: z.boolean().default(false),
+      enabled: z.boolean().default(true),
       contextWindow: z.number().int().min(10000).default(200000),
       reservedTokensForSummary: z.number().int().min(1000).default(20000),
       autoCompactBuffer: z.number().int().min(1000).default(13000),

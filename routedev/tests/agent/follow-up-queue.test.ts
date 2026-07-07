@@ -5,10 +5,9 @@
 //   1. followUp() 把消息排入 follow-up 队列
 //   2. drainFollowUpQueue 'all' 模式返回全部并清空队列
 //   3. drainFollowUpQueue 'one-at-a-time' 模式仅返回第一条，剩余保留
-//   4. clearFollowUpQueue 清空 follow-up 队列
-//   5. clearAllQueues 清空 follow-up 队列
-//   6. follow-up 消息通过 defaultConvertToLlm 转换为 user 消息（前缀 [后续任务]）
-//   7. getFollowUpQueue / removeFollowUp / getQueueStatus 辅助 API 行为正确
+//   4. clearAllQueues 清空 follow-up 队列
+//   5. follow-up 消息通过 defaultConvertToLlm 转换为 user 消息（前缀 [后续任务]）
+//   6. getFollowUpQueue / removeFollowUp / getQueueStatus 辅助 API 行为正确
 
 import { describe, it, expect } from 'vitest';
 import { ReActAgentLoop } from '../../src/agent/loop.js';
@@ -136,25 +135,6 @@ describe('Phase 73 Part C：follow-up 队列', () => {
     });
   });
 
-  describe('clearFollowUpQueue 清空 follow-up 队列', () => {
-    it('清空后队列为空', () => {
-      const loop = createLoop();
-      loop.followUp('A');
-      loop.followUp('B');
-      expect(loop.getFollowUpQueue()).toHaveLength(2);
-
-      loop.clearFollowUpQueue();
-      expect(loop.getFollowUpQueue()).toHaveLength(0);
-      // drainFollowUpQueue 也应返回空
-      expect(loop.drainFollowUpQueue()).toEqual([]);
-    });
-
-    it('清空空队列不报错', () => {
-      const loop = createLoop();
-      expect(() => loop.clearFollowUpQueue()).not.toThrow();
-    });
-  });
-
   describe('clearAllQueues 清空所有队列', () => {
     it('清空 follow-up 队列且 steering 队列保持为空（steer() 已删除，无外部入队入口）', () => {
       const loop = createLoop();
@@ -231,7 +211,7 @@ describe('Phase 73 Part C：follow-up 队列', () => {
       loop.followUp('B');
       expect(loop.getQueueStatus().followUp).toBe(2);
 
-      loop.clearFollowUpQueue();
+      loop.clearAllQueues();
       expect(loop.getQueueStatus().followUp).toBe(0);
     });
 

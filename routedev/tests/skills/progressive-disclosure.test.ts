@@ -3,13 +3,11 @@
 // 覆盖：
 //   1. computeDisclosureLevel 四条决策路径
 //   2. applyDisclosure 三档（summary/key-details/full）行为
-//   3. disclose 便捷函数
 
 import { describe, it, expect } from 'vitest';
 import {
   computeDisclosureLevel,
   applyDisclosure,
-  disclose,
   type DisclosureContext,
 } from '../../src/skills/progressive-disclosure.js';
 
@@ -72,14 +70,6 @@ describe('progressive-disclosure', () => {
       const content = 'line1\n\n\n\nline2';
       const result = applyDisclosure(content, 'full');
       expect(result).toBe(content);
-    });
-  });
-
-  describe('disclose', () => {
-    it('便捷函数：计算级别并应用', () => {
-      const content = 'line1\nline2\nline3\nline4\nline5\nline6\nline7';
-      const result = disclose(content, makeCtx({ tokenUsageRatio: 0.85 }));
-      expect(result).toContain('[已压缩...]');
     });
   });
 });
