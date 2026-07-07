@@ -26,7 +26,9 @@
     "predist:electron": "tsx scripts/clean-release.ts",
     "dist:electron:safe": "tsx scripts/build-with-retry.ts",
     "lint:descriptions": "tsx scripts/lint-descriptions.ts",
-    "detect-dead-code": "node --import tsx/esm scripts/detect-dead-code.ts"
+    "detect-dead-code": "node --import tsx/esm scripts/detect-dead-code.ts",
+    "prepare": "husky install",
+    "commitlint": "commitlint --edit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.2",
@@ -66,7 +68,11 @@
     "typescript": "^6.0.3",
     "vite": "^6.4.3",
     "vitest": "^4.1.9",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.14",
+    "@commitlint/cli": "^19.5.0",
+    "@commitlint/config-conventional": "^19.5.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.2.10"
   },
   "packageManager": "pnpm@11.7.0+sha512.19cc852c120c7125760f2443ee6be0ca5b40f9f50598de1a09a1f177503e010e57c23c77646e01e761de59bf874fb22a3398c33ab9691fc13eb946b6f0f4d620"
 }

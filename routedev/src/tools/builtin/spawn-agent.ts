@@ -38,7 +38,7 @@ import type { SkillLifecycleManager } from '../../skills/skill-lifecycle.js';
 import { logger } from '../../utils/logger.js';
 
 /** 子 Agent 类型：决定可用工具集（白名单在 app-init.ts 中维护） */
-export type SubagentType = 'general' | 'researcher' | 'coder' | 'reviewer' | 'advisor';
+export type SubagentType = 'general' | 'researcher' | 'coder' | 'reviewer' | 'advisor' | 'review-plan';
 
 /**
  * SubagentType → AgentRole 映射
@@ -48,12 +48,14 @@ export type SubagentType = 'general' | 'researcher' | 'coder' | 'reviewer' | 'ad
  *   - 'researcher' → 'researcher'
  *   - 'coder' → 'executor'（coder 在 Agent 体系中对应 executor 角色）
  *   - 'reviewer' → 'reviewer'
+ *   - 'review-plan' → 'review-planner'（Phase 75-A4：Pre-flight plan review，扫 plan 内部冲突）
  *   - 'general' / 'advisor'：无对应 role，不使用 profile
  */
 const SUBAGENT_TYPE_TO_ROLE: Partial<Record<SubagentType, AgentRole>> = {
   researcher: 'researcher',
   coder: 'executor',
   reviewer: 'reviewer',
+  'review-plan': 'review-planner',
 };
 
 /**
@@ -64,6 +66,7 @@ const SUBAGENT_TYPE_TO_ROLE: Partial<Record<SubagentType, AgentRole>> = {
  *   - coder：读写执行工具
  *   - reviewer：只读审查工具
  *   - advisor：空集 = 无工具权限（用于 /BTW 临时问答，仅做单次 LLM 调用）
+ *   - review-plan：只读审查工具（Phase 75-A4：Pre-flight plan review，主要读 plan + 文件）
  */
 export const SUBAGENT_TOOL_WHITELIST: Record<SubagentType, Set<string>> = {
   general: new Set<string>(),  // 空集 = 全部工具（除 spawn_agent）
@@ -71,6 +74,7 @@ export const SUBAGENT_TOOL_WHITELIST: Record<SubagentType, Set<string>> = {
   coder: new Set(['file_read', 'file_write', 'file_edit', 'shell_exec', 'git_op']),
   reviewer: new Set(['file_read', 'code_search', 'list_directory']),
   advisor: new Set<string>(),  // 空集 = 无工具权限（createChildRegistry 中特殊处理）
+  'review-plan': new Set(['file_read', 'code_search', 'list_directory']),
 };
 
 /**
@@ -292,6 +296,21 @@ export interface SpawnAgentParams {
   maxIterations?: number;
   /** 是否使用独立上下文，默认 true */
   isolated?: boolean;
+  /**
+   * 指定 subagent 使用的模型 ID。省略则使用 AgentProfile.modelId（继承）。
+   *
+   * Phase 75-A3：强制 dispatch 时写明 model，避免静默继承最贵模型
+   * （借鉴 Superpowers v6：一次 26 个 reviewer 全跑顶配的惨痛教训）。
+   *
+   * 当前为过渡期：字段可选，未传时回退到 AgentProfile.modelId。
+   * Phase 75-A3 第二阶段计划强制必填，届时未传将 throw。
+   *
+   * 取值语义：
+   *   - 省略 / undefined：继承 AgentProfile.modelId（向后兼容）
+   *   - 'inherit'：明确选择继承 AgentProfile.modelId（过渡期推荐写法）
+   *   - 其他字符串：指定具体的 model id（如 'gpt-4o-mini'）
+   */
+  model?: string;
 }
 
 /**
@@ -427,6 +446,8 @@ function subagentTypeToPackerRole(subagentType: SubagentType): PackerAgentRole {
     case 'researcher': return 'researcher';
     case 'coder': return 'executor';
     case 'reviewer': return 'reviewer';
+    // Phase 75-A4：review-plan 复用 reviewer 的上下文打包策略（只读审查类）
+    case 'review-plan': return 'reviewer';
     default: return 'custom';
   }
 }
@@ -805,8 +826,8 @@ export class SpawnAgentTool implements ITool {
         },
         subagentType: {
           type: 'string',
-          enum: ['general', 'researcher', 'coder', 'reviewer', 'advisor'],
-          description: '子 Agent 类型，决定可用工具集。general=全部工具（除 spawn_agent），researcher=只读检索，coder=读写执行，reviewer=只读审查，advisor=无工具（仅单次 LLM 调用，用于 /BTW 临时问答）。默认 general。',
+          enum: ['general', 'researcher', 'coder', 'reviewer', 'advisor', 'review-plan'],
+          description: '子 Agent 类型，决定可用工具集。general=全部工具（除 spawn_agent），researcher=只读检索，coder=读写执行，reviewer=只读审查，advisor=无工具（仅单次 LLM 调用，用于 /BTW 临时问答），review-plan=Pre-flight plan review（执行 Task 1 前扫 plan 内部冲突，Phase 75-A4）。默认 general。',
         },
         maxIterations: {
           type: 'number',
@@ -815,6 +836,10 @@ export class SpawnAgentTool implements ITool {
         isolated: {
           type: 'boolean',
           description: '是否使用独立上下文（默认 true）',
+        },
+        model: {
+          type: 'string',
+          description: '指定 subagent 使用的模型 ID（Phase 75-A3）。省略=继承 AgentProfile.modelId；传 "inherit"=明确继承；传具体 model id（如 "gpt-4o-mini"）=使用该模型。建议显式写明以避免静默继承最贵模型。',
         },
       },
       required: ['description', 'prompt'],
@@ -859,11 +884,15 @@ export class SpawnAgentTool implements ITool {
         errors.push('maxIterations 必须是 1 到 100 之间的整数');
       }
     }
-    if (args.subagentType !== undefined && !['general', 'researcher', 'coder', 'reviewer', 'advisor'].includes(args.subagentType as string)) {
-      errors.push('subagentType 必须是 general/researcher/coder/reviewer/advisor 之一');
+    if (args.subagentType !== undefined && !['general', 'researcher', 'coder', 'reviewer', 'advisor', 'review-plan'].includes(args.subagentType as string)) {
+      errors.push('subagentType 必须是 general/researcher/coder/reviewer/advisor/review-plan 之一');
     }
     if (args.isolated !== undefined && typeof args.isolated !== 'boolean') {
       errors.push('isolated 必须是布尔值');
+    }
+    // Phase 75-A3：model 字段校验（可选，字符串）
+    if (args.model !== undefined && typeof args.model !== 'string') {
+      errors.push('model 必须是字符串（model id 或 "inherit"）');
     }
     return { valid: errors.length === 0, errors };
   }
@@ -893,6 +922,10 @@ export class SpawnAgentTool implements ITool {
     }
     if (args.isolated !== undefined) {
       params.isolated = args.isolated as boolean;
+    }
+    // Phase 75-A3：透传 model 字段（可选，未传时由 createSpawnAgentFn 回退到 AgentProfile.modelId）
+    if (args.model !== undefined) {
+      params.model = args.model as string;
     }
 
     // 兼容旧 options.systemPrompt（保留透传，由 app-init.ts 处理）

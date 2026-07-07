@@ -283,6 +283,52 @@ export const SynthesizerResultSchema = z.object({
 export type SynthesizerResult = z.infer<typeof SynthesizerResultSchema>;
 
 // ============================================================
+// ReviewPlanner 结果 schema（Phase 75 Task A4）
+// ============================================================
+
+/**
+ * ReviewPlanner（计划审查者）结构化返回
+ * 用于 Pre-flight plan review：执行 Task 1 前扫描 plan 内部冲突、
+ * 覆盖盲点与执行风险，给出 proceed / fix_first / block 三态结论
+ *
+ * 借鉴 Superpowers v6：在执行前对 plan 做一次独立审查，避免
+ * "26 个 reviewer 全跑顶配才发现 plan 自相矛盾" 类事故。
+ */
+export const ReviewPlannerResultSchema = z.object({
+  /** 审查总结 */
+  summary: z.string().describe('审查总结'),
+  /** plan 内部冲突清单 */
+  conflicts: z
+    .array(
+      z.object({
+        /** 冲突描述 */
+        description: z.string(),
+        /** 涉及的子任务（如 "T1 vs T3"） */
+        location: z.string(),
+        /** 严重级别 */
+        severity: z.enum(['blocking', 'warning', 'info']),
+        /** 建议修复 */
+        suggestedFix: z.string().optional(),
+      }),
+    )
+    .default([]),
+  /** 覆盖盲点（plan 未涉及的关键点） */
+  coverageGaps: z.array(z.string()).default([]).describe('覆盖盲点'),
+  /** 执行风险 */
+  executionRisks: z
+    .array(
+      z.object({
+        description: z.string(),
+        mitigation: z.string().optional(),
+      }),
+    )
+    .default([]),
+  /** 总体判定：proceed=可开始执行，fix_first=需先修复冲突，block=plan 不可执行 */
+  verdict: z.enum(['proceed', 'fix_first', 'block']),
+});
+export type ReviewPlannerResult = z.infer<typeof ReviewPlannerResultSchema>;
+
+// ============================================================
 // 角色 → schema 映射
 // ============================================================
 
@@ -297,6 +343,7 @@ export const RESULT_SCHEMAS: Record<AgentRole, z.ZodType> = {
   planner: PlannerResultSchema,
   verifier: VerifierResultSchema,
   synthesizer: SynthesizerResultSchema,
+  'review-planner': ReviewPlannerResultSchema,
   custom: CustomResultSchema,
 };
 
@@ -527,6 +574,38 @@ function formatSynthesizer(data: SynthesizerResult): string {
 }
 
 /**
+ * 将 ReviewPlanner 结构化结果格式化为父 Agent 可读文本（Phase 75 Task A4）
+ */
+function formatReviewPlanner(data: ReviewPlannerResult): string {
+  const lines: string[] = [`【审查总结】\n${data.summary}`];
+  if (data.conflicts.length > 0) {
+    lines.push('【plan 内部冲突】');
+    data.conflicts.forEach((c, i) => {
+      lines.push(`${i + 1}. [${c.severity}] ${c.description}`);
+      lines.push(`   位置：${c.location}`);
+      if (c.suggestedFix) {
+        lines.push(`   建议修复：${c.suggestedFix}`);
+      }
+    });
+  }
+  if (data.coverageGaps.length > 0) {
+    lines.push('【覆盖盲点】');
+    data.coverageGaps.forEach((g, i) => lines.push(`${i + 1}. ${g}`));
+  }
+  if (data.executionRisks.length > 0) {
+    lines.push('【执行风险】');
+    data.executionRisks.forEach((r, i) => {
+      lines.push(`${i + 1}. ${r.description}`);
+      if (r.mitigation) {
+        lines.push(`   缓解：${r.mitigation}`);
+      }
+    });
+  }
+  lines.push(`【总体判定】${data.verdict}`);
+  return lines.join('\n');
+}
+
+/**
  * 提取最终答案文本（从结构化结果）
  *
  * 流程：
@@ -559,6 +638,8 @@ export function formatResultForParent(result: unknown, role: string): string {
       return formatVerifier(data as VerifierResult);
     case 'synthesizer':
       return formatSynthesizer(data as SynthesizerResult);
+    case 'review-planner':
+      return formatReviewPlanner(data as ReviewPlannerResult);
     default:
       return formatCustom(data as CustomResult);
   }

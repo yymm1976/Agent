@@ -827,9 +827,37 @@ export function createAppDependencies(
         if (!defaultModel) {
           return { success: false, result: '', error: '未配置可用模型' };
         }
+        // Phase 75-A3：model 选择优先级
+        //   1. normalizedParams.model（显式指定，'inherit' 视为继承 profile）
+        //   2. profile?.modelId（profile 声明，非 'default'）
+        //   3. classifier + modelRouter 路由
+        //   4. defaultModel（兜底）
+        // 借鉴 Superpowers v6：避免 spawn 时静默继承 session 最贵模型
+        const explicitModelId = normalizedParams.model && normalizedParams.model !== 'inherit'
+          ? normalizedParams.model
+          : undefined;
         let childClient = primaryClient;
         let routeDecision: RoutingResult;
-        if (profile?.modelId && profile.modelId !== 'default') {
+        if (explicitModelId) {
+          // Phase 75-A3：params.model 显式指定优先
+          const provider = config.providers.find(p => p.models.some(m => m.id === explicitModelId));
+          const model = provider?.models.find(m => m.id === explicitModelId);
+          if (!provider || !model) {
+            return { success: false, result: '', error: `子 Agent params.model 指定的模型不存在: ${explicitModelId}` };
+          }
+          const modelClient = clientManager.get(provider.id);
+          if (!modelClient || !modelClient.isReady()) {
+            return { success: false, result: '', error: `子 Agent params.model 指定的提供商不可用: ${provider.id}` };
+          }
+          childClient = modelClient;
+          routeDecision = {
+            model,
+            providerId: provider.id,
+            fallbackUsed: false,
+            originalTier: (model.tier ?? 'medium') as ScenarioTier,
+            degraded: false,
+          };
+        } else if (profile?.modelId && profile.modelId !== 'default') {
           const provider = config.providers.find(p => p.models.some(m => m.id === profile.modelId));
           const model = provider?.models.find(m => m.id === profile.modelId);
           if (!provider || !model) {

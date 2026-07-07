@@ -509,6 +509,7 @@ function asRole(v: unknown, def: AgentRole): AgentRole {
     v === 'planner' ||
     v === 'verifier' ||
     v === 'synthesizer' ||
+    v === 'review-planner' ||
     v === 'custom'
   ) {
     return v;

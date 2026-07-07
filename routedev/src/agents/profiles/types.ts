@@ -21,6 +21,7 @@ export type AgentRole =
   | 'planner'
   | 'verifier'
   | 'synthesizer'
+  | 'review-planner'
   | 'custom';
 
 /** 输出格式 */
@@ -136,6 +137,7 @@ export function validateProfile(profile: AgentProfile): AgentProfileValidationEr
     'planner',
     'verifier',
     'synthesizer',
+    'review-planner',
     'custom',
   ];
   if (!validRoles.includes(profile.role)) {

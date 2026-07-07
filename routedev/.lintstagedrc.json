@@ -1,0 +1,4 @@
+{
+  "*.{ts,tsx,js,jsx,mjs}": ["node -e \"console.log('lint-staged: TS/JS 文件已暂存，请手动跑 npm run typecheck')\""],
+  "*.{json,md,yml,yaml}": ["node -e \"console.log('lint-staged: 配置文件已暂存')\""]
+}
