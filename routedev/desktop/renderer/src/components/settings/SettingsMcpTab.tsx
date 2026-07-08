@@ -2,11 +2,12 @@
 // Phase 74-G：MCP 插件设置 Tab（MCP 服务器管理 + 插件市场 + 安装模态框）
 // 从 SettingsPage.tsx 迁移
 
+import { useState, useEffect, useCallback } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import { Trash2, Plus, X, Sparkles, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Trash2, Plus, X, Sparkles, CheckCircle2, AlertCircle, Link2, Link2Off } from 'lucide-react';
 import type { AppConfig, MCPServerEntryConfig } from '../../../../../src/config/schema.js';
 import type { McpFormState } from '../../pages/settings-helpers.js';
-import type { MCPCatalogEntry } from '../../../../shared/ipc-types.js';
+import type { MCPCatalogEntry, MCPStatus } from '../../../../shared/ipc-types.js';
 import { Button } from '../ui/button.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Input } from '../ui/input.js';
@@ -95,6 +96,72 @@ export function SettingsMcpTab({
   envInputs, setEnvInputs, headerInputs, setHeaderInputs,
   openInstallModal, handleInstall,
 }: SettingsMcpTabProps) {
+  // ===== Phase 71：MCP 连接状态管理 =====
+  const [mcpStatus, setMcpStatus] = useState<MCPStatus | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [connBusyId, setConnBusyId] = useState<string | null>(null);
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const status = await window.routedev.mcp.status();
+      setMcpStatus(status);
+      setStatusError(null);
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStatus();
+  }, [loadStatus]);
+
+  const handleConnect = useCallback(async (serverId: string) => {
+    setConnBusyId(serverId);
+    setStatusError(null);
+    try {
+      const res = await window.routedev.mcp.connect(serverId);
+      if (!res.success) {
+        setStatusError(res.error || `连接 ${serverId} 失败`);
+      } else if (res.status) {
+        setMcpStatus(res.status);
+      } else {
+        await loadStatus();
+      }
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setConnBusyId(null);
+    }
+  }, [loadStatus]);
+
+  const handleDisconnect = useCallback(async (serverId: string) => {
+    setConnBusyId(serverId);
+    setStatusError(null);
+    try {
+      const res = await window.routedev.mcp.disconnect(serverId);
+      if (!res.success) {
+        setStatusError(res.error || `断开 ${serverId} 失败`);
+      } else if (res.status) {
+        setMcpStatus(res.status);
+      } else {
+        await loadStatus();
+      }
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setConnBusyId(null);
+    }
+  }, [loadStatus]);
+
+  // 从 mcpStatus 中查找指定 serverId 的连接状态
+  const getServerStatus = useCallback(
+    (serverId: string): { connected: boolean; error?: string } | null => {
+      if (!mcpStatus) return null;
+      return mcpStatus.servers.find((s) => s.id === serverId) ?? null;
+    },
+    [mcpStatus],
+  );
+
   return (
     <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
       <Card>
@@ -135,11 +202,19 @@ export function SettingsMcpTab({
         </CardContent>
       </Card>
 
-      {draft.mcp.servers.map((server, idx) => (
+      {statusError && (
+        <div className="text-xs text-rd-danger px-1">连接状态获取失败：{statusError}</div>
+      )}
+
+      {draft.mcp.servers.map((server, idx) => {
+        const serverStatus = getServerStatus(server.id);
+        const isConnected = serverStatus?.connected ?? false;
+        const busy = connBusyId === server.id;
+        return (
         <Card key={idx}>
           <CardContent className="py-6">
             <div className="flex items-center justify-between gap-4">
-              <div className="grid flex-1 grid-cols-2 gap-4 md:grid-cols-4">
+              <div className="grid flex-1 grid-cols-2 gap-4 md:grid-cols-5">
                 <div className="space-y-1">
                   <div className="text-xs text-rd-textMuted">ID</div>
                   <div className="text-sm font-medium text-rd-text">{server.id}</div>
@@ -152,6 +227,26 @@ export function SettingsMcpTab({
                   <div className="text-xs text-rd-textMuted">传输方式</div>
                   <Badge variant="outline">{server.config.transport}</Badge>
                 </div>
+                <div className="space-y-1">
+                  <div className="text-xs text-rd-textMuted">连接状态</div>
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={[
+                        'inline-block h-2 w-2 rounded-full',
+                        busy ? 'bg-rd-textSubtle animate-pulse' : isConnected ? 'bg-rd-success' : 'bg-rd-textMuted',
+                      ].join(' ')}
+                      aria-hidden
+                    />
+                    <span className="text-xs text-rd-textSubtle">
+                      {busy ? '处理中…' : isConnected ? '已连接' : '未连接'}
+                    </span>
+                    {serverStatus?.error && (
+                      <span className="text-xs text-rd-danger truncate" title={serverStatus.error}>
+                        · {serverStatus.error}
+                      </span>
+                    )}
+                  </div>
+                </div>
                 <div className="flex items-center justify-between gap-2 md:justify-start">
                   <Label htmlFor={`mcp-enabled-${idx}`}>启用</Label>
                   <Switch
@@ -162,6 +257,26 @@ export function SettingsMcpTab({
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleConnect(server.id)}
+                  disabled={busy || isConnected}
+                  title="连接此 MCP 服务器"
+                >
+                  <Link2 size={14} />
+                  连接
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleDisconnect(server.id)}
+                  disabled={busy || !isConnected}
+                  title="断开此 MCP 服务器"
+                >
+                  <Link2Off size={14} />
+                  断开
+                </Button>
                 <Button variant="ghost" size="sm" onClick={() => openEditMcp(idx)}>
                   编辑
                 </Button>
@@ -177,7 +292,8 @@ export function SettingsMcpTab({
             </div>
           </CardContent>
         </Card>
-      ))}
+        );
+      })}
 
       {/* MCP 添加/编辑表单：mcpForm 非 null 时显示 */}
       {mcpForm !== null && (

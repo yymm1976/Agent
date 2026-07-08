@@ -10,7 +10,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { IToolRegistry } from '../types.js';
 import type { MCPServerEntry, MCPConnectionInfo, MCPConnectionStatus } from './types.js';
-import type { MCPConfig } from '../../config/schema.js';
+import type { MCPConfig, MCPLifecyclePolicy } from '../../config/schema.js';
 import { MCPTool } from './mcp-tool.js';
 import { logger } from '../../utils/logger.js';
 // Phase 32 Task 4.2：接入 ToolResultSanitizer 的注入检测能力
@@ -75,6 +75,8 @@ export class MCPClientManager {
   private sanitizer?: ToolResultSanitizer;
   // MCP 全局配置（C6/I9 使用）
   private mcpConfig?: MCPConfig;
+  // Phase 48 Task 4：默认会话生命周期策略（构造函数注入，connect 时读取并记录）
+  private defaultLifecycle: MCPLifecyclePolicy;
   // Phase 53 Task 5：MCP 安全扫描器（可选，未注入时跳过扫描）
   private securityScanner?: McpSecurityScanner;
   // I9：重连定时器（serverId → timer）
@@ -88,8 +90,9 @@ export class MCPClientManager {
   // I9：最大退避（毫秒）
   private static readonly RECONNECT_MAX_DELAY = 30000;
 
-  constructor(registry: IToolRegistry) {
+  constructor(registry: IToolRegistry, defaultLifecycle: MCPLifecyclePolicy = 'per-session') {
     this.registry = registry;
+    this.defaultLifecycle = defaultLifecycle;
   }
 
   /** Phase 32 Task 4.2：注入 ToolResultSanitizer，用于检测 MCP 工具描述中的注入模式 */
@@ -115,6 +118,8 @@ export class MCPClientManager {
 
     logger.info(`Connecting to MCP server: ${entry.name} (${entry.id})`, {
       transport: entry.config.transport,
+      // Phase 48 Task 4：消费 lifecyclePolicy 配置（entry → mcpConfig → defaultLifecycle 三级回退）
+      lifecyclePolicy: entry.lifecyclePolicy ?? this.mcpConfig?.lifecyclePolicy ?? this.defaultLifecycle,
     });
 
     const state: ConnectionState = {

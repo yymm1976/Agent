@@ -52,7 +52,7 @@
 - `middleware/loop-detection.ts` — 循环检测中间件（检测重复工具调用并打破）（Phase 38）
 - `branch.ts` — BranchManager：分支对话管理（260 行）
 - `context-compaction.ts` — ContextCompactor：五阶段渐进压缩（L1-L4 零 LLM，L5 摘要）（221 行）
-- `dream-consolidator.ts` — DreamConsolidator：整理记忆（合并去重）（331 行）
+- `dream-consolidator.ts` — DreamConsolidator：整理记忆（合并去重）（331 行）（已删除：Phase 56 死代码清理）
 - `goal-parser.ts` — /goal 命令的目标分解器，LLM 拆步骤（137 行）
 - `goal-types.ts` — 目标分解与验证相关类型（74 行）
 - `goal-verifier.ts` — 目标完成度验证器，独立 LLM 验证 + 对抗性验证（288 行）
@@ -68,7 +68,7 @@
 - `memory/context-manager.ts` — 上下文管理器：token 监控 → checkpoint → 压缩（2026-07-07 统计 877 行）；Phase 38 增强：知识图谱跨会话持久化（.routedev/memory/knowledge-graph.json）
 - `memory/graph.ts` — KnowledgeGraph：PPR + 双路径召回 + Label Propagation 社区检测 + 模式聚类 + 置信度评分（Phase 36 增强）（2026-07-07 统计 1160 行）；Phase 38 增强：improve() 反馈 + forget() 遗忘 + recallV2() 多策略检索
 - `memory/types.ts` — 增量 Checkpoint + 上下文压缩类型（110 行）
-- `memory/dream-to-graph.ts` — Dream → KnowledgeGraph 信息流：归纳三步（合并同类/冲突检测/时效淘汰）（Phase 36）（236 行）
+- `memory/dream-to-graph.ts` — Dream → KnowledgeGraph 信息流：归纳三步（合并同类/冲突检测/时效淘汰）（Phase 36）（236 行）（已删除：Phase 56 死代码清理）
 - `multi/blackboard.ts` — 公共黑板：Worker 间共享任务共识（105 行）
 - `multi/conflict.ts` — ConflictDetector：文件访问冲突检测（85 行）
 - `multi/orchestrator.ts` — Orchestrator：分析步骤依赖，生成执行计划 + executeWorkerIsolated（401 行）
@@ -76,15 +76,15 @@
 - `multi/worker-executor.ts` — WorkerExecutor：执行单步骤，注入角色 prompt + 异常隔离 + 任务感知上下文裁剪（Phase 36 增强）（560 行）
 - `task-orchestrator.ts` — TaskOrchestrator：统一工作流调度中心，判定 intent 并分发（Phase 31）（342 行）
 - `task-orchestrator-types.ts` — Phase 31 类型定义：TaskIntent/OrchestratorStage/TaskContext/SteeringMessage（Phase 31）（205 行）
-- `requirements-gatherer.ts` — RequirementsGatherer：需求确认阶段，自动确认/主动追问/规划模式（Phase 31）
-- `complexity-analyzer.ts` — TaskComplexityAnalyzer：规则层+LLM层混合复杂度评估（Phase 31）
-- `execution-orchestrator.ts` — ExecutionOrchestrator：单/多 Agent 自适应执行编排（Phase 31）
+- `requirements-gatherer.ts` — RequirementsGatherer：需求确认阶段，自动确认/主动追问/规划模式（Phase 31）（已删除：Phase 59 死代码清理）
+- `complexity-analyzer.ts` — TaskComplexityAnalyzer：规则层+LLM层混合复杂度评估（Phase 31）（已删除：Phase 59 死代码清理）
+- `execution-orchestrator.ts` — ExecutionOrchestrator：单/多 Agent 自适应执行编排（Phase 31）（已删除：Phase 62/66/67/69 死代码清理）
 - `unified-reviewer.ts` — UnifiedReviewer：两层审查（GoalVerifier + 代码审查）（Phase 31）
 - `completion-gate.ts` — CompletionGate：独立代码验证门（typecheck/lint/tests）（Phase 31）
-- `failure-report.ts` — 结构化失败报告，规则生成建议不调用 LLM（Phase 31）
+- `failure-report.ts` — 结构化失败报告，规则生成建议不调用 LLM（Phase 31）（已删除：v3.7.0 死代码清理）
 - `hooks.ts` — HookRunner：扩展钩子（pre/post-tool-call + on-session-start/end）（Phase 31 扩展）
 - `step-executor.ts` — AgentLoopStepExecutor：DurableExecutor 的真实步骤执行器，调用 agentLoop.run()（Phase 35）
-- `requirements-clarifier.ts` — RequirementsClarifier：LLM 模糊度分析 + 追问生成 + 规则降级（Phase 37 Task 1）
+- `requirements-clarifier.ts` — RequirementsClarifier：LLM 模糊度分析 + 追问生成 + 规则降级（Phase 37 Task 1）（已删除：Phase 59 死代码清理）
 **依赖：** router/、tools/、harness/、utils/、config/
 
 ### src/config/ — 配置系统
@@ -93,7 +93,6 @@
 - `schema.ts` — 全局配置 Zod Schema，配置系统的"宪法"（248 行）
 - `loader.ts` — 配置加载器：YAML 解析 + 环境变量 + 全局/项目合并（163 行）
 - `defaults.ts` — 默认配置值（显式可读备份）（93 行）
-- `watcher.ts` — 配置文件热重载（最终一致）（51 行）
 **依赖：** 无外部模块依赖（被所有模块引用）
 
 ### src/evaluation/ — 评估指标
@@ -126,8 +125,8 @@
 ### src/observability/ — 轨迹导出与聚合分析（Phase 35）
 **职责：** 跨会话执行轨迹导出与聚合分析
 **关键文件：**
-- `trajectory-exporter.ts` — TrajectoryExporter：组装单会话完整轨迹（审计 + trace + token）
-- `trajectory-aggregator.ts` — TrajectoryAggregator：跨会话聚合指标（成功率/平均 token/工具使用 Top 5）
+- `trajectory-exporter.ts` — TrajectoryExporter：组装单会话完整轨迹（审计 + trace + token）（已删除：死代码清理）
+- `trajectory-aggregator.ts` — TrajectoryAggregator：跨会话聚合指标（成功率/平均 token/工具使用 Top 5）（已删除：死代码清理）
 **依赖：** harness/、router/
 
 ### src/memory/ — 项目记忆

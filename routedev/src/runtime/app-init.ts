@@ -672,7 +672,8 @@ export function createAppDependencies(
     });
   }
 
-  const mcpManager = new MCPClientManager(registry);
+  // Phase 48 Task 4（Kimi F-025 修复）：传入 lifecyclePolicy 默认值，避免配置僵尸
+  const mcpManager = new MCPClientManager(registry, config.mcp.lifecyclePolicy);
   // CONCERN 修复：传入 MCP 配置，使 connectTimeout 和 autoReconnect 生效
   mcpManager.setMcpConfig(config.mcp);
   const securityChecker = new SecurityChecker(cwd, config.security, config.permissionProfile);

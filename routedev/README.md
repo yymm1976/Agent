@@ -17,7 +17,7 @@ pnpm start
 ```
 routedev/
 ├── src/
-│   ├── agent/         # Agent 引擎（ReAct Loop + 目标分解 + 记忆 + 多 Agent + 工作模式 + 统一工作流编排）
+│   ├── agent/         # Agent 引擎（ReAct Loop + 目标分解 + 记忆 + 多 Agent + 工作模式）
 │   ├── runtime/       # 运行时（app-init + doctor + goal-runner + graceful-shutdown + 插件初始化）
 │   ├── config/        # 配置系统（YAML 加载 + Zod 校验 + 热重载）
 │   ├── harness/       # 可观测性（Trace + Audit + Checkpoint）
@@ -36,31 +36,14 @@ routedev/
 ## 架构概览
 
 ```
-用户输入 → TaskOrchestrator（Phase 31 统一调度）
-         ├─ quick_answer → ChatRunner（简单问题直达）
-         ├─ development → 完整流水线
-         │   ├─ RequirementsGatherer（需求确认）
-         │   ├─ GoalParser + TaskComplexityAnalyzer（分解+复杂度评估）
-         │   ├─ ExecutionOrchestrator（单/多 Agent 自适应）
-         │   │   ├─ 单 Agent：串行执行
-         │   │   └─ 多 Agent：Orchestrator + WorkerExecutor + Blackboard
-         │   └─ UnifiedReviewer（GoalVerifier + 代码审查）
-         ├─ explicit_goal → GoalRunner（/goal 命令）
-         └─ planning → 规划模式（/plan 命令）
+用户输入(desktop renderer) → IPC → engine-bridge.sendChat
+                              → ScenarioClassifier → ModelRouter → ReActAgentLoop → LLM → 响应渲染
+
+/goal 命令 → engine-bridge.executeCommand
+            → GoalParser → GoalPlan → 逐步执行(ReActAgentLoop) → GoalVerifier → 完成
 ```
 
-> **入口说明：** CLI 已在 Phase 72 退役，Electron 桌面端为主要入口。上述流水线在桌面端 chat 输入框中触发，`/goal`、`/plan` 等命令在桌面端 chat 中输入即可。
-
-### 统一工作流编排（Phase 31）
-
-Phase 31 把三条互不相通的执行路径合并为一条智能流水线：
-
-- **TaskOrchestrator**：所有非命令输入的调度中心，判定 intent 并分发
-- **RequirementsGatherer**：需求确认阶段，自动确认或主动追问
-- **TaskComplexityAnalyzer**：规则层+LLM层混合复杂度评估
-- **ExecutionOrchestrator**：单/多 Agent 自适应执行
-- **UnifiedReviewer**：两层审查（GoalVerifier + 代码审查）
-- **生产安全防护**：ReadTracker（先读后写）、ToolResultSanitizer（注入检测）、CompletionGate（独立验证）、Token 熔断
+> **入口说明：** CLI 已在 Phase 72 退役，Electron 桌面端为主要入口。所有交互经 `desktop/main/engine-bridge.ts` 的 `sendChat`（对话）与 `executeCommand`（命令）进入运行时层。多步任务通过 `/goal` 命令触发，由 `goal-runner` 执行器逐步执行并经 `GoalVerifier` 验证。
 
 ## 开发命令
 

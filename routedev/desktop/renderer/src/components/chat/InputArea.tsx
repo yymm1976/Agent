@@ -15,12 +15,13 @@ import { Textarea } from '../ui/textarea.js';
 
 // 支持的命令列表（Phase 37：扩展为动态获取 + 静态兜底）
 // Phase 54：补全 /goal 命令
-const STATIC_COMMANDS = ['/clear', '/status', '/mcp', '/compact', '/help', '/skill', '/skills', '/goal'];
+const STATIC_COMMANDS = ['/clear', '/status', '/mcp', '/compact', '/compress', '/help', '/skill', '/skills', '/goal'];
 const COMMAND_DESCRIPTIONS: Record<string, string> = {
   '/clear': '清空对话',
   '/status': '查看状态',
   '/mcp': 'MCP 状态',
   '/compact': '压缩上下文',
+  '/compress': '压缩上下文（同 /compact）',
   '/help': '帮助',
   '/skill': 'Skill 管理',
   '/skills': 'Skill 列表',

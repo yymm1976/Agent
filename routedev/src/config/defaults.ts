@@ -146,13 +146,14 @@ export const DEFAULT_CONFIG: AppConfig = {
     idleHintSeconds: 30,
     hotReloadNotify: true,
     // Phase 50 Task 7：7 个 React 组件接入开关（tracePanel 默认 false，其余默认 true）
+    // CLI 退役遗留，桌面端不消费 — 以下组件开关仅 CLI 端使用，桌面端组件接入由各页面自行控制
     components: {
-      branchSwitcher: true,
-      resumePicker: true,
-      progressBar: true,
-      tracePanel: false,
-      disclosureLevel: true,
-      diffView: true,
+      branchSwitcher: true,    // CLI 退役遗留
+      resumePicker: true,      // CLI 退役遗留
+      progressBar: true,       // CLI 退役遗留
+      tracePanel: false,       // CLI 退役遗留
+      disclosureLevel: true,   // CLI 退役遗留
+      diffView: true,          // CLI 退役遗留
       configReloadNotice: true,
     },
   },

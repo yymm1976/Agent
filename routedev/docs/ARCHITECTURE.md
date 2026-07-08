@@ -111,7 +111,7 @@ RouteDev 采用七层安全防护：
 - **RouterPlugin**：自定义路由决策
 
 ### MCP 集成
-通过 MCP 协议接入外部工具服务器，支持 stdio 和 SSE 两种传输方式。
+通过 MCP 协议接入外部工具服务器，支持 stdio / http / sse / streamable_http / websocket 五种传输方式。
 
 ## 6. Phase 50 模块接入总览
 

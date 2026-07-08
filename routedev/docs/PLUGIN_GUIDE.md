@@ -159,11 +159,7 @@ export default class MyRouterPlugin implements RouterPlugin {
     index.js
 ```
 
-使用 `/plugin` 命令管理插件：
-- `/plugin list` — 列出已安装插件
-- `/plugin enable <name>` — 启用插件
-- `/plugin disable <name>` — 禁用插件
-- `/plugin reload` — 重新加载插件
+> 当前插件系统仅用于内部中间件管线注册（agent/tools/router 桥接），暂不支持 `/plugin` 命令管理。插件启用/禁用通过 `PluginRegistry` 的 `enable()` / `disable()` API 在代码层完成，运行时由装配工厂统一调度，未对外暴露交互式命令。
 
 ## 8. 插件生命周期
 

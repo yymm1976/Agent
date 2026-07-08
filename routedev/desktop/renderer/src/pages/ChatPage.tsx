@@ -136,6 +136,13 @@ export function ChatPage({
     if (ok) setFollowUpQueue((prev) => prev.filter((_, i) => i !== idx));
   }, []);
 
+  // Phase 71：清空全部 follow-up 队列
+  const clearAllFollowUps = useCallback(() => {
+    window.routedev.agent.clearAllQueues();
+    setFollowUpQueue([]);
+    setFollowUpExpanded(false);
+  }, []);
+
   const handleFollowUpModeChange = useCallback((m: FollowUpMode) => {
     setFollowUpModeState(m);
     window.routedev.agent.setFollowUpMode(m);
@@ -289,7 +296,7 @@ export function ChatPage({
           <FollowUpQueue items={followUpQueue} expanded={followUpExpanded}
             onToggle={() => setFollowUpExpanded(!followUpExpanded)}
             mode={followUpMode} onModeChange={handleFollowUpModeChange}
-            onRemove={removeFollowUpItem} />
+            onRemove={removeFollowUpItem} onClearAll={clearAllFollowUps} />
         </div>
       )}
 

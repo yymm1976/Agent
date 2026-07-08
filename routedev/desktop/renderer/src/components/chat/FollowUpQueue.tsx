@@ -4,7 +4,7 @@
 // 保留现有 API 兼容：items / expanded / onToggle / mode / onModeChange / onRemove
 // 视觉：触发器用主色色条（border-l-2 border-rd-primary）区分 pending 队列
 
-import { History, X } from 'lucide-react';
+import { History, X, Trash2 } from 'lucide-react';
 import type { FollowUpItem, FollowUpMode } from '../../../../shared/ipc-types.js';
 import { QueuePopover } from './QueuePopover.js';
 
@@ -15,6 +15,7 @@ export function FollowUpQueue({
   mode,
   onModeChange,
   onRemove,
+  onClearAll,
 }: {
   items: FollowUpItem[];
   expanded: boolean;
@@ -22,6 +23,8 @@ export function FollowUpQueue({
   mode: FollowUpMode;
   onModeChange: (mode: FollowUpMode) => void;
   onRemove: (idx: number) => void;
+  /** Phase 71：清空全部 follow-up 队列 */
+  onClearAll: () => void;
 }) {
   if (items.length === 0) return null;
 
@@ -74,6 +77,15 @@ export function FollowUpQueue({
               {m === 'one-at-a-time' ? '逐条' : '全部'}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={onClearAll}
+            title="清空全部接续队列"
+            className="ml-auto flex items-center gap-0.5 rounded px-2 py-0.5 text-xs text-rd-textMuted transition hover:bg-rd-danger/10 hover:text-rd-danger"
+          >
+            <Trash2 size={11} />
+            清空全部
+          </button>
         </div>
 
         {/* 队列项列表（74-I2：role=list） */}

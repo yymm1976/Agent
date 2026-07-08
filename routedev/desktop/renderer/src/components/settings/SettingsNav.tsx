@@ -3,7 +3,7 @@
 // 从 SettingsPage.tsx 迁移
 
 import {
-  Server, Palette, Route, Zap, Plug, Bell, GraduationCap, Sparkles, Radio,
+  Server, Palette, Route, Zap, Plug, GraduationCap, Sparkles, Radio,
   Target, FileText, BookOpen, Webhook, Brain, BarChart3, Map as MapIcon,
   Shield, ShoppingBag, Users, Gauge, ShieldCheck, Split, CheckCircle2,
   Folder, Archive, Info, ChevronDown, ChevronRight,
@@ -51,7 +51,8 @@ export function SettingsNav({ activeTab, setActiveTab, advancedExpanded, setAdva
     { id: 'router', label: '路由规则', icon: Route },
     { id: 'execution', label: '执行', icon: Zap },
     { id: 'mcp', label: '插件与 MCP', icon: Plug },
-    { id: 'sounds', label: '提示音', icon: Bell },
+    // CLI 退役遗留，桌面端不消费 — 隐藏 Tab（sounds 配置运行时无消费方）
+    // { id: 'sounds', label: '提示音', icon: Bell },
     { id: 'expertise', label: '引导', icon: GraduationCap },
     { id: 'persona', label: '角色设定', icon: Sparkles },
     { id: 'voice', label: '语音', icon: Radio },
@@ -76,7 +77,8 @@ export function SettingsNav({ activeTab, setActiveTab, advancedExpanded, setAdva
     { id: 'resultSchema', label: '结果格式', icon: CheckCircle2 },
     { id: 'configLayering', label: '配置分层', icon: Folder },
     { id: 'security', label: '安全设置', icon: Shield },
-    { id: 'channels', label: '渠道', icon: Radio },
+    // CLI 退役遗留，桌面端不消费 — 隐藏 Tab（无 Webhook 服务器消费 channels 配置）
+    // { id: 'channels', label: '渠道', icon: Radio },
     { id: 'archived', label: '归档', icon: Archive },
     { id: 'about', label: '关于', icon: Info },
   ] as const;

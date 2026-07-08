@@ -41,6 +41,8 @@ import type { SkillSecurityGate } from '../../src/skills/security-gate.js';
 // Phase 48 Task 4 接线修复：AgentProfileManager 用于 UI 编辑 Profile
 import { AgentProfileManager } from '../../src/agents/profiles/manager.js';
 import type { AgentProfile } from '../../src/agents/profiles/types.js';
+// F-021/F-015 修复：plan edit 超时清理使用 logger 持久化警告
+import { logger } from '../../src/utils/logger.js';
 
 /**
  * Phase 54：判断是否为 goal-runner 输出的进度文本（已被 GoalExecutionCard 取代）
@@ -239,7 +241,9 @@ export class RouteDevEngine {
 
   async sendChat(text: string): Promise<void> {
     if (!this.deps || !this.classifier || !this.modelRouter || !this.tracker || !this.clientManager) {
+      // F-014 修复：引擎未就绪时补发 done 事件，避免渲染层永久 loading
       this.options.onStream({ type: 'error', error: '引擎未初始化' });
+      this.options.onStream({ type: 'done' });
       return;
     }
 
@@ -276,10 +280,12 @@ export class RouteDevEngine {
 
       const client = this.clientManager.get(routeDecision.providerId);
       if (!client || !client.isReady()) {
+        // F-013 修复：provider 不可用时补发 done 事件，避免渲染层永久 loading
         this.options.onStream({
           type: 'error',
           error: `提供商 ${routeDecision.providerId} 不可用。请检查 API Key 配置。`,
         });
+        this.options.onStream({ type: 'done' });
         return;
       }
 
@@ -775,8 +781,21 @@ export class RouteDevEngine {
             })),
           };
           // 等待渲染层响应（resolvePlanEdit 在 IPC plan:edit-response 触发时调用 resolver）
+          // F-021/F-015 修复：添加 5 分钟超时，避免用户关闭 StepEditor 时 Promise 永久挂起导致 goal-runner 线程泄漏
           const edited = await new Promise<PlanEditRequestPayload['plan']['steps'] | null>((resolve) => {
-            this.pendingPlanEditResolvers.set(requestId, resolve);
+            const timeoutId = setTimeout(() => {
+              if (this.pendingPlanEditResolvers.has(requestId)) {
+                this.pendingPlanEditResolvers.delete(requestId);
+                logger.warn('Plan edit timeout, auto-cancelling', { requestId });
+                resolve([]);  // 超时返回空数组（取消编辑，保留原计划）
+              }
+            }, 5 * 60 * 1000); // 5 分钟超时
+
+            // 包装 resolver：resolvePlanEdit 调用时清理 timeout，避免超时定时器残留
+            this.pendingPlanEditResolvers.set(requestId, (steps) => {
+              clearTimeout(timeoutId);
+              resolve(steps);
+            });
             this.options.onPlanEditRequest!(requestId, planSnapshot);
           });
           if (edited === null) return null;

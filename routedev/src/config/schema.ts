@@ -87,6 +87,7 @@ export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 // 与 providers 数组并存：providers 数组用于自定义任意 provider，
 // llmProviders 提供 4 个常见 provider 的快捷配置（apiKey/baseURL/defaultModel）
 // 客户端构造时优先使用 providers 数组中的配置，回退到 llmProviders，再回退到环境变量
+// 状态：已定义未消费 — 预留字段，客户端构造实际未读取此配置（仅 schema 定义）
 const LLMProvidersConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** Google Gemini 配置（原生协议） */
   gemini: z.preprocess((v) => v ?? {}, z.object({
@@ -256,6 +257,7 @@ export type ToolCategory = z.infer<typeof ToolCategorySchema>;
 
 // 7 层安全模型中的配置层（参见蓝图决策 4）
 const SecurityConfigSchema = z.object({
+  // TODO: 未实施 — SecurityChecker 未实现目录边界检查
   directoryBoundary: z.boolean().default(true),                       // 目录边界限制
   commandBlacklist: z.array(z.string()).default(['rm -rf', 'format', 'del /s']), // 危险命令黑名单
   commandWhitelist: z.array(z.string()).default([]),                   // 白名单（空 = 不限制）
@@ -535,9 +537,9 @@ const WorkflowConfigSchema = z.object({
   reviewOnComplete: z.boolean().default(true),
   /** 审查模式：builtin（内置 Worker）/ ocr（外部 open-code-review）/ none */
   reviewMode: z.enum(['builtin', 'ocr', 'none']).default('builtin'),
-  /** 审查使用的模型：'auto' 用路由器选择，或指定具体模型 id */
+  /** 审查使用的模型：'auto' 用路由器选择，或指定具体模型 id — 预留字段，当前未消费 */
   reviewModel: z.string().default('auto'),
-  /** 审查严格度 */
+  /** 审查严格度 — 预留字段，当前未消费 */
   reviewStrictness: z.enum(['low', 'medium', 'high']).default('medium'),
 });
 export type WorkflowConfig = z.infer<typeof WorkflowConfigSchema>;
@@ -649,6 +651,7 @@ export type OptimizationConfig = z.infer<typeof OptimizationConfigSchema>;
  * 控制定时任务引擎的启用状态、容量上限与默认时区
  * 注：ScheduleEngine 空转引擎已移除（死代码清理），但 UI 仍保留配置入口，
  *     后续接入真实调度器时直接复用此 schema
+ * 状态：已定义未消费 — Phase 37 Task 2 预留字段，调度器引擎已移除
  */
 const SchedulerConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用定时任务引擎（默认 true） */
@@ -686,6 +689,7 @@ export type BackgroundBehaviorConfig = z.infer<typeof BackgroundBehaviorConfigSc
 /**
  * 知识图谱配置
  * 控制持久化、自动遗忘和多策略召回的默认行为
+ * 状态：已定义未消费 — Phase 38 Task 4 预留字段，运行时无消费方
  */
 const KnowledgeGraphConfigSchema = z.object({
   /** 持久化配置 */
@@ -986,6 +990,7 @@ export type CodeMapConfig = z.infer<typeof CodeMapConfigSchema>;
  * 市场配置（Phase 42）
  * 控制 Skill / Hook 的发布、导入、导出
  * Phase 43：新增 registryUrl / registryToken，支持远程 Registry 拉取
+ * 状态：已定义未消费 — Phase 42 预留字段，运行时无市场服务器消费
  */
 const MarketConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用市场 */
@@ -1022,6 +1027,7 @@ export type PoliciesConfig = z.infer<typeof PoliciesConfigSchema>;
 /**
  * 推理模式配置（Phase 42）
  * fast（快速）/ balanced（均衡）/ accurate（精准）
+ * 状态：已定义未消费 — router.ts 注释明确说明未接入后端
  */
 const ReasoningModeSchema = z.enum(['fast', 'balanced', 'accurate']).default('balanced');
 export type ReasoningMode = z.infer<typeof ReasoningModeSchema>;
@@ -1473,7 +1479,9 @@ const ActivityPanelSchema = z.preprocess((v) => v ?? {}, z.object({
 }));
 export type ActivityPanelConfig = z.infer<typeof ActivityPanelSchema>;
 
-/** 项目级配置分层（Phase 51 Task 8） */
+/** 项目级配置分层（Phase 51 Task 8）
+ *  状态：已定义未消费 — Phase 51 Task 8 预留字段，运行时未实现分层合并逻辑
+ */
 const ConfigLayeringSchema = z.preprocess((v) => v ?? {}, z.object({
   // 旧字段(保留向后兼容)
   // 默认 true：启用项目级配置覆盖全局配置（Phase 60 接线后保持原有合并行为）
@@ -1488,7 +1496,9 @@ const ConfigLayeringSchema = z.preprocess((v) => v ?? {}, z.object({
 }));
 export type ConfigLayeringConfig = z.infer<typeof ConfigLayeringSchema>;
 
-/** 错误显示配置（Phase 51 Task 9） */
+/** 错误显示配置（Phase 51 Task 9）
+ *  状态：已定义未消费 — Phase 51 Task 9 预留字段，运行时错误展示未读取此配置
+ */
 export const ErrorDisplaySchema = z.preprocess((v) => v ?? {}, z.object({
   // 旧字段
   showDevDetails: z.boolean().default(false),
@@ -1514,7 +1524,9 @@ const ResultSchemaConfigSchema = z.preprocess((v) => v ?? {}, z.object({
 }));
 export type ResultSchemaConfig = z.infer<typeof ResultSchemaConfigSchema>;
 
-/** 模型显示配置（Phase 51 Task 11） */
+/** 模型显示配置（Phase 51 Task 11）
+ *  状态：已定义未消费 — Phase 51 Task 11 预留字段，运行时模型展示未读取此配置
+ */
 const ModelDisplaySchema = z.preprocess((v) => v ?? {}, z.object({
   // 旧字段
   showThinkingLevel: z.boolean().default(true),

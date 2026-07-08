@@ -207,6 +207,57 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
     const state = get();
     if (!text.trim() || state.isProcessing) return;
     const trimmed = text.trim();
+
+    // F-007 修复：slash 命令（非 /goal）路由到 command.execute
+    // /goal 仍走 chat:send（engine-bridge.ts 会拦截并交由 GoalRunner 执行）
+    // 之前所有 slash 命令都被当普通文本发给 LLM，导致 /clear /status /mcp 等命令不生效
+    if (trimmed.startsWith('/') && !trimmed.startsWith('/goal')) {
+      const now = Date.now();
+      const taskId = `task-${now}`;
+      const userMsg: ChatMessage = {
+        id: `u-${now}`,
+        role: 'user',
+        content: trimmed,
+        taskId,
+        timestamp: now,
+        taskStartTime: now,
+      };
+      set({
+        messages: [...state.messages, userMsg],
+        _currentTaskId: taskId,
+      });
+      // 异步执行命令，结果作为 assistant 消息追加显示
+      void window.routedev.command.execute({ text: trimmed }).then((result: unknown) => {
+        const r = result as { ok?: boolean; message?: string } | null;
+        const content = r?.message ?? (r?.ok ? '命令已执行' : '命令执行失败');
+        const ts = Date.now();
+        set((s) => ({
+          messages: [...s.messages, {
+            id: `a-${ts}`,
+            role: 'assistant' as const,
+            content,
+            taskId,
+            timestamp: ts,
+          }],
+          _currentTaskId: null,
+        }));
+      }).catch((err: unknown) => {
+        const ts = Date.now();
+        set((s) => ({
+          messages: [...s.messages, {
+            id: `a-${ts}`,
+            role: 'assistant' as const,
+            content: `命令执行失败: ${err instanceof Error ? err.message : String(err)}`,
+            error: true,
+            taskId,
+            timestamp: ts,
+          }],
+          _currentTaskId: null,
+        }));
+      });
+      return;
+    }
+
     const now = Date.now();
     const taskId = `task-${now}`;
     const userMsg: ChatMessage = {

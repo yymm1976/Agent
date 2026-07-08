@@ -33,22 +33,16 @@ phase49Integration: {}
 
 ```yaml
 goalIntegration:
-  # 是否启用五段式 goal spec 构造（goal/scope/constraints/doneWhen/stopIf）
-  promptBuilderEnabled: false
   # 是否启用目标持久化到 .routedev/goals/
   persistenceEnabled: false
   # 是否启用多层目标审计（CompletionGate + VerifierLLM + ReviewerAgent 三层仲裁）
   auditEnabled: false
-  # 是否启用需求变更分析（用户追加需求时检测影响）
-  requirementChangeEnabled: false
 ```
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `promptBuilderEnabled` | boolean | false | 开启后 `/goal` 命令入口调用 `GoalPromptBuilder.build` 构造五段式规范 |
 | `persistenceEnabled` | boolean | false | 开启后 plan 生成后调用 `GoalPersistence.save` 持久化到 `.routedev/goals/<id>.json` |
 | `auditEnabled` | boolean | false | 开启后 verify 阶段调用 `GoalAuditor.audit` 执行三层独立审计 |
-| `requirementChangeEnabled` | boolean | false | 开启后用户追加需求时调用 `RequirementChangeAnalyzer.analyzeChangeImpact` 分析影响 |
 
 ### 2.2 orchestrationIntegration（Task 2：多 Agent 编排接入）
 
@@ -150,8 +144,6 @@ phase49Integration:
   contextUsagePanelEnabled: false
   # 评估集框架（Smoke/Regression 两套 + LLM-as-Judge）
   evaluationFrameworkEnabled: false
-  # 意图路由四层漏斗（L0 正则 / L1 向量 / L2 LLM / SafeNet）
-  routingFunnelEnabled: false
 ```
 
 注：Phase 49 模块默认 `false`（架构性变更较大，需用户手动开启）。
@@ -173,10 +165,8 @@ phase49Integration:
 ```yaml
 providers: []
 goalIntegration:
-  promptBuilderEnabled: false
   persistenceEnabled: false
   auditEnabled: false
-  requirementChangeEnabled: false
 orchestrationIntegration:
   strategyEnabled: false
   stateGraphEnabled: false
@@ -193,10 +183,8 @@ delegationIntegration:
 ```yaml
 providers: []
 goalIntegration:
-  promptBuilderEnabled: true
   persistenceEnabled: true
   auditEnabled: true
-  requirementChangeEnabled: true
 orchestrationIntegration:
   strategyEnabled: true
   stateGraphEnabled: true
@@ -212,7 +200,6 @@ phase49Integration:
   skillQualityGateEnabled: true
   contextUsagePanelEnabled: true
   evaluationFrameworkEnabled: true
-  routingFunnelEnabled: true
 ui:
   components:
     tracePanel: true

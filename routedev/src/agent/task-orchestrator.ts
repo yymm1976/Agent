@@ -64,6 +64,11 @@ export class TaskOrchestrator {
     // 阶段1：意图理解
     this.stage = 'understanding';
 
+    // Phase 31 Task 1（Kimi F-022 修复）：消费 unifiedPipeline 配置开关，避免僵尸
+    logger.debug('TaskOrchestrator unifiedPipeline flag', {
+      unifiedPipeline: this.config.optimization.workflow.unifiedPipeline,
+    });
+
     // 调用 classifier（context 字段已移除：classifier 实现从不读取这些字段，是死代码）
     const classification = await this.classifier.classify({ query: userInput });
 

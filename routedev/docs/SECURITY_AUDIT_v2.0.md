@@ -43,7 +43,7 @@
 
 **证据**：
 - `src/config/schema.ts:70` — apiKey 支持 `${ENV_VAR}` 环境变量引用
-- `src/channels/adapters/wechat-work.ts` — corpSecret 错误日志脱敏（Phase 26 修复）
+- `src/channels/adapters/wechat-work.ts` — corpSecret 错误日志脱敏（Phase 26 修复）（注：src/channels/ 子系统已在 CLI 退役后删除，本节为历史参考）
 - 日志系统不直接输出 apiKey 明文
 
 **测试**：`tests/security/final-audit.test.ts` S-3 组（2 个测试全部通过）
@@ -64,7 +64,7 @@
 **检查方法**：验证 WebhookServer 限流、body 限制、认证。
 
 **证据**：
-- `src/channels/server.ts` — WebhookServer 模块完整
+- `src/channels/server.ts` — WebhookServer 模块完整（注：src/channels/ 子系统已在 CLI 退役后删除，本节为历史参考）
 - 性能基线强制门（P6: 内存 < 256MB，P8: 10x 稳定性）
 
 **测试**：`tests/security/final-audit.test.ts` S-5 组（1 个测试通过）
@@ -86,7 +86,7 @@
 
 **证据**：
 - PermissionEngine 可配置 web_search 为 confirm 层
-- `src/config/schema.ts:183` — networkConfirm 默认启用
+- `src/config/schema.ts:270` — networkConfirm 默认 false（用户需显式启用网络确认）
 
 **测试**：`tests/security/final-audit.test.ts` S-7 组（2 个测试全部通过）
 

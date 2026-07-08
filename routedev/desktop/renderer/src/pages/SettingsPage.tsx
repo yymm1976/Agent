@@ -1,4 +1,4 @@
-﻿// desktop/renderer/src/pages/SettingsPage.tsx
+// desktop/renderer/src/pages/SettingsPage.tsx
 // 设置页面：Provider / 模型 / 路由规则 / 安全 / 命令与工具 / 可观测性 / 记忆 / MCP / 渠道 / 外观 / 提示音 / 归档对话 / 关于
 
 import { useState, useEffect, useRef, type ChangeEvent } from 'react';
@@ -423,7 +423,8 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
       )}
 
       {/* ===== 渠道集成 ===== */}
-      {activeTab === 'channels' && (
+      {/* CLI 退役遗留，桌面端不消费 — 隐藏 Tab（无 Webhook 服务器消费 channels 配置） */}
+      {false && activeTab === 'channels' && (
         <SettingsChannelsTab
           draft={draft}
           updateChannels={updateChannels}
@@ -457,7 +458,8 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
       )}
 
       {/* ===== 提示音 ===== */}
-      {activeTab === 'sounds' && (
+      {/* CLI 退役遗留，桌面端不消费 — 隐藏 Tab（sounds 配置运行时无消费方） */}
+      {false && activeTab === 'sounds' && (
         <SettingsSoundsTab draft={draft} updateSounds={updateSounds} />
       )}
 
