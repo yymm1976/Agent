@@ -180,7 +180,7 @@ Phase 56-60 是 RouteDev 的架构瘦身工程，删除 ~3000 行死代码与无
 
 删除无消费方的重型模块：
 - `src/agent/self-evolution/` 整个目录（selfEvolution/godelProposer/selfHarness 配置字段移除）
-- `src/agent/dream-consolidator.ts`（无入口模块）
+- `src/agent/dream-consolidator.ts`（已删除：无入口模块，Phase 56）
 - `src/agent/eq-detector.ts`（接口不匹配）
 
 ### 7.2 C 档收窄（Phase 57）

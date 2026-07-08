@@ -339,7 +339,7 @@ export class DualLoopOrchestrator {
       }
 
       // Phase 59：metricsCollector 死分支已删除（setter 无外部调用方，字段永为 undefined）
-      // - 源文件 src/evaluation/architecture-aware-metrics.ts 保留
+      // - 原 architecture-aware-metrics.ts 已删除（Phase 59），本处保留 comment 仅作历史
 
       // ===== 外循环：独立验证 =====
       yield { type: 'outer-loop-start', iteration };

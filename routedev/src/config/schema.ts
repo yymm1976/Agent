@@ -1559,7 +1559,7 @@ const SkillLifecycleConfigSchema = z.object({
 });
 export type SkillLifecycleConfig = z.infer<typeof SkillLifecycleConfigSchema>;
 
-// Phase 59：SaturationMonitorConfigSchema 已删除（批次1，孤儿 schema——字段已从 Phase52Integration 删除，evaluation 文件用 saturation-monitor.ts 中的 interface）
+// Phase 59：SaturationMonitorConfigSchema 已删除（批次1，孤儿 schema——字段已从 Phase52Integration 删除，原 evaluation 文件已删除，schema 仅保留历史标注）
 // Phase 59：MCPSecurityConfigSchema 已删除（批次3，与 phase53 McpSecurityScanConfigSchema 重复）
 // --- Phase 52 Task 3：长程工作流有界局部恢复配置 ---
 

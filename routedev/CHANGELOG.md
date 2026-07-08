@@ -2,6 +2,8 @@
 
 所有版本变更记录。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+> **路径迁移说明（Phase 60 后）：** `src/cli/` 已迁移到 `src/runtime/` 和 `desktop/renderer/src/`，历史条目中引用的 `src/cli/goal-runner.ts` / `src/cli/app-init.ts` / `src/cli/App.tsx` 等路径均已迁移到新位置，详见 `CODEMAP.md`。
+
 ## v4.5.4 (2026-07-02) — Phase 60: 花架子去除工程五（A 档打磨与全量验收发布）
 
 > **核心目标：** 花架子去除工程收尾。核心模块边界测试补强、`/dream` deprecated alias 删除、文档同步、版本发布。本 Phase 不新增功能，只做稳定性补强。

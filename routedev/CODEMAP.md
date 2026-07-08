@@ -1,6 +1,6 @@
 # RouteDev — 代码库索引（CODEMAP）
 > 搜索代码前先读本文件定位目标模块，再进入具体文件。
-> 最后更新：2026-07-05（终端 UI 退役 + 死代码清理后）
+> 最后更新：2026-07-08（CODEMAP 失真修复：删除 src/evaluation/ 条目、补齐已删除文件标注、修正文件名漂移）
 
 ## 目录总览
 - `src/runtime/` — 核心运行时（装配工厂 + 目标执行器 + 通知 + 插件初始化 + shutdown）
@@ -9,7 +9,6 @@
 - `src/cite/` — 引用管理（manager + resolver + types）
 - `src/code-map/` — 代码地图（多语言 extractor + PageRank 排序 + 增量索引 + 查询器）
 - `src/config/` — 配置系统（YAML 加载 + Zod 校验 + 热重载）
-- `src/evaluation/` — 评估指标（4 个活模块：MI 交叉评分 / 饱和度 / 架构感知 / 缺陷本体）
 - `src/harness/` — 可观测性层（Trace + Audit + Checkpoint + 实验管理）
 - `src/hooks/` — 内置钩子注册（文件变更验证 + 会话生命周期日志）
 - `src/import/` — 外部生态导入（Anthropic Skills / Claude Plugin / Codex）
@@ -57,9 +56,9 @@
 - `goal-types.ts` — 目标分解与验证相关类型（74 行）
 - `goal-verifier.ts` — 目标完成度验证器，独立 LLM 验证 + 对抗性验证（288 行）
 - `goal-gates.ts` — GoalGateManager：验收门控冻结/持久化/修改（173 行）
-- `handoff.ts` — 结构化交接文件（HANDOFF.md 模式）（51 行）
-- `init-analyzer.ts` — InitAnalyzer：分析项目结构，生成 .routedev-rules.md（283 行）
-- `prompts.ts` — 默认 System Prompt（38 行）
+- `handoff-contract.ts` — 结构化交接文件（HANDOFF.md 模式）（51 行）
+- `init-analyzer.ts` — InitAnalyzer：分析项目结构，生成 .routedev-rules.md（283 行）（已删除：Phase 59 死代码清理）
+- `prompts.ts` — 默认 System Prompt（38 行）（已删除：Phase 59 死代码清理）
 - `token-profiler.ts` — TokenProfiler：分组件 token 快照（五分表：系统提示词/对话历史/工具定义/工具返回/用户消息）（Phase 30）
 - `concise-thinking.ts` — 简洁思考约束：CONCISE_THINKING_BLOCK + trimToolResult + shouldSkipConcise（Phase 30 实验性）
 - `vision.ts` — VisionAssistant：多模态视觉辅助（148 行）
@@ -83,7 +82,7 @@
 - `completion-gate.ts` — CompletionGate：独立代码验证门（typecheck/lint/tests）（Phase 31）
 - `failure-report.ts` — 结构化失败报告，规则生成建议不调用 LLM（Phase 31）（已删除：v3.7.0 死代码清理）
 - `hooks.ts` — HookRunner：扩展钩子（pre/post-tool-call + on-session-start/end）（Phase 31 扩展）
-- `step-executor.ts` — AgentLoopStepExecutor：DurableExecutor 的真实步骤执行器，调用 agentLoop.run()（Phase 35）
+- `step-executor.ts` — AgentLoopStepExecutor：DurableExecutor 的真实步骤执行器，调用 agentLoop.run()（Phase 35）（已删除：Phase 59 死代码清理）
 - `requirements-clarifier.ts` — RequirementsClarifier：LLM 模糊度分析 + 追问生成 + 规则降级（Phase 37 Task 1）（已删除：Phase 59 死代码清理）
 **依赖：** router/、tools/、harness/、utils/、config/
 
@@ -94,15 +93,6 @@
 - `loader.ts` — 配置加载器：YAML 解析 + 环境变量 + 全局/项目合并（163 行）
 - `defaults.ts` — 默认配置值（显式可读备份）（93 行）
 **依赖：** 无外部模块依赖（被所有模块引用）
-
-### src/evaluation/ — 评估指标
-**职责：** 保留 4 个活模块，覆盖 MI 交叉评分、饱和度监控、架构感知指标、过程缺陷本体（终端 UI 退役 + 死代码清理后，bfcl-tool-evaluator / evaluation-framework / online-monitor / runner / cases / index 等已删）
-**关键文件：**
-- `mi-cross-scorer.ts` — MI 交叉评分器（被 app-init.ts 实例化）
-- `saturation-monitor.ts` — 饱和度监控（类型契约）
-- `architecture-aware-metrics.ts` — 架构感知指标（类型契约）
-- `process-defect-ontology.ts` — 过程缺陷本体（类型契约）
-**依赖：** utils/、harness/
 
 ### src/harness/ — 可观测性层
 **职责：** Trace 收集、Audit 日志、Git 检查点、实验分支管理
@@ -123,10 +113,11 @@
 **依赖：** agent/hooks.js、harness/audit-logger.js
 
 ### src/observability/ — 轨迹导出与聚合分析（Phase 35）
-**职责：** 跨会话执行轨迹导出与聚合分析
+**职责：** 跨会话执行轨迹导出与聚合分析（终端 UI 退役 + 死代码清理后，trajectory-exporter.ts / trajectory-aggregator.ts 已删，当前 3 个活模块）
 **关键文件：**
-- `trajectory-exporter.ts` — TrajectoryExporter：组装单会话完整轨迹（审计 + trace + token）（已删除：死代码清理）
-- `trajectory-aggregator.ts` — TrajectoryAggregator：跨会话聚合指标（成功率/平均 token/工具使用 Top 5）（已删除：死代码清理）
+- `analytics-queue.ts` — 分析事件队列：缓冲 + 批量 flush 跨会话指标
+- `integration.ts` — 集成入口：装配 analytics-queue + otel-exporter
+- `otel-exporter.ts` — OpenTelemetry 协议导出器：将 trace/metrics 推送到 OTLP endpoint
 **依赖：** harness/、router/
 
 ### src/memory/ — 项目记忆
@@ -135,13 +126,15 @@
 - `project-memory.ts` — 项目记忆：自动维护 .routedev/ 目录结构（230 行）
 **依赖：** utils/、config/
 
+> **注：** `/consolidate-memory` 命令未实现为独立 slash 命令，记忆整合通过自动触发（context-manager 的 checkpoint 压缩 + project-memory 的会话级维护）。原 `/dream` 命令已在 Phase 60 删除 deprecated alias。
+
 ### src/plugins/ — 插件系统
 **职责：** 四种插件类型（theme/tool/hook/router）+ 注册表 + SDK
 **关键文件：**
 - `types.ts` — 插件基础接口 + 四种特化类型（128 行）
 - `registry.ts` — PluginRegistry：discover/load/init/destroy/enable/disable（375 行）
-- `sdk.ts` — 四个 define*Plugin 辅助函数（163 行）
-- `index.ts` — 导出聚合（5 行）
+- `sdk.ts` — 四个 define*Plugin 辅助函数（163 行）（已删除：Phase 59 死代码清理）
+- `index.ts` — 导出聚合（5 行）（已删除：Phase 59 死代码清理）
 **依赖：** agent/（中间件管线）、tools/（工具注册表）、utils/
 
 ### src/prompts/ — Prompt 模板系统
@@ -199,7 +192,7 @@
 - `paths.ts` — 路径工具：管理全局/项目级数据目录（61 行）
 - `retry.ts` — 重试 + 熔断工具（仅用于 LLM 调用）（101 行）
 - `token-estimate.ts` — 中文感知的 Token 估算（CJK 1.5x + 其他 /4）（12 行）
-- `stall-detector.ts` — 子进程活性检测器（50 行）
+- `stall-detector.ts` — 子进程活性检测器（50 行）（已删除：Phase 56 死代码清理）
 **依赖：** 无（被所有模块引用）
 
 ### desktop/ — Electron 桌面应用（Phase 33 后）
@@ -214,8 +207,9 @@
 - `renderer/src/pages/SettingsPage.tsx` — 设置页面（12 个标签页，覆盖全部配置项）（2026-07-07 统计 693 行）
 - `renderer/src/pages/settings-helpers.ts` — SettingsPage 纯函数辅助模块（Phase 33 Task 5 提取，可单测）
 - `renderer/src/pages/ChatPage.tsx` — 对话页面
-- `renderer/src/pages/TokenPage.tsx` — Token 用量页面
-- `renderer/src/pages/TracePage.tsx` — Trace 追踪页面
+- `renderer/src/pages/NewTaskPage.tsx` — 新建任务页面（替代原 TokenPage / TracePage，终端 UI 退役后整合）
+- `renderer/src/pages/TokenPage.tsx` — Token 用量页面（已删除：终端 UI 退役清理）
+- `renderer/src/pages/TracePage.tsx` — Trace 追踪页面（已删除：终端 UI 退役清理）
 - `renderer/src/components/ui/` — UI 组件库（button/card/input/label/select/switch/alert/badge/textarea/separator）
 - `renderer/src/components/CheckpointTimeline.tsx` — Checkpoint 时间轴组件：竖线 + 圆点节点布局，点击高亮 + 回滚确认对话框（Phase 47 Task 6）
 - `renderer/src/store/useProjectsStore.ts` — 项目状态管理（zustand）
@@ -229,7 +223,6 @@
 - `tests/cite/` — 引用管理测试
 - `tests/code-map/` — 代码地图测试（extractor/pagerank/cross-file-resolve/watcher）
 - `tests/config/` — 配置加载测试 + loader-env（Phase 29 env fail-fast）
-- `tests/evaluation/` — 评估指标测试（4 个活模块：mi-cross-scorer/saturation-monitor/architecture-aware-metrics/process-defect-ontology）
 - `tests/harness/` — 可观测性测试（audit-logger/checkpoint/trace-collector/tracing-executor + checkpoint-rollback）
 - `tests/integration/` — 集成测试（conversation-flow/goal-flow/ipc-bridge/performance-benchmark + phase31-workflow/phase39-48 系列 + phase47-task1~9 + phase50/51/65-67）
 - `tests/memory/` — 记忆测试（checkpoint-writer/context-manager/project-memory/compress-enhanced + bm25/provenance/reputation/unified-memory）

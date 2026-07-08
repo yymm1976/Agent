@@ -526,12 +526,24 @@ export class RouteDevEngine {
    * 停止当前生成（供 IPC chat:stop 调用）
    * 中止进行中的 LLM 请求与 Agent Loop 迭代
    * Phase 54 修复：同时 abort 共享的 abortControllerRef，让 GoalRunner 步骤循环检测到 aborted 后中止
+   * F4.10 修复：abort 时主动清理 pendingPlanEditResolvers，避免用户中断 /goal 时残留 resolver 导致线程泄漏
    */
   stopGeneration(): void {
     this.abortController?.abort();
     this.abortController = null;
     this.abortControllerRef.current?.abort();
     this.abortControllerRef.current = null;
+    // F4.10：清理挂起的 plan edit resolvers，resolve([]) 与超时行为一致（取消编辑，保留原计划）
+    if (this.pendingPlanEditResolvers.size > 0) {
+      for (const resolver of this.pendingPlanEditResolvers.values()) {
+        try {
+          resolver([]);
+        } catch (err) {
+          logger.warn('Failed to resolve pending plan edit on stopGeneration', { error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+      this.pendingPlanEditResolvers.clear();
+    }
   }
 
   /**
