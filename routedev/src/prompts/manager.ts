@@ -775,7 +775,8 @@ export class PromptTemplateManager {
         version: this.parseMetadata(content, 'version') ?? DEFAULT_VERSION,
         variables,
       };
-    } catch {
+    } catch (error) {
+      logger.warn('prompt 模板加载失败', { source, path: filePath, error });
       return null;
     }
   }

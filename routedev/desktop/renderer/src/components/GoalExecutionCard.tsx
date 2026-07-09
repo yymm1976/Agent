@@ -374,7 +374,11 @@ interface GoalExecutionCardProps {
 }
 
 /** Goal 执行卡片：运行态展示步骤进度，完成态折叠为单行摘要 */
-export function GoalExecutionCard({ execution, planRevisions, onCheckOmissions }: GoalExecutionCardProps) {
+// F-049：用 memo 包装组件
+// props 来源均稳定：execution 来自 GoalMessageBubble 的细粒度 selector，
+// planRevisions 来自 useState，onCheckOmissions 来自 useCallback。
+// 父组件 MessageBubble 因复制按钮等局部状态变化重渲染时，GoalExecutionCard 可避免连带重渲染。
+export const GoalExecutionCard = memo(function GoalExecutionCard({ execution, planRevisions, onCheckOmissions }: GoalExecutionCardProps) {
   const isDone = execution.status === 'completed' || execution.status === 'failed';
   const [expanded, setExpanded] = useState(!isDone);
 
@@ -478,4 +482,4 @@ export function GoalExecutionCard({ execution, planRevisions, onCheckOmissions }
       )}
     </div>
   );
-}
+});

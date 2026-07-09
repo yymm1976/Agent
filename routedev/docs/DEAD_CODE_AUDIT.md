@@ -1,8 +1,10 @@
-# RouteDev 死代码审计报告（Phase 50）
+# RouteDev 死代码审计报告
 
-> 本文档记录 Phase 50 死代码全量审计结果与清理决策。
+> 本文档记录 RouteDev 死代码审计结果与清理决策，按 Phase 增量更新。
+> 初始审计：Phase 50（6 路并行子代理扫描 + 人工复核）。
+> 后续清理：Phase 56-60（花架子去除工程）、Phase 72-74（终端 UI 退役 + 技术债清理）。
 > 审计范围：`src/` 全目录 + `tests/` 测试文件。
-> 审计方法：6 路并行子代理扫描 + 人工复核。
+> 最后更新：2026-07-10（Phase 77）。
 
 ## 1. 审计规模
 
@@ -225,3 +227,38 @@ Phase 56-60 在 Phase 50 审计基础上进一步深度清理，删除无用户�
 - **全量测试**：259 文件 / 3552 用例全部通过（0 失败）
 - **build** + **dist:electron**：通过
 - **残留扫描**：`dream-to-graph|execution-router|level-path-router|self-evolution|dream-consolidator|eq-detector|EQDetector|GodelProposer|SelfHarnessLoop|SelfEvolutionFramework|persona-templates|routing-funnel|executePlanWithMultiAgent` 在 `src/` 无匹配
+
+---
+
+## 7. Phase 72-74 终端 UI 退役 + 技术债清理统计
+
+Phase 72 终端 UI（CLI）全面退役，Electron 桌面端为唯一入口；Phase 72-74 清理因终端 UI 退役而失去消费方的 Phase 49 实验性模块及其源文件。
+
+### 7.1 删除的源文件
+
+| Phase | 文件 | 删除原因 |
+|-------|------|----------|
+| 72 | `src/agent/context-usage-panel.ts` | 上下文占用率可视化，终端 UI 退役后无消费方 |
+| 72 | `src/evaluation/` 整个目录（含 `evaluation-framework.ts` / `online-monitor.ts`） | 评估集框架，终端 UI 退役后无入口 |
+| 72-74 | `src/skills/skill-flow-engine.ts` | SkillFlow 引擎，依赖的终端交互入口已退役 |
+| 73-74 | `src/skills/quality-gate.ts` | Skill 质量门，上层消费方 SkillFlowEngine 已删 |
+
+注：`RoutingFunnel`（`src/router/routing-funnel.ts`）已在 Phase 59 删除（见第 6 节），其配置字段 `routingFunnelEnabled` 同期清理。Phase 72-74 删除的模块对应的配置字段（`skillFlowEnabled` / `contextUsagePanelEnabled` / `evaluationFrameworkEnabled`）已在 Phase 59 预先清理（源模块当时仍在但标记为待删）。
+
+### 7.2 关联文档处理
+
+5 份设计文档保留为历史设计参考，头部均添加"源模块已删除"警告标注：
+
+| 文档 | 源模块 | 删除 Phase |
+|------|--------|-----------|
+| `docs/ROUTING.md` | `RoutingFunnel` | 59 |
+| `docs/EVALUATION.md` | `EvaluationFramework` | 72 |
+| `docs/CONTEXT_USAGE.md` | `ContextUsagePanel` | 72 |
+| `docs/SKILLFLOW.md` | `SkillFlowEngine` | 72-74 |
+| `docs/QUALITY_GATE.md` | `SkillQualityGate` | 73-74 |
+
+### 7.3 清理验证（Phase 74）
+
+- **typecheck** + **typecheck:desktop**：通过
+- **全量测试**：全部通过
+- **残留扫描**：`ContextUsagePanel|EvaluationFramework|OnlineMonitor|SkillFlowEngine|SkillQualityGate` 在 `src/` 无匹配

@@ -79,11 +79,10 @@ describe('Phase 47 Task 1 - AGENTS.md 瘦身', () => {
   it('AGENTS.md 保留「关键入口」段落', async () => {
     const { content } = await readFileLines(AGENTS_MD_PATH);
     expect(content).toContain('## 关键入口');
-    // 关键入口段必须包含核心入口文件
-    expect(content).toContain('src/index.tsx');
-    expect(content).toContain('src/cli/App.tsx');
-    expect(content).toContain('src/cli/service-context.ts');
-    expect(content).toContain('src/cli/app-init.ts');
+    // 关键入口段必须包含核心入口文件（Phase 72-74 CLI 退役后，入口已迁移至 desktop/main 与 src/runtime）
+    expect(content).toContain('desktop/main/index.ts');
+    expect(content).toContain('src/runtime/app-init.ts');
+    expect(content).toContain('desktop/main/engine-bridge.ts');
   });
 
   it('AGENTS.md 保留「项目约定」段落', async () => {

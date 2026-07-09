@@ -7,6 +7,7 @@ import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';
 import { Select, SelectItem } from '../ui/select.js';
 import { Input } from '../ui/input.js';
+import { SettingsTabContainer } from './SettingsTabContainer.js';
 
 interface SettingsPersonaTabProps {
   draft: AppConfig;
@@ -28,7 +29,7 @@ export function SettingsPersonaTab({ draft, updateDraft }: SettingsPersonaTabPro
   };
 
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <SettingsTabContainer>
       <Card>
         <CardHeader>
           <CardTitle>人格引擎</CardTitle>
@@ -72,6 +73,6 @@ export function SettingsPersonaTab({ draft, updateDraft }: SettingsPersonaTabPro
           </div>
         </CardContent>
       </Card>
-    </div>
+    </SettingsTabContainer>
   );
 }

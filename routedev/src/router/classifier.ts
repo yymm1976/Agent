@@ -57,11 +57,11 @@ export class ScenarioClassifier {
   /**
    * 分类用户输入
    * Phase 40 Task 2：在命令匹配后插入确定性规则匹配层
-   * 命中确定性规则时返回 tier='deterministic'（通过类型断言，因为 schema.ts 的
-   * ScenarioTier 无法修改），调用方通过判断 tier === 'deterministic' 跳过 LLM 调用
+   * 命中确定性规则时返回 tier='deterministic'（ClassificationResult.tier 已扩展为
+   * ScenarioTier | 'deterministic'），调用方通过判断 tier === 'deterministic' 跳过 LLM 调用
    *
    * 返回类型保持 ClassificationResult 以兼容现有调用方，
-   * deterministic 结果通过类型断言返回（tier/source/matchedRuleId 字段在运行时存在）
+   * deterministic 结果的 tier/source/matchedRuleId 字段在 ClassificationResult 中已声明
    */
   async classify(input: ClassificationInput): Promise<ClassificationResult> {
     const query = input.query.trim();
@@ -79,7 +79,8 @@ export class ScenarioClassifier {
 
     // 2. 确定性规则匹配（Phase 40 Task 2 新增）
     // 命中后直接返回 tier='deterministic'，跳过 LLM 分类
-    // 通过类型断言返回，因为 'deterministic' 不在 schema.ts 的 ScenarioTier 枚举中
+    // 'deterministic' 不在 ScenarioTier 枚举中，通过 as unknown as 断言绕过类型检查
+    // TODO(F-2.02 排期修复): 统一 deterministic 分类结果的类型处理，消除 as unknown as 断言
     const deterministicRule = matchDeterministicRule(query);
     if (deterministicRule) {
       return {

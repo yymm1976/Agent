@@ -1,5 +1,7 @@
 # SkillFlow 引擎
 
+> ⚠️ **本文档引用的源模块已删除。** `SkillFlowEngine`（`src/skills/skill-flow-engine.ts`）已在死代码清理中移除（Phase 72-74 期间）。本文档仅作历史设计参考。
+
 > Phase 49 Task 1 — Skill 固化阶段 2
 
 ## 概述

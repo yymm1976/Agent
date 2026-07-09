@@ -1,5 +1,7 @@
 # Skill 质量门（Quality Gate）
 
+> ⚠️ **本文档引用的源模块已删除。** `SkillQualityGate`（`src/skills/quality-gate.ts`）已在死代码清理中移除（Phase 73-74 期间技术债清理）。本文档仅作历史设计参考。
+
 > Phase 49 Task 3 · 模块：`src/skills/quality-gate.ts` + `skill-schema-validator.ts` + `fallback-checker.ts` + `skill-validator.ts` + `model-drift-detector.ts` + `runtime-fallback-detector.ts`
 
 ## 概述

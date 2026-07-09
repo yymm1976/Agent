@@ -174,7 +174,7 @@ export class MCPClientManager {
       logger.error(`Failed to connect MCP server: ${entry.name}`, { error: state.error });
 
       // C6 修复：超时后关闭连接和子进程，防止 socket 泄漏
-      try { await state.client.close(); } catch { /* ignore */ }
+      try { await state.client.close(); } catch (closeError) { logger.warn('[mcp] client.close 失败', { serverId: entry.id, error: closeError }); }
       this.killChildProcess(state);
       this.connections.delete(entry.id);
 
@@ -379,7 +379,7 @@ export class MCPClientManager {
     const originalOnclose = transport.onclose;
     transport.onclose = () => {
       if (originalOnclose) {
-        try { originalOnclose(); } catch { /* ignore */ }
+        try { originalOnclose(); } catch (error) { logger.warn('[mcp] onclose 回调失败', { serverId: entry.id, error }); }
       }
       logger.info(`MCP server "${entry.id}" connection closed, scheduling reconnect`);
       const current = this.connections.get(entry.id);

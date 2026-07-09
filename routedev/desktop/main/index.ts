@@ -142,22 +142,31 @@ function createWindow(splash?: BrowserWindow | null): void {
   // 陷阱 #195：ESM 模式下 require 是 undefined，必须用顶层 import 的 fs 模块
   const rendererLogPath = path.join(app.getPath('userData'), 'renderer-console.log');
   const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB
-  const rendererLog = (msg: string) => {
+  // F-057/F-4.06 修复：使用异步 IO（fs.promises）避免同步文件操作阻塞主进程
+  // 调用点（console-message / render-process-gone 等事件处理器）均为 fire-and-forget，无需 await
+  const rendererLog = async (msg: string) => {
     const line = `[${new Date().toISOString()}] ${msg}\n`;
     console.log(line.trim());
     try {
       // 检查大小并轮转
       try {
-        const stats = fs.statSync(rendererLogPath);
+        const stats = await fs.promises.stat(rendererLogPath);
         if (stats.size > MAX_LOG_SIZE) {
           const backup = `${rendererLogPath}.old`;
-          try { fs.unlinkSync(backup); } catch {}
-          fs.renameSync(rendererLogPath, backup);
+          // F-3.01 修复：区分 ENOENT（备份不存在，正常）与其他错误
+          try {
+            await fs.promises.unlink(backup);
+          } catch (e) {
+            if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+              console.warn('[rendererLog] 删除旧备份失败:', e);
+            }
+          }
+          await fs.promises.rename(rendererLogPath, backup);
         }
       } catch {
         // 文件不存在，正常
       }
-      fs.appendFileSync(rendererLogPath, line);
+      await fs.promises.appendFile(rendererLogPath, line);
     } catch (e) {
       console.error('[rendererLog] 写入失败:', e);
     }
@@ -225,7 +234,7 @@ function createWindow(splash?: BrowserWindow | null): void {
   // 安全：仅允许 http/https 协议，阻止 file:/javascript:/data: 等危险 scheme
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) {
-      shell.openExternal(url).catch(() => {});
+      shell.openExternal(url).catch(e => console.warn('[openExternal] 打开链接失败:', url, e));
     }
     return { action: 'deny' };
   });
@@ -971,15 +980,40 @@ ipcMain.handle('profile:list', async () => {
 
 ipcMain.handle('profile:save', async (_event, payload: import('../shared/ipc-types.js').ProfileSavePayload) => {
   if (!engine) return { success: false, error: '引擎未初始化' };
+  // F-034 修复：参数校验——防止畸形/恶意 payload 写入 Profile 文件
+  if (!payload || typeof payload !== 'object') {
+    return { success: false, error: '无效的参数' };
+  }
+  if (typeof payload.id !== 'string' || payload.id.length === 0 || payload.id.length > 256 ||
+      typeof payload.name !== 'string' || payload.name.length === 0 || payload.name.length > 256) {
+    return { success: false, error: '无效的参数' };
+  }
+  const validRoles = ['researcher', 'executor', 'reviewer', 'custom'];
+  if (!validRoles.includes(payload.role)) {
+    return { success: false, error: '无效的参数' };
+  }
+  if (!Array.isArray(payload.allowedTools) || !Array.isArray(payload.forbiddenTools) ||
+      !Array.isArray(payload.boundSkills)) {
+    return { success: false, error: '无效的参数' };
+  }
   return engine.saveProfile(payload);
 });
 
 ipcMain.handle('profile:delete', async (_event, id: string) => {
+  // F-034 修复：参数校验——id 必须是非空字符串且长度合理
+  if (typeof id !== 'string' || id.length === 0 || id.length > 256) {
+    return { success: false, error: '无效的参数' };
+  }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.deleteProfile(id);
 });
 
 ipcMain.handle('profile:duplicate', async (_event, id: string, newName: string) => {
+  // F-034 修复：参数校验——id 和 newName 必须是非空字符串且长度合理
+  if (typeof id !== 'string' || id.length === 0 || id.length > 256 ||
+      typeof newName !== 'string' || newName.length === 0 || newName.length > 256) {
+    return { success: false, error: '无效的参数' };
+  }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.duplicateProfile(id, newName);
 });

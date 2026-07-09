@@ -95,8 +95,8 @@ export class SessionMemoryStore {
       const arr = JSON.parse(data) as SessionMemory[];
       this.memories.clear();
       for (const m of arr) this.memories.set(m.sessionId, m);
-    } catch {
-      // skip corrupted data
+    } catch (error) {
+      logger.warn('[session-memory-store] deserialize 失败（fail-open）', { error });
     }
   }
 
@@ -109,8 +109,11 @@ export class SessionMemoryStore {
       const data = await readFile(filePath, 'utf-8');
       this.deserializeJSONL(data);
       logger.info('SessionMemoryStore: loaded from file', { filePath, count: this.memories.size });
-    } catch {
-      // file doesn't exist yet — that's fine
+    } catch (error) {
+      // ENOENT 是首次运行的正常情况，不日志；其他错误 warn
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        logger.warn('[session-memory-store] loadFromFile 失败（fail-open）', { filePath, error });
+      }
     }
   }
 
@@ -158,8 +161,8 @@ export class SessionMemoryStore {
         if (m && typeof m.sessionId === 'string') {
           this.memories.set(m.sessionId, m);
         }
-      } catch {
-        // 跳过损坏行，fail-open
+      } catch (error) {
+        logger.warn('[session-memory-store] JSONL 行解析失败（fail-open）', { line, error });
       }
     }
   }
@@ -172,8 +175,8 @@ export class SessionMemoryStore {
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null;
       if (this.persistentPath) {
-        this.flushToFile(this.persistentPath).catch(() => {
-          // fail-open：异步 flush 失败不阻塞主流程
+        this.flushToFile(this.persistentPath).catch((error) => {
+          logger.warn('[session-memory-store] 异步 flush 失败（fail-open）', { filePath: this.persistentPath, error });
         });
       }
     }, this.flushDebounceMs);

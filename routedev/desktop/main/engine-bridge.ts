@@ -1080,10 +1080,15 @@ export class RouteDevEngine {
   async executeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
     if (!this.deps) return { error: '引擎未初始化' };
     try {
+      // F-013/F-012 修复：过滤 process.env 中的 undefined 值，避免不安全断言
+      const env: Record<string, string> = {};
+      for (const [k, v] of Object.entries(process.env)) {
+        if (v !== undefined) env[k] = v;
+      }
       const result = await this.deps.toolExecutor.execute(name, args, {
         workingDirectory: this.options.cwd,
         allowedDirectories: [this.options.cwd],
-        environment: process.env as Record<string, string>,
+        environment: env,
         timeoutMs: 30000,
       });
       return { output: result.output, success: result.success, error: result.error };
@@ -1390,7 +1395,7 @@ export class RouteDevEngine {
    *
    * 与 app-init.ts 保持一致的 config 守护与动态 import 模式。
    */
-  private async createIntegrityManifestFromConfig(): Promise<unknown | undefined> {
+  private async createIntegrityManifestFromConfig(): Promise<import('../../src/security/integrity-manifest.js').IntegrityManifest | undefined> {
     const cfg = this.config.security;
     if (!cfg?.integrityCheck) return undefined;
     try {

@@ -45,7 +45,7 @@
 4. **Rollback 前置工作区检查**（#18）：`CheckpointManager.rollback()` 在 `git checkout` 前**必须**检查 `git status` 工作区是否干净，有未提交更改时**中止回滚**（强制回滚会丢失用户工作）
 5. **TaskOrchestrator 仅用于 goal 路径 DAG 编排**（#23）：TaskOrchestrator 在 app-init 创建但不注入 sendChat 路径——Phase 59 删除统一流水线后，sendChat 直接 classify → route → agentLoop。TaskOrchestrator 仅用于 goal 路径的 DAG 编排
 6. **ReadTracker 追踪的是绝对路径**（#27）：`file_read` 和 `file_write` 传入的路径必须 `normalize` 后比对。新建文件不受 read-before-write 限制（通过 `fs.access()` 检查存在性）
-7. **HookRunner 在 app-init.ts 中必须传入 TraceCollector**（#45）：`new HookRunner()` 后必须调用 `setTraceCollector(trace)`，否则钩子执行不产生 span 记录。`DurableExecutor` 也必须传入同一 `hookRunner` 实例
+7. **HookRunner 在 app-init.ts 中必须传入 TraceCollector**（#45）：`new HookRunner()` 后必须调用 `setTraceCollector(trace)`，否则钩子执行不产生 span 记录。`DurableExecutor` 也必须传入同一 `hookRunner` 实例（注：`DurableExecutor` 已在死代码清理中移除——step-executor.ts 于 Phase 59 删除，durable-executor.ts 后续清理，此条仅作历史参考）
 8. **Tool/Skill 的 description 写法决定 80% 匹配效果**（#54）：description 必须写给模型看（包含触发场景、适用条件），不是简短标题。实测同一工具描述写法差异可达 30 个百分点准确率
 9. **中间件阶段顺序不可随意调整**（#60）：`onSystemPrompt → onModelCall → onReasoning → onActing → onAgent` 是 ReAct 循环自然顺序。把 `onAgent` 提前到 `onActing` 之前，会话级 Token 统计会漏掉最后一次工具调用
 10. **子 Agent 的 ToolRegistry 是父 Agent 的浅拷贝**（#62）：`spawn_agent` 通过 `registry.clone()` 复制父 Agent 的 ToolRegistry 但移除 `spawn_agent`。子 Agent 工具集在创建时确定，父 Agent 后续注册的新工具子 Agent 看不到
@@ -69,7 +69,7 @@
 > 详细说明见 `.routedev/skills/pitfalls-guide/SKILL.md` Phase 48 章节。
 
 - **#143** 交互模式下 config.security.sandbox 必须在 createDefaultEngine 后手动应用（默认 full-access，不显式应用则配置不生效）
-- **#144** ScheduleEngine 的 onTaskTrigger 回调不能阻塞主线程（fire-and-forget，不 await，否则会卡住定时器循环）
+- **#144** ~~ScheduleEngine 的 onTaskTrigger 回调不能阻塞主线程（fire-and-forget，不 await，否则会卡住定时器循环）~~ — **已废弃（ScheduleEngine 已在 Phase 74 死代码清理中移除——第五轮：Scheduler 空转）**
 - **#145** AgentProfileManager 的 loadAll 是异步的，spawn-agent 需懒加载（首次调用时加载，失败 fail-open 回退到硬编码白名单）
 
 ## 完整陷阱索引
@@ -78,7 +78,7 @@
 
 **`.routedev/skills/pitfalls-guide/SKILL.md`**
 
-涉及 PermissionEngine、AgentLoop、Checkpoint、Blackboard、HookRunner、MCPClientManager、ToolExecutor、TaskOrchestrator、ReadTracker、LoopDetection、ConflictDetector、DurableExecutor、WorkerExecutor、TraceCollector、ToolResultSanitizer、ScheduleEngine、Git Worktree、KnowledgeGraph、spawn_agent 等模块时，务必先查阅该 Skill 文件对应章节。
+涉及 PermissionEngine、AgentLoop、Checkpoint、Blackboard、HookRunner、MCPClientManager、ToolExecutor、TaskOrchestrator、ReadTracker、LoopDetection、ConflictDetector、DurableExecutor（已移除）、WorkerExecutor、TraceCollector、ToolResultSanitizer、ScheduleEngine（已移除）、Git Worktree、KnowledgeGraph、spawn_agent 等模块时，务必先查阅该 Skill 文件对应章节。
 
 ## 附录：已退役陷阱（CLI 时期）
 

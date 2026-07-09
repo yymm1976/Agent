@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui
 import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';
 import { Select, SelectItem } from '../ui/select.js';
+import { SettingsTabContainer } from './SettingsTabContainer.js';
 
 interface SettingsVoiceTabProps {
   draft: AppConfig;
@@ -38,7 +39,7 @@ export function SettingsVoiceTab({ draft, updateDraft }: SettingsVoiceTabProps) 
   };
 
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <SettingsTabContainer>
       <Card>
         <CardHeader>
           <CardTitle>语音</CardTitle>
@@ -100,6 +101,6 @@ export function SettingsVoiceTab({ draft, updateDraft }: SettingsVoiceTabProps) 
           </div>
         </CardContent>
       </Card>
-    </div>
+    </SettingsTabContainer>
   );
 }

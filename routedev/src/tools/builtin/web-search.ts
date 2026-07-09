@@ -402,7 +402,9 @@ export class WebSearchTool implements ITool {
         const b64 = ckMatch[1].replace(/-/g, '+').replace(/_/g, '/');
         const decoded = Buffer.from(b64, 'base64').toString('utf-8');
         if (decoded.startsWith('http')) return decoded;
-      } catch { /* 解码失败返回原 URL */ }
+      } catch (error) {
+        logger.warn('[web-search] Bing URL 解码失败，返回原 URL', { url, error });
+      }
     }
     return url;
   }

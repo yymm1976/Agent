@@ -9,7 +9,7 @@
 //   5. spawn-agent.ts 有 resolveProfileForSubagent 函数（Task 4 AgentProfileManager 接入）
 //   6. [已删除] trace-collector.ts 有 getTrajectoryAggregator 方法（Task 6）—— TrajectoryAggregator 死链清理已移除
 //   7. package.json scripts 包含 lint:descriptions（Task 5）
-//   8. src/cli/exec.ts 不存在（已清理，Task 5）
+//   8. [已删除] src/cli/exec.ts 不存在（Task 5）—— CLI 退役，exec.ts 与 exec-runner.ts 均已删除
 //   9. SettingsPage.tsx 包含沙箱级选择器（SandboxLevel，Task 1 UI）
 //  10. [已删除] service-context.ts ServiceContext 接口包含 scheduleEngine 字段（Task 3）
 
@@ -30,10 +30,9 @@ import { createDefaultEngine } from '../../src/tools/permission-engine.js';
 // ============================================================
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
-const APP_INIT_PATH = path.join(PROJECT_ROOT, 'src', 'cli', 'app-init.ts');
+const APP_INIT_PATH = path.join(PROJECT_ROOT, 'src', 'runtime', 'app-init.ts');
 const PROJECT_MEMORY_PATH = path.join(PROJECT_ROOT, 'src', 'memory', 'project-memory.ts');
 const SPAWN_AGENT_PATH = path.join(PROJECT_ROOT, 'src', 'tools', 'builtin', 'spawn-agent.ts');
-const SERVICE_CONTEXT_PATH = path.join(PROJECT_ROOT, 'src', 'cli', 'service-context.ts');
 const SETTINGS_PAGE_PATH = path.join(
   PROJECT_ROOT,
   'desktop',
@@ -43,7 +42,6 @@ const SETTINGS_PAGE_PATH = path.join(
   'SettingsPage.tsx',
 );
 const PACKAGE_JSON_PATH = path.join(PROJECT_ROOT, 'package.json');
-const EXEC_TS_PATH = path.join(PROJECT_ROOT, 'src', 'cli', 'exec.ts');
 
 // ============================================================
 // 工具函数
@@ -190,20 +188,6 @@ describe('Phase 48 E2E - Task 5: package.json scripts 包含 lint:descriptions',
 });
 
 // ============================================================
-// 8. src/cli/exec.ts 不存在（已清理，Task 5）
-// ============================================================
-describe('Phase 48 E2E - Task 5: src/cli/exec.ts 已清理', () => {
-  it('src/cli/exec.ts 文件不存在（已被 exec-runner.ts 替代）', () => {
-    expect(fs.existsSync(EXEC_TS_PATH)).toBe(false);
-  });
-
-  it('src/cli/exec-runner.ts 文件存在（替代品）', () => {
-    const runnerPath = path.join(PROJECT_ROOT, 'src', 'cli', 'exec-runner.ts');
-    expect(fs.existsSync(runnerPath)).toBe(true);
-  });
-});
-
-// ============================================================
 // 9. SettingsPage.tsx 包含沙箱级选择器（SandboxLevel，Task 1 UI）
 // ============================================================
 describe('Phase 48 E2E - Task 1 UI: SettingsPage 沙箱级选择器', () => {
@@ -227,8 +211,3 @@ describe('Phase 48 E2E - Task 1 UI: SettingsPage 沙箱级选择器', () => {
     expect(content).toMatch(/value=\{draft\.security\.sandbox\}/);
   });
 });
-
-// ============================================================
-// 10. service-context.ts ServiceContext 接口（Task 3）
-// 注：scheduleEngine 相关测试已随 ScheduleEngine 空转引擎删除一并移除
-// ============================================================

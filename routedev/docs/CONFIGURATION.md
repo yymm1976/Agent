@@ -134,19 +134,13 @@ phase48Integration:
 
 ```yaml
 phase49Integration:
-  # SkillFlow 引擎（5 种节点类型 + onFailure 处理）
-  skillFlowEnabled: false
   # 双循环编排器（Inner ReAct + Outer 验证）
-  dualLoopEnabled: false
+  dualLoopEnabled: true
   # Skill 质量门（三层检查 + 模型漂移检测）
-  skillQualityGateEnabled: false
-  # 上下文占用率可视化（三级阈值 + 分项 token 占用）
-  contextUsagePanelEnabled: false
-  # 评估集框架（Smoke/Regression 两套 + LLM-as-Judge）
-  evaluationFrameworkEnabled: false
+  qualityGateEnabled: true
 ```
 
-注：Phase 49 模块默认 `false`（架构性变更较大，需用户手动开启）。
+注：Phase 59 已删除 `skillFlowEnabled` / `contextUsagePanelEnabled` / `evaluationFrameworkEnabled` / `routingFunnelEnabled`（对应源模块已在 Phase 59/72-74 死代码清理中删除，开关无效）。剩余两项默认 `true`（已在生产验证稳定性）。
 
 ## 3. 渐进接入原则
 
@@ -195,11 +189,8 @@ delegationIntegration:
   lifecycleEnabled: true
   scoreCardEnabled: true
 phase49Integration:
-  skillFlowEnabled: true
   dualLoopEnabled: true
-  skillQualityGateEnabled: true
-  contextUsagePanelEnabled: true
-  evaluationFrameworkEnabled: true
+  qualityGateEnabled: true
 ui:
   components:
     tracePanel: true

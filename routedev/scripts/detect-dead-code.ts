@@ -12,7 +12,7 @@
 // 运行方式：node --import tsx/esm scripts/detect-dead-code.ts
 // 输出：dead-code-report.json + 控制台摘要
 //
-// 与 audit-dead-code.ts 的差异：
+// 设计特点：
 //   - 范围：扫描 src/ + desktop/（覆盖 Electron 主进程与渲染进程）
 //   - 入口白名单：明确跳过入口文件 export
 //   - test-only 区分：避免把"仅测试消费"误判为 dead

@@ -1,5 +1,7 @@
 # 上下文占用率（Context Usage）
 
+> ⚠️ **本文档引用的源模块已删除。** `ContextUsagePanel`（`src/agent/context-usage-panel.ts`）已在 Phase 72 死代码清理中删除。本文档仅作历史设计参考。
+
 > Phase 49 Task 4 · 模块：`src/agent/context-usage-panel.ts` + `src/cite/structured-injector.ts` + `src/skills/progressive-disclosure.ts` + `src/cite/style-sample-injector.ts`
 
 ## 概述

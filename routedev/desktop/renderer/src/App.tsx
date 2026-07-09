@@ -13,7 +13,6 @@ import { SetupWizard } from './components/SetupWizard.js';
 import { StatusBanner } from './components/StatusBanner.js';
 import { DiscoveryPage, type RecentConversation, type SuggestedTask, generateSuggestedTasks } from './components/DiscoveryPage.js';
 import { Button } from './components/ui/button.js';
-import { useRouteDev } from './hooks/useRouteDev.js';
 import { useTheme } from './hooks/useTheme.js';
 import { initIPCListeners, loadInitialConfig, useRouteDevStore } from './store/useRouteDevStore.js';
 import { useProjectsStore } from './store/useProjectsStore.js';
@@ -27,8 +26,34 @@ export default function App() {
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
   // 新建任务页面的预选项目 ID（来自项目右侧+按钮）
   const [newTaskInitialProjectId, setNewTaskInitialProjectId] = useState<string | undefined>(undefined);
-  const routeDev = useRouteDev();
-  const { config } = routeDev;
+  // F-047/F-4.01：将原 useRouteDev() 全量订阅改为按字段 selector 订阅，
+  // 避免任意 store 字段变化（如 isProcessing / messages 流式更新）都触发 App 重渲染，
+  // 进而连带触发 ChatPage / SettingsPage 等子树重渲染。
+  // 函数引用（sendMessage / saveConfig 等）在 Zustand 中是稳定的，selector 订阅不会触发重渲染。
+  const config = useRouteDevStore((s) => s.config);
+  const configLoading = useRouteDevStore((s) => s.configLoading);
+  const configError = useRouteDevStore((s) => s.configError);
+  const isProcessing = useRouteDevStore((s) => s.isProcessing);
+  const currentModel = useRouteDevStore((s) => s.currentModel);
+  const pendingConfirm = useRouteDevStore((s) => s.pendingConfirm);
+  const tokenSnapshots = useRouteDevStore((s) => s.tokenSnapshots);
+  const sendMessage = useRouteDevStore((s) => s.sendMessage);
+  const confirmTool = useRouteDevStore((s) => s.confirmTool);
+  const stopGeneration = useRouteDevStore((s) => s.stopGeneration);
+  const saveConfig = useRouteDevStore((s) => s.saveConfig);
+  const reloadConfig = useRouteDevStore((s) => s.reloadConfig);
+  const deleteMessage = useRouteDevStore((s) => s.deleteMessage);
+  const retryMessage = useRouteDevStore((s) => s.retryMessage);
+  // messages 字段单列：App 自身需要在 effect 中读写它（持久化/切换对话），
+  // 也要传给 Layout（messages prop）和 ChatPage（{...routeDev}）
+  const routeDevMessages = useRouteDevStore((s) => s.messages);
+  // 兼容子组件 props 形状：组装为 routeDev 对象传给 ChatPage / SettingsPage
+  const routeDev = {
+    config, configLoading, configError,
+    isProcessing, currentModel, pendingConfirm, tokenSnapshots, messages: routeDevMessages,
+    sendMessage, confirmTool, stopGeneration, saveConfig, reloadConfig,
+    deleteMessage, retryMessage,
+  };
 
   // 应用主题和字体大小
   useTheme(config);
@@ -58,7 +83,6 @@ export default function App() {
   // 新建任务待发送消息：NewTaskPage 发送时暂存，等对话切换完成后触发 sendMessage
   const pendingSendRef = useRef<string | null>(null);
   const { currentProjectId, currentConversationId, projects, getMessages, setMessages, addConversation } = useProjectsStore();
-  const routeDevMessages = useRouteDevStore((s) => s.messages);
 
   useEffect(() => {
     // 删除对话后 currentConversationId 变为 null：清空 routeDevStore 消息，避免界面残留

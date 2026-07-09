@@ -1,10 +1,12 @@
 # 子 Agent 独立审计流程
 
-> Phase 71 Task F2 · 纪律层文档
+> Phase 71 Task F2 · 纪律层文档（Phase 77 更新）
 >
 > 本文档规范"子 Agent 审计"环节：当某个子 Agent 完成开发 Task 后，由另一个独立子 Agent 对其改动进行结构化审查，目的是把"严禁死代码 + 自审"从隐式约定固化为可执行流程。
 >
 > 派发流程（如何派子 Agent、如何分任务、如何隔离上下文）由 `subagent-driven-development` skill 覆盖，本文档不重复。
+>
+> **与 audit-report-fixer skill 的关系**：本文档规范"开发期自审 + 独立审计"（内嵌在开发流程中）；`audit-report-fixer` skill 规范"外部审查报告处理"（收到多模型审查报告后的核验+修复分离流程）。两者互补——开发期审计用本文档的 5 维框架，审查报告处理用 skill 的核验+修复分离流程。子 Agent 在两种场景下均须遵守：禁止 git stash、禁止 git add/commit、禁止运行构建命令，所有 git 操作由主 Agent 统一执行。
 
 ---
 
@@ -239,24 +241,17 @@ SUGGEST 完全可选，开发者可忽略。
 | 工具 | 用途 | 命令 |
 |------|------|------|
 | `scripts/detect-dead-code.ts` | 死代码全量扫描 | `node --import tsx/esm scripts/detect-dead-code.ts` |
-| `scripts/audit-dead-code.ts` | Phase 53 老版死代码扫描（含 desktop/） | `node --import tsx/esm scripts/audit-dead-code.ts` |
 | Grep 工具（rg） | 调用方 grep / 配置消费链检查 | `rg "symbolName" src/ tests/` |
 | `git diff` | 改动复核 | `git diff HEAD~1 HEAD -- <file>` |
 | `git log` | commit 历史核查 | `git log --oneline \| rg "Phase N"` |
 
 ### 6.1 detect-dead-code.ts 关键行为
 
-- 范围：仅扫 `src/`（不扫 `desktop/`，与 `audit-dead-code.ts` 区分）
+- 范围：仅扫 `src/`（不扫 `desktop/`）
 - 入口白名单：`index.ts` / `app-init.ts` / `main.tsx` / `App.tsx` / `server.ts` / `args.ts` 的 export 不算死代码
 - test-only 区分：仅 tests 中有 import 的 export 标 warning，不计入 dead
 - fail-open：扫描异常时退出码 0，不阻塞流程
 - 输出：`dead-code-report.json` + 控制台摘要（前 20 死代码 / 前 10 test-only）
-
-### 6.2 与 audit-dead-code.ts 的冲突
-
-`audit-dead-code.ts`（Phase 53）也写 `dead-code-report.json`，两脚本双写冲突。审计时优先以 `detect-dead-code.ts` 的输出为准（覆盖更新），`audit-dead-code.ts` 仅在需要扫 `desktop/` 时使用。
-
-> F1 Task 已识别此双写冲突为 RISK，后续 Phase 应统一为单一脚本。
 
 ---
 
@@ -316,7 +311,8 @@ git diff HEAD~1 HEAD -- src/agent/loop.ts
 
 ## 相关文档
 
-- [DEAD_CODE_AUDIT.md](./DEAD_CODE_AUDIT.md) — Phase 50 死代码全量审计结果
-- [QUALITY_GATE.md](./QUALITY_GATE.md) — Skill 质量门（3 场景验证）
-- [phase-71-audit-report.md](./phase-71-audit-report.md) — Phase 71 各 Task 审计结论汇总
+- [DEAD_CODE_AUDIT.md](./DEAD_CODE_AUDIT.md) — 死代码审计结果与清理统计（Phase 50 / 56-60 / 72-74）
+- `audit-report-fixer` skill — 外部审查报告处理流程（核验+修复分离，本文档不覆盖）
 - `subagent-driven-development` skill — 子 Agent 派发流程（本文档不覆盖）
+- [QUALITY_GATE.md](./QUALITY_GATE.md) — Skill 质量门（3 场景验证，⚠️ 源模块已删除，仅作历史参考）
+- [phase-71-audit-report.md](./phase-71-audit-report.md) — Phase 71 各 Task 审计结论汇总

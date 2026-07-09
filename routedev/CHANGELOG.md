@@ -4,6 +4,29 @@
 
 > **路径迁移说明（Phase 60 后）：** `src/cli/` 已迁移到 `src/runtime/` 和 `desktop/renderer/src/`，历史条目中引用的 `src/cli/goal-runner.ts` / `src/cli/app-init.ts` / `src/cli/App.tsx` 等路径均已迁移到新位置，详见 `CODEMAP.md`。
 
+## Phase 61-77（v4.5.4 续，2026-07-02 ~ 2026-07-10）
+
+> Phase 60 后持续迭代，版本号未单独 bump。以下为各 Phase 一行简述（基于 git log 提取）。
+
+| Phase | 简述 |
+|-------|------|
+| 61 | ACRouter 闭环模型路由（closedLoopRouting：路由历史回放 + 路由记忆 + 编排器 + 执行验证器） |
+| 62 | 动态工作流模式与隔离治理（stateExternalization：K 句压缩 + 内容去重 + 预算感知渲染） |
+| 63-64 | （已删除/合并——ExecutionOrchestrator 死代码清理，配置字段移除） |
+| 65 | 记忆系统四模块重构（memorySystem：SQLite 存储 + BM25+embedding 混合检索 + 本地维护） |
+| 66 | 策略管道编号分段与治理（已删除——ExecutionOrchestrator 死代码清理） |
+| 67 | 推理质量诊断与 SNR 过滤（已删除——ExecutionOrchestrator 死代码清理） |
+| 68 | 检索/搜索/发现三分与知识图谱（phase68Integration：操作分类 + 溯源图 + KAN 障碍检查 + 定量门控） |
+| 69 | Worktree 隔离执行与多代理并行编排（已删除——ExecutionOrchestrator 死代码清理） |
+| 70 | 上下文压缩技术深度优化（phase70Integration：工具输出预算 + 微压缩 + 上下文折叠 + 自动压缩守卫 + 压缩提示词 + 会话记忆） |
+| 71 | code-map 增强（content hash 缓存 + 增量 PageRank + watch mode）+ @-mention 引用协议 + 进程内 VFS + plan 工具 + offload 清理 + CodebaseMemory 语义检索 + 死代码检测脚本 + 子 Agent 审计流程 |
+| 72 | 退役终端 UI 层（cli/→runtime/ 重命名，desktop 为唯一前端）+ 外部借鉴落地（Profile 模板/上下文工程/工具系统/代码地图四线并行）+ 死代码全量清理（channels/voice/patterns/evaluation 等死模块删除） |
+| 73 | Pi 开源借鉴落地（消息抽象层 + 工具并行 + 消息队列 + 会话树 + 供应链安全） |
+| 74 | 前端交互优化（74-A/B/D/F/H/I 六子 Phase）+ 死代码清理第十三轮（ExecutionOrchestrator 整条链路 + Scheduler 空转 + Phase 65 死记忆） |
+| 75 | 第一波（75-A1~A6：husky/lint-staged/commitlint 接入等）+ 第二波（75-B1~B8） |
+| 76 | 功能完整度审查 + 落地计划文档 |
+| 77 | 运行回放与评分卡（trace:replay/scorecard）+ Goal 冷启动恢复 + 会话状态卡（session:get-status） |
+
 ## v4.5.4 (2026-07-02) — Phase 60: 花架子去除工程五（A 档打磨与全量验收发布）
 
 > **核心目标：** 花架子去除工程收尾。核心模块边界测试补强、`/dream` deprecated alias 删除、文档同步、版本发布。本 Phase 不新增功能，只做稳定性补强。

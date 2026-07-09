@@ -43,7 +43,7 @@ routedev/
             → GoalParser → GoalPlan → 逐步执行(ReActAgentLoop) → GoalVerifier → 完成
 ```
 
-> **入口说明：** CLI 已在 Phase 72 退役，Electron 桌面端为主要入口。所有交互经 `desktop/main/engine-bridge.ts` 的 `sendChat`（对话）与 `executeCommand`（命令）进入运行时层。多步任务通过 `/goal` 命令触发，由 `goal-runner` 执行器逐步执行并经 `GoalVerifier` 验证。
+> **入口说明：** Electron 桌面端为主要入口。所有交互经 `desktop/main/engine-bridge.ts` 的 `sendChat`（对话）与 `executeCommand`（命令）进入运行时层。多步任务通过 `/goal` 命令触发，由 `goal-runner` 执行器逐步执行并经 `GoalVerifier` 验证。
 
 ## 开发命令
 

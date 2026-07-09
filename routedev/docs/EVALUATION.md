@@ -1,5 +1,7 @@
 # 评估集框架（Evaluation Framework）
 
+> ⚠️ **本文档引用的源模块已删除。** `EvaluationFramework`（`src/evaluation/` 整个目录）已在 Phase 72 死代码清理中删除。本文档仅作历史设计参考。
+
 > Phase 49 Task 5 · 模块：`src/evaluation/evaluation-framework.ts` + `online-monitor.ts`
 
 ## 概述

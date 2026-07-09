@@ -1,5 +1,7 @@
 # 意图路由四层漏斗（Routing Funnel）
 
+> ⚠️ **本文档引用的源模块已删除。** `RoutingFunnel`（`src/router/routing-funnel.ts`）已在 Phase 59 死代码清理中删除，路由现由 ModelRouter + ScenarioClassifier + PathRouter 承担。本文档仅作历史设计参考。
+
 > Phase 49 Task 6 · 模块：`src/router/routing-funnel.ts` + `deterministic-rules.ts`
 
 ## 概述

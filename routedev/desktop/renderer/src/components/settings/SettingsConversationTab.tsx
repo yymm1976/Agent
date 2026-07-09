@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui
 import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';
 import { Input } from '../ui/input.js';
+import { SettingsTabContainer } from './SettingsTabContainer.js';
 
 interface SettingsConversationTabProps {
   draft: AppConfig;
@@ -20,7 +21,7 @@ export function SettingsConversationTab({ draft, updateDraft }: SettingsConversa
   };
 
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <SettingsTabContainer>
       <Card>
         <CardHeader>
           <CardTitle>对话持久化</CardTitle>
@@ -76,6 +77,6 @@ export function SettingsConversationTab({ draft, updateDraft }: SettingsConversa
           </div>
         </CardContent>
       </Card>
-    </div>
+    </SettingsTabContainer>
   );
 }

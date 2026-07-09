@@ -17,7 +17,7 @@
 
 ## 2. Scope 列表
 
-issue 标题、commit message、PR 标题的 `scope` 字段必须取自以下白名单（与 `commitlint.config.js` 的 `scope-enum` 严格一致）：
+issue 标题、commit message、PR 标题的 `scope` 字段必须取自以下白名单（与 `commitlint.config.cjs` 的 `scope-enum` 严格一致）：
 
 | Scope | 涵盖范围 |
 |-------|----------|
@@ -30,7 +30,7 @@ issue 标题、commit message、PR 标题的 `scope` 字段必须取自以下白
 | `infra` | 基础设施（构建脚本、CI、vitest 配置、husky、commitlint、perf-gate） |
 | `docs` | 文档（AGENTS.md、CODEMAP.md、CHANGELOG.md、README、本文件） |
 
-> 新增 scope 必须先开 `[infra] issue`，PR 通过后同步更新本表 + `commitlint.config.js` 的 `scope-enum`。
+> 新增 scope 必须先开 `[infra] issue`，PR 通过后同步更新本表 + `commitlint.config.cjs` 的 `scope-enum`。
 
 ## 3. Commit Message 规范
 
@@ -52,7 +52,7 @@ fix(agent): 修复 spawn-agent 不继承父 hooks
 refactor(ui): 设置页拆分为独立路由
 ```
 
-`type` 取值（与 `commitlint.config.js` 的 `type-enum` 严格一致）：
+`type` 取值（与 `commitlint.config.cjs` 的 `type-enum` 严格一致）：
 `feat`、`fix`、`docs`、`style`、`refactor`、`perf`、`test`、`chore`、`build`、`ci`
 
 ### 技术债 commit（强制 tag）
@@ -222,7 +222,7 @@ AI 生成的 PR 必须在描述末尾添加：
 |------|------|
 | `AGENTS.md` | Agent 接手项目必读，含 Top 10 核心陷阱 |
 | `CODEMAP.md` | 代码库索引，定位模块前先读 |
-| `commitlint.config.js` | commit message 校验规则（scope 白名单 + type 白名单） |
+| `commitlint.config.cjs` | commit message 校验规则（scope 白名单 + type 白名单） |
 | `.lintstagedrc.json` | lint-staged 配置（暂存文件提示） |
 | `.husky/pre-commit` | pre-commit hook（触发 lint-staged） |
 | `.husky/commit-msg` | commit-msg hook（触发 commitlint） |

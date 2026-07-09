@@ -63,6 +63,9 @@ import type { ExecutionVerifier } from '../router/execution-verifier.js';
 import type { RoutingRegretTracker } from '../router/regret-tracker.js';
 import type { RoutingOrchestrator } from '../router/orchestrator.js';
 
+/** 上下文文本/诊断片段截断长度上限（step.result / taskSignature / args JSON 等） */
+const MAX_CONTEXT_ITEMS = 200;
+
 /** GoalRunner 依赖的外部对象（由 App.tsx 注入） */
 export interface GoalRunnerDeps {
   classifier: ScenarioClassifier;
@@ -664,7 +667,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
           addSystemMessage(`✅ 代码验证通过（${passedChecks.length} 项通过${skippedChecks.length > 0 ? `，${skippedChecks.length} 项跳过` : ''}）`);
         } else {
           // 验证未通过——将失败信息展示给用户，但不自动回滚（让用户决定）
-          const failedDetails = failedChecks.map(c => `  • ${c.name}: ${c.output.slice(0, 200)}`).join('\n');
+          const failedDetails = failedChecks.map(c => `  • ${c.name}: ${c.output.slice(0, MAX_CONTEXT_ITEMS)}`).join('\n');
           addSystemMessage(`⚠️ 代码验证未通过：\n${failedDetails}\n\n请根据上述错误信息修复代码后重新验证。`);
           // 将 plan 状态从 completed 改为 failed（LLM 说完成但代码验证不过）
           plan.status = 'failed';
@@ -726,7 +729,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
             resolve: (r) => resolve(typeof r === 'boolean' ? r : r.approved),
             toolName,
           };
-            const argsStr = JSON.stringify(args, null, 2).slice(0, 200);
+            const argsStr = JSON.stringify(args, null, 2).slice(0, MAX_CONTEXT_ITEMS);
             addSystemMessage(`⚠️  补救步骤 · 工具 ${toolName} 需要确认 [y/n]\n参数: ${argsStr}`);
             // Phase 54 修复 (Grok F-001)：Electron 端触发渲染层 ToolConfirmDialog，CLI 端依赖 addSystemMessage
             if (onToolConfirmRequest) onToolConfirmRequest(toolName, args);
@@ -772,7 +775,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
       }
       step.status = 'completed';
       step.completedAt = Date.now();
-      step.result = stepContent.slice(0, 200);
+      step.result = stepContent.slice(0, MAX_CONTEXT_ITEMS);
       addSystemMessage(`✅ 补救步骤 ${step.id} 完成`);
       conversationHistoryRef.current.push({ role: 'user', content: step.description });
       conversationHistoryRef.current.push({ role: 'assistant', content: stepContent });
@@ -1374,7 +1377,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
             resolve: (r) => resolve(typeof r === 'boolean' ? r : r.approved),
             toolName,
           };
-          const argsStr = JSON.stringify(args, null, 2).slice(0, 200);
+          const argsStr = JSON.stringify(args, null, 2).slice(0, MAX_CONTEXT_ITEMS);
           addSystemMessage(`⚠️  目标步骤 · 工具 ${toolName} 需要确认 [y/n]\n参数: ${argsStr}`);
           // Phase 54 修复 (Grok F-001)：Electron 端触发渲染层 ToolConfirmDialog，CLI 端依赖 addSystemMessage
           if (onToolConfirmRequest) onToolConfirmRequest(toolName, args);
@@ -1417,7 +1420,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
     // ===== Phase 61：记录路由历史 =====
     if (routingHistory) {
       const record: RoutingRecord = {
-        taskSignature: step.description.slice(0, 200),
+        taskSignature: step.description.slice(0, MAX_CONTEXT_ITEMS),
         modelId: routeDecision.model.id,
         timestamp: Date.now(),
         userOverride: !!deps.modelRouter.getManualOverride(),
@@ -1427,7 +1430,9 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
           const { HashEmbedder } = await import('../router/embedder.js');
           const embedder = new HashEmbedder();
           record.taskEmbedding = await embedder.embed(record.taskSignature);
-        } catch { /* fail-open */ }
+        } catch (error) {
+          logger.warn('[goal-runner] HashEmbedder 失败（fail-open）', { stepId: step.id, error });
+        }
       }
       // Phase 61 接线：当 ExecutionVerifier 可用时，验证执行结果并填充 qualityScore
       // ExecutionVerifier 通过沙盒原生多路信号（compile/typecheck/test/latency）聚合打分
@@ -1627,7 +1632,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
         const stepContent = await executeSingleStep(step);
         step.status = 'completed';
         step.completedAt = Date.now();
-        step.result = stepContent.slice(0, 200);
+        step.result = stepContent.slice(0, MAX_CONTEXT_ITEMS);
         addSystemMessage(renderGoalProgressText(plan));
         conversationHistoryRef.current.push({ role: 'user', content: step.description });
         conversationHistoryRef.current.push({ role: 'assistant', content: stepContent });
@@ -1744,7 +1749,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
           const result = await executeSingleStep(step);
           step.status = 'completed';
           step.completedAt = Date.now();
-          step.result = result.slice(0, 200);
+          step.result = result.slice(0, MAX_CONTEXT_ITEMS);
           conversationHistoryRef.current.push({ role: 'user', content: step.description });
           conversationHistoryRef.current.push({ role: 'assistant', content: result });
           if (conversationHistoryRef.current.length > 20) {
@@ -1916,7 +1921,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
           const result = await executeSingleStep(step);
           step.status = 'completed';
           step.completedAt = Date.now();
-          step.result = result.slice(0, 200);
+          step.result = result.slice(0, MAX_CONTEXT_ITEMS);
           conversationHistoryRef.current.push({ role: 'user', content: step.description });
           conversationHistoryRef.current.push({ role: 'assistant', content: result });
           if (conversationHistoryRef.current.length > 20) {

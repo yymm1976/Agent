@@ -341,8 +341,11 @@ export class FilesystemDiscovery {
           const parsed = this.parseSkillMarkdown(content, entry.name, skillFile);
           skills.push(parsed);
           logger.debug('Skill discovered', { name: entry.name, path: skillFile });
-        } catch {
-          // SKILL.md 不存在或读取失败，跳过
+        } catch (e) {
+          // ENOENT 是正常情况（SKILL.md 尚未创建），不日志；其他错误 warn
+          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+            logger.warn('[skill-discovery] SKILL.md 读取失败', { path: skillFile, error: e });
+          }
         }
       }
     } catch {
