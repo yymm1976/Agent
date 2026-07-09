@@ -275,7 +275,7 @@ export class BrowserTool implements ITool {
       return {
         success: false,
         output: '',
-        error: '截图需要 puppeteer（未安装）。请运行：npm install puppeteer',
+        error: '截图需要 puppeteer（未安装）。请运行：pnpm add puppeteer',
         durationMs: Date.now() - start,
         metadata: { url, missingDependency: 'puppeteer' },
       };

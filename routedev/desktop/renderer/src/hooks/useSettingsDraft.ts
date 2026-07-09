@@ -26,6 +26,13 @@ interface UseSettingsDraftOptions {
  * SettingsPage 的 draft 状态管理 hook
  * 包含：draft 状态 + config→draft 同步 + 50 个 update* 函数
  * 所有 update* 函数仅在 draft 非空时生效（组件在 if (!draft) return 后才调用）
+ *
+ * GPT F-021 已知重复模式（标注性注释，未重构）：
+ *   下方 50+ 个 updateXxx 函数均遵循同构模式 `if (!draft) return; updateDraft({ X: { ...draft.X, ...patch } })`。
+ *   评估结论：提取 `updateSection<K extends keyof AppConfig>(key: K, patch: Partial<AppConfig[K]>)` 通用函数在理论可行，
+ *   但每个 updateXxx 的入参类型 `Partial<AppConfig['X']>` 各不相同（嵌套层级、union 类型、可选字段），
+ *   通用化后会丢失 call site 的类型收窄，且需同步修改所有调用点（覆盖 30+ 个 SettingsXxxTab 组件）。
+ *   改动量 > 30 行且收益以可读性为主、无 bug 风险，故保留现状 + 标注重复模式，待后续 SettingsPage 整体重构时一并处理。
  */
 export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraftOptions) {
   const [draft, setDraft] = useState<AppConfig | null>(null);

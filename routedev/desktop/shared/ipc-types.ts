@@ -59,6 +59,9 @@ export interface ToolConfirmPayload {
 export interface ConfigSaveResult {
   success: boolean;
   error?: string;
+  /** Grok F-011：config:save 仅更新内存 config 不重建 deps（LLM 客户端/分类器）。
+   * 为 true 时提示前端需调用 config:reload 才能让 provider/model 等变更生效。 */
+  needsReload?: boolean;
 }
 
 export interface MCPStatus {
@@ -634,6 +637,17 @@ export interface RouteDevAPI {
     replay: (sessionId: string, step?: number) => Promise<TimelineEvent[]>;
     /** 生成指定会话的评分卡 */
     scorecard: (sessionId: string) => Promise<Scorecard | null>;
+  };
+  // AgentProfile 管理 API（Grok F-010 修复）
+  profile: {
+    /** 列出所有 Profile（不含 systemPrompt） */
+    list: () => Promise<AgentProfileInfo[]>;
+    /** 保存 Profile（新增/更新） */
+    save: (payload: ProfileSavePayload) => Promise<ProfileOpResult>;
+    /** 删除 Profile（内置 Profile 不可删除） */
+    delete: (id: string) => Promise<ProfileOpResult>;
+    /** 复制 Profile 为自定义副本 */
+    duplicate: (id: string, newName: string) => Promise<ProfileOpResult>;
   };
 }
 

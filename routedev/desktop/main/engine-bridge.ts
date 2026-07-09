@@ -725,7 +725,7 @@ export class RouteDevEngine {
     if (cmd === '/help') {
       return {
         ok: true,
-        message: '可用命令: /clear /status /mcp /compact /skill /help',
+        message: '可用命令: /clear /status /mcp /compact /skill /goal /replay /scorecard /doctor /help',
       };
     }
     // Phase 37：/skill 和 /skills 命令
@@ -741,6 +741,26 @@ export class RouteDevEngine {
         ok: true,
         message: `Skill 列表（${skills.length} 个）:\n${lines.join('\n')}\n\n在设置页面的 "Skill 技能" Tab 可管理 Skill`,
       };
+    }
+    // Grok F-016 修复：/doctor 手动入口——按需运行 Doctor 探测，输出格式化报告
+    // 复用 src/runtime/doctor.ts 的 Doctor 类（与 app-init.ts 启动检查同源），runOnStartup=false 表示手动触发
+    if (cmd === '/doctor') {
+      try {
+        const { Doctor } = await import('../../src/runtime/doctor.js');
+        const probeTimeout = this.config.phase53Integration?.doctor?.probeTimeout ?? 10000;
+        const doctor = new Doctor(
+          { probeTimeout, runOnStartup: false },
+          {
+            providers: this.config.providers.map((p) => ({ id: p.id, baseUrl: p.baseUrl })),
+            mcpServers: this.config.mcp.servers.map((s) => ({ id: s.id, command: (s as { command?: string }).command ?? '' })),
+            cwd: this.options.cwd,
+          },
+        );
+        const results = await doctor.runAllChecks();
+        return { ok: true, message: doctor.formatReport(results) };
+      } catch (err) {
+        return { ok: false, message: `Doctor 探测失败: ${err instanceof Error ? err.message : String(err)}` };
+      }
     }
     return { ok: false, message: `GUI 中暂不支持命令: ${text}` };
   }
@@ -1737,13 +1757,29 @@ export class RouteDevEngine {
     }
   }
 
+  /**
+   * 统一解析 Hook 配置文件路径并执行边界校验
+   * 安全：拒绝绝对路径 + resolve 后必须 startsWith cwd，防止路径穿越
+   * @returns 校验通过的绝对路径；校验失败返回 null
+   */
+  private resolveHookConfigPath(): string | null {
+    const rawConfigPath = this.config.hooks?.configPath ?? '.routedev/hooks.json';
+    if (path.isAbsolute(rawConfigPath)) {
+      return null;
+    }
+    const resolvedConfigPath = path.resolve(this.options.cwd, rawConfigPath);
+    const cwdResolved = path.resolve(this.options.cwd);
+    if (!resolvedConfigPath.startsWith(cwdResolved + path.sep) && resolvedConfigPath !== cwdResolved) {
+      return null;
+    }
+    return resolvedConfigPath;
+  }
+
   /** 列出所有 Hook 配置 */
   async listHooks(): Promise<unknown[]> {
     try {
-      const configPath = path.join(
-        this.options.cwd,
-        this.config.hooks?.configPath ?? '.routedev/hooks.json',
-      );
+      const configPath = this.resolveHookConfigPath();
+      if (!configPath) return [];
       const registry = new HookConfigRegistry(configPath);
       await registry.load();
       return registry.list();
@@ -1758,10 +1794,8 @@ export class RouteDevEngine {
     enabled: boolean,
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      const configPath = path.join(
-        this.options.cwd,
-        this.config.hooks?.configPath ?? '.routedev/hooks.json',
-      );
+      const configPath = this.resolveHookConfigPath();
+      if (!configPath) return { success: false, error: 'hooks.configPath 越界：必须在项目目录内' };
       const registry = new HookConfigRegistry(configPath);
       await registry.load();
       const ok = registry.toggle(id, enabled);
@@ -1799,18 +1833,11 @@ export class RouteDevEngine {
     },
   ): Promise<{ success: boolean; hookId?: string; error?: string }> {
     try {
-      // C4 修复：hooks.configPath 路径越界校验
-      // 拒绝绝对路径和 .. 越界，确保 Hook 注册表只能写到项目目录内
-      const rawConfigPath = this.config.hooks?.configPath ?? '.routedev/hooks.json';
-      if (path.isAbsolute(rawConfigPath)) {
-        return { success: false, error: 'hooks.configPath 不能使用绝对路径' };
-      }
-      const resolvedConfigPath = path.resolve(this.options.cwd, rawConfigPath);
-      const cwdResolved = path.resolve(this.options.cwd);
-      if (!resolvedConfigPath.startsWith(cwdResolved + path.sep) && resolvedConfigPath !== cwdResolved) {
+      // C4 修复：hooks.configPath 路径越界校验（统一复用 resolveHookConfigPath）
+      const configPath = this.resolveHookConfigPath();
+      if (!configPath) {
         return { success: false, error: 'hooks.configPath 越界：必须在项目目录内' };
       }
-      const configPath = resolvedConfigPath;
       const registry = new HookConfigRegistry(configPath);
       await registry.load();
 
@@ -1889,10 +1916,8 @@ export class RouteDevEngine {
   /** 删除自定义 Hook */
   async deleteHook(id: string): Promise<{ success: boolean; error?: string }> {
     try {
-      const configPath = path.join(
-        this.options.cwd,
-        this.config.hooks?.configPath ?? '.routedev/hooks.json',
-      );
+      const configPath = this.resolveHookConfigPath();
+      if (!configPath) return { success: false, error: 'hooks.configPath 越界：必须在项目目录内' };
       const registry = new HookConfigRegistry(configPath);
       await registry.load();
       const ok = registry.remove(id);

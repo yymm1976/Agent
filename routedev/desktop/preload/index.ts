@@ -136,6 +136,13 @@ const api: RouteDevAPI = {
     replay: (sessionId: string, step?: number) => ipcRenderer.invoke('trace:replay', sessionId, step),
     scorecard: (sessionId: string) => ipcRenderer.invoke('trace:scorecard', sessionId),
   },
+  // AgentProfile 管理 API（Grok F-010 修复：暴露 engine-bridge 的 profile 方法）
+  profile: {
+    list: () => ipcRenderer.invoke('profile:list'),
+    save: (payload) => ipcRenderer.invoke('profile:save', payload),
+    delete: (id: string) => ipcRenderer.invoke('profile:delete', id),
+    duplicate: (id: string, newName: string) => ipcRenderer.invoke('profile:duplicate', id, newName),
+  },
   off: (channel, callback) => {
     const channelMap = listenerMap.get(channel);
     if (!channelMap) return;

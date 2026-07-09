@@ -43,7 +43,7 @@
 2. **命令解析必须走 `parseCommand()` tokenize**（#14）：`SecurityChecker.checkCommand()` 与 `PermissionEngine` 的 deny 规则**必须**用 `parseCommand()` 首 token 精确匹配，**禁止** `includes()`/正则子串匹配（会被 `rmrf.sh` 等绕过）
 3. **环境变量替换 fail-fast**（#16）：`replaceEnvVars()` 引用未设置的环境变量时**抛出 `ConfigValidationError`**，不再保留 `${VAR}` 占位符。配置中所有 `${VAR}` 必须在 `.env` 或系统环境变量中定义
 4. **Rollback 前置工作区检查**（#18）：`CheckpointManager.rollback()` 在 `git checkout` 前**必须**检查 `git status` 工作区是否干净，有未提交更改时**中止回滚**（强制回滚会丢失用户工作）
-5. **TaskOrchestrator 是 engine-bridge.ts 的调度层**（#23）：所有非命令输入先经过它，由它判定 intent（quick_answer/development/explicit_goal/planning）并分发。`quick_answer` 短路直达 `engine-bridge.sendChat`，`development` 走完整流水线
+5. **TaskOrchestrator 仅用于 goal 路径 DAG 编排**（#23）：TaskOrchestrator 在 app-init 创建但不注入 sendChat 路径——Phase 59 删除统一流水线后，sendChat 直接 classify → route → agentLoop。TaskOrchestrator 仅用于 goal 路径的 DAG 编排
 6. **ReadTracker 追踪的是绝对路径**（#27）：`file_read` 和 `file_write` 传入的路径必须 `normalize` 后比对。新建文件不受 read-before-write 限制（通过 `fs.access()` 检查存在性）
 7. **HookRunner 在 app-init.ts 中必须传入 TraceCollector**（#45）：`new HookRunner()` 后必须调用 `setTraceCollector(trace)`，否则钩子执行不产生 span 记录。`DurableExecutor` 也必须传入同一 `hookRunner` 实例
 8. **Tool/Skill 的 description 写法决定 80% 匹配效果**（#54）：description 必须写给模型看（包含触发场景、适用条件），不是简短标题。实测同一工具描述写法差异可达 30 个百分点准确率
@@ -58,6 +58,7 @@
 - **#134** description lint 不能阻断开发流程（过渡期 warning，不返回 error）
 - **#136** 沙箱级判断必须在审批级之前（deny 优先于 never-ask）
 - **#137** /review 子代理必须用 read-only 沙箱（工具白名单不是确定性兜底）
+  - 注：`/review` 仅在 `/goal` 审计内部由 `UnifiedReviewer` 自动调用（见 `src/agent/unified-reviewer.ts`），无独立 slash 命令入口、无 GUI 触发按钮。用户无法手动发起 `/review`。
 - **#138** Checkpoint 语义化摘要的 LLM 调用必须设超时（3 秒）与降级（返回原始 description）
 - **#140** AGENTS.override.md 的语义是「跳过」而非「合并」（存在 override 时跳过 base）
 - **#141** GitHub Action 的 config 必须用 Base64 传输（避免 YAML 多行字符串转义问题）

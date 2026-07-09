@@ -1472,21 +1472,22 @@ export function createAppDependencies(
   const workerContextPacker = orchestrationIntegration ? new ContextPacker() : undefined;
   // Phase 54：workerProfileManager 已在 Phase 55 Task 8 提前创建（供 delegationDeps.detachedSession 和 WorkerExecutor 共享）
   // Phase 35 Task 1：注入 workerContext 配置，启用上下文选择性传递
-  const workerExecutor = new WorkerExecutor(agentLoop, {
-    agentLoop,
-    workerContextConfig: config.optimization?.workerContext,
-    // Phase 54 Task 2：可选注入 ContextPacker
-    contextPacker: workerContextPacker,
-    // Phase 54：注入 AgentProfileManager，让 Worker 用 profile.systemPrompt 替换 WORKER_ROLE_PROMPTS
-    profileManager: workerProfileManager,
-  });
-  if (workerContextPacker) {
-    logger.info('Phase 54 Task 2: ContextPacker injected into WorkerExecutor', {
-      strategyEnabled: !!orchestrationIntegrationCfg?.strategyEnabled,
-      stateGraphEnabled: !!orchestrationIntegrationCfg?.stateGraphEnabled,
-    });
-  }
-  logger.info('Phase 54: AgentProfileManager injected into WorkerExecutor (async loading)');
+  // Grok F-014 修复：Phase 58 删除 multi-agent legacy 后 workerExecutor 无 execute() 消费方
+  // （spawn_agent / unified-reviewer 各自内部创建独立实例，不消费此处的 workerExecutor）。
+  // 实例化已注释；CircuitBreaker feature-detect 注入（下方 we 相关）同步注释，delegationLifecycle 注入保留。
+  // const workerExecutor = new WorkerExecutor(agentLoop, {
+  //   agentLoop,
+  //   workerContextConfig: config.optimization?.workerContext,
+  //   contextPacker: workerContextPacker,
+  //   profileManager: workerProfileManager,
+  // });
+  // if (workerContextPacker) {
+  //   logger.info('Phase 54 Task 2: ContextPacker injected into WorkerExecutor', {
+  //     strategyEnabled: !!orchestrationIntegrationCfg?.strategyEnabled,
+  //     stateGraphEnabled: !!orchestrationIntegrationCfg?.stateGraphEnabled,
+  //   });
+  // }
+  // logger.info('Phase 54: AgentProfileManager injected into WorkerExecutor (async loading)');
 
   // Phase 53 Task 11：熔断器（受 config.phase53Integration.circuitBreaker.enabled 守护，fail-open）
   // 注入 workerExecutor + delegationLifecycle（如果存在），使用变量路径让 TypeScript 无法静态解析
@@ -1500,12 +1501,13 @@ export function createAppDependencies(
           resetTimeout: phase53BreakerCfg.resetTimeout,
           halfOpenMaxAttempts: phase53BreakerCfg.halfOpenMaxAttempts,
         });
-        // feature-detect：workerExecutor 和 delegationLifecycle 的 setter 可能由其他子代理添加
+        // feature-detect：delegationLifecycle 的 setter 可能由其他子代理添加
         // delegationLifecycle 为外层 let 变量，闭包在此处捕获引用，import 异步回调执行时取最新值
-        const we = workerExecutor as unknown as { setCircuitBreaker?: (b: unknown) => void };
-        if (typeof we.setCircuitBreaker === 'function') {
-          we.setCircuitBreaker(breaker);
-        }
+        // Grok F-014：workerExecutor 实例化已注释，we 相关注入同步移除
+        // const we = workerExecutor as unknown as { setCircuitBreaker?: (b: unknown) => void };
+        // if (typeof we.setCircuitBreaker === 'function') {
+        //   we.setCircuitBreaker(breaker);
+        // }
         const dl = delegationLifecycle as unknown as { setCircuitBreaker?: (b: unknown) => void } | null;
         if (dl && typeof dl.setCircuitBreaker === 'function') {
           dl.setCircuitBreaker(breaker);
@@ -1514,7 +1516,7 @@ export function createAppDependencies(
           via: 'setCircuitBreaker',
           failureThreshold: phase53BreakerCfg.failureThreshold,
           targets: {
-            workerExecutor: typeof we.setCircuitBreaker === 'function',
+            workerExecutor: false, // Grok F-014: 实例化已注释
             delegationLifecycle: !!dl && typeof dl.setCircuitBreaker === 'function',
           },
         });

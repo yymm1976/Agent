@@ -257,8 +257,8 @@ export type ToolCategory = z.infer<typeof ToolCategorySchema>;
 
 // 7 层安全模型中的配置层（参见蓝图决策 4）
 const SecurityConfigSchema = z.object({
-  // TODO: 未实施 — SecurityChecker 未实现目录边界检查
-  directoryBoundary: z.boolean().default(true),                       // 目录边界限制
+  // 默认 false — SecurityChecker 未实现目录边界检查
+  directoryBoundary: z.boolean().default(false),                      // 目录边界限制
   commandBlacklist: z.array(z.string()).default(['rm -rf', 'format', 'del /s']), // 危险命令黑名单
   commandWhitelist: z.array(z.string()).default([]),                   // 白名单（空 = 不限制）
   /** 工具黑名单：匹配的工具一律禁止调用（支持通配符 pattern，如 file_write, mcp_*） */
@@ -1972,11 +1972,11 @@ export const AppConfigSchema = z.object({
   macros: z.preprocess((v) => v ?? {}, MacrosConfigSchema),
   // Phase 48 Task 2/3：外部生态导入配置（Anthropic Skills / Claude Plugin / Codex）
   import: ImportConfigSchema,
-  // Phase 50 Task 1：Goal 流程模块接入开关（默认全部 false）
+  // Phase 50 Task 1：Goal 流程模块接入开关（默认全部 true——审计/持久化是核心保障，见 GoalIntegrationConfigSchema）
   goalIntegration: GoalIntegrationConfigSchema,
-  // Phase 50 Task 2：多 Agent 编排模块接入开关（默认全部 false）
+  // Phase 50 Task 2：多 Agent 编排模块接入开关（默认全部 false，实验性）
   orchestrationIntegration: OrchestrationIntegrationConfigSchema,
-  // Phase 50 Task 3：子 Agent 委托体系模块接入开关（默认全部 false）
+  // Phase 50 Task 3：子 Agent 委托体系模块接入开关（默认全部 true——delegate 全链路可观测，见 DelegationIntegrationConfigSchema）
   delegationIntegration: DelegationIntegrationConfigSchema,
   // Phase 50 Task 5：Phase 48 模块接入确认开关（默认全部 true）
   phase48Integration: Phase48IntegrationConfigSchema,

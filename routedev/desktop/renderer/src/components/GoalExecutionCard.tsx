@@ -7,7 +7,7 @@
 //   - 图标统一用 lucide-react 线性图标（1.5px stroke），不用默认 emoji
 // Phase 71：新增 Plan 修订 diff 视图 + 遗漏点检查
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 import {
   Circle, Loader2, CheckCircle2, XCircle,
   ChevronRight, ChevronDown, Target, Timer, ShieldCheck, ShieldAlert,
@@ -57,7 +57,7 @@ function StepStatusIcon({ status }: { status: GoalStepState['status'] }) {
 }
 
 /** 单个步骤行：状态图标 + 描述 + 耗时 + 可折叠 Agent 活动 */
-function StepRow({ step, index, runningElapsedMs }: { step: GoalStepState; index: number; runningElapsedMs?: number }) {
+const StepRow = memo(function StepRow({ step, index, runningElapsedMs }: { step: GoalStepState; index: number; runningElapsedMs?: number }) {
   const hasActivities = step.activities.length > 0;
   const [showActivities, setShowActivities] = useState(false);
 
@@ -116,7 +116,7 @@ function StepRow({ step, index, runningElapsedMs }: { step: GoalStepState; index
       )}
     </div>
   );
-}
+});
 
 /** 验证结果区块 */
 function VerificationBlock({ verification }: {

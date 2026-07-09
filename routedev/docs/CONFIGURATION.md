@@ -34,15 +34,15 @@ phase49Integration: {}
 ```yaml
 goalIntegration:
   # 是否启用目标持久化到 .routedev/goals/
-  persistenceEnabled: false
+  persistenceEnabled: true
   # 是否启用多层目标审计（CompletionGate + VerifierLLM + ReviewerAgent 三层仲裁）
-  auditEnabled: false
+  auditEnabled: true
 ```
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `persistenceEnabled` | boolean | false | 开启后 plan 生成后调用 `GoalPersistence.save` 持久化到 `.routedev/goals/<id>.json` |
-| `auditEnabled` | boolean | false | 开启后 verify 阶段调用 `GoalAuditor.audit` 执行三层独立审计 |
+| `persistenceEnabled` | boolean | true | 开启后 plan 生成后调用 `GoalPersistence.save` 持久化到 `.routedev/goals/<id>.json` |
+| `auditEnabled` | boolean | true | 开启后 verify 阶段调用 `GoalAuditor.audit` 执行三层独立审计 |
 
 ### 2.2 orchestrationIntegration（Task 2：多 Agent 编排接入）
 
@@ -64,24 +64,24 @@ orchestrationIntegration:
 ```yaml
 delegationIntegration:
   # 是否启用上下文打包（按角色权重收集代码符号）
-  contextPackerEnabled: false
+  contextPackerEnabled: true
   # 是否启用委托门控（spawn 前检查资格）
-  delegationGateEnabled: false
+  delegationGateEnabled: true
   # 是否启用契约校验（执行中校验工具调用合规）
-  delegationEnforcerEnabled: false
+  delegationEnforcerEnabled: true
   # 是否启用生命周期管理 + 反滥用检测
-  lifecycleEnabled: false
+  lifecycleEnabled: true
   # 是否启用评分卡收集
-  scoreCardEnabled: false
+  scoreCardEnabled: true
 ```
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `contextPackerEnabled` | boolean | false | 开启后 `spawn_agent` 调用前用 `ContextPacker.pack` 按角色打包上下文附加到 prompt |
-| `delegationGateEnabled` | boolean | false | 开启后 `spawn_agent` 调用前用 `DelegationGate.checkDelegationEligibility` 检查资格，不合格拒绝 |
-| `delegationEnforcerEnabled` | boolean | false | 开启后创建 `DelegationContract` + `DelegationEnforcer` 校验工具调用合规（自动激活 `delegation-contract.ts`） |
-| `lifecycleEnabled` | boolean | false | 开启后用 `SubAgentLifecycle` 注册子 Agent 状态转换（pending→running→completed/failed）+ 反滥用检测 |
-| `scoreCardEnabled` | boolean | false | 开启后执行完成用 `SubAgentScoreCardCollector` 记录评分卡（角色/满意度/Token 使用） |
+| `contextPackerEnabled` | boolean | true | 开启后 `spawn_agent` 调用前用 `ContextPacker.pack` 按角色打包上下文附加到 prompt |
+| `delegationGateEnabled` | boolean | true | 开启后 `spawn_agent` 调用前用 `DelegationGate.checkDelegationEligibility` 检查资格，不合格拒绝 |
+| `delegationEnforcerEnabled` | boolean | true | 开启后创建 `DelegationContract` + `DelegationEnforcer` 校验工具调用合规（自动激活 `delegation-contract.ts`） |
+| `lifecycleEnabled` | boolean | true | 开启后用 `SubAgentLifecycle` 注册子 Agent 状态转换（pending→running→completed/failed）+ 反滥用检测 |
+| `scoreCardEnabled` | boolean | true | 开启后执行完成用 `SubAgentScoreCardCollector` 记录评分卡（角色/满意度/Token 使用） |
 
 ### 2.4 ui.components（Task 7：React 组件接入）
 

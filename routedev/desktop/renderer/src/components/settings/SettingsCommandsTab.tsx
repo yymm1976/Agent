@@ -203,11 +203,11 @@ export function SettingsCommandsTab({
         </CardContent>
       </Card>
 
-      {/* 调度器配置（Phase 37 Task 2） */}
-      <Card>
+      {/* 调度器配置（Phase 37 Task 2）—— 预留功能，当前未在生产路径接线，控件禁用避免误导 */}
+      <Card className="opacity-60">
         <CardHeader>
-          <CardTitle>调度器</CardTitle>
-          <CardDescription>定时任务引擎的启用状态、容量上限与默认时区</CardDescription>
+          <CardTitle>调度器（预留功能，当前不生效）</CardTitle>
+          <CardDescription>定时任务引擎的启用状态、容量上限与默认时区（当前版本未接入运行时）</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
@@ -219,6 +219,7 @@ export function SettingsCommandsTab({
               id="sched-enabled"
               checked={draft.scheduler?.enabled ?? true}
               onCheckedChange={(checked) => updateScheduler({ enabled: checked })}
+              disabled
             />
           </div>
           <div className="space-y-2">
@@ -230,6 +231,7 @@ export function SettingsCommandsTab({
               max={100}
               value={draft.scheduler?.maxTasks ?? 20}
               onChange={(e) => updateScheduler({ maxTasks: Number(e.target.value) })}
+              disabled
             />
             <p className="text-xs text-rd-textMuted">调度器同时承载的任务上限，范围 1~100，默认 20。</p>
           </div>
@@ -240,6 +242,7 @@ export function SettingsCommandsTab({
               value={draft.scheduler?.defaultTimezone ?? 'Asia/Shanghai'}
               onChange={(e) => updateScheduler({ defaultTimezone: e.target.value })}
               placeholder="例如 Asia/Shanghai"
+              disabled
             />
             <p className="text-xs text-rd-textMuted">未显式指定时区的定时任务使用的回退时区，IANA 时区名称。</p>
           </div>

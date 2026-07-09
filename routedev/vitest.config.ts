@@ -11,9 +11,8 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.{ts,tsx}', 'test/**/*.test.{ts,tsx}', 'src/**/*.test.{ts,tsx}'],
     // e2e 测试需要串行执行（Electron 单实例限制）
-    // 当 tests/e2e/ 目录有测试时，取消以下注释：
-    // pool: 'forks',
-    // fileParallelism: false,
+    pool: 'forks',
+    fileParallelism: false,
   },
   resolve: {
     alias: {

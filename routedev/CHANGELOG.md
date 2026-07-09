@@ -50,7 +50,7 @@
 
 - **配置兼容**：旧 config 中含已删除字段时，Zod safe-parse 默认忽略未知字段，不会报错
 - **安全默认启用**：升级后 5 个安全模块自动开启；若装配失败则 fail-open 跳过并记录警告
-- **/dream 命令**：Phase 60 删除 deprecated alias，请改用 `/consolidate-memory`
+- **/dream 命令**：Phase 60 删除 deprecated alias；记忆整合改为自动触发（context-manager checkpoint 压缩 + project-memory 维护），无独立 slash 命令入口
 - **路由模式**：旧 `executionRouter.mode: 'legacy'` 由 z.preprocess 自动迁移为 `'auto'`
 
 ### Test Stats

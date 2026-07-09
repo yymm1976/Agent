@@ -40,7 +40,7 @@ import { logger } from '../utils/logger.js';
 import { estimateTokens } from '../utils/token-estimate.js';
 // Phase 30 P1-1：goal 路径补 profiler.persistSession，需 path 解析输出目录
 import * as path from 'node:path';
-import { mkdirSync, appendFileSync } from 'node:fs';
+import { mkdir, appendFile } from 'node:fs/promises';
 import { renderGoalProgressText, renderGoalCompletionSummary, formatDuration } from './components/goal-progress.js';
 import { notifyRoutingFallback } from './notification.js';
 // Phase 71：Plan diff + 遗漏点分析——保存 plan 修订历史
@@ -255,17 +255,17 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
    * 文件名 <goalId>.jsonl，每行一个 revision（before/after/timestamp）
    * fail-open：写入失败只记日志，不阻塞 goal 流程
    */
-  function savePlanRevision(
+  async function savePlanRevision(
     beforeSteps: GoalStep[],
     afterSteps: GoalStep[],
     reason: string,
-  ): void {
+  ): Promise<void> {
     try {
       const revisionDir = config.plan?.revisionHistoryPath ?? '.routedev/plan-revisions/';
       const absDir = path.isAbsolute(revisionDir)
         ? revisionDir
         : path.resolve(process.cwd(), revisionDir);
-      mkdirSync(absDir, { recursive: true });
+      await mkdir(absDir, { recursive: true });
       const filePath = path.join(absDir, `${gid}.jsonl`);
       const revision = {
         revisedAt: Date.now(),
@@ -273,7 +273,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
         before: beforeSteps.map(s => toDiffPlanStep(s)),
         after: afterSteps.map(s => toDiffPlanStep(s)),
       };
-      appendFileSync(filePath, JSON.stringify(revision) + '\n', 'utf-8');
+      await appendFile(filePath, JSON.stringify(revision) + '\n', 'utf-8');
       logger.debug('[goal-runner] plan 修订历史已保存', { filePath, reason, beforeCount: beforeSteps.length, afterCount: afterSteps.length });
     } catch (err) {
       logger.warn('[goal-runner] 保存 plan 修订历史失败（fail-open）', {
@@ -728,6 +728,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
           };
             const argsStr = JSON.stringify(args, null, 2).slice(0, 200);
             addSystemMessage(`⚠️  补救步骤 · 工具 ${toolName} 需要确认 [y/n]\n参数: ${argsStr}`);
+            // Phase 54 修复 (Grok F-001)：Electron 端触发渲染层 ToolConfirmDialog，CLI 端依赖 addSystemMessage
+            if (onToolConfirmRequest) onToolConfirmRequest(toolName, args);
           });
         },
       })) {
@@ -1118,7 +1120,7 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
         if (suggestion) {
           const migration = new StateMigration().migrate({ plan, suggestion });
           // Phase 71：保存修订历史（before=迁移前 steps，after=迁移后 steps）
-          savePlanRevision(plan.steps, migration.plan.steps, 'dynamic_level_switch');
+          await savePlanRevision(plan.steps, migration.plan.steps, 'dynamic_level_switch');
           plan.steps = migration.plan.steps;
           plan.difficultyAssessment = migration.plan.difficultyAssessment;
           // 还有 pending 步骤才需要重跑
@@ -1374,6 +1376,8 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
           };
           const argsStr = JSON.stringify(args, null, 2).slice(0, 200);
           addSystemMessage(`⚠️  目标步骤 · 工具 ${toolName} 需要确认 [y/n]\n参数: ${argsStr}`);
+          // Phase 54 修复 (Grok F-001)：Electron 端触发渲染层 ToolConfirmDialog，CLI 端依赖 addSystemMessage
+          if (onToolConfirmRequest) onToolConfirmRequest(toolName, args);
         });
       },
     })) {

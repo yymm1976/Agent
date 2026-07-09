@@ -367,6 +367,10 @@ ipcMain.on('plan:edit-response', (_event, payload: import('../shared/ipc-types.j
 ipcMain.handle('plan:get-revisions', async (_event, goalId: string) => {
   // 从 .routedev/plan-revisions/<goalId>.jsonl 读取修订历史
   // 路径通过 config.plan.revisionHistoryPath 配置，默认 .routedev/plan-revisions/
+  // 安全：校验 goalId 字符集，防止路径穿越（../ 注入）
+  if (!goalId || typeof goalId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(goalId)) {
+    return { ok: false, revisions: [] };
+  }
   try {
     const path = await import('node:path');
     const fs = await import('node:fs/promises');
@@ -377,7 +381,13 @@ ipcMain.handle('plan:get-revisions', async (_event, goalId: string) => {
       : path.join(process.cwd(), '.routedev', 'plan-revisions');
     const revisionFile = path.join(revisionDir, `${goalId}.jsonl`);
     const data = await fs.readFile(revisionFile, 'utf-8');
-    const revisions = data.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    // 安全：JSON.parse 后校验 revision shape（before/after/revisedAt），丢弃畸形记录
+    const revisions = data.trim().split('\n').filter(Boolean).map((line) => {
+      try { return JSON.parse(line); } catch { return null; }
+    }).filter((r): r is { before: unknown; after: unknown; revisedAt: string } =>
+      r !== null && typeof r === 'object' &&
+      'before' in r && 'after' in r && typeof r.revisedAt === 'string',
+    );
     return { ok: true, revisions };
   } catch {
     // 文件不存在或读取失败返回空（fail-open）
@@ -460,7 +470,9 @@ ipcMain.handle('config:save', async (_event, config: import('../../src/config/sc
     await saveConfig(config);
     // 同步更新 engine 内部配置，确保自主度等设置实时生效
     engine?.updateConfig(config);
-    return { success: true };
+    // Grok F-011：updateConfig 仅更新内存 config，不重建 deps（LLM 客户端/分类器）。
+    // 提示前端：provider/model 等结构性变更需调用 config:reload 才能真正生效。
+    return { success: true, needsReload: true };
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -489,6 +501,10 @@ ipcMain.handle('command:execute', async (_event, payload: CommandExecutePayload)
 // 工具执行（用于设置页中的测试按钮等）
 ipcMain.handle('tool:execute', async (_event, payload: ToolExecutePayload): Promise<unknown> => {
   if (!payload || typeof payload.name !== 'string' || payload.name.length === 0 || payload.name.length > 256) {
+    return { error: '无效的参数' };
+  }
+  // 安全：args 必须是对象（或 null/undefined），拒绝数组/原始值
+  if (payload.args != null && (typeof payload.args !== 'object' || Array.isArray(payload.args))) {
     return { error: '无效的参数' };
   }
   return engine?.executeTool(payload.name, payload.args) ?? { error: '引擎未初始化' };
@@ -575,6 +591,12 @@ ipcMain.handle('skill:toggle', async (_event, payload: { name: string; enabled: 
 });
 
 ipcMain.handle('skill:create', async (_event, payload: import('../shared/ipc-types.js').SkillCreatePayload) => {
+  // 安全：运行时校验 payload shape，防止畸形/恶意输入
+  if (!payload || typeof payload.name !== 'string' || payload.name.length === 0 || payload.name.length > 256 ||
+      typeof payload.description !== 'string' || typeof payload.content !== 'string' ||
+      !Array.isArray(payload.keywords)) {
+    return { success: false, error: '无效的参数' };
+  }
   return engine?.createSkill(payload.name, payload.description, payload.keywords, payload.content)
     ?? { success: false, error: '引擎未初始化' };
 });
@@ -670,12 +692,27 @@ ipcMain.handle('fs:open-folder', async (_event, filePath: string): Promise<boole
       return false;
     }
     const fsSync = await import('node:fs');
-    if (fsSync.existsSync(resolved) && fsSync.statSync(resolved).isFile()) {
+    if (!fsSync.existsSync(resolved)) {
+      console.error('[fs:open-folder] 路径不存在:', resolved);
+      return false;
+    }
+    // 安全修复：解析符号链接后重新校验路径，防止 symlink 逃逸（与 fs:read 一致）
+    let realPath = resolved;
+    try {
+      realPath = fsSync.realpathSync(resolved);
+    } catch {
+      // realpathSync 失败时保持原路径（理论上不会触发，已 existsSync 校验）
+    }
+    if (!realPath.startsWith(cwd + path.sep) && realPath !== cwd) {
+      console.error('[fs:open-folder] 符号链接逃逸：目标路径不在项目目录内');
+      return false;
+    }
+    if (fsSync.statSync(realPath).isFile()) {
       // 文件：在资源管理器中打开并选中该文件
-      shell.showItemInFolder(resolved);
+      shell.showItemInFolder(realPath);
     } else {
       // 目录：直接打开
-      await shell.openPath(resolved);
+      await shell.openPath(realPath);
     }
     return true;
   } catch (err) {
@@ -919,6 +956,32 @@ ipcMain.handle('trace:scorecard', async (_event, sessionId: string) => {
   if (typeof sessionId !== 'string' || sessionId.length === 0) return null;
   if (!engine) return null;
   return engine.generateTraceScorecard(sessionId);
+});
+
+// ============================================================
+// AgentProfile 管理 IPC handler（Grok F-010 修复）
+// 数据流：renderer → IPC profile:* → engine-bridge.listProfiles/saveProfile/deleteProfile/duplicateProfile
+// fail-open：engine 未初始化时返回空/失败结果
+// ============================================================
+
+ipcMain.handle('profile:list', async () => {
+  if (!engine) return [];
+  return engine.listProfiles();
+});
+
+ipcMain.handle('profile:save', async (_event, payload: import('../shared/ipc-types.js').ProfileSavePayload) => {
+  if (!engine) return { success: false, error: '引擎未初始化' };
+  return engine.saveProfile(payload);
+});
+
+ipcMain.handle('profile:delete', async (_event, id: string) => {
+  if (!engine) return { success: false, error: '引擎未初始化' };
+  return engine.deleteProfile(id);
+});
+
+ipcMain.handle('profile:duplicate', async (_event, id: string, newName: string) => {
+  if (!engine) return { success: false, error: '引擎未初始化' };
+  return engine.duplicateProfile(id, newName);
 });
 
 // ============================================================

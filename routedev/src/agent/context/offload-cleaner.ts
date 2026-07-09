@@ -10,7 +10,8 @@
 //   - 跨平台路径：用 path.join 拼接，不硬编码分隔符
 //   - 钩子可反注册：返回 disposer 便于测试隔离
 import * as path from 'node:path';
-import { readdirSync, statSync, rmSync, existsSync } from 'node:fs';
+import { rmSync, existsSync } from 'node:fs';
+import { readdir, stat, rm } from 'node:fs/promises';
 import { logger } from '../../utils/logger.js';
 
 /** 孤儿文件最大保留时长：7 天（毫秒） */
@@ -43,19 +44,21 @@ function cleanSessionOffload(offloadDir: string, sessionId: string): void {
  * 扫描 offloadDir 下的 session 子目录，按 mtime 判断是否过期
  * fail-open：整体扫描失败仅 warn，单个目录失败不影响其他目录
  *
+ * GPT F-018：异步文件操作，避免阻塞事件循环
+ *
  * @param offloadDir offload 根目录
  * @param maxAgeMs 最大保留时长，默认 7 天
  */
-function cleanOrphanOffload(
+async function cleanOrphanOffload(
   offloadDir: string,
   maxAgeMs: number = ORPHAN_MAX_AGE_MS,
-): void {
+): Promise<void> {
   try {
     if (!existsSync(offloadDir)) return;
     const now = Date.now();
     let entries: string[];
     try {
-      entries = readdirSync(offloadDir);
+      entries = await readdir(offloadDir);
     } catch (err) {
       logger.warn('Offload 目录读取失败（fail-open）', {
         offloadDir,
@@ -66,11 +69,11 @@ function cleanOrphanOffload(
     for (const name of entries) {
       const sessionDir = path.join(offloadDir, name);
       try {
-        const stat = statSync(sessionDir);
-        if (!stat.isDirectory()) continue;
-        const ageMs = now - stat.mtimeMs;
+        const fileStat = await stat(sessionDir);
+        if (!fileStat.isDirectory()) continue;
+        const ageMs = now - fileStat.mtimeMs;
         if (ageMs > maxAgeMs) {
-          rmSync(sessionDir, { recursive: true, force: true });
+          await rm(sessionDir, { recursive: true, force: true });
           logger.debug('孤儿 offload 目录已清理', { dir: sessionDir, ageMs });
         }
       } catch {
@@ -102,8 +105,8 @@ export function registerOffloadCleaner(
   sessionId: string,
   offloadDir: string,
 ): () => void {
-  // 启动时清理孤儿文件
-  cleanOrphanOffload(offloadDir);
+  // 启动时清理孤儿文件（异步 fire-and-forget，fail-open）
+  void cleanOrphanOffload(offloadDir);
 
   // 退出时清理当前 session
   const handleClose = () => {

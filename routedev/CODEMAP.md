@@ -195,6 +195,18 @@
 - `stall-detector.ts` — 子进程活性检测器（50 行）（已删除：Phase 56 死代码清理）
 **依赖：** 无（被所有模块引用）
 
+### src/macros/ — 宏命令系统（Phase 48 Task 5）
+**职责：** 轻量工作流宏，通过 `!name` 触发器引用预定义的多步操作
+**关键文件：**
+- `manager.ts` — MacroManager：加载 + 注册 + 触发宏
+- `builtin.ts` — 内置宏定义
+- `types.ts` — 宏类型定义
+**触发方式：** 用户输入 `!宏名` 隐式触发，由 MacroManager 在命令解析阶段匹配并展开
+**UI 状态：**
+- 设置页面仅有总开关（`phase48Integration.macrosEnabled`，默认 true）
+- **无宏列表 / 编辑 / 删除 UI**——Grok F-017 标注：当前只能通过手动编辑 `.routedev/macros/*.json` 增删宏，GUI 管理 UI 计划后续 Phase 补充
+**依赖：** config/、utils/
+
 ### desktop/ — Electron 桌面应用（Phase 33 后）
 **职责：** 图形化桌面应用，提供完整 GUI 设置页面与对话界面，替代 CLI 交互
 **关键文件：**

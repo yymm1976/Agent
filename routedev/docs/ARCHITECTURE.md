@@ -243,3 +243,77 @@ Phase 72 是 RouteDev 的前端收敛与死代码清算工程：终端 UI 退役
 - `errors.ts` 删除 3 个未使用错误类
 - `schema.ts` export 收敛，仅暴露外部消费的类型
 - `tournament` 选项移除
+
+## 9. 桌面 IPC 与 Phase 73/77 能力
+
+> Grok F-019 补遗：Phase 73 / 77 引入的桌面 IPC 能力此前未在架构文档中描述，本节补齐。
+
+Phase 73 / 77 在 desktop renderer ↔ main 边界上新增了 5 类能力。所有 IPC channel 集中注册在 `desktop/main/index.ts`，renderer 通过 `preload` 暴露的安全 API 调用。
+
+### 9.1 Follow-up 队列（Phase 73）
+
+允许用户在 Agent 执行中追加消息，按 `all` / `one-at-a-time` 两种模式出队。
+
+| IPC channel | 方向 | 说明 |
+|-------------|------|------|
+| `agent:followUp` (on) | renderer → main | 排队一条 follow-up 消息（fire-and-forget） |
+| `agent:setFollowUpMode` (on) | renderer → main | 切换出队模式（`all` / `one-at-a-time`） |
+| `agent:clearAllQueues` (on) | renderer → main | 清空 steering + follow-up 队列 |
+| `agent:queueStatus` (handle) | renderer ← main | 查询队列计数（`{ followUp: number }`） |
+| `agent:getFollowUpQueue` (handle) | renderer ← main | 查询 follow-up 队列内容（UI 列表展示用） |
+| `agent:removeFollowUp` (handle) | renderer ← main | 删除指定索引的 follow-up 消息 |
+
+UI 入口：`FollowUpQueue.tsx` + `QueuePopover.tsx`（顶部气泡展示队列状态）。
+
+### 9.2 Plan 修订历史（Phase 71 / 73）
+
+记录 GoalPlan 每次修订的 diff，支持 UI 查看修订前后差异。
+
+| IPC channel | 方向 | 说明 |
+|-------------|------|------|
+| `plan:get-revisions` (handle) | renderer ← main | 取指定 goalId 的修订历史列表 |
+| `plan:check-omissions` (handle) | renderer ← main | 用 LLM 检查 plan 的遗漏点（edge-case / error-handling / dependency / security / performance / testing） |
+| `plan:edit-request` (send) | main → renderer | 半自动/手动模式下请求用户编辑 plan |
+| `plan:edit-response` (on) | renderer → main | 用户提交编辑后的 plan |
+
+diff 引擎：`src/agent/plan-diff.ts` 的 `PlanDiffEngine`（纯逻辑无 Node 依赖，renderer 直接 import，见 GPT F-004 标注）。
+遗漏点检查：`src/agent/omission-checker.ts`（仅类型 import 到 renderer，实际 LLM 调用在 main 侧）。
+
+### 9.3 Goal 冷启动恢复（Phase 77）
+
+崩溃或手动关闭后，恢复未完成的 Goal 执行。
+
+| IPC channel | 方向 | 说明 |
+|-------------|------|------|
+| `goal:list-resumable` (handle) | renderer ← main | 列出 `.routedev/goals/` 下所有可恢复的目标（带标题/进度/最后更新时间） |
+| `goal:resume` (handle) | renderer → main | 恢复指定 goalId 的执行 |
+| `goal:discard` (handle) | renderer → main | 丢弃指定 goalId 的恢复点 |
+
+恢复管理器：`src/runtime/goal-recovery.ts` 的 `GoalRecoveryManager`。
+持久化前提：`goalIntegration.persistenceEnabled: true`（默认 true，见 schema.ts L1363-1369）。
+UI 入口：`RecoveryPrompt.tsx`（启动时检测到可恢复目标弹出提示）。
+
+### 9.4 Session 状态卡（Phase 77 借鉴点 4）
+
+聚合当前会话的活跃 goal / 队列 / 模型 / token 等状态，供 UI 顶部状态卡展示。
+
+| IPC channel | 方向 | 说明 |
+|-------------|------|------|
+| `session:get-status` (handle) | renderer ← main | 返回 `SessionStatus` 聚合对象（含 currentGoalId / followUpCount / model / tier / degraded 等） |
+
+聚合器：`src/agent/session-status-aggregator.ts` 的 `aggregateSessionStatus`。
+UI 入口：`SessionStatusCard.tsx`。
+
+### 9.5 Trace 回放与评分卡（Phase 77 借鉴点 7）
+
+借鉴 HomeRail 的 `hr replay` / `hr scorecard`，提供会话级 trace 回放与质量评分。
+
+| IPC channel | 方向 | 说明 |
+|-------------|------|------|
+| `trace:list-sessions` (handle) | renderer ← main | 列出最近 N 条 trace session |
+| `trace:replay` (handle) | renderer ← main | 按 sessionId 回放时间线（可选 step 跳转） |
+| `trace:scorecard` (handle) | renderer ← main | 生成 sessionId 的评分卡（质量维度 + 加分/扣分明细） |
+| `trace:event` (send) | main → renderer | 实时推送 trace span 事件（流式渲染） |
+
+底层模块：`src/harness/trace-collector.ts`（采集）+ `src/harness/trace-replayer.ts`（回放）+ `src/harness/scorecard.ts` 的 `generateScorecard`（评分）。
+UI 入口：`ReplayView.tsx`（回放）+ `ScorecardView.tsx`（评分卡）+ `/replay` `/scorecard` 命令补全（见 `InputArea.tsx` STATIC_COMMANDS）。
