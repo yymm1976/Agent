@@ -49,6 +49,9 @@ export class TraceCollector {
   /** P4：跟踪未完成的异步写入，供 flush() 等待 */
   private pendingWrites: Promise<void>[] = [];
 
+  /** Phase 77：sessionId → trace.jsonl 文件路径缓存，避免每次读取都扫描全部日期目录 */
+  private sessionPathCache: Map<string, string> = new Map();
+
   constructor(config?: Partial<TraceCollectorConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
@@ -486,22 +489,38 @@ export class TraceCollector {
     return Number(((totalTokens / 1000) * price).toFixed(6));
   }
 
-  /** 列出磁盘上的会话 */
+  /**
+   * 列出磁盘上的会话
+   * Phase 77 修复：扫描所有 YYYY-MM-DD 日期子目录（不再只读当天），合并后按 startTime 降序取 limit 条
+   */
   async listSessions(limit = 20): Promise<TraceSession[]> {
     const dir = this.getStorageDir();
+    const sessions: TraceSession[] = [];
     try {
-      const today = new Date().toISOString().slice(0, 10);
-      const dayDir = path.join(dir, today);
-      const files = await fs.readdir(dayDir);
-      const sessions: TraceSession[] = [];
-
-      for (const file of files) {
-        if (!file.endsWith('.session.json')) continue;
+      const entries = await fs.readdir(dir);
+      for (const entry of entries) {
+        // 仅处理 YYYY-MM-DD 格式的日期目录
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(entry)) continue;
+        const dayDir = path.join(dir, entry);
+        let files: string[];
         try {
-          const content = await fs.readFile(path.join(dayDir, file), 'utf-8');
-          sessions.push(JSON.parse(content));
+          files = await fs.readdir(dayDir);
         } catch {
-          // 跳过损坏文件
+          continue;
+        }
+        for (const file of files) {
+          if (!file.endsWith('.session.json')) continue;
+          try {
+            const content = await fs.readFile(path.join(dayDir, file), 'utf-8');
+            const session: TraceSession = JSON.parse(content);
+            sessions.push(session);
+            // 顺带预热路径缓存（sessionId → trace.jsonl 路径）
+            if (session.id && !this.sessionPathCache.has(session.id)) {
+              this.sessionPathCache.set(session.id, path.join(dayDir, `${session.id}.trace.jsonl`));
+            }
+          } catch {
+            // 跳过损坏文件
+          }
         }
       }
 
@@ -513,18 +532,50 @@ export class TraceCollector {
     }
   }
 
-  /** 读取指定会话的记录 */
+  /**
+   * 读取指定会话的记录
+   * Phase 77 修复：扫描所有日期目录查找 `${sessionId}.trace.jsonl`，找到后读取并缓存路径
+   */
   async readSessionRecords(sessionId: string): Promise<TraceRecord[]> {
-    const dir = this.getStorageDir();
-    const today = new Date().toISOString().slice(0, 10);
-    const filePath = path.join(dir, today, `${sessionId}.trace.jsonl`);
-
+    const filePath = await this.locateSessionFile(sessionId, 'trace.jsonl');
+    if (!filePath) return [];
     try {
       const content = await fs.readFile(filePath, 'utf-8');
       return content
         .split('\n')
         .filter(line => line.trim())
         .map(line => JSON.parse(line));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Phase 77：读取指定会话的元数据（${sessionId}.session.json）
+   * 供 scorecard 获取 goalId / totalUsage / startTime / endTime
+   */
+  async readSession(sessionId: string): Promise<TraceSession | null> {
+    const filePath = await this.locateSessionFile(sessionId, 'session.json');
+    if (!filePath) return null;
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      return JSON.parse(content) as TraceSession;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Phase 77：读取指定会话的 spans（${sessionId}.spans.json）
+   * 供 replayer 识别 goal_step 边界与 scorecard 统计 llm_call / retryCount
+   */
+  async readSessionSpans(sessionId: string): Promise<TraceSpan[]> {
+    const filePath = await this.locateSessionFile(sessionId, 'spans.json');
+    if (!filePath) return [];
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      const parsed = JSON.parse(content);
+      return Array.isArray(parsed) ? (parsed as TraceSpan[]) : [];
     } catch {
       return [];
     }
@@ -723,5 +774,40 @@ export class TraceCollector {
   private getStorageDir(): string {
     return this.config.storageDir
       ?? path.join(getAppDataDir(), 'traces');
+  }
+
+  /**
+   * Phase 77：定位指定会话的某个产物文件（trace.jsonl / session.json / spans.json）
+   * 优先查 sessionPathCache；未命中时扫描所有日期目录查找 `${sessionId}.trace.jsonl` 作为锚点并缓存。
+   * @returns 完整文件路径；未找到返回 null
+   */
+  private async locateSessionFile(sessionId: string, suffix: 'trace.jsonl' | 'session.json' | 'spans.json'): Promise<string | null> {
+    // 缓存中以 trace.jsonl 路径为锚，可派生出同目录下的其他文件
+    const cached = this.sessionPathCache.get(sessionId);
+    if (cached) {
+      const derived = path.join(path.dirname(cached), `${sessionId}.${suffix}`);
+      return derived;
+    }
+    // 扫描所有日期目录，定位 trace.jsonl（或目标 suffix）作为锚点
+    const dir = this.getStorageDir();
+    try {
+      const entries = await fs.readdir(dir);
+      for (const entry of entries) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(entry)) continue;
+        const dayDir = path.join(dir, entry);
+        const tracePath = path.join(dayDir, `${sessionId}.trace.jsonl`);
+        try {
+          await fs.access(tracePath);
+          // 命中：缓存 trace.jsonl 路径，返回目标 suffix 的完整路径
+          this.sessionPathCache.set(sessionId, tracePath);
+          return path.join(dayDir, `${sessionId}.${suffix}`);
+        } catch {
+          // 该日期目录下无此会话，继续
+        }
+      }
+    } catch {
+      // 存储根目录不存在
+    }
+    return null;
   }
 }

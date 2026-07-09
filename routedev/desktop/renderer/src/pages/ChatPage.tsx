@@ -13,7 +13,7 @@ import { UploadCloud, FolderOpen, History } from 'lucide-react';
 import type { ChatMessage, PendingConfirm } from '../hooks/useRouteDev.js';
 import type { AppConfig, AutonomyMode } from '../../../../src/config/schema.js';
 import type { TokenProfileSnapshot } from '../../../../src/agent/token-profiler.js';
-import type { ConfigSaveResult, FollowUpItem, FollowUpMode } from '../../../shared/ipc-types.js';
+import type { ConfigSaveResult, FollowUpItem, FollowUpMode, SessionStatus } from '../../../shared/ipc-types.js';
 import { NeuralNetworkBackground } from '../components/NeuralNetworkBackground.js';
 import { ArtifactPanel } from '../components/ArtifactPanel.js';
 import { StepEditor } from '../components/StepEditor.js';
@@ -26,6 +26,12 @@ import { InputArea } from '../components/chat/InputArea.js';
 import { PendingQueue } from '../components/chat/PendingQueue.js';
 import { FollowUpQueue } from '../components/chat/FollowUpQueue.js';
 import { ScrollToBottom } from '../components/chat/ScrollToBottom.js';
+// Phase 77：运行回放与评分卡 UI
+import { ReplayView } from '../components/trace/ReplayView.js';
+import { ScorecardView } from '../components/trace/ScorecardView.js';
+// Phase 77 借鉴点 7：冷启动恢复提示条
+import { RecoveryPrompt } from '../components/goal/RecoveryPrompt.js';
+import { SessionStatusCard } from '../components/session/SessionStatusCard.js';
 
 interface ChatPageProps {
   messages: ChatMessage[];
@@ -57,6 +63,11 @@ export function ChatPage({
   const [followUpExpanded, setFollowUpExpanded] = useState(false);
   const [followUpMode, setFollowUpModeState] = useState<FollowUpMode>('one-at-a-time');
   const [showCheckpointPanel, setShowCheckpointPanel] = useState(false);
+  // Phase 77：运行回放 / 评分卡弹窗
+  const [replayOpen, setReplayOpen] = useState(false);
+  const [scorecardOpen, setScorecardOpen] = useState(false);
+  // Phase 77：会话状态卡数据（每 5 秒轮询 session:get-status，idle 时不渲染卡片）
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
 
   // C-V2：细粒度 selector——仅订阅所需字段，避免全量 store 变化触发重渲染
   const projects = useProjectsStore((s) => s.projects);
@@ -102,6 +113,21 @@ export function ChatPage({
     return () => { cancelled = true; clearInterval(timer); };
   }, [isProcessing]);
 
+  // Phase 77：轮询会话状态卡数据（每 5 秒拉取，goal 执行中/已完成/失败时均展示）
+  // 无活跃 goal 时聚合器返回 idle 状态，本组件在 idle 时不渲染卡片
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const status = await window.routedev.session.getStatus();
+        if (!cancelled) setSessionStatus(status);
+      } catch { /* fail-open */ }
+    };
+    poll();
+    const timer = setInterval(poll, 5000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
+
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -116,6 +142,16 @@ export function ChatPage({
 
   // InputArea 提交：引擎工作时进入队列，否则直接发送
   const handleSubmit = useCallback((text: string) => {
+    // Phase 77：拦截 /replay /scorecard 命令，直接打开对应弹窗（不进入发送队列）
+    const trimmed = text.trim();
+    if (trimmed === '/replay' || trimmed.startsWith('/replay ')) {
+      setReplayOpen(true);
+      return;
+    }
+    if (trimmed === '/scorecard' || trimmed.startsWith('/scorecard ')) {
+      setScorecardOpen(true);
+      return;
+    }
     if (isProcessing) {
       setQueue((prev) => [...prev, text]);
       setQueueExpanded(true);
@@ -236,10 +272,20 @@ export function ChatPage({
         </button>
       </div>
 
+      {/* Phase 77 借鉴点 7：冷启动恢复提示条（无可恢复 goal 时不渲染） */}
+      <RecoveryPrompt
+        onResume={() => { /* goal 恢复后由 onGoalEvent 驱动 UI 切换 */ }}
+        onClose={() => { /* 用户可关闭提示条，下次刷新 listResumable 仍会重新拉取 */ }}
+      />
+
       {/* 消息区 */}
       <div className="relative flex min-h-0 flex-1">
         <div ref={scrollRef} onScroll={handleScroll}
           className="flex-1 space-y-2.5 overflow-y-auto px-5 py-4">
+          {/* Phase 77：Voice Memo 式会话状态卡（无活跃 goal 时不渲染） */}
+          {sessionStatus && sessionStatus.status !== 'idle' && (
+            <SessionStatusCard status={sessionStatus} />
+          )}
           {messages.length === 0 ? (
             <div className="relative flex h-full items-start justify-center pt-[18%]">
               <NeuralNetworkBackground />
@@ -283,6 +329,10 @@ export function ChatPage({
 
       {/* Phase 54：计划编辑器 */}
       <StepEditor />
+
+      {/* Phase 77：运行回放 / 评分卡弹窗（/replay /scorecard 命令触发） */}
+      <ReplayView open={replayOpen} onClose={() => setReplayOpen(false)} />
+      <ScorecardView open={scorecardOpen} onClose={() => setScorecardOpen(false)} />
 
       {/* Phase 74-B2：双队列触发器行（浮层式，胶囊触发器水平排列在输入区上方） */}
       {(queue.length > 0 || followUpQueue.length > 0) && (

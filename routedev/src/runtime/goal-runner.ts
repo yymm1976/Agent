@@ -34,7 +34,7 @@ import { GoalGateManager, gatesFromSteps } from '../agent/goal-gates.js';
 import { archiveCurrentPlan, attestPlan, verifyPlanAttestation } from '../agent/plan-attestation.js';
 // Phase 50 Task 1：接入核心模块（默认 enabled: false，开关在 config.goalIntegration）
 import { GoalAuditor } from '../agent/goal-audit.js';
-import { GoalPersistence } from '../agent/goal-persistence.js';
+import { GoalPersistence, type PersistedGoal } from '../agent/goal-persistence.js';
 // Phase 59：GoalPromptBuilder / requirement-change 已删除（批次1 无价值 Integration）
 import { logger } from '../utils/logger.js';
 import { estimateTokens } from '../utils/token-estimate.js';
@@ -2029,5 +2029,90 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
 
   // Phase 59：analyzeRequirementChange 函数已删除（批次1 requirementChangeEnabled 无价值 Integration）
 
-  return { handleGoalCommand, executeGoalPlan };
+  // ============================================================
+  // Phase 77：冷启动恢复——resumeGoalPlan
+  // ============================================================
+  //
+  // 设计：从 PersistedGoal 重建 GoalPlan，跳过目标分解+确认阶段，直接执行剩余步骤
+  // - 已完成步骤（status='completed'）从 plan.steps 中过滤掉，executeGoalPlan 只跑剩余步骤
+  // - in_progress / pending / failed 步骤都重新执行（in_progress 因中断未完成）
+  // - token 预算继承：通过给 plan 注入起始 tokenUsed 让 tracker.startTask 后能感知已用量
+  //   （实际 tokenUsed 由 tracker 内部维护，此处仅作信息提示，不修改 tracker 内部状态）
+  // - 复用 executeGoalPlan 的执行核心（路径路由/DAG/压缩/检查点/验证/迭代闭环）
+  //
+  // 注意：不重构 executeGoalPlan，只新增 resumeGoalPlan
+  /**
+   * 从持久化的 PersistedGoal 恢复执行
+   *
+   * @param persistedGoal 持久化的 goal 数据（含已完成步骤状态）
+   * @throws 当 PersistedGoal 数据无效时抛出 Error
+   */
+  async function resumeGoalPlan(persistedGoal: PersistedGoal): Promise<void> {
+    setIsProcessing(true);
+
+    // 校验 PersistedGoal 数据完整性
+    if (!persistedGoal || !persistedGoal.plan || !Array.isArray(persistedGoal.plan.steps)) {
+      throw new Error('resumeGoalPlan: PersistedGoal.plan.steps 无效');
+    }
+    if (persistedGoal.plan.steps.length === 0) {
+      addSystemMessage('❌ 恢复失败：goal 无步骤');
+      setIsProcessing(false);
+      return;
+    }
+
+    // 从 PersistedGoal 重建 GoalPlan
+    // - 保留原 id/createdAt，便于执行结果回写同一份持久化记录
+    // - 过滤掉 status='completed' 的步骤（已完成的不再跑）
+    // - 其他状态（in_progress/pending/failed/skipped）全部置为 pending 重新执行
+    const remainingSteps: GoalStep[] = persistedGoal.plan.steps
+      .filter(s => s.status !== 'completed')
+      .map(s => ({
+        id: Number(s.id),
+        description: s.description,
+        status: 'pending' as GoalStep['status'],
+        dependencies: s.dependencies.map(d => Number(d)),
+        domain: 'general' as GoalStep['domain'],
+      }));
+
+    if (remainingSteps.length === 0) {
+      addSystemMessage('✅ 该 goal 的所有步骤已完成，无需恢复');
+      setIsProcessing(false);
+      return;
+    }
+
+    const plan: GoalPlan = {
+      id: persistedGoal.id,
+      description: persistedGoal.spec?.goal ?? '(resumed goal)',
+      verificationCriteria: persistedGoal.spec?.doneWhen?.join('; '),
+      steps: remainingSteps,
+      status: 'pending',
+      createdAt: persistedGoal.createdAt,
+      attestation: persistedGoal.plan.attestation,
+      archivedVersions: persistedGoal.plan.archivedVersions,
+    };
+
+    addSystemMessage(`🔄 Phase77 恢复目标: ${plan.description}`);
+    addSystemMessage(`📊 剩余步骤 ${remainingSteps.length}/${persistedGoal.plan.steps.length}，已用 token ${persistedGoal.tokenUsed}/${persistedGoal.tokenBudget}`);
+
+    attestPlan(plan, 'resume_from_persistence');
+
+    // 持久化 goal 状态恢复为 executing（覆盖原 paused/executing 状态）
+    if (goalPersistence) {
+      try {
+        await goalPersistence.save({
+          ...persistedGoal,
+          status: 'executing',
+          updatedAt: Date.now(),
+        });
+      } catch (err) {
+        logger.warn('Phase77 resumeGoalPlan: goalPersistence.save failed (non-blocking)', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    await executeGoalPlan(plan);
+  }
+
+  return { handleGoalCommand, executeGoalPlan, resumeGoalPlan };
 }

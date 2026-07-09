@@ -6,8 +6,14 @@ import type { TokenProfileSnapshot } from '../../src/agent/token-profiler.js';
 import type { TraceSpan } from '../../src/harness/trace-types.js';
 // Phase 54：GoalEvent 类型从 src/agent/goal-types.ts re-import（避免 src/ 反向引用 desktop/ 触发 rootDir 错误）
 import type { GoalEvent } from '../../src/agent/goal-types.js';
+// Phase 77：运行回放与评分卡类型
+import type { TraceSession } from '../../src/harness/trace-types.js';
+import type { TimelineEvent } from '../../src/harness/trace-replayer.js';
+import type { Scorecard } from '../../src/harness/scorecard.js';
 
 export type { AppConfig, TokenProfileSnapshot, GoalEvent };
+// Phase 77：运行回放与评分卡类型（re-export 供渲染层使用）
+export type { TraceSession, TimelineEvent, Scorecard };
 
 export interface ChatSendPayload {
   text: string;
@@ -375,6 +381,62 @@ export interface PlanEditResponsePayload {
 }
 
 // ============================================================
+// Phase 77 借鉴点 4：Voice Memo 式会话状态卡 IPC 类型
+// 数据流：renderer → IPC session:get-status → engine-bridge.aggregateSessionStatus → goalPersistence + blackboard
+// ============================================================
+
+/** 待办条目（与 src/agent/session-status-aggregator.ts 的 SessionStatusTodo 同构） */
+export interface SessionStatusTodo {
+  text: string;
+  done: boolean;
+}
+
+// ============================================================
+// Phase 77 借鉴点 7：冷启动恢复 IPC 类型
+// 数据流：renderer → IPC goal:list-resumable → engine-bridge.listResumableGoals → GoalRecoveryManager
+// ============================================================
+
+/** 可恢复 goal 的 IPC 传输对象（扁平化 ResumableGoalInfo，剥离嵌套 goal 对象） */
+export interface ResumableGoalIpcInfo {
+  id: string;
+  /** 五段式规范（含 goal 描述、doneWhen 等） */
+  spec: {
+    goal: string;
+    scope: string;
+    constraints: string[];
+    doneWhen: string[];
+    stopIf: string[];
+    tokenBudget: number;
+  };
+  status: 'executing' | 'paused' | 'planning' | 'completed' | 'failed';
+  completedSteps: number;
+  totalSteps: number;
+  tokenUsed: number;
+  tokenBudget: number;
+  updatedAt: number;
+  isStale: boolean;
+}
+
+/**
+ * 会话状态卡数据（IPC 传输用）
+ *
+ * 与 src/agent/session-status-aggregator.ts 的 SessionStatus 同构，
+ * 在 ipc-types 中独立定义以避免 desktop/ 反向引用 src/ 触发 rootDir 错误。
+ */
+export interface SessionStatus {
+  title: string;
+  status: 'idle' | 'executing' | 'paused' | 'completed' | 'failed';
+  summary: string;
+  knownFacts: string[];
+  openQuestions: string[];
+  todos: SessionStatusTodo[];
+  nextAction: string | null;
+  tokenUsed: number;
+  tokenBudget: number;
+  updatedAt: string;
+}
+
+// ============================================================
 // Phase 73 Part C：Steering / Follow-up 双消息队列 IPC 类型
 // 数据流：renderer → IPC agent:followUp / agent:clearAllQueues / agent:queueStatus → engine-bridge → agentLoop
 // ============================================================
@@ -523,6 +585,18 @@ export interface RouteDevAPI {
     /** 触发 plan 遗漏点检查（LLM 调用，结果异步返回） */
     checkOmissions: (goalId: string) => Promise<{ ok: boolean; result?: unknown; error?: string }>;
   };
+  // Phase 77 借鉴点 7：冷启动恢复 API
+  //   - listResumable：查询可恢复 goal 列表（启动时调用 + 用户操作后刷新）
+  //   - resume：恢复指定 goal 的执行
+  //   - discard：放弃（归档）指定 goal
+  goal: {
+    /** 列出可恢复的 goal（驱动 UI 提示条） */
+    listResumable: () => Promise<ResumableGoalIpcInfo[]>;
+    /** 恢复指定 goal 的执行 */
+    resume: (goalId: string) => Promise<{ success: boolean; error?: string }>;
+    /** 放弃（归档）指定 goal */
+    discard: (goalId: string) => Promise<{ success: boolean; error?: string }>;
+  };
   // Phase 73 Part C：Steering / Follow-up 双消息队列 API
   //   - followUp：排队后续任务（Agent 完成当前工作后执行）
   //   - clearAllQueues：清空 steering + follow-up 队列（取消所有待执行任务）
@@ -544,8 +618,23 @@ export interface RouteDevAPI {
     /** 删除指定索引的 follow-up 消息（0 表示最早入队的） */
     removeFollowUp: (index: number) => Promise<boolean>;
   };
+  // Phase 77 借鉴点 4：Voice Memo 式会话状态卡 API
+  //   - getStatus：聚合 goal-persistence + blackboard 返回会话状态快照（驱动 SessionStatusCard 渲染）
+  session: {
+    /** 获取当前会话状态快照（无活跃 goal 时返回 idle 状态） */
+    getStatus: () => Promise<SessionStatus>;
+  };
   on: (channel: MainToRendererEvent['channel'], callback: (payload: unknown) => void) => void;
   off: (channel: MainToRendererEvent['channel'], callback: (payload: unknown) => void) => void;
+  // Phase 77：运行回放与评分卡 API
+  trace: {
+    /** 列出磁盘上的 Trace 会话（按 startTime 倒序） */
+    listSessions: (limit?: number) => Promise<TraceSession[]>;
+    /** 回放指定会话，返回时间线事件；传入 step 时仅返回该步骤段落 */
+    replay: (sessionId: string, step?: number) => Promise<TimelineEvent[]>;
+    /** 生成指定会话的评分卡 */
+    scorecard: (sessionId: string) => Promise<Scorecard | null>;
+  };
 }
 
 declare global {

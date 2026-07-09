@@ -10,13 +10,17 @@ import { ModelRouter } from '../../src/router/router.js';
 import { buildRouterConfig } from '../../src/router/config.js';
 import { createAppDependencies } from '../../src/runtime/app-init.js';
 import type { AppDependencies } from '../../src/runtime/app-init.js';
-import type { ChatStreamPayload, MCPStatus, MCPConnectionResult, MCPInstallResult, MCPInstallPayload, SkillInstallPayload, AgentProfileInfo, AgentProfileDetail, ProfileSavePayload, ProfileOpResult, GoalEvent, PlanEditRequestPayload, AgentProfileRole, AgentProfileOutputFormat } from '../shared/ipc-types.js';
+import type { ChatStreamPayload, MCPStatus, MCPConnectionResult, MCPInstallResult, MCPInstallPayload, SkillInstallPayload, AgentProfileInfo, AgentProfileDetail, ProfileSavePayload, ProfileOpResult, GoalEvent, PlanEditRequestPayload, AgentProfileRole, AgentProfileOutputFormat, ResumableGoalIpcInfo } from '../shared/ipc-types.js';
 import type { TokenProfileSnapshot } from '../../src/agent/token-profiler.js';
 import { VisionAssistant, type ImageInput } from '../../src/agent/vision.js';
 import { notifyRoutingFallback } from '../../src/runtime/notification.js';
 import { estimateTokens } from '../../src/utils/token-estimate.js';
 import type { TraceSpan } from '../../src/harness/trace-types.js';
 import type { TrajectorySummary } from '../../src/harness/trace-types.js';
+// Phase 77：运行回放与评分卡——借鉴 HomeRail 的 hr replay / hr scorecard
+import type { TraceSession } from '../../src/harness/trace-types.js';
+import { TraceReplayer, type TimelineEvent } from '../../src/harness/trace-replayer.js';
+import { generateScorecard, type Scorecard } from '../../src/harness/scorecard.js';
 // Phase 34 Task 2：微摘要生成器（任务结束后从 trace spans + 最终回复中提取摘要）
 import { generateMicroSummary } from '../../src/agent/micro-summary.js';
 import type { SkillStatus } from '../../src/plugins/filesystem-discovery.js';
@@ -34,6 +38,8 @@ import type { Checkpoint } from '../../src/harness/types.js';
 // Phase 54：GoalRunner 接入——Electron 端 /goal 命令实际执行入口
 import { createGoalRunner } from '../../src/runtime/goal-runner.js';
 import type { GoalPlan, PlanStep } from '../../src/agent/goal-types.js';
+// Phase 77：冷启动恢复——GoalRecoveryManager + IPC 数据类型
+import { GoalRecoveryManager } from '../../src/runtime/goal-recovery.js';
 // Phase 37 Skill 市场接线：复用 SkillMarketManager 的 install 能力
 import { SkillMarketManager } from '../../src/skills/market-manager.js';
 // Phase 53 Task 6：安装前安全门控（仅类型，运行时按需动态 import）
@@ -43,6 +49,8 @@ import { AgentProfileManager } from '../../src/agents/profiles/manager.js';
 import type { AgentProfile } from '../../src/agents/profiles/types.js';
 // F-021/F-015 修复：plan edit 超时清理使用 logger 持久化警告
 import { logger } from '../../src/utils/logger.js';
+// Phase 77 借鉴点 4：Voice Memo 式会话状态卡聚合器
+import { aggregateSessionStatus } from '../../src/agent/session-status-aggregator.js';
 
 /**
  * Phase 54：判断是否为 goal-runner 输出的进度文本（已被 GoalExecutionCard 取代）
@@ -147,6 +155,12 @@ export class RouteDevEngine {
    * 渲染层 StepEditor 确认/取消 → IPC plan:edit-response → resolvePlanEdit → goal-runner Promise
    */
   private pendingPlanEditResolvers: Map<string, (result: PlanEditRequestPayload['plan']['steps'] | null) => void> = new Map();
+  /**
+   * Phase 77：当前活跃 goal ID（用于 session:get-status 聚合）
+   * executeGoalCommand 中赋值，goal 完成后保留以供状态卡展示最终态（completed/failed）
+   * 下次 /goal 命令覆盖为新 goalId
+   */
+  private currentGoalId: string | null = null;
 
   constructor(config: AppConfig, options: EngineBridgeOptions) {
     this.config = config;
@@ -750,6 +764,8 @@ export class RouteDevEngine {
     // 原因：gid 在 createGoalRunner 顶部固定，复用实例会导致多次 /goal 共用同一 goalId
     // createGoalRunner 仅组装闭包，重建成本极低，且保证 goalId 隔离
     const goalId = `goal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // Phase 77：记录当前活跃 goalId，供 session:get-status 聚合器读取
+    this.currentGoalId = goalId;
     try {
       this.goalRunner = createGoalRunner({
         classifier: this.classifier,
@@ -886,6 +902,158 @@ export class RouteDevEngine {
       const errMsg = err instanceof Error ? err.message : String(err);
       this.options.onStream({ type: 'error', error: `/goal 执行失败: ${errMsg}` });
       return { ok: false, message: errMsg };
+    }
+  }
+
+  // ============================================================
+  // Phase 77：冷启动恢复 IPC 入口方法
+  // ============================================================
+
+  /**
+   * 列出可恢复的 goal（驱动 UI 提示条）
+   *
+   * 调用 GoalRecoveryManager.detectResumableGoals()，把 ResumableGoalInfo
+   * 扁平化为 IPC 友好的对象（剥离嵌套的 goal 对象，仅暴露 UI 所需字段）
+   *
+   * fail-open：引擎未初始化或 persistence 未启用时返回空数组
+   */
+  async listResumableGoals(): Promise<ResumableGoalIpcInfo[]> {
+    if (!this.deps?.goalPersistence) return [];
+    try {
+      const manager = new GoalRecoveryManager(this.deps.goalPersistence);
+      const infos = await manager.detectResumableGoals();
+      return infos.map(info => ({
+        id: info.goal.id,
+        spec: info.goal.spec,
+        status: info.goal.status,
+        completedSteps: info.completedSteps,
+        totalSteps: info.totalSteps,
+        tokenUsed: info.goal.tokenUsed,
+        tokenBudget: info.goal.tokenBudget,
+        updatedAt: info.goal.updatedAt,
+        isStale: info.isStale,
+      }));
+    } catch (err) {
+      logger.warn('Phase77 listResumableGoals failed (fail-open)', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }
+  }
+
+  /**
+   * 恢复指定 goal 的执行
+   *
+   * 流程：
+   *   1. 通过 goalPersistence.load(goalId) 读取持久化数据
+   *   2. 重建 GoalRunner（与 executeGoalCommand 一致，确保 goalId 隔离）
+   *   3. 调用 goalRunner.resumeGoalPlan(persistedGoal)
+   *
+   * 注意：与 /goal 命令一样，每次恢复重建 GoalRunner，
+   * 避免复用旧实例导致 goalId/emit 串扰
+   */
+  async resumeGoal(goalId: string): Promise<{ success: boolean; error?: string }> {
+    if (!this.deps || !this.classifier || !this.modelRouter || !this.tracker || !this.clientManager) {
+      return { success: false, error: '引擎未初始化' };
+    }
+    if (!this.deps.goalPersistence) {
+      return { success: false, error: 'goal persistence 未启用' };
+    }
+    const goal = await this.deps.goalPersistence.load(goalId);
+    if (!goal) {
+      return { success: false, error: `Goal ${goalId} 不存在` };
+    }
+
+    // 重建 GoalRunner（复用 executeGoalCommand 的初始化逻辑）
+    // 注意：此处使用原 goal.id 作为 gid，确保事件流与持久化记录一致
+    try {
+      this.goalRunner = createGoalRunner({
+        classifier: this.classifier,
+        modelRouter: this.modelRouter,
+        clientManager: this.clientManager,
+        tracker: this.tracker,
+        agentLoop: this.deps.agentLoop,
+        checkpointManager: this.deps.checkpointManager,
+        contextManager: this.deps.contextManager,
+        config: this.config,
+        systemPromptRef: this.deps.sharedSystemPromptRef,
+        conversationHistoryRef: { current: this.conversationHistory },
+        pendingConfirmRef: this.pendingConfirmRef,
+        abortControllerRef: this.abortControllerRef,
+        currentPlanRef: { current: null },
+        addSystemMessage: (content: string) => {
+          if (isGoalProgressText(content)) return;
+          this.options.onStream({ type: 'text_delta', chunk: content + '\n' });
+        },
+        onToolConfirmRequest: this.options.onToolConfirmRequest,
+        requestPlanEdit: async (plan: GoalPlan): Promise<PlanStep[] | null> => {
+          if (!this.options.onPlanEditRequest) return plan.steps;
+          // 简化：resume 不再触发 UI 编辑，直接返回原计划
+          return plan.steps;
+        },
+        setIsProcessing: () => { /* engine 自己管理 done 事件 */ },
+        nextId: () => `goal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        blackboard: this.deps.blackboard,
+        unifiedReviewer: this.deps.unifiedReviewer,
+        goalAuditor: this.deps.goalAuditor ?? undefined,
+        goalPersistence: this.deps.goalPersistence ?? undefined,
+        completionGate: this.deps.completionGate,
+        profiler: this.deps.profiler ?? undefined,
+        onGoalEvent: this.options.onGoalEvent,
+        goalId,
+        hookRunner: this.deps.hookRunner,
+        routingOrchestrator: this.deps.routingOrchestrator,
+        routingHistory: this.deps.routingHistory,
+        routingMemory: this.deps.routingMemory,
+        executionVerifier: this.deps.executionVerifier,
+        routingRegretTracker: this.deps.routingRegretTracker,
+        memoryStore: this.deps.memoryStore,
+        hybridRetriever: this.deps.hybridRetriever,
+        localMaintenance: this.deps.localMaintenance,
+        provenanceGraph: this.deps.provenanceGraph,
+        kanObstacleChecker: this.deps.kanObstacleChecker,
+        quantitativeGate: this.deps.quantitativeGate,
+        classifyOperation: this.deps.classifyOperation,
+        compositionalRouter: this.deps.compositionalRouter,
+        dualLoopOrchestratorRef: this.deps.dualLoopOrchestratorRef,
+        dagEngine: this.deps.dagEngineRef.current ?? undefined,
+        pathRouter: this.deps.pathRouter,
+      });
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      this.options.onStream({ type: 'error', error: `GoalRunner 初始化失败: ${errMsg}` });
+      return { success: false, error: errMsg };
+    }
+
+    this.currentGoalId = goalId;
+    try {
+      await this.goalRunner.resumeGoalPlan(goal);
+      return { success: true };
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      this.options.onStream({ type: 'error', error: `/goal 恢复失败: ${errMsg}` });
+      return { success: false, error: errMsg };
+    }
+  }
+
+  /**
+   * 放弃（归档）指定 goal
+   *
+   * 调用 goalPersistence.archive(goalId)，把 goal 从 .routedev/goals/ 移到 archived/
+   * 归档后不再出现在可恢复列表中
+   */
+  async discardGoal(goalId: string): Promise<{ success: boolean; error?: string }> {
+    if (!this.deps?.goalPersistence) {
+      return { success: false, error: 'goal persistence 未启用' };
+    }
+    try {
+      await this.deps.goalPersistence.archive(goalId);
+      return { success: true };
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
     }
   }
 
@@ -1032,6 +1200,29 @@ export class RouteDevEngine {
   removeFollowUp(index: number): boolean {
     if (!this.deps?.agentLoop) return false;
     return this.deps.agentLoop.removeFollowUp(index);
+  }
+
+  // ============================================================
+  // Phase 77 借鉴点 4：Voice Memo 式会话状态卡 API
+  // 聚合 goal-persistence + blackboard 返回会话状态快照
+  // fail-open：deps 未就绪或 goalPersistence 未启用时返回 idle 状态
+  // ============================================================
+
+  /**
+   * 获取当前会话状态快照（驱动渲染层 SessionStatusCard 渲染）
+   *
+   * 数据流：renderer → IPC session:get-status → 此方法 → aggregateSessionStatus
+   * 聚合源：
+   *   - goalPersistence.load(currentGoalId)：取 goal.spec / plan.steps / status / token
+   *   - blackboard.getSnapshot()：取 projectFacts
+   * 无活跃 goal 或 goalPersistence 未启用时返回 idle 状态
+   */
+  async getSessionStatus(): Promise<import('../shared/ipc-types.js').SessionStatus> {
+    return aggregateSessionStatus({
+      goalPersistence: this.deps?.goalPersistence ?? undefined,
+      currentGoalId: this.currentGoalId,
+      blackboard: this.deps?.blackboard,
+    });
   }
 
   getMCPStatus(): MCPStatus {
@@ -1746,6 +1937,44 @@ export class RouteDevEngine {
       return { success: ok, error: ok ? undefined : '回滚失败（检查点不存在或工作区有未提交更改）' };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  // ============================================================
+  // Phase 77：运行回放与评分卡——委托 TraceCollector + TraceReplayer + scorecard
+  // ============================================================
+
+  /** 列出磁盘上的 Trace 会话（按 startTime 倒序） */
+  async listTraceSessions(limit?: number): Promise<TraceSession[]> {
+    if (!this.deps) return [];
+    try {
+      return await this.deps.trace.listSessions(limit);
+    } catch (err) {
+      console.error('[Engine] listTraceSessions failed:', err);
+      return [];
+    }
+  }
+
+  /** 回放指定会话，返回时间线事件；传入 step 时仅返回该步骤段落 */
+  async replayTrace(sessionId: string, step?: number): Promise<TimelineEvent[]> {
+    if (!this.deps) return [];
+    try {
+      const replayer = new TraceReplayer(this.deps.trace);
+      return await replayer.replay(sessionId, step !== undefined ? { step } : undefined);
+    } catch (err) {
+      console.error('[Engine] replayTrace failed:', err);
+      return [];
+    }
+  }
+
+  /** 生成指定会话的评分卡 */
+  async generateTraceScorecard(sessionId: string): Promise<Scorecard | null> {
+    if (!this.deps) return null;
+    try {
+      return await generateScorecard(this.deps.trace, sessionId);
+    } catch (err) {
+      console.error('[Engine] generateTraceScorecard failed:', err);
+      return null;
     }
   }
 

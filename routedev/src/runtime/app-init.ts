@@ -78,6 +78,8 @@ import type { OrchestrationIntegrationOptions } from '../agent/multi/orchestrato
 // Phase 50 Task 1：Goal 流程核心模块（按 config.goalIntegration 渐进接入）
 import { GoalAuditor } from '../agent/goal-audit.js';
 import { GoalPersistence } from '../agent/goal-persistence.js';
+// Phase 77：冷启动恢复——借鉴 HomeRail 的 recoverAllActiveRuns()
+import { detectResumableGoalsOnStartup } from './goal-recovery.js';
 // Phase 59：GoalPromptBuilder 已删除（批次1 无价值 Integration）
 // Phase 50 Task 3：子 Agent 委托体系核心模块（按 config.delegationIntegration 渐进接入）
 import { ContextPacker } from '../agents/context-packer.js';
@@ -2293,6 +2295,51 @@ export function createAppDependencies(
       sessionMemoryStore: !!p70SessionMemoryStore,
       sessionMemoryPersistPath: p70SessionMemoryPersistentPath,
       sessionMemoryMaxMemories: p70Cfg?.sessionMemory?.maxMemories,
+    });
+  }
+
+  // ===== Phase 77：冷启动恢复检测（fail-open，不阻塞应用启动） =====
+  // 借鉴 HomeRail 的 recoverAllActiveRuns()：启动时扫描 .routedev/goals/ 下 status=executing/paused 的 goal
+  // 仅检测，不自动恢复——结果通过 IPC goal:list-resumable 供渲染层按需查询
+  //
+  // 注意：createAppDependencies 为同步函数，检测采用 fire-and-forget 模式：
+  //   - 异步检测完成后仅记日志（结果不回写到 deps，避免同步返回后字段被异步覆盖的竞态）
+  //   - 渲染层通过 window.routedev.goal.listResumable() 实时查询，而非读 deps.resumableGoals
+  if (goalPersistence) {
+    detectResumableGoalsOnStartup(goalPersistence)
+      .then(detected => {
+        if (detected.length > 0) {
+          logger.info('Phase77: detected resumable goals', { count: detected.length });
+        }
+      })
+      .catch((err: unknown) => {
+        logger.warn('Phase77: goal recovery detection failed (fail-open)', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+
+  // ===== Phase 77：注册 shutdown hook 保存 goal 状态 =====
+  // 优先级 80：高于 codemap-watcher(50)/analytics-flush(10)，低于 session-memory(100)
+  // 触发场景：用户关闭应用时，若 goal 正在执行，更新 updatedAt 后 save，便于下次冷启动恢复
+  //
+  // 策略：直接遍历 listResumable() 返回的 status=executing goal，更新 updatedAt 后 save
+  // （不依赖 currentGoalId——闭包内的 goalPersistence 引用稳定，listResumable 自带 fail-open）
+  if (goalPersistence) {
+    registerShutdownHook(80, 'goal-state-persist', async () => {
+      try {
+        const resumable = await goalPersistence.listResumable();
+        for (const goal of resumable) {
+          if (goal.status === 'executing') {
+            goal.updatedAt = Date.now();
+            await goalPersistence.save(goal);
+          }
+        }
+      } catch (err) {
+        logger.warn('Phase77: goal state persist on shutdown failed (fail-open)', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     });
   }
 

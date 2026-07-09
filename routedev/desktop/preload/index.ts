@@ -102,6 +102,12 @@ const api: RouteDevAPI = {
     getRevisions: (goalId: string) => ipcRenderer.invoke('plan:get-revisions', goalId),
     checkOmissions: (goalId: string) => ipcRenderer.invoke('plan:check-omissions', goalId),
   },
+  // Phase 77 借鉴点 7：冷启动恢复——查询/恢复/放弃可恢复 goal
+  goal: {
+    listResumable: () => ipcRenderer.invoke('goal:list-resumable'),
+    resume: (goalId: string) => ipcRenderer.invoke('goal:resume', goalId),
+    discard: (goalId: string) => ipcRenderer.invoke('goal:discard', goalId),
+  },
   // Phase 73 Part C：Steering / Follow-up 双消息队列 API
   agent: {
     followUp: (content: string) => ipcRenderer.send('agent:followUp', content),
@@ -111,6 +117,10 @@ const api: RouteDevAPI = {
     getFollowUpQueue: () => ipcRenderer.invoke('agent:getFollowUpQueue'),
     removeFollowUp: (index: number) => ipcRenderer.invoke('agent:removeFollowUp', index),
   },
+  // Phase 77 借鉴点 4：Voice Memo 式会话状态卡 API
+  session: {
+    getStatus: () => ipcRenderer.invoke('session:get-status'),
+  },
   on: (channel, callback) => {
     const channelMap = getChannelMap(channel);
     if (channelMap.has(callback)) return;
@@ -119,6 +129,12 @@ const api: RouteDevAPI = {
     };
     channelMap.set(callback, listener);
     ipcRenderer.on(channel, listener);
+  },
+  // Phase 77：运行回放与评分卡 API
+  trace: {
+    listSessions: (limit?: number) => ipcRenderer.invoke('trace:list-sessions', limit),
+    replay: (sessionId: string, step?: number) => ipcRenderer.invoke('trace:replay', sessionId, step),
+    scorecard: (sessionId: string) => ipcRenderer.invoke('trace:scorecard', sessionId),
   },
   off: (channel, callback) => {
     const channelMap = listenerMap.get(channel);

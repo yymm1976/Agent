@@ -15,7 +15,8 @@ import { Textarea } from '../ui/textarea.js';
 
 // 支持的命令列表（Phase 37：扩展为动态获取 + 静态兜底）
 // Phase 54：补全 /goal 命令
-const STATIC_COMMANDS = ['/clear', '/status', '/mcp', '/compact', '/compress', '/help', '/skill', '/skills', '/goal'];
+// Phase 77：补全 /replay /scorecard 命令
+const STATIC_COMMANDS = ['/clear', '/status', '/mcp', '/compact', '/compress', '/help', '/skill', '/skills', '/goal', '/replay', '/scorecard'];
 const COMMAND_DESCRIPTIONS: Record<string, string> = {
   '/clear': '清空对话',
   '/status': '查看状态',
@@ -26,6 +27,8 @@ const COMMAND_DESCRIPTIONS: Record<string, string> = {
   '/skill': 'Skill 管理',
   '/skills': 'Skill 列表',
   '/goal': '目标分解与执行（多 Agent 协作）',
+  '/replay': '运行回放（查看历史会话时间线）',
+  '/scorecard': '评分卡（查看会话质量评估）',
 };
 
 // 自主度模式标签

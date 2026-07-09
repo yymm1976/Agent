@@ -396,6 +396,45 @@ ipcMain.handle('plan:check-omissions', async (_event, goalId: string) => {
   }
 });
 
+// ============================================================
+// Phase 77 借鉴点 7：冷启动恢复 IPC——goal:list-resumable / goal:resume / goal:discard
+// 数据流：renderer → IPC → engine-bridge.{listResumableGoals,resumeGoal,discardGoal}
+// ============================================================
+
+// 列出可恢复 goal（驱动 UI 提示条）
+ipcMain.handle('goal:list-resumable', async (): Promise<import('../shared/ipc-types.js').ResumableGoalIpcInfo[]> => {
+  try {
+    return (await engine?.listResumableGoals?.()) ?? [];
+  } catch {
+    // fail-open：任何异常返回空数组，不阻塞 UI
+    return [];
+  }
+});
+
+// 恢复指定 goal 的执行
+ipcMain.handle('goal:resume', async (_event, goalId: string): Promise<{ success: boolean; error?: string }> => {
+  if (!goalId || typeof goalId !== 'string' || goalId.length > 256) {
+    return { success: false, error: '无效的 goalId' };
+  }
+  try {
+    return (await engine?.resumeGoal?.(goalId)) ?? { success: false, error: '引擎未初始化' };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+// 放弃（归档）指定 goal
+ipcMain.handle('goal:discard', async (_event, goalId: string): Promise<{ success: boolean; error?: string }> => {
+  if (!goalId || typeof goalId !== 'string' || goalId.length > 256) {
+    return { success: false, error: '无效的 goalId' };
+  }
+  try {
+    return (await engine?.discardGoal?.(goalId)) ?? { success: false, error: '引擎未初始化' };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
 // 聊天：停止当前生成（中止进行中的 LLM 请求与 Agent Loop）
 ipcMain.on('chat:stop', () => {
   engine?.stopGeneration();
@@ -855,4 +894,53 @@ ipcMain.handle('agent:removeFollowUp', async (_event, index: number): Promise<bo
   }
   if (!engine) return false;
   return engine.removeFollowUp(index);
+});
+
+// ============================================================
+// Phase 77：运行回放与评分卡 IPC handler
+// 数据流：renderer → IPC trace:* → engine-bridge → TraceCollector / TraceReplayer / scorecard
+// ============================================================
+
+// 列出磁盘上的 Trace 会话（按 startTime 倒序）
+ipcMain.handle('trace:list-sessions', async (_event, limit?: number) => {
+  if (!engine) return [];
+  return engine.listTraceSessions(limit);
+});
+
+// 回放指定会话，返回时间线事件；传入 step 时仅返回该步骤段落
+ipcMain.handle('trace:replay', async (_event, sessionId: string, step?: number) => {
+  if (typeof sessionId !== 'string' || sessionId.length === 0) return [];
+  if (!engine) return [];
+  return engine.replayTrace(sessionId, step);
+});
+
+// 生成指定会话的评分卡
+ipcMain.handle('trace:scorecard', async (_event, sessionId: string) => {
+  if (typeof sessionId !== 'string' || sessionId.length === 0) return null;
+  if (!engine) return null;
+  return engine.generateTraceScorecard(sessionId);
+});
+
+// ============================================================
+// Phase 77 借鉴点 4：Voice Memo 式会话状态卡 IPC handler
+// 数据流：renderer → IPC session:get-status → engine-bridge.getSessionStatus → aggregateSessionStatus
+// fail-open：engine 未初始化时返回 idle 状态
+// ============================================================
+
+ipcMain.handle('session:get-status', async (): Promise<import('../shared/ipc-types.js').SessionStatus> => {
+  if (!engine) {
+    return {
+      title: '',
+      status: 'idle',
+      summary: '引擎未初始化',
+      knownFacts: [],
+      openQuestions: [],
+      todos: [],
+      nextAction: null,
+      tokenUsed: 0,
+      tokenBudget: 0,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  return engine.getSessionStatus();
 });
