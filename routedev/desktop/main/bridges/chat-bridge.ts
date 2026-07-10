@@ -35,6 +35,9 @@ export class ChatBridge {
   constructor(private ctx: EngineContext) {}
 
   async sendChat(text: string): Promise<void> {
+    // G-004 修复：每次 sendChat 生成唯一 requestId，用于隔离 abortController 和 pendingConfirm，
+    // 避免并发 sendChat 互相覆盖导致中断错乱和工具确认张冠李戴
+    const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const { deps, classifier, modelRouter, tracker, clientManager, options, config } = this.ctx;
     if (!deps || !classifier || !modelRouter || !tracker || !clientManager) {
       // F-014 修复：引擎未就绪时补发 done 事件，避免渲染层永久 loading
@@ -123,7 +126,8 @@ export class ChatBridge {
         }
       }
 
-      this.ctx.abortController = new AbortController();
+      // G-004：按 requestId 绑定中断控制器到 Map，避免并发覆盖
+      this.ctx.setAbortController(requestId, new AbortController());
       let finalUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
       // Phase 37：Skill 路由——根据用户消息匹配已启用的 Skill，将内容追加到 systemPrompt
@@ -150,7 +154,8 @@ export class ChatBridge {
           availableTools: deps.registry.list().map(t => t.definition.name).join(', '),
           cwd: options.cwd,
         })) + skillPromptSuffix,
-        signal: this.ctx.abortController.signal,
+        // G-004：从 Map 取该 requestId 对应的 signal，避免读到其他并发请求的 controller
+        signal: this.ctx.getAbortController(requestId)?.signal,
         onConfirmTool: async (toolName, args) => {
           // 根据当前自主度模式决定是否需要用户确认
           // auto（全自动）：所有工具调用直接批准，不弹确认框
@@ -162,11 +167,11 @@ export class ChatBridge {
             // TD-09：auto 模式下高风险工具仍需用户确认
             // 防止 LLM 在无监督下执行 shell_exec/git_op/file_write/spawn_agent 等危险操作
             if (AUTO_MODE_CONFIRM_TOOLS.has(toolName)) {
-              return this.requestUserConfirmation(toolName, args);
+              return this.requestUserConfirmation(requestId, toolName, args);
             }
             return true;
           }
-          return this.requestUserConfirmation(toolName, args);
+          return this.requestUserConfirmation(requestId, toolName, args);
         },
       })) {
         switch (event.type) {
@@ -260,7 +265,8 @@ export class ChatBridge {
       });
       options.onStream({ type: 'done' });
     } finally {
-      this.ctx.abortController = null;
+      // G-004：清除该 requestId 对应的中断控制器（已完成或出错，不再需要中断）
+      this.ctx.clearAbortController(requestId);
 
       // Phase 34：任务结束时记录 trajectory 级过程评测汇总
       // 与 chat-runner.ts finally 块对齐，确保删除 chat-runner 后 desktop 不丢失可观测性
@@ -308,27 +314,41 @@ export class ChatBridge {
   /**
    * TD-09：请求用户确认工具调用
    *
-   * 通过 onToolConfirmRequest 回调把确认请求推送到渲染进程，
-   * 同时把 resolver 存入 pendingConfirmRef，等待 resolveToolConfirm 在
-   * IPC chat:confirm-tool 触发时 resolve。
+   * G-004 修复：通过 requestId 在 pendingConfirms Map 中隔离不同并发请求的确认 entry，
+   * 避免并发 sendChat 的工具确认张冠李戴。
+   *
+   * 通过 onToolConfirmRequest 回调把确认请求（含 requestId）推送到渲染进程，
+   * 同时把 resolver 存入 pendingConfirms Map，等待 resolveToolConfirm 在
+   * IPC chat:confirm-tool 触发时按 requestId 精准 resolve。
    *
    * 抽取为独立方法供 onConfirmTool 在 auto/semi 两条路径复用，
    * 避免重复内联 Promise 逻辑。
    */
   private requestUserConfirmation(
+    requestId: string,
     toolName: string,
     args: Record<string, unknown>,
   ): Promise<boolean | { approved: boolean; payload?: unknown }> {
     return new Promise((resolve) => {
-      this.ctx.pendingConfirmRef.current = { resolve, toolName };
-      this.ctx.options.onToolConfirmRequest(toolName, args);
+      // G-004：按 requestId 存入 Map，避免并发覆盖
+      this.ctx.setPendingConfirm(requestId, { resolve, toolName });
+      // G-004：回调携带 requestId，前端在 confirm-tool 回传中带上以实现精准 resolve
+      this.ctx.options.onToolConfirmRequest(requestId, toolName, args);
     });
   }
 
-  resolveToolConfirm(approved: boolean, payload?: unknown): void {
-    if (this.ctx.pendingConfirmRef.current) {
-      this.ctx.pendingConfirmRef.current.resolve({ approved, payload });
-      this.ctx.pendingConfirmRef.current = null;
+  /**
+   * 解析工具确认（供 IPC chat:confirm-tool 调用）
+   * G-004 修复：按 requestId 从 Map 中精准取 entry，避免张冠李戴
+   * @param requestId 关联的聊天请求 ID
+   * @param approved 用户是否批准
+   * @param payload 附加载荷（如 ask_user 的回答内容）
+   */
+  resolveToolConfirm(requestId: string, approved: boolean, payload?: unknown): void {
+    const entry = this.ctx.getPendingConfirm(requestId);
+    if (entry) {
+      entry.resolve({ approved, payload });
+      this.ctx.clearPendingConfirm(requestId);
     }
   }
 
@@ -348,12 +368,29 @@ export class ChatBridge {
   /**
    * 停止当前生成（供 IPC chat:stop 调用）
    * 中止进行中的 LLM 请求与 Agent Loop 迭代
+   *
+   * G-004 修复：支持按 requestId 精准中断指定请求；
+   * 未传入 requestId 时中断全部并发请求（向后兼容）。
+   *
    * Phase 54 修复：同时 abort 共享的 abortControllerRef，让 GoalRunner 步骤循环检测到 aborted 后中止
    * F4.10 修复：abort 时主动清理 pendingPlanEditResolvers，避免用户中断 /goal 时残留 resolver 导致线程泄漏
+   *
+   * @param requestId 可选，指定要中断的聊天请求 ID；不传则中断全部
    */
-  stopGeneration(): void {
-    this.ctx.abortController?.abort();
-    this.ctx.abortController = null;
+  stopGeneration(requestId?: string): void {
+    if (requestId) {
+      // G-004：精准中断指定 requestId
+      const controller = this.ctx.getAbortController(requestId);
+      if (controller) {
+        try { controller.abort(); } catch { /* 忽略 abort 异常 */ }
+        this.ctx.clearAbortController(requestId);
+      }
+    } else {
+      // G-004：无 requestId 时中断全部并发请求（向后兼容）
+      this.ctx.clearAllAbortControllers();
+      this.ctx.clearAllPendingConfirms();
+    }
+    // 同时 abort GoalRunner 的共享 ref，让 GoalRunner 步骤循环检测到 aborted 后中止
     this.ctx.abortControllerRef.current?.abort();
     this.ctx.abortControllerRef.current = null;
     // F4.10：清理挂起的 plan edit resolvers，resolve([]) 与超时行为一致（取消编辑，保留原计划）

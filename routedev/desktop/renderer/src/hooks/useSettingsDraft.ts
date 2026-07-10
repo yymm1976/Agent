@@ -5,13 +5,13 @@
 import { useState, useEffect, useRef } from 'react';
 import type {
   AppConfig, ProviderConfig, ModelConfig, RouterRule, SecurityConfig,
-  MCPServerEntryConfig, ChannelType,
+  MCPServerEntryConfig,
   PermissionProfile, FilesystemPermissionRule, ExecutionConfig,
   ApprovalLevel, ToolCategory,
-} from '../../../../src/config/schema.js';
+} from '../../../shared/config-types.js';
 import {
   constructMcpServer, mcpServerToForm, EMPTY_MCP_FORM,
-  constructChannelEntry, constructChannelOptions, deepClone,
+  deepClone,
   EMPTY_PROVIDER, EMPTY_MODEL, EMPTY_RULE, SEARCH_ENGINES,
   type AgentProfileUI, type McpFormState,
 } from '../pages/settings-helpers.js';
@@ -56,17 +56,6 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
   // 子 Agent Profile state
   const [agentProfiles, setAgentProfiles] = useState<AgentProfileUI[]>([]);
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
-  // 渠道添加表单
-  const [showAddChannel, setShowAddChannel] = useState(false);
-  const [newChannel, setNewChannel] = useState({ id: '', type: 'wechat-work' as ChannelType });
-  // 渠道凭据值（按字段 key 存储）
-  const [channelCreds, setChannelCreds] = useState<Record<string, string>>({});
-  // 渠道凭据显示/隐藏状态（按 字段key 存储）
-  const [showChannelCreds, setShowChannelCreds] = useState<Record<string, boolean>>({});
-  // Webhook authToken 显示/隐藏切换
-  const [showChannelAuthToken, setShowChannelAuthToken] = useState(false);
-  // 渠道编辑：null=无编辑，number=编辑指定 index 的 options
-  const [editingChannelIdx, setEditingChannelIdx] = useState<number | null>(null);
   // 模型编辑模态：null=关闭，{pIdx, mIdx?, model}=打开（mIdx 不存在=新增，存在=编辑）
   const [modelEditor, setModelEditor] = useState<{ pIdx: number; mIdx?: number; model: ModelConfig } | null>(null);
 
@@ -427,36 +416,6 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
     setMcpEditingId(draft.mcp.servers[index].id);
   };
 
-  // --- 渠道配置 ---
-  const updateChannels = (patch: Partial<AppConfig['channels']>) => {
-    if (!draft) return;
-    updateDraft({ channels: { ...draft.channels, ...patch } });
-  };
-  const removeChannel = (index: number) => {
-    if (!draft) return;
-    updateChannels({ entries: draft.channels.entries.filter((_, i) => i !== index) });
-  };
-  // 添加渠道：使用 channelCreds 中的值构造 options
-  const addChannel = () => {
-    if (!draft) return;
-    const entry = constructChannelEntry(newChannel.id, newChannel.type, channelCreds);
-    updateChannels({ entries: [...draft.channels.entries, entry] });
-    setNewChannel({ id: '', type: 'wechat-work' });
-    setChannelCreds({});
-    setShowAddChannel(false);
-  };
-  // 保存渠道 options 编辑
-  const saveChannelOptions = (index: number) => {
-    if (!draft) return;
-    const entries = [...draft.channels.entries];
-    const entry = entries[index];
-    const options = constructChannelOptions(entry.type, channelCreds);
-    entries[index] = { ...entry, options };
-    updateChannels({ entries });
-    setEditingChannelIdx(null);
-    setChannelCreds({});
-  };
-
   // --- 通用配置 ---
   const updateGeneral = (patch: Partial<AppConfig['general']>) => {
     if (!draft) return;
@@ -473,12 +432,6 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
   const updateUi = (patch: Partial<AppConfig['ui']>) => {
     if (!draft) return;
     updateDraft({ ui: { ...draft.ui, ...patch } });
-  };
-
-  // --- 提示音配置 ---
-  const updateSounds = (patch: Partial<AppConfig['sounds']>) => {
-    if (!draft) return;
-    updateDraft({ sounds: { ...draft.sounds, ...patch } });
   };
 
   // --- Phase 40：渐进式信任配置 ---
@@ -570,19 +523,6 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
     setAgentProfiles,
     expandedAgentId,
     setExpandedAgentId,
-    // 渠道表单
-    showAddChannel,
-    setShowAddChannel,
-    newChannel,
-    setNewChannel,
-    channelCreds,
-    setChannelCreds,
-    showChannelCreds,
-    setShowChannelCreds,
-    showChannelAuthToken,
-    setShowChannelAuthToken,
-    editingChannelIdx,
-    setEditingChannelIdx,
     // 更新函数
     updateDraft,
     updateProvider,
@@ -632,17 +572,8 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
     submitMcpForm,
     openAddMcp,
     openEditMcp,
-    updateChannels,
-    removeChannel,
-    addChannel,
-    saveChannelOptions,
-    updateGeneral,
-    updateBackgroundBehavior,
-    updateUi,
-    updateSounds,
-    updateTrust,
-    updateQuality,
-    updateExpertise,
+    updateGeneral, updateBackgroundBehavior, updateUi,
+    updateTrust, updateQuality, updateExpertise,
     updateSubAgents,
     updateSubAgentsGateRules,
     toggleApiKey,

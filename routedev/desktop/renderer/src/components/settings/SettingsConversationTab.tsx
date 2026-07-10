@@ -1,7 +1,7 @@
 // desktop/renderer/src/components/settings/SettingsConversationTab.tsx
 // Phase 44：对话消息树持久化设置
 
-import type { AppConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig } from '../../../../shared/config-types.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';

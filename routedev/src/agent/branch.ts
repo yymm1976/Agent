@@ -543,6 +543,68 @@ export class BranchManager {
     this.historyNodeIds = [];
   }
 
+  // G-023: 暴露受控公开 API，替代 branch-operations.ts 的私有字段访问
+
+  /** 获取所有节点的 Map 只读视图 */
+  getAllNodes(): ReadonlyMap<string, BranchNode> {
+    return this.nodes;
+  }
+
+  /** 获取所有分支的 Map 只读视图 */
+  getAllBranches(): ReadonlyMap<string, BranchInfo> {
+    return this.branches;
+  }
+
+  /** 获取当前活跃分支 key */
+  getActiveBranchKey(): string | null {
+    return this.activeBranchKey;
+  }
+
+  /** 获取历史节点 ID 列表（只读视图） */
+  getHistoryNodeIds(): readonly string[] {
+    return this.historyNodeIds;
+  }
+
+  /** 设置/更新节点（供 BranchOperations 受控写入） */
+  setNode(id: string, node: BranchNode): void {
+    this.nodes.set(id, node);
+  }
+
+  /** 删除节点（供 BranchOperations 受控写入） */
+  deleteNode(id: string): void {
+    this.nodes.delete(id);
+  }
+
+  /** 清空所有节点（供 BranchOperations restore 使用） */
+  clearNodes(): void {
+    this.nodes.clear();
+  }
+
+  /** 设置/更新分支信息（供 BranchOperations 受控写入） */
+  setBranch(id: string, branch: BranchInfo): void {
+    this.branches.set(id, branch);
+  }
+
+  /** 清空所有分支（供 BranchOperations restore 使用） */
+  clearBranches(): void {
+    this.branches.clear();
+  }
+
+  /** 设置当前活跃分支 ID（供 BranchOperations 受控写入） */
+  setActiveBranchId(id: string | null): void {
+    this.activeBranchId = id;
+  }
+
+  /** 设置当前活跃分支 key（供 BranchOperations 受控写入） */
+  setActiveBranchKey(key: string | null): void {
+    this.activeBranchKey = key;
+  }
+
+  /** 设置历史节点 ID 列表（供 BranchOperations 受控写入） */
+  setHistoryNodeIds(ids: string[]): void {
+    this.historyNodeIds = ids;
+  }
+
   /** P6：淘汰早期非活跃节点（保留活跃分支路径上的节点） */
   private evictOldNodes(): void {
     // 收集活跃分支路径上的所有节点 ID（不可淘汰）
@@ -589,7 +651,7 @@ export class BranchManager {
     }
   }
 
-  private generateId(): string {
+  generateId(): string {
     return crypto.randomUUID().slice(0, 8);
   }
 

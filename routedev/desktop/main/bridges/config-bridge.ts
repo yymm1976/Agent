@@ -3,7 +3,7 @@
 // 原 RouteDevEngine.getConfig / updateConfig / handleTestConnection 委托至此。
 // 注意：reloadConfig 与 initialize/setCwd/destroy 属于引擎生命周期管理，仍保留在 RouteDevEngine 中。
 
-import type { AppConfig } from '../../../src/config/schema.js';
+import type { AppConfig } from '../../shared/config-types.js';
 import { createLLMClient } from '../../../src/router/llm/index.js';
 // G-006 修复：test_connection 增加 SSRF 防护
 import { checkSSRF } from '../../../src/tools/security-enhanced.js';

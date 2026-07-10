@@ -2,7 +2,7 @@
 // Phase 51 Task 2/3/4：委托四维约束 + 三态策略配置
 // 控制子 Agent 委托深度/并行、专家可用性、工具调用守卫、会话隔离等。
 
-import type { AppConfig, DelegationPolicyConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig, DelegationPolicyConfig } from '../../../../shared/config-types.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';

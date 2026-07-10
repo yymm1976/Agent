@@ -3,7 +3,7 @@
 // 从 SettingsPage.tsx 迁移
 
 import { Map as MapIcon, Sparkles } from 'lucide-react';
-import type { AppConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig } from '../../../../shared/config-types.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Input } from '../ui/input.js';
 import { Label } from '../ui/label.js';

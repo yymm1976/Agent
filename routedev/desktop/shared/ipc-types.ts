@@ -1,7 +1,7 @@
 // desktop/shared/ipc-types.ts
 // 主进程与渲染进程共享的 IPC 类型定义
 
-import type { AppConfig } from '../../src/config/schema.js';
+import type { AppConfig } from './config-types.js';
 import type { TokenProfileSnapshot } from '../../src/agent/token-profiler.js';
 import type { TraceSpan } from '../../src/harness/trace-types.js';
 // Phase 54：GoalEvent 类型从 src/agent/goal-types.ts re-import（避免 src/ 反向引用 desktop/ 触发 rootDir 错误）
@@ -54,6 +54,8 @@ export interface ToolExecutePayload {
 }
 
 export interface ToolConfirmPayload {
+  /** G-004 修复：关联的聊天请求 ID，用于精准 resolve 工具确认 */
+  requestId: string;
   approved: boolean;
   payload?: unknown;
 }
@@ -475,7 +477,7 @@ export type FollowUpMode = 'all' | 'one-at-a-time';
 
 export type MainToRendererEvent =
   | { channel: 'chat:stream'; payload: ChatStreamPayload }
-  | { channel: 'chat:tool-confirm-request'; payload: { toolName: string; params: Record<string, unknown> } }
+  | { channel: 'chat:tool-confirm-request'; payload: { requestId: string; toolName: string; params: Record<string, unknown> } }
   | { channel: 'token:profile'; payload: TokenProfileSnapshot }
   | { channel: 'trace:event'; payload: TraceSpan }
   | { channel: 'config:reloaded'; payload: AppConfig }
@@ -488,8 +490,8 @@ export interface RouteDevAPI {
   chat: {
     send: (payload: ChatSendPayload) => void;
     confirmTool: (payload: ToolConfirmPayload) => void;
-    /** 停止当前生成（中止进行中的 LLM 请求与 Agent Loop） */
-    stop: () => void;
+    /** 停止当前生成（中止进行中的 LLM 请求与 Agent Loop）；G-004：可选 requestId 精准中断 */
+    stop: (requestId?: string) => void;
     syncHistory: (messages: ChatHistoryMessage[]) => void;
     /** 使用杂活模型生成对话标题（首条消息后调用），返回标题字符串或 null */
     generateTitle: (userMessage: string, assistantReply?: string) => Promise<string | null>;

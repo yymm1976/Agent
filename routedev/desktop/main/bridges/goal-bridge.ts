@@ -4,7 +4,7 @@
 // checkOmissions 及 isGoalProgressText 辅助函数委托至此。
 // executeGoalCommand 在原实现中为 private，此处提升为 public 以便 ChatBridge.executeCommand 跨 bridge 调用。
 
-import type { AppConfig } from '../../../src/config/schema.js';
+import type { AppConfig } from '../../shared/config-types.js';
 import { createGoalRunner } from '../../../src/runtime/goal-runner.js';
 import type { GoalPlan, PlanStep } from '../../../src/agent/goal-types.js';
 // Phase 77：冷启动恢复——GoalRecoveryManager + IPC 数据类型
@@ -12,7 +12,7 @@ import { GoalRecoveryManager } from '../../../src/runtime/goal-recovery.js';
 import type { ResumableGoalIpcInfo, PlanEditRequestPayload } from '../../shared/ipc-types.js';
 // F-021/F-015 修复：plan edit 超时清理使用 logger 持久化警告
 import { logger } from '../../../src/utils/logger.js';
-import type { EngineContext } from './engine-context.js';
+import type { EngineContext, PendingConfirmEntry } from './engine-context.js';
 
 /**
  * Phase 54：判断是否为 goal-runner 输出的进度文本（已被 GoalExecutionCard 取代）
@@ -38,11 +38,47 @@ function isGoalProgressText(content: string): boolean {
  * Goal 领域桥接器
  *
  * 持有 EngineContext 引用，复用 ctx.classifier/modelRouter/clientManager/tracker/deps 构造 GoalRunner。
- * 与 sendChat 共享 pendingConfirmRef / abortControllerRef / conversationHistory，确保 stopGeneration
- * 可同时中止 sendChat 与 GoalRunner。
+ * G-004 修复：GoalRunner 通过适配器 ref 访问 EngineContext 的 pendingConfirms Map（以 goalId 为 requestId），
+ * 与 sendChat 共享 abortControllerRef / conversationHistory，确保 stopGeneration 可同时中止 sendChat 与 GoalRunner。
  */
 export class GoalBridge {
   constructor(private ctx: EngineContext) {}
+
+  /**
+   * G-004 修复：创建 pendingConfirmRef 适配器
+   * GoalRunner 期望 { current: PendingConfirmEntry | null } 接口，
+   * 此适配器通过 getter/setter 代理到 EngineContext 的 pendingConfirms Map（以 goalId 为 requestId），
+   * 使 GoalRunner 的工具确认也能享受 requestId 隔离。
+   */
+  private createPendingConfirmRef(goalId: string): { current: PendingConfirmEntry | null } {
+    const ctx = this.ctx;
+    return {
+      get current(): PendingConfirmEntry | null {
+        return ctx.getPendingConfirm(goalId) ?? null;
+      },
+      set current(v: PendingConfirmEntry | null) {
+        if (v === null) {
+          ctx.clearPendingConfirm(goalId);
+        } else {
+          ctx.setPendingConfirm(goalId, v);
+        }
+      },
+    };
+  }
+
+  /**
+   * G-004 修复：创建 onToolConfirmRequest 适配器
+   * GoalRunner 期望 (toolName, params) 签名，此处包装为 (requestId=goalId, toolName, params)，
+   * 使前端 confirm-tool 回传的 requestId 能匹配到 GoalRunner 的 pendingConfirm entry。
+   */
+  private createOnToolConfirmRequest(
+    goalId: string,
+    original: (requestId: string, toolName: string, params: Record<string, unknown>) => void,
+  ): (toolName: string, params: Record<string, unknown>) => void {
+    return (toolName: string, params: Record<string, unknown>) => {
+      original(goalId, toolName, params);
+    };
+  }
 
   /**
    * Phase 54：执行 /goal 命令
@@ -80,7 +116,8 @@ export class GoalBridge {
         config,
         systemPromptRef: deps.sharedSystemPromptRef,
         conversationHistoryRef: { current: this.ctx.conversationHistory },
-        pendingConfirmRef: this.ctx.pendingConfirmRef,
+        // G-004：用适配器 ref 代理到 pendingConfirms Map（以 goalId 为 requestId）
+        pendingConfirmRef: this.createPendingConfirmRef(goalId),
         // Phase 54 修复：用共享 abortControllerRef，stopGeneration 可中止 GoalRunner
         abortControllerRef: this.ctx.abortControllerRef,
         currentPlanRef: { current: null },
@@ -90,8 +127,8 @@ export class GoalBridge {
           if (isGoalProgressText(content)) return;
           options.onStream({ type: 'text_delta', chunk: content + '\n' });
         },
-        // Phase 54：工具确认/用户提问触发器（复用 sendChat 的 onToolConfirmRequest）
-        onToolConfirmRequest: options.onToolConfirmRequest,
+        // G-004：包装 onToolConfirmRequest，以 goalId 为 requestId 传给前端
+        onToolConfirmRequest: this.createOnToolConfirmRequest(goalId, options.onToolConfirmRequest),
         // Phase 54：计划编辑——发送 IPC 到渲染层 StepEditor，等待用户确认/取消
         // semi/manual 模式触发；auto 模式 goal-runner 已在上层跳过此调用
         requestPlanEdit: this.buildRequestPlanEdit(),
@@ -234,14 +271,16 @@ export class GoalBridge {
         config,
         systemPromptRef: deps.sharedSystemPromptRef,
         conversationHistoryRef: { current: this.ctx.conversationHistory },
-        pendingConfirmRef: this.ctx.pendingConfirmRef,
+        // G-004：用适配器 ref 代理到 pendingConfirms Map（以 goalId 为 requestId）
+        pendingConfirmRef: this.createPendingConfirmRef(goalId),
         abortControllerRef: this.ctx.abortControllerRef,
         currentPlanRef: { current: null },
         addSystemMessage: (content: string) => {
           if (isGoalProgressText(content)) return;
           options.onStream({ type: 'text_delta', chunk: content + '\n' });
         },
-        onToolConfirmRequest: options.onToolConfirmRequest,
+        // G-004：包装 onToolConfirmRequest，以 goalId 为 requestId 传给前端
+        onToolConfirmRequest: this.createOnToolConfirmRequest(goalId, options.onToolConfirmRequest),
         requestPlanEdit: async (plan: GoalPlan): Promise<PlanStep[] | null> => {
           if (!options.onPlanEditRequest) return plan.steps;
           // 简化：resume 不再触发 UI 编辑，直接返回原计划

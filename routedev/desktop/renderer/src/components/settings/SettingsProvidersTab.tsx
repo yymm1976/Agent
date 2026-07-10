@@ -4,7 +4,7 @@
 
 import type { Dispatch, SetStateAction } from 'react';
 import { Server, Plus, Trash2, Eye, EyeOff, Zap, Brain, Gauge, Lightbulb } from 'lucide-react';
-import type { AppConfig, ModelConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig, ModelConfig } from '../../../../shared/config-types.js';
 import { Button } from '../ui/button.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Input } from '../ui/input.js';

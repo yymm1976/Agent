@@ -300,20 +300,16 @@ export interface SpawnAgentParams {
   /** 是否使用独立上下文，默认 true */
   isolated?: boolean;
   /**
-   * 指定 subagent 使用的模型 ID。省略则使用 AgentProfile.modelId（继承）。
-   *
-   * Phase 75-A3：强制 dispatch 时写明 model，避免静默继承最贵模型
-   * （借鉴 Superpowers v6：一次 26 个 reviewer 全跑顶配的惨痛教训）。
-   *
-   * 当前为过渡期：字段可选，未传时回退到 AgentProfile.modelId。
-   * Phase 75-A3 第二阶段计划强制必填，届时未传将 throw。
+   * 指定 subagent 使用的模型 ID。必填，强制 dispatch 时写明 model，
+   * 避免静默继承最贵模型（借鉴 Superpowers v6：一次 26 个 reviewer 全跑顶配的惨痛教训）。
    *
    * 取值语义：
-   *   - 省略 / undefined：继承 AgentProfile.modelId（向后兼容）
-   *   - 'inherit'：明确选择继承 AgentProfile.modelId（过渡期推荐写法）
+   *   - 'inherit'：明确选择继承 AgentProfile.modelId（推荐写法）
    *   - 其他字符串：指定具体的 model id（如 'gpt-4o-mini'）
+   *
+   * Phase 75-A3 第二阶段已落地：字段强制必填，未传将由 Zod schema 拒绝工具调用。
    */
-  model?: string;
+  model: string;
 }
 
 /**
@@ -476,7 +472,7 @@ export function wrapSpawnAgentWithDelegation(
 
   return async (params, options) => {
     const normalizedParams: SpawnAgentParams = typeof params === 'string'
-      ? { description: params, prompt: params }
+      ? { description: params, prompt: params, model: 'inherit' }
       : params;
     const subagentType: SubagentType = normalizedParams.subagentType ?? 'general';
     const role = subagentTypeToPackerRole(subagentType);
@@ -843,10 +839,10 @@ export class SpawnAgentTool implements ITool {
         },
         model: {
           type: 'string',
-          description: '指定 subagent 使用的模型 ID（Phase 75-A3）。省略=继承 AgentProfile.modelId；传 "inherit"=明确继承；传具体 model id（如 "gpt-4o-mini"）=使用该模型。建议显式写明以避免静默继承最贵模型。',
+          description: '必填。指定 subagent 使用的模型 ID（Phase 75-A3）。传 "inherit"=继承 AgentProfile.modelId；传具体 model id（如 "gpt-4o-mini"）=使用该模型。强制必填以避免静默继承最贵模型。',
         },
       },
-      required: ['description', 'prompt'],
+      required: ['description', 'prompt', 'model'],
     },
     requiresApproval: true,
     category: 'system',
@@ -894,8 +890,10 @@ export class SpawnAgentTool implements ITool {
     if (args.isolated !== undefined && typeof args.isolated !== 'boolean') {
       errors.push('isolated 必须是布尔值');
     }
-    // Phase 75-A3：model 字段校验（可选，字符串）
-    if (args.model !== undefined && typeof args.model !== 'string') {
+    // Phase 75-A3：model 字段校验（必填，字符串）
+    if (args.model === undefined) {
+      errors.push('缺少必需参数: model（必须显式指定 model id 或 "inherit"）');
+    } else if (typeof args.model !== 'string') {
       errors.push('model 必须是字符串（model id 或 "inherit"）');
     }
     return { valid: errors.length === 0, errors };
@@ -917,6 +915,8 @@ export class SpawnAgentTool implements ITool {
     const params: SpawnAgentParams = {
       description,
       prompt,
+      // Phase 75-A3：model 必填，schema 已强制校验，未传会在 validateArgs 被拒绝
+      model: args.model as string,
     };
     if (args.subagentType !== undefined) {
       params.subagentType = args.subagentType as SubagentType;
@@ -926,10 +926,6 @@ export class SpawnAgentTool implements ITool {
     }
     if (args.isolated !== undefined) {
       params.isolated = args.isolated as boolean;
-    }
-    // Phase 75-A3：透传 model 字段（可选，未传时由 createSpawnAgentFn 回退到 AgentProfile.modelId）
-    if (args.model !== undefined) {
-      params.model = args.model as string;
     }
 
     // 兼容旧 options.systemPrompt（保留透传，由 app-init.ts 处理）

@@ -5,8 +5,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { stringify as stringifyYaml } from 'yaml';
-import type { AppConfig } from '../../src/config/schema.js';
-import { AppConfigSchema } from '../../src/config/schema.js';
+import type { AppConfig } from '../shared/config-types.js';
+import { AppConfigSchema } from '../shared/config-types.js';
 import { getGlobalConfigPath } from '../../src/utils/paths.js';
 
 /**

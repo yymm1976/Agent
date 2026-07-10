@@ -11,7 +11,7 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { UploadCloud, FolderOpen, History } from 'lucide-react';
 import type { ChatMessage, PendingConfirm } from '../hooks/useRouteDev.js';
-import type { AppConfig, AutonomyMode } from '../../../../src/config/schema.js';
+import type { AppConfig, AutonomyMode } from '../../../shared/config-types.js';
 import type { TokenProfileSnapshot } from '../../../../src/agent/token-profiler.js';
 import type { ConfigSaveResult, FollowUpItem, FollowUpMode, SessionStatus } from '../../../shared/ipc-types.js';
 import { NeuralNetworkBackground } from '../components/NeuralNetworkBackground.js';

@@ -1,10 +1,10 @@
 // desktop/renderer/src/components/settings/SettingsMiscTabs.tsx
-// Phase 74-G：4 个小块 Tab 合并文件（sounds / expertise / about / market）
+// Phase 74-G：3 个小块 Tab 合并文件（expertise / about / market）
 // 从 SettingsPage.tsx 迁移，保留原逻辑与 UI
 
 import { useState } from 'react';
 import { Server, Sparkles, ShoppingBag } from 'lucide-react';
-import type { AppConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig } from '../../../../shared/config-types.js';
 import { getAppVersion } from '../../pages/settings-helpers.js';
 import { Button } from '../ui/button.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
@@ -18,75 +18,7 @@ import { Switch } from '../ui/switch.js';
 const APP_VERSION = getAppVersion();
 
 // ============================================================================
-// 1. 提示音 Tab
-// ============================================================================
-
-interface SettingsSoundsTabProps {
-  /** 当前配置草稿 */
-  draft: AppConfig;
-  /** 更新 sounds 字段 */
-  updateSounds: (patch: Partial<AppConfig['sounds']>) => void;
-}
-
-/**
- * 提示音 Tab
- * 包含：启用开关、完成/错误/审批三种事件音效配置
- */
-export function SettingsSoundsTab({ draft, updateSounds }: SettingsSoundsTabProps) {
-  return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
-      <Card>
-        <CardHeader>
-          <CardTitle>提示音</CardTitle>
-          <CardDescription>为完成、错误与审批事件配置音效</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="sounds-enabled">启用提示音</Label>
-              <p className="text-xs text-rd-textMuted">为关键事件播放音效，关闭后所有事件静默。</p>
-            </div>
-            <Switch
-              id="sounds-enabled"
-              checked={draft.sounds.enabled}
-              onCheckedChange={(checked) => updateSounds({ enabled: checked })}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="sounds-completion">完成提示音</Label>
-            <Input
-              id="sounds-completion"
-              value={draft.sounds.completion}
-              onChange={(e) => updateSounds({ completion: e.target.value })}
-            />
-            <p className="text-xs text-rd-textMuted">Agent 完成任务时播放的音效名称。</p>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="sounds-error">错误提示音</Label>
-            <Input
-              id="sounds-error"
-              value={draft.sounds.error}
-              onChange={(e) => updateSounds({ error: e.target.value })}
-            />
-            <p className="text-xs text-rd-textMuted">Agent 执行出错时播放的音效名称。</p>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="sounds-approval">审批提示音</Label>
-            <Input
-              id="sounds-approval"
-              value={draft.sounds.approval}
-              onChange={(e) => updateSounds({ approval: e.target.value })}
-            />
-            <p className="text-xs text-rd-textMuted">需要用户审批确认时播放的音效名称。</p>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ============================================================================
-// 2. 用户体验 Tab
+// 1. 用户体验 Tab
 // ============================================================================
 
 interface SettingsExpertiseTabProps {
@@ -199,7 +131,7 @@ export function SettingsExpertiseTab({ draft, updateExpertise }: SettingsExperti
 }
 
 // ============================================================================
-// 3. 关于 Tab
+// 2. 关于 Tab
 // ============================================================================
 
 /**
@@ -258,7 +190,7 @@ export function SettingsAboutTab() {
 }
 
 // ============================================================================
-// 4. 市场 Tab
+// 3. 市场 Tab
 // ============================================================================
 
 interface SettingsMarketTabProps {

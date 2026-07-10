@@ -17,8 +17,8 @@ import { Badge } from './ui/badge.js';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert.js';
 import { Separator } from './ui/separator.js';
 // AppConfigSchema.parse 是纯函数（zod 校验 + 默认值填充），无 Node 依赖，可在 renderer 安全调用
-import { AppConfigSchema } from '../../../../src/config/schema.js';
-import type { AppConfig, ProviderConfig } from '../../../../src/config/schema.js';
+import { AppConfigSchema } from '../../../shared/config-types.js';
+import type { AppConfig, ProviderConfig } from '../../../shared/config-types.js';
 import type { ConfigSaveResult } from '../../../shared/ipc-types.js';
 
 interface SetupWizardProps {

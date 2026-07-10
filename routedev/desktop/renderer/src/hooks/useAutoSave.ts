@@ -3,7 +3,7 @@
 // 从 SettingsPage.tsx 迁移，保留所有原逻辑与函数签名
 
 import { useState, useEffect, type RefObject, type Dispatch, type SetStateAction } from 'react';
-import type { AppConfig } from '../../../../src/config/schema.js';
+import type { AppConfig } from '../../../shared/config-types.js';
 import type { ConfigSaveResult } from '../../../shared/ipc-types.js';
 import { cleanDraftForSave, deepClone } from '../pages/settings-helpers.js';
 

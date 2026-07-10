@@ -2,7 +2,7 @@
 // Phase 74-G：可观测性 Tab（Token 追踪 + 生产安全防护 + 简洁输出 + 提示词模板系统）
 // 从 SettingsPage.tsx 迁移
 
-import type { AppConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig } from '../../../../shared/config-types.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Input } from '../ui/input.js';
 import { Label } from '../ui/label.js';

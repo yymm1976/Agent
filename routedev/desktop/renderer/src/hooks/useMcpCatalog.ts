@@ -3,7 +3,7 @@
 // 从 SettingsPage.tsx 迁移，保留所有原逻辑与函数签名
 
 import { useState, useEffect } from 'react';
-import type { AppConfig } from '../../../../src/config/schema.js';
+import type { AppConfig } from '../../../shared/config-types.js';
 import type { MCPCatalogEntry, MCPInstallResult } from '../../../shared/ipc-types.js';
 
 interface UseMcpCatalogOptions {

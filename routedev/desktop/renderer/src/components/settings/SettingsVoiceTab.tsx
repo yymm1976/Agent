@@ -1,7 +1,7 @@
 // desktop/renderer/src/components/settings/SettingsVoiceTab.tsx
 // Phase 45：语音输入输出设置
 
-import type { AppConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig } from '../../../../shared/config-types.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';

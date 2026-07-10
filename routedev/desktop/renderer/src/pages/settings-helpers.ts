@@ -10,7 +10,7 @@ import type {
   MCPServerEntryConfig,
   ChannelEntryConfig,
   ChannelType,
-} from '../../../../src/config/schema.js';
+} from '../../../shared/config-types.js';
 
 // ===== 通用解析 =====
 

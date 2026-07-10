@@ -18,3 +18,7 @@ export { MCPBridge } from './mcp-bridge.js';
 export { SkillBridge } from './skill-bridge.js';
 export { ExperimentBridge } from './experiment-bridge.js';
 export { GoalBridge } from './goal-bridge.js';
+// G-022a：从 engine-bridge.ts 继续拆分的领域 delegate
+export { ProfileBridge } from './profile-bridge.js';
+export { HookBridge } from './hook-bridge.js';
+export { TraceBridge } from './trace-bridge.js';

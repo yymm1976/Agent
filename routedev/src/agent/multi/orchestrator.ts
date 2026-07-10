@@ -616,11 +616,38 @@ export class Orchestrator {
     return isRetryable(errorType);
   }
 
-  // TODO Phase 73：synthesizer 派生点
-  // 触发条件（满足任一即派生 synthesizer 子 Agent 做合成）：
-  //   1. 多个 worker 的结论相互矛盾（success 但 conclusion 文本差异显著）
-  //   2. 比较器返回 needsHumanReview=true（无法自动选优）
-  //   3. 并行组中多个 worker 都成功且产出不同结论
-  // 启用方式：在 worker 结果收集后做冲突检测，true 时通过 spawn_agent 派生
-  // role='synthesizer' 的子 Agent，把所有 worker 的 conclusion 作为输入。
+  // [TECH-DEBT] G-025: synthesizer 子 Agent 未实现
+  //
+  // 设计意图：
+  //   当多个 Worker 并发执行同一任务的不同子目标后，各自的结论可能存在冲突（如对同一文件的不同修改建议、
+  //   对同一问题的不同答案）。synthesizer 子 Agent 负责在所有 Worker 完成后：
+  //   1. 收集所有 Worker 的 conclusion
+  //   2. 通过 ConflictDetector 检测冲突（文件级/逻辑级/数据级）
+  //   3. 对冲突项进行裁决或合并
+  //   4. 综合出最终答案返回给调用方
+  //
+  // 触发条件：
+  //   - orchestrator 检测到 Worker 数量 > 1 且所有 Worker 已完成
+  //   - 或 Worker 结论中存在显式标记的冲突字段
+  //
+  // 预期接口：
+  //   interface ConflictDetector {
+  //     detect(conclusions: WorkerConclusion[]): ConflictReport;
+  //   }
+  //   interface Synthesizer {
+  //     synthesize(conclusions: WorkerConclusion[], conflicts: ConflictReport): SynthesisResult;
+  //   }
+  //   // orchestrator 在此调用：
+  //   // const conflicts = this.conflictDetector.detect(conclusions);
+  //   // if (conflicts.hasConflicts) {
+  //   //   const result = await this.synthesizer.synthesize(conclusions, conflicts);
+  //   //   return result;
+  //   // }
+  //
+  // 依赖项：
+  //   - 需先实现 ConflictDetector 模块（检测多 Worker 结论冲突）
+  //   - 需在 AgentProfile 中注册 synthesizer 角色
+  //   - 需定义 WorkerConclusion / ConflictReport / SynthesisResult 类型
+  //
+  // 排期：新功能开发，非修复项，单独立项。当前保留单 Worker 直接返回模式。
 }

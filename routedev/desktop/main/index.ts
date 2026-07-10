@@ -278,8 +278,9 @@ app.whenReady().then(async () => {
       onStream: sendChatStream,
       onTokenProfile: sendTokenProfile,
       onTraceEvent: sendTraceEvent,
-      onToolConfirmRequest: (toolName, params) => {
-        mainWindow?.webContents.send('chat:tool-confirm-request', { toolName, params });
+      // G-004 修复：回调携带 requestId，前端在 confirm-tool 回传中带上以实现精准 resolve
+      onToolConfirmRequest: (requestId, toolName, params) => {
+        mainWindow?.webContents.send('chat:tool-confirm-request', { requestId, toolName, params });
       },
       onConfigReloaded: (cfg) => {
         // G-002 修复：推送前对敏感字段脱敏，防止明文 apiKey 泄露到渲染进程
@@ -374,11 +375,16 @@ ipcMain.on('chat:send', (_event, rawPayload: unknown) => {
 });
 
 // 聊天：确认/拒绝工具调用
+// G-004 修复：通过 requestId 精准 resolve 对应并发请求的工具确认 entry
 ipcMain.on('chat:confirm-tool', (_event, payload: ToolConfirmPayload) => {
   if (!payload || typeof payload.approved !== 'boolean') {
     return;
   }
-  engine?.resolveToolConfirm(payload.approved, payload.payload);
+  // F-N026 修复：校验 requestId 为非空字符串且长度合理
+  if (typeof payload.requestId !== 'string' || payload.requestId.length === 0 || payload.requestId.length > 128) {
+    return;
+  }
+  engine?.resolveToolConfirm(payload.requestId, payload.approved, payload.payload);
 });
 
 // Phase 54：计划编辑响应（StepEditor 确认/取消后回传）
@@ -423,6 +429,10 @@ ipcMain.handle('plan:get-revisions', async (_event, goalId: string) => {
 });
 
 ipcMain.handle('plan:check-omissions', async (_event, goalId: string) => {
+  // F-N026 修复：补 goalId 正则校验（参照 plan:get-revisions），防止路径穿越
+  if (typeof goalId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(goalId)) {
+    return { ok: false, error: 'Invalid goalId' };
+  }
   // 通过 engine 触发遗漏点检查（LLM 调用，结果异步返回）
   // 实际 LLM 调用由 OmissionChecker 在主进程完成
   try {
@@ -482,8 +492,13 @@ ipcMain.handle('goal:discard', async (_event, goalId: string): Promise<{ success
 });
 
 // 聊天：停止当前生成（中止进行中的 LLM 请求与 Agent Loop）
-ipcMain.on('chat:stop', () => {
-  engine?.stopGeneration();
+// G-004 修复：支持可选 requestId 精准中断指定请求；未传则中断全部（向后兼容）
+ipcMain.on('chat:stop', (_event, payload?: { requestId?: string }) => {
+  const requestId = payload?.requestId;
+  if (requestId !== undefined && (typeof requestId !== 'string' || requestId.length === 0 || requestId.length > 128)) {
+    return;
+  }
+  engine?.stopGeneration(requestId);
 });
 
 // 聊天：同步当前对话历史，避免切换/分支后后台仍沿用旧对话上下文
@@ -664,7 +679,11 @@ ipcMain.handle('mcp:tools', async () => {
 // ============================================================
 
 // 列出内置精选目录（可按分类过滤）
+// F-N026 修复：补 category 类型与长度校验
 ipcMain.handle('mcp:catalog:list', async (_event, category?: string): Promise<MCPCatalogResult> => {
+  if (category !== undefined && (typeof category !== 'string' || category.length > 256)) {
+    return { entries: [], total: 0 };
+  }
   return listCatalog(category);
 });
 
@@ -818,7 +837,11 @@ ipcMain.handle('fs:read', async (_event, filePath: string): Promise<{ data: stri
 });
 
 // 文件夹选择对话框：返回用户选择的文件夹路径，取消则返回 null
+// F-N026 修复：补 defaultPath 长度上限，防止超长路径导致异常
 ipcMain.handle('fs:select-folder', async (_event, defaultPath?: string): Promise<string | null> => {
+  if (defaultPath !== undefined && (typeof defaultPath !== 'string' || defaultPath.length > 4096)) {
+    defaultPath = undefined;
+  }
   const safeDefaultPath = defaultPath && path.isAbsolute(defaultPath)
     ? defaultPath
     : app.getPath('desktop');
@@ -909,7 +932,10 @@ ipcMain.on('project:set-cwd', (_event, cwd: string) => {
 // 使用路由模型（杂活模型）根据用户首条消息生成简洁对话标题
 // 失败时回退到截断策略，不影响主流程
 ipcMain.handle('chat:generate-title', async (_event, userMessage: string, assistantReply?: string) => {
-  if (!engine || !userMessage) return null;
+  // F-N026 修复：补 userMessage 类型+长度校验，assistantReply 类型校验
+  if (typeof userMessage !== 'string' || userMessage.length === 0 || userMessage.length > 100000) return null;
+  if (assistantReply !== undefined && (typeof assistantReply !== 'string' || assistantReply.length > 100000)) return null;
+  if (!engine) return null;
   try {
     return await engine.generateTitle(userMessage, assistantReply);
   } catch (err) {
@@ -999,11 +1025,20 @@ ipcMain.handle('hook:create', async (_event, payload: unknown): Promise<{ succes
   if (!payload || typeof payload !== 'object') {
     return { success: false, error: '无效的参数' };
   }
-  const p = payload as { templateId?: string; name?: string };
+  const p = payload as { templateId?: string; name?: string; event?: string; code?: string };
   const hasTemplateId = typeof p.templateId === 'string' && p.templateId.length > 0 && p.templateId.length <= 256;
   const hasName = typeof p.name === 'string' && p.name.length > 0 && p.name.length <= 256;
   if (!hasTemplateId && !hasName) {
     return { success: false, error: '无效的参数' };
+  }
+  // F-N026 修复：自定义模式（有 name 无 templateId）时补 event/code 校验
+  if (!hasTemplateId && hasName) {
+    if (typeof p.event !== 'string' || p.event.length === 0 || p.event.length > 256) {
+      return { success: false, error: '无效的 event' };
+    }
+    if (typeof p.code !== 'string' || p.code.length === 0 || p.code.length > 100000) {
+      return { success: false, error: '无效的 code' };
+    }
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.createHook(payload as Parameters<typeof engine.createHook>[0]);
@@ -1024,7 +1059,11 @@ ipcMain.handle('hook:delete', async (_event, hookId: string): Promise<{ success:
 // ============================================================
 
 // 列出当前项目的所有检查点（用于时间轴展示）
+// F-N026 修复：补 projectId 类型与长度校验
 ipcMain.handle('checkpoint:list', async (_event, projectId?: string) => {
+  if (projectId !== undefined && (typeof projectId !== 'string' || projectId.length === 0 || projectId.length > 256)) {
+    return [];
+  }
   if (!engine) return [];
   return engine.listCheckpoints(projectId);
 });
@@ -1106,21 +1145,28 @@ ipcMain.handle('agent:removeFollowUp', async (_event, index: number): Promise<bo
 // ============================================================
 
 // 列出磁盘上的 Trace 会话（按 startTime 倒序）
+// F-N026 修复：补 limit 数值范围校验
 ipcMain.handle('trace:list-sessions', async (_event, limit?: number) => {
+  if (limit !== undefined && (typeof limit !== 'number' || !Number.isFinite(limit) || limit < 1 || limit > 1000)) {
+    return [];
+  }
   if (!engine) return [];
   return engine.listTraceSessions(limit);
 });
 
 // 回放指定会话，返回时间线事件；传入 step 时仅返回该步骤段落
+// F-N026 修复：补 sessionId 长度上限 + step 数值校验
 ipcMain.handle('trace:replay', async (_event, sessionId: string, step?: number) => {
-  if (typeof sessionId !== 'string' || sessionId.length === 0) return [];
+  if (typeof sessionId !== 'string' || sessionId.length === 0 || sessionId.length > 128) return [];
+  if (step !== undefined && (typeof step !== 'number' || !Number.isFinite(step) || step < 0 || step > 100000)) return [];
   if (!engine) return [];
   return engine.replayTrace(sessionId, step);
 });
 
 // 生成指定会话的评分卡
+// F-N026 修复：补 sessionId 长度上限
 ipcMain.handle('trace:scorecard', async (_event, sessionId: string) => {
-  if (typeof sessionId !== 'string' || sessionId.length === 0) return null;
+  if (typeof sessionId !== 'string' || sessionId.length === 0 || sessionId.length > 128) return null;
   if (!engine) return null;
   return engine.generateTraceScorecard(sessionId);
 });

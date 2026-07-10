@@ -3,7 +3,7 @@
 // 从 SettingsPage.tsx 迁移
 
 import { Trash2, Plus } from 'lucide-react';
-import type { AppConfig, RouterRule } from '../../../../../src/config/schema.js';
+import type { AppConfig, RouterRule } from '../../../../shared/config-types.js';
 import { Button } from '../ui/button.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Input } from '../ui/input.js';

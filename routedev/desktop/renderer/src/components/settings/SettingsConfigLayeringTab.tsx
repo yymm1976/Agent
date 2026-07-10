@@ -1,7 +1,7 @@
 // desktop/renderer/src/components/settings/SettingsConfigLayeringTab.tsx
 // Phase 51 Task 8：项目级配置分层
 // 支持项目级配置覆盖全局配置，控制合并策略与文件路径。
-import type { AppConfig, ConfigLayeringConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig, ConfigLayeringConfig } from '../../../../shared/config-types.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';

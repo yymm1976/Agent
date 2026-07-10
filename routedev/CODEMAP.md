@@ -237,7 +237,7 @@
 - `tests/code-map/` — 代码地图测试（extractor/pagerank/cross-file-resolve/watcher）
 - `tests/config/` — 配置加载测试 + loader-env（Phase 29 env fail-fast）
 - `tests/harness/` — 可观测性测试（audit-logger/checkpoint/trace-collector/tracing-executor + checkpoint-rollback）
-- `tests/integration/` — 集成测试（conversation-flow/goal-flow/ipc-bridge/performance-benchmark + phase31-workflow/phase39-48 系列 + phase47-task1~9 + phase50/51/65-67）
+- `tests/integration/` — 集成测试（conversation-flow/goal-flow/ipc-bridge/performance-benchmark + phase31-workflow/phase39-48 系列 + phase47-task1~8 + phase50/51/65-67）
 - `tests/memory/` — 记忆测试（checkpoint-writer/context-manager/project-memory/compress-enhanced + bm25/provenance/reputation/unified-memory）
 - `tests/phase32/` — Phase 32 接线验证测试（agent-eval/integration/safety-hardening）
 - `tests/phase33/` — Phase 33 设置页面纯函数测试（settings-helpers）
@@ -256,15 +256,10 @@
 ## scripts/ — 工程脚本（Phase 47 后）
 - `scripts/verify.ts` — Phase 17b 验收门脚本（`pnpm tsx scripts/verify.ts`），Phase 47 Task 2 后集成 checkDescriptionLint 检查项
 - `scripts/lint-descriptions.ts` — description 质量审计脚本（Phase 47 Task 2）：扫描 src/tools/builtin/*.ts 和 SKILL.md，检查 MIN_LENGTH / NO_TRIGGER / NO_VERB 规则，过渡期不阻断（陷阱 #134）
-- `scripts/action-entry.ts` — GitHub Action 入口脚本（Phase 47 Task 9）：读取 INPUT_* 环境变量 → Base64 解码 config → 构造 exec 命令 → 写回 GITHUB_OUTPUT，零依赖（不引入 @actions/core，陷阱 #141）
 - `scripts/perf-gate.ts` — 性能门脚本
 - `scripts/build-with-retry.ts` — 构建重试脚本（Windows Defender 排除项）
 - `scripts/clean-release.ts` — 发布前清理脚本
 - `scripts/setup-codebase-memory.sh` — codebase-memory-mcp 二进制安装脚本
-
-## GitHub Action（Phase 47 Task 9）
-- `action.yml` — GitHub Action 定义：inputs（prompt/work-mode/allowed-tools/config）+ outputs（result）+ runs（node20 + dist/index.js），config 必须用 Base64 传输（陷阱 #141）
-- `.github/workflows/routedev-example.yml` — 示例 workflow：pull_request 触发 + checkout + RouteDev read-only 审查 + 评论
 
 ## .routedev/ — 项目级配置与 Skill（Phase 47 后）
 - `.routedev/skills/minimalist-coding/SKILL.md` — 极简编码优先级 Skill（Ponytail 6 层 + Karpathy 4 原则）

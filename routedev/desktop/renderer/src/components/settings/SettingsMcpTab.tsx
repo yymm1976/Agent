@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { Trash2, Plus, X, Sparkles, CheckCircle2, AlertCircle, Link2, Link2Off } from 'lucide-react';
-import type { AppConfig, MCPServerEntryConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig, MCPServerEntryConfig } from '../../../../shared/config-types.js';
 import type { McpFormState } from '../../pages/settings-helpers.js';
 import type { MCPCatalogEntry, MCPStatus } from '../../../../shared/ipc-types.js';
 import { Button } from '../ui/button.js';

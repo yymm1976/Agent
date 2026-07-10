@@ -171,6 +171,15 @@ export interface AppDependencies {
   kanObstacleChecker?: KanObstacleChecker;
   quantitativeGate?: QuantitativeGate;
   classifyOperation?: (signal: OperationSignal, sessionId: string) => ReturnType<typeof classifyOperation>;
+
+  /**
+   * 释放所有子系统资源（G-007 修复）
+   *
+   * 按逆序调用各子系统的 dispose 方法（仅调用已存在的，不强制新增）。
+   * 由 engine-bridge.destroy() 在销毁引擎时调用，确保旧依赖（timer/handle/MCP 连接等）
+   * 在 reloadConfig 或进程退出前被正确释放，避免资源泄漏。
+   */
+  dispose(): Promise<void>;
 }
 
 // ============================================================
@@ -351,5 +360,20 @@ export function createAppDependencies(
     ...memoryDeps,
     ...toolsDeps,
     ...agentDeps,
+    // G-007：统一资源释放协议——按逆序调用各子系统 dispose（仅调用已存在的，不强制新增）
+    async dispose() {
+      // 逆序释放：agent → tools → memory → router → observability（与创建顺序相反）
+      await (agentDeps as { dispose?: () => Promise<void> }).dispose?.();
+      await (toolsDeps as { dispose?: () => Promise<void> }).dispose?.();
+      await (memoryDeps as { dispose?: () => Promise<void> }).dispose?.();
+      await (routerDeps as { dispose?: () => Promise<void> }).dispose?.();
+      await (observabilityDeps as { dispose?: () => Promise<void> }).dispose?.();
+      // 释放传入的共享实例（tracker/clientManager/classifier/modelRouter）
+      await (tracker as { dispose?: () => Promise<void> } | undefined)?.dispose?.();
+      await (clientManager as { dispose?: () => Promise<void> }).dispose?.();
+      await (classifier as { dispose?: () => Promise<void> } | undefined)?.dispose?.();
+      await (modelRouter as { dispose?: () => Promise<void> } | undefined)?.dispose?.();
+      console.log('[AppDependencies] 已释放所有依赖资源');
+    },
   } as AppDependencies;
 }

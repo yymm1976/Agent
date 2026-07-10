@@ -2,15 +2,14 @@
 // 节点级操作补全：delete / insert / undo / redo / batch edit
 //
 // 设计说明：
-//   - 不修改 BranchManager，通过构造函数接收实例
-//   - 由于 BranchManager 没有暴露内部状态（nodes/branches/activeBranchId 等）的公共方法，
-//     本模块通过 (manager as any) 访问这些私有字段——这是必要的妥协
+//   - 不修改 BranchManager 内部字段，通过构造函数接收实例
+//   - G-023: 通过 BranchManager 暴露的受控公开 API（getAllNodes/setNode 等）
+//     读写内部状态，不再使用 `as unknown as` 双重断言
 //   - undo/redo 采用"操作前快照"策略：每次操作前完整快照 manager 的内部状态，
 //     undo 时整体恢复。简单可靠，避免反向操作逻辑出错
 
 import type { BranchManager, BranchNode, MessageNode, BranchInfo } from './branch.js';
 import type { LLMMessage } from '../router/types.js';
-import crypto from 'node:crypto';
 import { logger } from '../utils/logger.js';
 
 /** 操作结果 */
@@ -34,16 +33,6 @@ interface ActionRecord {
   };
 }
 
-/** 通过 any 访问 BranchManager 私有字段 */
-interface ManagerInternals {
-  nodes: Map<string, BranchNode>;
-  branches: Map<string, BranchInfo>;
-  activeBranchId: string | null;
-  activeBranchKey: string | null;
-  historyNodeIds: string[];
-  generateId?: () => string;
-}
-
 export class BranchOperations {
   private manager: BranchManager;
   private undoStack: ActionRecord[] = [];
@@ -58,40 +47,32 @@ export class BranchOperations {
   // 内部访问
   // ============================================================
 
-  private internals(): ManagerInternals {
-    return this.manager as unknown as ManagerInternals;
-  }
+  // G-023: 不再使用 `as unknown as` 断言，直接调用 manager 的受控公开 API
 
   private generateId(): string {
-    const internals = this.internals();
-    if (typeof internals.generateId === 'function') {
-      return internals.generateId();
-    }
-    return crypto.randomUUID().slice(0, 8);
+    return this.manager.generateId();
   }
 
   /** 拍摄当前 manager 内部状态快照 */
   private snapshot(): ActionRecord['data'] {
-    const m = this.internals();
     return {
-      nodes: Array.from(m.nodes.values()).map(n => ({ ...n, children: [...n.children] })),
-      branches: Array.from(m.branches.values()).map(b => ({ ...b })),
-      activeBranchId: m.activeBranchId,
-      activeBranchKey: m.activeBranchKey,
-      historyNodeIds: [...m.historyNodeIds],
+      nodes: Array.from(this.manager.getAllNodes().values()).map(n => ({ ...n, children: [...n.children] })),
+      branches: Array.from(this.manager.getAllBranches().values()).map(b => ({ ...b })),
+      activeBranchId: this.manager.getActiveBranchId(),
+      activeBranchKey: this.manager.getActiveBranchKey(),
+      historyNodeIds: [...this.manager.getHistoryNodeIds()],
     };
   }
 
   /** 用快照覆盖 manager 内部状态 */
   private restore(data: ActionRecord['data']): void {
-    const m = this.internals();
-    m.nodes.clear();
-    for (const n of data.nodes) m.nodes.set(n.id, { ...n, children: [...n.children] });
-    m.branches.clear();
-    for (const b of data.branches) m.branches.set(b.id, { ...b });
-    m.activeBranchId = data.activeBranchId;
-    m.activeBranchKey = data.activeBranchKey;
-    m.historyNodeIds = [...data.historyNodeIds];
+    this.manager.clearNodes();
+    for (const n of data.nodes) this.manager.setNode(n.id, { ...n, children: [...n.children] });
+    this.manager.clearBranches();
+    for (const b of data.branches) this.manager.setBranch(b.id, { ...b });
+    this.manager.setActiveBranchId(data.activeBranchId);
+    this.manager.setActiveBranchKey(data.activeBranchKey);
+    this.manager.setHistoryNodeIds([...data.historyNodeIds]);
   }
 
   /** 压入 undo 栈，超过 maxStack 时丢弃最旧；同时清空 redo 栈 */
@@ -115,12 +96,13 @@ export class BranchOperations {
    *   - 更新 historyNodeIds
    */
   deleteByHistoryIndex(historyIndex: number): ActionResult {
-    const m = this.internals();
-    if (historyIndex < 0 || historyIndex >= m.historyNodeIds.length) {
+    const historyNodeIds = this.manager.getHistoryNodeIds();
+    const nodes = this.manager.getAllNodes();
+    if (historyIndex < 0 || historyIndex >= historyNodeIds.length) {
       return { success: false, error: 'invalid-history-index' };
     }
-    const targetId = m.historyNodeIds[historyIndex];
-    const target = m.nodes.get(targetId);
+    const targetId = historyNodeIds[historyIndex];
+    const target = nodes.get(targetId);
     if (!target) return { success: false, error: 'target-node-not-found' };
     if (target.parentId === null) {
       return { success: false, error: 'cannot-delete-root' };
@@ -128,12 +110,12 @@ export class BranchOperations {
 
     const before = this.snapshot();
 
-    const parent = m.nodes.get(target.parentId);
+    const parent = nodes.get(target.parentId);
     if (parent) {
       // 从父节点 children 中移除目标，并把目标的子节点接到父节点
       parent.children = parent.children.filter(c => c !== targetId);
       for (const childId of target.children) {
-        const child = m.nodes.get(childId);
+        const child = nodes.get(childId);
         if (child) {
           child.parentId = parent.id;
           parent.children.push(childId);
@@ -142,13 +124,13 @@ export class BranchOperations {
     }
 
     // 删除目标节点
-    m.nodes.delete(targetId);
+    this.manager.deleteNode(targetId);
 
     // 更新 historyNodeIds：移除被删除的节点
-    m.historyNodeIds = m.historyNodeIds.filter(id => id !== targetId);
+    this.manager.setHistoryNodeIds(historyNodeIds.filter(id => id !== targetId));
 
     // 如果删除的是分支 tip，回退到父节点
-    for (const branch of m.branches.values()) {
+    for (const branch of this.manager.getAllBranches().values()) {
       if (branch.tipNodeId === targetId) {
         branch.tipNodeId = target.parentId;
         branch.messageCount = Math.max(0, branch.messageCount - 1);
@@ -156,8 +138,8 @@ export class BranchOperations {
     }
 
     // 如果 activeBranchId 指向被删除节点，回退到父节点
-    if (m.activeBranchId === targetId) {
-      m.activeBranchId = target.parentId;
+    if (this.manager.getActiveBranchId() === targetId) {
+      this.manager.setActiveBranchId(target.parentId);
     }
 
     this.pushUndo({
@@ -186,12 +168,13 @@ export class BranchOperations {
     historyIndex: number,
     message: { role: string; content: string },
   ): ActionResult {
-    const m = this.internals();
-    if (historyIndex < 0 || historyIndex >= m.historyNodeIds.length) {
+    const historyNodeIds = this.manager.getHistoryNodeIds();
+    const nodes = this.manager.getAllNodes();
+    if (historyIndex < 0 || historyIndex >= historyNodeIds.length) {
       return { success: false, error: 'invalid-history-index' };
     }
-    const targetId = m.historyNodeIds[historyIndex];
-    const target = m.nodes.get(targetId);
+    const targetId = historyNodeIds[historyIndex];
+    const target = nodes.get(targetId);
     if (!target) return { success: false, error: 'target-node-not-found' };
 
     const before = this.snapshot();
@@ -206,16 +189,16 @@ export class BranchOperations {
       children: [],
       timestamp: Date.now(),
     };
-    m.nodes.set(newNodeId, newNode);
+    this.manager.setNode(newNodeId, newNode);
     target.children.push(newNodeId);
 
     // 2. 复制原后续消息（historyIndex+1 起）作为新节点的子树
     //    逐条 append 到新节点下，保持线性顺序
     let lastInsertedId = newNodeId;
-    const initialLen = m.historyNodeIds.length;
+    const initialLen = historyNodeIds.length;
     for (let i = historyIndex + 1; i < initialLen; i++) {
-      const laterId = m.historyNodeIds[i];
-      const laterNode = m.nodes.get(laterId);
+      const laterId = historyNodeIds[i];
+      const laterNode = nodes.get(laterId);
       if (!laterNode) continue;
       // Phase 73 Part D：仅复制 MessageNode
       if (laterNode.type !== 'message') continue;
@@ -228,8 +211,8 @@ export class BranchOperations {
         children: [],
         timestamp: Date.now(),
       };
-      m.nodes.set(copyId, copyNode);
-      const parent = m.nodes.get(lastInsertedId);
+      this.manager.setNode(copyId, copyNode);
+      const parent = nodes.get(lastInsertedId);
       if (parent) parent.children.push(copyId);
       lastInsertedId = copyId;
     }
@@ -239,8 +222,9 @@ export class BranchOperations {
     // 计算路径长度：从 lastInsertedId 回溯到根
     const pathLen = this.pathLength(lastInsertedId);
     // 旧活跃分支置为非活跃
-    if (m.activeBranchKey) {
-      const old = m.branches.get(m.activeBranchKey);
+    const activeBranchKey = this.manager.getActiveBranchKey();
+    if (activeBranchKey) {
+      const old = this.manager.getAllBranches().get(activeBranchKey);
       if (old) old.isActive = false;
     }
     const newBranch: BranchInfo = {
@@ -253,13 +237,15 @@ export class BranchOperations {
       parentId: targetId,
       lastActiveAt: Date.now(),
     };
-    m.branches.set(newBranchId, newBranch);
-    m.activeBranchId = lastInsertedId;
-    m.activeBranchKey = newBranchId;
+    this.manager.setBranch(newBranchId, newBranch);
+    this.manager.setActiveBranchId(lastInsertedId);
+    this.manager.setActiveBranchKey(newBranchId);
 
     // 4. historyNodeIds 不修改原顺序，但要让新插入的消息可被 editByHistoryIndex 编辑
     //    在 historyIndex+1 位置插入新节点 ID
-    m.historyNodeIds.splice(historyIndex + 1, 0, newNodeId);
+    const newHistory = [...historyNodeIds];
+    newHistory.splice(historyIndex + 1, 0, newNodeId);
+    this.manager.setHistoryNodeIds(newHistory);
 
     this.pushUndo({
       type: 'insert',
@@ -286,8 +272,9 @@ export class BranchOperations {
     endIndex: number,
     newMessages: { role: string; content: string }[],
   ): ActionResult {
-    const m = this.internals();
-    if (startIndex < 0 || endIndex >= m.historyNodeIds.length || startIndex > endIndex) {
+    const historyNodeIds = this.manager.getHistoryNodeIds();
+    const nodes = this.manager.getAllNodes();
+    if (startIndex < 0 || endIndex >= historyNodeIds.length || startIndex > endIndex) {
       return { success: false, error: 'invalid-range' };
     }
     if (newMessages.length === 0) {
@@ -296,8 +283,8 @@ export class BranchOperations {
 
     const before = this.snapshot();
 
-    const startNodeId = m.historyNodeIds[startIndex];
-    const startNode = m.nodes.get(startNodeId);
+    const startNodeId = historyNodeIds[startIndex];
+    const startNode = nodes.get(startNodeId);
     if (!startNode || !startNode.parentId) {
       return { success: false, error: 'start-node-not-found-or-root' };
     }
@@ -315,10 +302,10 @@ export class BranchOperations {
     }
 
     // 3. 复制原 endIndex 之后的后续消息到新分支
-    const initialLen = m.historyNodeIds.length;
+    const initialLen = historyNodeIds.length;
     for (let i = endIndex + 1; i < initialLen; i++) {
-      const laterId = m.historyNodeIds[i];
-      const laterNode = m.nodes.get(laterId);
+      const laterId = historyNodeIds[i];
+      const laterNode = nodes.get(laterId);
       if (!laterNode) continue;
       // Phase 73 Part D：仅复制 MessageNode
       if (laterNode.type !== 'message') continue;
@@ -331,8 +318,9 @@ export class BranchOperations {
     }
 
     // 4. 创建新分支
-    if (m.activeBranchKey) {
-      const old = m.branches.get(m.activeBranchKey);
+    const activeBranchKey = this.manager.getActiveBranchKey();
+    if (activeBranchKey) {
+      const old = this.manager.getAllBranches().get(activeBranchKey);
       if (old) old.isActive = false;
     }
     const newBranchId = firstNewId;
@@ -346,9 +334,9 @@ export class BranchOperations {
       parentId: startNode.parentId,
       lastActiveAt: Date.now(),
     };
-    m.branches.set(newBranchId, newBranch);
-    m.activeBranchId = lastId;
-    m.activeBranchKey = newBranchId;
+    this.manager.setBranch(newBranchId, newBranch);
+    this.manager.setActiveBranchId(lastId);
+    this.manager.setActiveBranchKey(newBranchId);
 
     this.pushUndo({
       type: 'batch_edit',
@@ -361,8 +349,8 @@ export class BranchOperations {
 
   /** 在指定父节点下创建新节点（不创建分支，仅节点） */
   private forkAt(parentId: string, message: { role: string; content: string }): string | null {
-    const m = this.internals();
-    const parent = m.nodes.get(parentId);
+    const nodes = this.manager.getAllNodes();
+    const parent = nodes.get(parentId);
     if (!parent) return null;
     const id = this.generateId();
     const node: MessageNode = {
@@ -373,15 +361,15 @@ export class BranchOperations {
       children: [],
       timestamp: Date.now(),
     };
-    m.nodes.set(id, node);
+    this.manager.setNode(id, node);
     parent.children.push(id);
     return id;
   }
 
   /** 在指定父节点下追加新节点 */
   private appendAt(parentId: string, message: { role: string; content: string }): string {
-    const m = this.internals();
-    const parent = m.nodes.get(parentId);
+    const nodes = this.manager.getAllNodes();
+    const parent = nodes.get(parentId);
     const id = this.generateId();
     const node: MessageNode = {
       type: 'message',
@@ -391,17 +379,17 @@ export class BranchOperations {
       children: [],
       timestamp: Date.now(),
     };
-    m.nodes.set(id, node);
+    this.manager.setNode(id, node);
     if (parent) parent.children.push(id);
     return id;
   }
 
   private pathLength(nodeId: string): number {
-    const m = this.internals();
+    const nodes = this.manager.getAllNodes();
     let count = 0;
     let cur: string | null = nodeId;
     while (cur) {
-      const node = m.nodes.get(cur);
+      const node = nodes.get(cur);
       if (!node) break;
       // Phase 73 Part D：仅统计 MessageNode（跳过虚拟根节点）
       if (node.type === 'message') {

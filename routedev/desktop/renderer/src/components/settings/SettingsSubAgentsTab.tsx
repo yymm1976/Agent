@@ -4,7 +4,7 @@
 
 import type { Dispatch, SetStateAction } from 'react';
 import { Users, Plus, Trash2, Eye, ChevronDown, ChevronRight } from 'lucide-react';
-import type { AppConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig } from '../../../../shared/config-types.js';
 import type { AgentProfileUI } from '../../pages/settings-helpers.js';
 import { Button } from '../ui/button.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';

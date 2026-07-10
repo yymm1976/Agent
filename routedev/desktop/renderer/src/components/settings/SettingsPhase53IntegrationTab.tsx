@@ -2,7 +2,7 @@
 // Phase 53 代码卫生与安全治理加固（含 10 个子任务）
 // 本 Tab 聚合关键子任务的核心字段，便于快速启用 / 调参。
 // Phase 60：合并到 '安全与治理' tab，删除 Task N 编号
-import type { AppConfig, Phase53IntegrationConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig, Phase53IntegrationConfig } from '../../../../shared/config-types.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';

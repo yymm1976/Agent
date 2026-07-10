@@ -2,12 +2,15 @@
 // 配置加载器：YAML 解析 + 环境变量替换 + 全局/项目级配置合并 + Schema 验证
 // 加载优先级：项目级 .routedev.yaml > 全局 config.yaml > Schema 默认值
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import { parse as parseYaml } from 'yaml';
 import { AppConfigSchema, type AppConfig } from './schema.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 import { getGlobalConfigPath, getProjectConfigPath } from '../utils/paths.js';
 import { ConfigValidationError } from '../utils/errors.js';
+
+// 配置文件大小上限：1MB，防止超大文件导致主进程 OOM
+const MAX_CONFIG_SIZE = 1024 * 1024;
 
 /**
  * 替换配置字符串中的环境变量引用
@@ -132,6 +135,14 @@ function loadYamlFile(filePath: string): Record<string, unknown> | null {
     return null;
   }
 
+  // 大小检查：防止超大文件导致主进程 OOM
+  const stat = statSync(filePath);
+  if (stat.size > MAX_CONFIG_SIZE) {
+    throw new ConfigValidationError(
+      filePath,
+      `配置文件过大：${stat.size} 字节，超过上限 ${MAX_CONFIG_SIZE} 字节（1MB）`,
+    );
+  }
   const content = readFileSync(filePath, 'utf-8');
 
   // 文件为空或只有空白：返回空对象，让 loadConfig 使用默认值
@@ -173,6 +184,14 @@ function tryLoadBackup(globalPath: string, projectPath?: string): AppConfig | nu
   }
 
   try {
+    // 大小检查：防止超大备份文件导致主进程 OOM
+    const stat = statSync(backupPath);
+    if (stat.size > MAX_CONFIG_SIZE) {
+      throw new ConfigValidationError(
+        backupPath,
+        `备份配置文件过大：${stat.size} 字节，超过上限 ${MAX_CONFIG_SIZE} 字节（1MB）`,
+      );
+    }
     const content = readFileSync(backupPath, 'utf-8');
     if (!content.trim()) return null;
 
@@ -341,6 +360,14 @@ export function validateConfigFile(filePath: string): {
     }
 
     // 检查环境变量引用是否存在（仅警告，不阻断）
+    // 大小检查：防止超大文件导致主进程 OOM
+    const stat = statSync(filePath);
+    if (stat.size > MAX_CONFIG_SIZE) {
+      throw new ConfigValidationError(
+        filePath,
+        `配置文件过大：${stat.size} 字节，超过上限 ${MAX_CONFIG_SIZE} 字节（1MB）`,
+      );
+    }
     const content = readFileSync(filePath, 'utf-8');
     const envRefs = content.match(/\$\{([^}]+)\}/g) || [];
     for (const ref of envRefs) {

@@ -1,7 +1,7 @@
 // desktop/renderer/src/components/settings/SettingsResultSchemaTab.tsx
 // Phase 51 Task 10：子 Agent 结果 Schema 配置
 // 控制子 Agent 产出结果的结构化校验行为。
-import type { AppConfig, ResultSchemaConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig, ResultSchemaConfig } from '../../../../shared/config-types.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';

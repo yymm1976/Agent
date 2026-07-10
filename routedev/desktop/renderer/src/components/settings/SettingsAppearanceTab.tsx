@@ -2,7 +2,7 @@
 // Phase 74-G：外观设置 Tab（主题配色 + 主题色 + 字体大小 + UI 提示 + 通用 + UI 设置）
 // 从 SettingsPage.tsx 迁移
 
-import type { AppConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig } from '../../../../shared/config-types.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';

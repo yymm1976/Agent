@@ -7,7 +7,7 @@ import { createPortal } from 'react-dom';
 import {
   Send, Square, Zap, BookOpen, Plug, X, ChevronDown, History,
 } from 'lucide-react';
-import type { AutonomyMode } from '../../../../../src/config/schema.js';
+import type { AutonomyMode } from '../../../../shared/config-types.js';
 import type { SkillInfo, MCPToolInfo } from '../../../../shared/ipc-types.js';
 import { Button } from '../ui/button.js';
 import { Card } from '../ui/card.js';

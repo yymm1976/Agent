@@ -4,7 +4,7 @@
 // Phase 59：processEvaluation/archAwareMetrics/saturationMonitor 已删除（批次1 无价值 Integration）
 // Phase 59：mcpSecurity 已删除（批次3，与 phase53Integration.mcpSecurityScan 重复，保留 53 的）
 // Phase 60：合并到 '安全与治理' tab，删除 Task N 编号
-import type { AppConfig, Phase52IntegrationConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig, Phase52IntegrationConfig } from '../../../../shared/config-types.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';

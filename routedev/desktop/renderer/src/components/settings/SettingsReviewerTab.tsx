@@ -3,7 +3,7 @@
 // 借鉴 ohmypi 的三档分级（tiny/medium/big/high-risk），但配置化。
 // 启用后根据任务规模和风险自动决定审查轮次。
 
-import type { AppConfig, ReviewerPolicyConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig, ReviewerPolicyConfig } from '../../../../shared/config-types.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';

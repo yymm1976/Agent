@@ -2,7 +2,7 @@
 // Phase 74-G：执行配置 Tab（并发/熔断 + 检查点提示 + 质量监测）
 // 从 SettingsPage.tsx 迁移
 
-import type { AppConfig, ExecutionConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig, ExecutionConfig } from '../../../../shared/config-types.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Input } from '../ui/input.js';
 import { Label } from '../ui/label.js';

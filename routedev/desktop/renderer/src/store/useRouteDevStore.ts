@@ -51,6 +51,8 @@ export interface ChatMessage {
 }
 
 export interface PendingConfirm {
+  /** G-004 修复：关联的聊天请求 ID，confirmTool 回传时带上以精准 resolve */
+  requestId: string;
   toolName: string;
   params: Record<string, unknown>;
 }
@@ -291,8 +293,12 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
   },
 
   confirmTool: (approved, payload) => {
+    // G-004 修复：从 pendingConfirm 中取出 requestId，回传给主进程以精准 resolve
+    const { pendingConfirm } = get();
     set({ pendingConfirm: null });
-    window.routedev.chat.confirmTool({ approved, payload } as ToolConfirmPayload);
+    if (pendingConfirm) {
+      window.routedev.chat.confirmTool({ requestId: pendingConfirm.requestId, approved, payload } as ToolConfirmPayload);
+    }
   },
 
   clearMessages: () => {
@@ -954,9 +960,10 @@ export function initIPCListeners(): () => void {
   };
 
   // 工具调用确认请求
+  // G-004 修复：从事件中提取 requestId，存入 pendingConfirm 供 confirmTool 回传
   const handleToolConfirm = (raw: unknown) => {
-    const payload = raw as { toolName: string; params: Record<string, unknown> };
-    store.getState()._setPendingConfirm({ toolName: payload.toolName, params: payload.params });
+    const payload = raw as { requestId: string; toolName: string; params: Record<string, unknown> };
+    store.getState()._setPendingConfirm({ requestId: payload.requestId, toolName: payload.toolName, params: payload.params });
   };
 
   // Token 快照事件

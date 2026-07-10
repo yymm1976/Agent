@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, FileDiff, Check, X } from 'lucide-react';
-import type { AppConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig } from '../../../../shared/config-types.js';
 import type { ExperimentInfo } from '../../../../shared/ipc-types.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Label } from '../ui/label.js';

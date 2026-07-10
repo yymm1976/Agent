@@ -3,7 +3,7 @@
 // 设置 document.documentElement 的 data-theme 属性和 --rd-* CSS 变量
 
 import { useEffect } from 'react';
-import type { AppConfig } from '../../../../src/config/schema.js';
+import type { AppConfig } from '../../../shared/config-types.js';
 
 /**
  * 根据配置应用主题和字体大小

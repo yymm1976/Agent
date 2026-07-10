@@ -25,7 +25,8 @@ const api: RouteDevAPI = {
   chat: {
     send: (payload) => ipcRenderer.send('chat:send', payload),
     confirmTool: (payload) => ipcRenderer.send('chat:confirm-tool', payload),
-    stop: () => ipcRenderer.send('chat:stop'),
+    // G-004：支持可选 requestId 精准中断；不传则中断全部
+    stop: (requestId?: string) => ipcRenderer.send('chat:stop', requestId ? { requestId } : undefined),
     syncHistory: (messages) => ipcRenderer.send('chat:sync-history', messages),
     /** 使用杂活模型生成对话标题（首条消息后调用） */
     generateTitle: (userMessage: string, assistantReply?: string) =>

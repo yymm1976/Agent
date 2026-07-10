@@ -1,5 +1,5 @@
 // desktop/renderer/src/pages/SettingsPage.tsx
-// 设置页面：Provider / 模型 / 路由规则 / 安全 / 命令与工具 / 可观测性 / 记忆 / MCP / 渠道 / 外观 / 提示音 / 归档对话 / 关于
+// 设置页面：Provider / 模型 / 路由规则 / 安全 / 命令与工具 / 可观测性 / 记忆 / MCP / 外观 / 归档对话 / 关于
 
 import { useState, useEffect, useRef, type ChangeEvent } from 'react';
 import {
@@ -9,13 +9,11 @@ import {
   Gauge, Brain, Lightbulb, Users,
 } from 'lucide-react';
 import type {
-  AppConfig, ModelConfig, RouterRule, ChannelType,
-} from '../../../../src/config/schema.js';
+  AppConfig, ModelConfig, RouterRule,
+} from '../../../shared/config-types.js';
 import type { ConfigSaveResult, ExperimentInfo } from '../../../shared/ipc-types.js';
 import {
   parseStringList, constructMcpServer, mcpServerToForm, EMPTY_MCP_FORM,
-  getChannelOptionFields, isChannelTypeSupported, constructChannelEntry,
-  constructChannelOptions,
   EMPTY_PROVIDER, EMPTY_MODEL, EMPTY_RULE, SEARCH_ENGINES,
   type McpFormState,
 } from './settings-helpers.js';
@@ -52,7 +50,6 @@ import { SettingsMcpTab } from '../components/settings/SettingsMcpTab.js';
 import { SettingsAppearanceTab } from '../components/settings/SettingsAppearanceTab.js';
 import { SettingsSkillsTab } from '../components/settings/SettingsSkillsTab.js';
 import { SettingsMemoryTab } from '../components/settings/SettingsMemoryTab.js';
-import { SettingsChannelsTab } from '../components/settings/SettingsChannelsTab.js';
 import { SettingsProvidersTab } from '../components/settings/SettingsProvidersTab.js';
 import { SettingsRouterTab } from '../components/settings/SettingsRouterTab.js';
 import { SettingsCommandsTab } from '../components/settings/SettingsCommandsTab.js';
@@ -61,7 +58,7 @@ import { SettingsExecutionTab } from '../components/settings/SettingsExecutionTa
 import { SettingsCodemapTab } from '../components/settings/SettingsCodemapTab.js';
 import { SettingsPoliciesTab } from '../components/settings/SettingsPoliciesTab.js';
 import { SettingsHooksTab } from '../components/settings/SettingsHooksTab.js';
-import { SettingsSoundsTab, SettingsExpertiseTab, SettingsAboutTab, SettingsMarketTab } from '../components/settings/SettingsMiscTabs.js';
+import { SettingsExpertiseTab, SettingsAboutTab, SettingsMarketTab } from '../components/settings/SettingsMiscTabs.js';
 import { SettingsHeader } from '../components/settings/SettingsHeader.js';
 import { SettingsNav, type TabId } from '../components/settings/SettingsNav.js';
 import { SaveToast } from '../components/settings/SaveToast.js';
@@ -107,10 +104,6 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
     modelEditor, setModelEditor,
     mcpForm, setMcpForm, mcpEditingId, setMcpEditingId,
     agentProfiles, setAgentProfiles, expandedAgentId, setExpandedAgentId,
-    showAddChannel, setShowAddChannel, newChannel, setNewChannel,
-    channelCreds, setChannelCreds, showChannelCreds, setShowChannelCreds,
-    showChannelAuthToken, setShowChannelAuthToken,
-    editingChannelIdx, setEditingChannelIdx,
     updateDraft, updateProvider, addProvider, removeProvider,
     updateModel, openAddModel, openEditModel, confirmModelEditor, removeModel,
     updateRule, addRule, removeRule, updateBudget,
@@ -124,8 +117,7 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
     updateExecution, updateUpdates, updatePhase48Integration, updatePhase49Integration,
     updateScheduler, updatePrompts, updateProjectMemory, updateMemory,
     updateMcp, updateMcpServer, removeMcpServer, submitMcpForm, openAddMcp, openEditMcp,
-    updateChannels, removeChannel, addChannel, saveChannelOptions,
-    updateGeneral, updateBackgroundBehavior, updateUi, updateSounds,
+    updateGeneral, updateBackgroundBehavior, updateUi,
     updateTrust, updateQuality, updateExpertise,
     updateSubAgents, updateSubAgentsGateRules,
     toggleApiKey, handleTestConnection,
@@ -184,7 +176,7 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
 
   // 当 activeTab 属于高级设置时，自动展开折叠组，避免用户在导航栏"丢失"当前页面
   useEffect(() => {
-    if (['security', 'channels', 'archived', 'about'].includes(activeTab)) {
+    if (['security', 'archived', 'about'].includes(activeTab)) {
       setAdvancedExpanded(true);
     }
   }, [activeTab]);
@@ -422,30 +414,6 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
         />
       )}
 
-      {/* ===== 渠道集成 ===== */}
-      {/* CLI 退役遗留，桌面端不消费 — 隐藏 Tab（无 Webhook 服务器消费 channels 配置） */}
-      {false && activeTab === 'channels' && (
-        <SettingsChannelsTab
-          draft={draft}
-          updateChannels={updateChannels}
-          showChannelAuthToken={showChannelAuthToken}
-          setShowChannelAuthToken={setShowChannelAuthToken}
-          editingChannelIdx={editingChannelIdx}
-          setEditingChannelIdx={setEditingChannelIdx}
-          channelCreds={channelCreds}
-          setChannelCreds={setChannelCreds}
-          showChannelCreds={showChannelCreds}
-          setShowChannelCreds={setShowChannelCreds}
-          showAddChannel={showAddChannel}
-          setShowAddChannel={setShowAddChannel}
-          newChannel={newChannel}
-          setNewChannel={setNewChannel}
-          removeChannel={removeChannel}
-          saveChannelOptions={saveChannelOptions}
-          addChannel={addChannel}
-        />
-      )}
-
       {/* ===== 外观 ===== */}
       {activeTab === 'appearance' && (
         <SettingsAppearanceTab
@@ -455,12 +423,6 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
           updateBackgroundBehavior={updateBackgroundBehavior}
           updateUpdates={updateUpdates}
         />
-      )}
-
-      {/* ===== 提示音 ===== */}
-      {/* CLI 退役遗留，桌面端不消费 — 隐藏 Tab（sounds 配置运行时无消费方） */}
-      {false && activeTab === 'sounds' && (
-        <SettingsSoundsTab draft={draft} updateSounds={updateSounds} />
       )}
 
       {/* ===== Phase 40：用户体验 ===== */}

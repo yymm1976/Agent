@@ -2,7 +2,7 @@
 // Phase 74-G：命令与工具 Tab（命令黑白名单 + 工具黑白名单 + 自主度补充 + Phase 48/49 接入 + 调度器）
 // 从 SettingsPage.tsx 迁移
 
-import type { AppConfig } from '../../../../../src/config/schema.js';
+import type { AppConfig } from '../../../../shared/config-types.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Input } from '../ui/input.js';
 import { Label } from '../ui/label.js';

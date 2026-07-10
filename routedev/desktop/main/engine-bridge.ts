@@ -1,14 +1,14 @@
 // desktop/main/engine-bridge.ts
 // 核心引擎桥接：把 CLI 的 App 依赖工厂包装成主进程可直接调用的服务
 //
-// TD-03 重构：按领域拆分为 delegate bridge（bridges/*），RouteDevEngine 仅保留：
+// TD-03 + G-022a 重构：按领域拆分为 delegate bridge（bridges/*），RouteDevEngine 仅保留：
 //   1. 引擎生命周期（initialize / reloadConfig / destroy / setCwd）
 //   2. executeTool（权限相关，留待阶段3 TD-07 增加权限校验）
-//   3. 未拆分的领域方法（Profile / Hook / Checkpoint / Trace / Session 聚合）
+//   3. 跨领域聚合方法（getSessionStatus）
 //   4. 对各 bridge 方法的委托包装（保持对外 API 不变）
 // 各 delegate 通过共享 EngineContext 读写状态，跨 bridge 调用经 ctx.bridges 完成。
 
-import type { AppConfig } from '../../src/config/schema.js';
+import type { AppConfig } from '../shared/config-types.js';
 import type { LLMMessage } from '../../src/router/types.js';
 import { LLMClientManager } from '../../src/router/llm/index.js';
 import { TokenTracker } from '../../src/router/tracker.js';
@@ -29,21 +29,11 @@ import type {
   ResumableGoalIpcInfo,
 } from '../shared/ipc-types.js';
 // Phase 77：运行回放与评分卡——借鉴 HomeRail 的 hr replay / hr scorecard
-import type { TraceSession } from '../../src/harness/trace-types.js';
-import { TraceReplayer, type TimelineEvent } from '../../src/harness/trace-replayer.js';
-import { generateScorecard, type Scorecard } from '../../src/harness/scorecard.js';
-import type { Checkpoint } from '../../src/harness/types.js';
+// G-022a：TraceReplayer/generateScorecard/Checkpoint/TraceSession 等已移至 bridges/trace-bridge.ts
 import { AgentProfileManager } from '../../src/agents/profiles/manager.js';
-import type { AgentProfile } from '../../src/agents/profiles/types.js';
-import { HookConfigRegistry } from '../../src/hooks/registry.js';
-import type { HookConfig } from '../../src/hooks/registry.js';
-import { getHookTemplates, getHookTemplateById } from '../../src/hooks/templates.js';
-import type { HookTemplate } from '../../src/hooks/templates.js';
-// C3 修复：Hook 命令安全扫描
-import { checkBashSecurity } from '../../src/tools/security-enhanced.js';
+// G-022a：HookConfigRegistry/checkBashSecurity/getHookTemplates/HookConfig 等已移至 bridges/hook-bridge.ts
 // Phase 77 借鉴点 4：Voice Memo 式会话状态卡聚合器
 import { aggregateSessionStatus } from '../../src/agent/session-status-aggregator.js';
-import path from 'node:path';
 
 // delegate bridge 与共享上下文
 import {
@@ -54,6 +44,9 @@ import {
   SkillBridge,
   ExperimentBridge,
   GoalBridge,
+  ProfileBridge,
+  HookBridge,
+  TraceBridge,
   type EngineBridgeOptions,
   type SkillInfo,
   type SkillPreview,
@@ -79,6 +72,10 @@ export class RouteDevEngine {
   private skillBridge: SkillBridge;
   private experimentBridge: ExperimentBridge;
   private goalBridge: GoalBridge;
+  // G-022a：从本文件拆分出的领域 delegate
+  private profileBridge: ProfileBridge;
+  private hookBridge: HookBridge;
+  private traceBridge: TraceBridge;
 
   constructor(config: AppConfig, options: EngineBridgeOptions) {
     this.ctx = new EngineContext(config, options);
@@ -88,6 +85,10 @@ export class RouteDevEngine {
     this.skillBridge = new SkillBridge(this.ctx);
     this.experimentBridge = new ExperimentBridge(this.ctx);
     this.goalBridge = new GoalBridge(this.ctx);
+    // G-022a：Profile/Hook/Trace 无需跨 bridge 调用，不注入 ctx.bridges
+    this.profileBridge = new ProfileBridge(this.ctx);
+    this.hookBridge = new HookBridge(this.ctx);
+    this.traceBridge = new TraceBridge(this.ctx);
     // 注入 bridge 互相引用，供跨 bridge 调用（如 ChatBridge.executeCommand → GoalBridge）
     this.ctx.bridges = {
       chat: this.chatBridge,
@@ -181,20 +182,26 @@ export class RouteDevEngine {
 
   async reloadConfig(config: AppConfig): Promise<void> {
     this.ctx.config = config;
+    // G-007 修复：先销毁旧依赖（释放 timer/handle/MCP 连接等资源），再重新初始化
+    // 原实现直接调用 initialize() 不先 destroy()，导致旧依赖泄漏
+    await this.destroy();
     // 重新初始化 LLM 客户端和分类器，保留对话历史
     await this.initialize();
     this.ctx.options.onConfigReloaded?.(config);
   }
 
   /**
-   * 销毁引擎：中止 LLM 请求 + 关闭 MCP 连接 + 移除 trace 回调
+   * 销毁引擎：中止 LLM 请求 + 调用 deps.dispose() + 关闭 MCP 连接 + 移除 trace 回调
    * 异步方法，调用方应 await 确保资源完全释放后再退出进程
    */
   async destroy(): Promise<void> {
-    this.ctx.abortController?.abort();
-    this.ctx.abortController = null;
+    // G-004：中断并清除所有并发请求的 abortController
+    this.ctx.clearAllAbortControllers();
+    this.ctx.clearAllPendingConfirms();
     // 清理 deps 资源（MCP 连接、trace 回调等），避免句柄泄漏
     if (this.ctx.deps) {
+      // G-007：先调用 AppDependencies.dispose() 释放各子系统资源（按逆序调用 dispose）
+      try { await this.ctx.deps.dispose(); } catch { /* 忽略清理错误 */ }
       // 移除 trace 回调，防止旧 TraceCollector 在被 GC 前继续触发事件
       try { this.ctx.deps.trace.onSpan(null); } catch { /* 忽略清理错误 */ }
       // 关闭所有 MCP 连接（await 确保子进程退出，避免孤儿进程锁定文件）
@@ -213,17 +220,18 @@ export class RouteDevEngine {
     return this.chatBridge.sendChat(text);
   }
 
-  resolveToolConfirm(approved: boolean, payload?: unknown): void {
-    this.chatBridge.resolveToolConfirm(approved, payload);
+  /** G-004 修复：按 requestId 解析工具确认 */
+  resolveToolConfirm(requestId: string, approved: boolean, payload?: unknown): void {
+    this.chatBridge.resolveToolConfirm(requestId, approved, payload);
   }
 
   resolvePlanEdit(requestId: string, steps: import('../shared/ipc-types.js').PlanEditRequestPayload['plan']['steps'] | null): void {
     this.chatBridge.resolvePlanEdit(requestId, steps);
   }
 
-  /** 停止当前生成（供 IPC chat:stop 调用） */
-  stopGeneration(): void {
-    this.chatBridge.stopGeneration();
+  /** 停止当前生成（供 IPC chat:stop 调用）；G-004：支持可选 requestId 精准中断 */
+  stopGeneration(requestId?: string): void {
+    this.chatBridge.stopGeneration(requestId);
   }
 
   async generateTitle(userMessage: string, assistantReply?: string): Promise<string> {
@@ -493,141 +501,44 @@ export class RouteDevEngine {
   }
 
   // ============================================================
-  // Phase 48 Task 4 接线修复：Agent Profile 管理 API（Profile 领域，暂未拆分为独立 bridge）
-  // 内部使用 AgentProfileManager（在 initialize() 中创建并异步 loadAll）
+  // Profile 领域委托（ProfileBridge）
+  // G-022a：从本文件拆分至 bridges/profile-bridge.ts
   // ============================================================
-
-  /** AgentProfile -> AgentProfileInfo（剥离 systemPrompt，列表传输用） */
-  private toProfileInfo(profile: AgentProfile): AgentProfileInfo {
-    // 显式列出字段，避免 systemPrompt 进入选型后造成 IPC 大对象传输
-    return {
-      id: profile.id,
-      name: profile.name,
-      type: 'agent-profile',
-      version: profile.version,
-      role: profile.role,
-      modelId: profile.modelId,
-      description: profile.description,
-      allowedTools: profile.allowedTools,
-      forbiddenTools: profile.forbiddenTools,
-      canChallenge: profile.canChallenge,
-      challengeSeverity: profile.challengeSeverity,
-      outputFormat: profile.outputFormat,
-      boundSkills: profile.boundSkills,
-      maxTokens: profile.maxTokens,
-      maxSteps: profile.maxSteps,
-      isBuiltin: profile.isBuiltin,
-      createdAt: profile.createdAt,
-      updatedAt: profile.updatedAt,
-    };
-  }
-
-  /** AgentProfile -> AgentProfileDetail（含完整字段） */
-  private toProfileDetail(profile: AgentProfile): AgentProfileDetail {
-    // TD-01：AgentProfileRole/AgentProfileOutputFormat 已统一为 AgentRole/AgentOutputFormat 别名，
-    // 不再需要显式断言（IPC 侧与 src 侧类型同源）
-    return {
-      ...profile,
-    };
-  }
-
-  /** ProfileSavePayload -> AgentProfile（IPC 字段透传，类型已与 src 一致） */
-  private fromSavePayload(payload: ProfileSavePayload): AgentProfile {
-    return { ...payload };
-  }
 
   /** 列出所有 Profile（不含 systemPrompt） */
   async listProfiles(): Promise<AgentProfileInfo[]> {
-    if (!this.ctx.profileManager) return [];
-    try {
-      const profiles = await this.ctx.profileManager.listProfiles();
-      return profiles.map((p) => this.toProfileInfo(p));
-    } catch (err) {
-      console.error('[Engine] listProfiles failed:', err);
-      return [];
-    }
+    return this.profileBridge.listProfiles();
   }
 
   /** 获取指定 Profile 详情（含 systemPrompt） */
   async getProfile(id: string): Promise<AgentProfileDetail | null> {
-    if (!this.ctx.profileManager) return null;
-    try {
-      const profile = await this.ctx.profileManager.getProfile(id);
-      return profile ? this.toProfileDetail(profile) : null;
-    } catch (err) {
-      console.error('[Engine] getProfile failed:', err);
-      return null;
-    }
+    return this.profileBridge.getProfile(id);
   }
 
   /** 保存 Profile（新增/更新） */
   async saveProfile(payload: ProfileSavePayload): Promise<ProfileOpResult> {
-    if (!this.ctx.profileManager) return { success: false, error: '引擎未初始化' };
-    try {
-      const profile = this.fromSavePayload(payload);
-      await this.ctx.profileManager.saveProfile(profile);
-      return { success: true, id: profile.id };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
+    return this.profileBridge.saveProfile(payload);
   }
 
   /** 删除 Profile（内置 Profile 不可删除，manager 会抛错） */
   async deleteProfile(id: string): Promise<ProfileOpResult> {
-    if (!this.ctx.profileManager) return { success: false, error: '引擎未初始化' };
-    try {
-      await this.ctx.profileManager.deleteProfile(id);
-      return { success: true, id };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
+    return this.profileBridge.deleteProfile(id);
   }
 
   /** 复制 Profile 为自定义副本（需传入新名称） */
   async duplicateProfile(id: string, newName: string): Promise<ProfileOpResult> {
-    if (!this.ctx.profileManager) return { success: false, error: '引擎未初始化' };
-    try {
-      const copy = await this.ctx.profileManager.duplicateProfile(id, newName);
-      return { success: true, id: copy.id };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
+    return this.profileBridge.duplicateProfile(id, newName);
   }
 
   // ============================================================
-  // Phase 39：Hook 桥接方法（Hook 领域，暂未拆分为独立 bridge）
+  // Hook 领域委托（HookBridge）
+  // G-022a：从本文件拆分至 bridges/hook-bridge.ts
   // fail-open：底层模块调用失败时返回默认值，不抛异常
   // ============================================================
 
-  /**
-   * 统一解析 Hook 配置文件路径并执行边界校验
-   * 安全：拒绝绝对路径 + resolve 后必须 startsWith cwd，防止路径穿越
-   * @returns 校验通过的绝对路径；校验失败返回 null
-   */
-  private resolveHookConfigPath(): string | null {
-    const rawConfigPath = this.ctx.config.hooks?.configPath ?? '.routedev/hooks.json';
-    if (path.isAbsolute(rawConfigPath)) {
-      return null;
-    }
-    const resolvedConfigPath = path.resolve(this.ctx.options.cwd, rawConfigPath);
-    const cwdResolved = path.resolve(this.ctx.options.cwd);
-    if (!resolvedConfigPath.startsWith(cwdResolved + path.sep) && resolvedConfigPath !== cwdResolved) {
-      return null;
-    }
-    return resolvedConfigPath;
-  }
-
   /** 列出所有 Hook 配置 */
   async listHooks(): Promise<unknown[]> {
-    try {
-      const configPath = this.resolveHookConfigPath();
-      if (!configPath) return [];
-      const registry = new HookConfigRegistry(configPath);
-      await registry.load();
-      return registry.list();
-    } catch {
-      return [];
-    }
+    return this.hookBridge.listHooks();
   }
 
   /** 启用/禁用 Hook */
@@ -635,33 +546,13 @@ export class RouteDevEngine {
     id: string,
     enabled: boolean,
   ): Promise<{ success: boolean; error?: string }> {
-    try {
-      const configPath = this.resolveHookConfigPath();
-      if (!configPath) return { success: false, error: 'hooks.configPath 越界：必须在项目目录内' };
-      const registry = new HookConfigRegistry(configPath);
-      await registry.load();
-      const ok = registry.toggle(id, enabled);
-      if (!ok) return { success: false, error: `未找到 Hook "${id}"` };
-      await registry.save();
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
+    return this.hookBridge.toggleHook(id, enabled);
   }
 
   /**
    * 创建新 Hook（模板模式 / 自定义模式）
-   *
-   * 替代已移除的 HookGenerator（LLM 生成模式），改为：
-   *   - 模板模式：传入 templateId，从内置模板库复制创建
-   *   - 自定义模式：传入 name + event + code（shell 命令），直接保存
-   *
-   * @param payload
-   *   - 模板模式：{ templateId: string }
-   *   - 自定义模式：{ name: string, event: HookEvent, code: string, description?, priority?, condition?, failBehavior? }
-   *   - 兼容旧调用：传入 string 时视为描述，但缺少 code 无法创建（返回错误提示）
-   *
-   * @returns 创建结果，成功时返回 hookId
+   * 模板模式：{ templateId: string }
+   * 自定义模式：{ name, event, code, description?, priority?, condition?, failBehavior? }
    */
   async createHook(
     payload: { templateId: string } | {
@@ -674,179 +565,58 @@ export class RouteDevEngine {
       failBehavior?: 'warn' | 'block' | 'silent';
     },
   ): Promise<{ success: boolean; hookId?: string; error?: string }> {
-    try {
-      // C4 修复：hooks.configPath 路径越界校验（统一复用 resolveHookConfigPath）
-      const configPath = this.resolveHookConfigPath();
-      if (!configPath) {
-        return { success: false, error: 'hooks.configPath 越界：必须在项目目录内' };
-      }
-      const registry = new HookConfigRegistry(configPath);
-      await registry.load();
-
-      let config: HookConfig;
-
-      // 模板模式：从内置模板复制
-      if (typeof payload === 'object' && payload !== null && 'templateId' in payload) {
-        const template = getHookTemplateById(payload.templateId);
-        if (!template) {
-          return { success: false, error: `未找到模板 "${payload.templateId}"` };
-        }
-        // G-021 修复：模板命令也需经过 bash 安全扫描，防止内置模板被篡改后注入危险命令
-        const templateBashResult = checkBashSecurity(template.code);
-        if (!templateBashResult.allowed) {
-          return { success: false, error: '模板命令被安全策略拒绝' };
-        }
-        // 生成唯一 ID：模板 id + 时间戳后缀，避免重复创建时 ID 冲突
-        const hookId = `${template.id}-${Date.now()}`;
-        config = {
-          id: hookId,
-          name: template.name,
-          event: template.event,
-          enabled: template.enabled,
-          condition: template.condition,
-          command: template.code,
-          failBehavior: template.failBehavior,
-          isTemplate: true,
-        };
-      } else if (
-        typeof payload === 'object' &&
-        payload !== null &&
-        'name' in payload &&
-        'event' in payload &&
-        'code' in payload
-      ) {
-        // 自定义模式：C3 修复——创建前强制安全扫描，拒绝危险命令
-        const p = payload as {
-          name: string;
-          event: string;
-          code: string;
-          description?: string;
-          priority?: number;
-          condition?: { toolName?: string; filePattern?: string };
-          failBehavior?: 'warn' | 'block' | 'silent';
-        };
-        const bashResult = checkBashSecurity(p.code);
-        if (!bashResult.allowed) {
-          return { success: false, error: `Hook 命令被安全策略拒绝：${bashResult.reason}` };
-        }
-        const hookId = `custom-${Date.now()}`;
-        config = {
-          id: hookId,
-          name: p.name,
-          event: p.event as HookConfig['event'],
-          enabled: true,
-          condition: p.condition,
-          command: p.code,
-          failBehavior: p.failBehavior ?? 'warn',
-          isTemplate: false,
-        };
-      } else {
-        return {
-          success: false,
-          error: '参数错误：需提供 templateId 或 { name, event, code }',
-        };
-      }
-
-      registry.add(config);
-      await registry.save();
-      return { success: true, hookId: config.id };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
+    return this.hookBridge.createHook(payload);
   }
 
   /** 列出所有内置 Hook 模板（供 UI 选择） */
-  listHookTemplates(): HookTemplate[] {
-    return getHookTemplates();
+  listHookTemplates(): import('../../src/hooks/templates.js').HookTemplate[] {
+    return this.hookBridge.listHookTemplates();
   }
 
   /** 删除自定义 Hook */
   async deleteHook(id: string): Promise<{ success: boolean; error?: string }> {
-    try {
-      const configPath = this.resolveHookConfigPath();
-      if (!configPath) return { success: false, error: 'hooks.configPath 越界：必须在项目目录内' };
-      const registry = new HookConfigRegistry(configPath);
-      await registry.load();
-      const ok = registry.remove(id);
-      if (!ok) return { success: false, error: `未找到 Hook "${id}"` };
-      await registry.save();
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
+    return this.hookBridge.deleteHook(id);
   }
 
   // ============================================================
-  // Phase 47 Task 6：Checkpoint 时间轴与语义化摘要桥接方法（Checkpoint 领域，暂未拆分为独立 bridge）
+  // Checkpoint 领域委托（TraceBridge）
+  // G-022a：从本文件拆分至 bridges/trace-bridge.ts
   // fail-open：底层 CheckpointManager 不存在时返回空数组/默认值
   // ============================================================
 
   /**
    * 列出当前项目的所有检查点
    * @param projectId 项目 ID（当前未使用，CheckpointManager 已按工作目录隔离）
-   * @returns 检查点列表（按创建时间升序，IPC 传输用，剥离 gitCommitHash 等内部字段）
    */
-  listCheckpoints(projectId?: string): Checkpoint[] {
-    if (!this.ctx.deps) return [];
-    try {
-      return this.ctx.deps.checkpointManager.list();
-    } catch (err) {
-      console.error('[Engine] listCheckpoints failed:', err);
-      return [];
-    }
+  listCheckpoints(projectId?: string): import('../../src/harness/types.js').Checkpoint[] {
+    return this.traceBridge.listCheckpoints(projectId);
   }
 
   /**
    * 回滚到指定检查点
    * 注意：这是破坏性操作（git reset --hard），调用方（UI）必须在执行前获得用户确认
-   * @param checkpointId 检查点 ID
-   * @returns 回滚结果
    */
   async rollbackCheckpoint(checkpointId: string): Promise<{ success: boolean; error?: string }> {
-    if (!this.ctx.deps) return { success: false, error: '引擎未初始化' };
-    try {
-      const ok = await this.ctx.deps.checkpointManager.rollback(checkpointId);
-      return { success: ok, error: ok ? undefined : '回滚失败（检查点不存在或工作区有未提交更改）' };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
+    return this.traceBridge.rollbackCheckpoint(checkpointId);
   }
 
   // ============================================================
-  // Phase 77：运行回放与评分卡——委托 TraceCollector + TraceReplayer + scorecard（Trace 领域，暂未拆分为独立 bridge）
+  // Trace 领域委托（TraceBridge）——Phase 77 运行回放与评分卡
+  // G-022a：从本文件拆分至 bridges/trace-bridge.ts
   // ============================================================
 
   /** 列出磁盘上的 Trace 会话（按 startTime 倒序） */
-  async listTraceSessions(limit?: number): Promise<TraceSession[]> {
-    if (!this.ctx.deps) return [];
-    try {
-      return await this.ctx.deps.trace.listSessions(limit);
-    } catch (err) {
-      console.error('[Engine] listTraceSessions failed:', err);
-      return [];
-    }
+  async listTraceSessions(limit?: number): Promise<import('../../src/harness/trace-types.js').TraceSession[]> {
+    return this.traceBridge.listTraceSessions(limit);
   }
 
   /** 回放指定会话，返回时间线事件；传入 step 时仅返回该步骤段落 */
-  async replayTrace(sessionId: string, step?: number): Promise<TimelineEvent[]> {
-    if (!this.ctx.deps) return [];
-    try {
-      const replayer = new TraceReplayer(this.ctx.deps.trace);
-      return await replayer.replay(sessionId, step !== undefined ? { step } : undefined);
-    } catch (err) {
-      console.error('[Engine] replayTrace failed:', err);
-      return [];
-    }
+  async replayTrace(sessionId: string, step?: number): Promise<import('../../src/harness/trace-replayer.js').TimelineEvent[]> {
+    return this.traceBridge.replayTrace(sessionId, step);
   }
 
   /** 生成指定会话的评分卡 */
-  async generateTraceScorecard(sessionId: string): Promise<Scorecard | null> {
-    if (!this.ctx.deps) return null;
-    try {
-      return await generateScorecard(this.ctx.deps.trace, sessionId);
-    } catch (err) {
-      console.error('[Engine] generateTraceScorecard failed:', err);
-      return null;
-    }
+  async generateTraceScorecard(sessionId: string): Promise<import('../../src/harness/scorecard.js').Scorecard | null> {
+    return this.traceBridge.generateTraceScorecard(sessionId);
   }
 }

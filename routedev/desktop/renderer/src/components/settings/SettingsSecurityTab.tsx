@@ -6,7 +6,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import type {
   AppConfig, SecurityConfig, SandboxLevel, ApprovalLevel, ToolCategory,
   FilesystemPermissionRule,
-} from '../../../../../src/config/schema.js';
+} from '../../../../shared/config-types.js';
 import { SEARCH_ENGINES } from '../../pages/settings-helpers.js';
 import { Button } from '../ui/button.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';

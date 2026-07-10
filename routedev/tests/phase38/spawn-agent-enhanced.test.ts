@@ -112,7 +112,7 @@ describe('Phase 38 Task 2: SpawnAgentTool 增强', () => {
       expect(props).toHaveProperty('subagentType');
       expect(props).toHaveProperty('maxIterations');
       expect(props).toHaveProperty('isolated');
-      expect(tool.definition.parameters.required).toEqual(['description', 'prompt']);
+      expect(tool.definition.parameters.required).toEqual(['description', 'prompt', 'model']);
       expect(tool.definition.requiresApproval).toBe(true);
     });
   });
@@ -142,6 +142,7 @@ describe('Phase 38 Task 2: SpawnAgentTool 增强', () => {
       const tool = new SpawnAgentTool(mockFn);
       const { valid, errors } = tool.validateArgs({
         taskDescription: '这是一个足够长的任务描述',
+        model: 'inherit',
       });
       expect(valid).toBe(true);
       expect(errors).toHaveLength(0);
@@ -294,11 +295,11 @@ describe('Phase 38 Task 2: SpawnAgentTool 增强', () => {
       const limitedFn = createConcurrencyLimitedSpawnFn(innerFn, maxConcurrent);
 
       // 启动 2 个并行子 Agent（达到上限）
-      const p1 = limitedFn({ description: '任务1', prompt: '执行任务1的详细指令' });
-      const p2 = limitedFn({ description: '任务2', prompt: '执行任务2的详细指令' });
+      const p1 = limitedFn({ description: '任务1', prompt: '执行任务1的详细指令', model: 'inherit' });
+      const p2 = limitedFn({ description: '任务2', prompt: '执行任务2的详细指令', model: 'inherit' });
 
       // 第 3 个应被拒绝
-      const result3 = await limitedFn({ description: '任务3', prompt: '执行任务3的详细指令' });
+      const result3 = await limitedFn({ description: '任务3', prompt: '执行任务3的详细指令', model: 'inherit' });
       expect(result3.success).toBe(false);
       expect(result3.error).toContain('已达到最大并行子 Agent 数');
       expect(result3.error).toContain(String(maxConcurrent));
@@ -319,12 +320,12 @@ describe('Phase 38 Task 2: SpawnAgentTool 增强', () => {
       const limitedFn = createConcurrencyLimitedSpawnFn(innerFn, maxConcurrent);
 
       // 第一次 spawn 应成功
-      const r1 = await limitedFn({ description: '任务1', prompt: '执行任务1的详细指令' });
+      const r1 = await limitedFn({ description: '任务1', prompt: '执行任务1的详细指令', model: 'inherit' });
       expect(r1.success).toBe(true);
       expect(limitedFn.getActiveCount()).toBe(0);
 
       // 计数器归零后，第二次 spawn 也应成功
-      const r2 = await limitedFn({ description: '任务2', prompt: '执行任务2的详细指令' });
+      const r2 = await limitedFn({ description: '任务2', prompt: '执行任务2的详细指令', model: 'inherit' });
       expect(r2.success).toBe(true);
       expect(limitedFn.getActiveCount()).toBe(0);
     });
@@ -337,7 +338,7 @@ describe('Phase 38 Task 2: SpawnAgentTool 增强', () => {
       const limitedFn = createConcurrencyLimitedSpawnFn(innerFn, 1);
 
       // 即使 inner fn 抛异常，计数器也应递减
-      await expect(limitedFn({ description: '任务', prompt: '执行任务的详细指令' })).rejects.toThrow('子 Agent 崩溃');
+      await expect(limitedFn({ description: '任务', prompt: '执行任务的详细指令', model: 'inherit' })).rejects.toThrow('子 Agent 崩溃');
       expect(limitedFn.getActiveCount()).toBe(0);
     });
   });

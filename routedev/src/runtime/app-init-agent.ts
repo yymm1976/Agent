@@ -176,9 +176,9 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
     let profileManagerLoaded = false;
 
     return async (params, options) => {
-      // 向后兼容：字符串参数转换为对象
+      // 向后兼容：字符串参数转换为对象（model 强制必填，旧字符串调用方默认 inherit）
       const normalizedParams: SpawnAgentParams = typeof params === 'string'
-        ? { description: params, prompt: params }
+        ? { description: params, prompt: params, model: 'inherit' }
         : params;
       const subagentType: SubagentType = normalizedParams.subagentType ?? 'general';
 

@@ -277,7 +277,7 @@ describe('Phase 50 Task 3: 子 Agent 委托体系模块接入', () => {
     const deps: DelegationIntegrationDeps = {}; // 全部未启用
     const wrapped = wrapSpawnAgentWithDelegation(innerFn, deps);
 
-    const result = await wrapped({ description: 'task', prompt: 'do something' });
+    const result = await wrapped({ description: 'task', prompt: 'do something', model: 'inherit' });
 
     expect(result.success).toBe(true);
     expect(innerFn).toHaveBeenCalledTimes(1);
@@ -295,7 +295,7 @@ describe('Phase 50 Task 3: 子 Agent 委托体系模块接入', () => {
     };
     const wrapped = wrapSpawnAgentWithDelegation(innerFn, deps);
 
-    await wrapped({ description: 'task', prompt: 'do something', subagentType: 'coder' });
+    await wrapped({ description: 'task', prompt: 'do something', model: 'inherit', subagentType: 'coder' });
 
     expect(innerFn).toHaveBeenCalledTimes(1);
     const callArg = innerFn.mock.calls[0][0] as SpawnAgentParams;
@@ -316,7 +316,7 @@ describe('Phase 50 Task 3: 子 Agent 委托体系模块接入', () => {
     };
     const wrapped = wrapSpawnAgentWithDelegation(innerFn, deps);
 
-    const result = await wrapped({ description: 'task', prompt: 'do something', subagentType: 'coder' });
+    const result = await wrapped({ description: 'task', prompt: 'do something', model: 'inherit', subagentType: 'coder' });
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('委托门控拒绝');
@@ -331,7 +331,7 @@ describe('Phase 50 Task 3: 子 Agent 委托体系模块接入', () => {
     };
     const wrapped = wrapSpawnAgentWithDelegation(innerFn, deps);
 
-    const result = await wrapped({ description: 'task', prompt: 'do something', subagentType: 'general' });
+    const result = await wrapped({ description: 'task', prompt: 'do something', model: 'inherit', subagentType: 'general' });
 
     // spawn_agent 在 allowedTools 列表中 → 校验通过 → 继续执行
     expect(result.success).toBe(true);
@@ -347,7 +347,7 @@ describe('Phase 50 Task 3: 子 Agent 委托体系模块接入', () => {
     };
     const wrapped = wrapSpawnAgentWithDelegation(innerFn, deps);
 
-    await wrapped({ description: 'task', prompt: 'do something', subagentType: 'coder' });
+    await wrapped({ description: 'task', prompt: 'do something', model: 'inherit', subagentType: 'coder' });
 
     // 应该有一个 agent 被注册，状态为 completed
     const all = lifecycle.getAll();
@@ -365,7 +365,7 @@ describe('Phase 50 Task 3: 子 Agent 委托体系模块接入', () => {
     };
     const wrapped = wrapSpawnAgentWithDelegation(innerFn, deps);
 
-    await wrapped({ description: 'task', prompt: 'do something', subagentType: 'coder' });
+    await wrapped({ description: 'task', prompt: 'do something', model: 'inherit', subagentType: 'coder' });
 
     const all = lifecycle.getAll();
     expect(all.length).toBe(1);
@@ -381,7 +381,7 @@ describe('Phase 50 Task 3: 子 Agent 委托体系模块接入', () => {
     };
     const wrapped = wrapSpawnAgentWithDelegation(innerFn, deps);
 
-    await wrapped({ description: 'task', prompt: 'do something', subagentType: 'coder' });
+    await wrapped({ description: 'task', prompt: 'do something', model: 'inherit', subagentType: 'coder' });
 
     // 应该记录一张评分卡
     expect(collector.size).toBe(1);
@@ -402,7 +402,7 @@ describe('Phase 50 Task 3: 子 Agent 委托体系模块接入', () => {
     const wrapped = wrapSpawnAgentWithDelegation(innerFn, deps);
 
     // 不应抛出异常，且应继续执行 innerFn
-    const result = await wrapped({ description: 'task', prompt: 'do something', subagentType: 'coder' });
+    const result = await wrapped({ description: 'task', prompt: 'do something', model: 'inherit', subagentType: 'coder' });
     expect(result.success).toBe(true);
     expect(innerFn).toHaveBeenCalledTimes(1);
     // prompt 未被附加上下文（因 pack 失败降级）
