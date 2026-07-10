@@ -1,5 +1,7 @@
 # Phase 65-67 模块详细说明
 
+> ⚠️ **废弃警告**：本文档中 Phase 66（CheckpointPipeline/CallOwnerCoordinator/StateSnapshotChain/ReputationDeriver）和 Phase 67（MICrossScorer 等）章节描述的模块已随 ExecutionOrchestrator 死代码清理被删除，仅保留历史记录。Phase 65 记忆系统模块仍有效。
+
 本文档为 Phase 65-67 中引入的所有模块提供详细说明，帮助理解这些学术命名模块的功能和使用场景。
 
 ## 目录
@@ -135,7 +137,7 @@
 
 ---
 
-## Phase 66: 基础协议
+## Phase 66: 基础协议（已废弃）
 
 ### CheckpointPipeline（检查点管道）
 
@@ -212,7 +214,7 @@
 
 ---
 
-## Phase 67: 推理质量诊断
+## Phase 67: 推理质量诊断（已废弃）
 
 ### MICrossScorer（互信息交叉评分器）
 

@@ -308,6 +308,16 @@ export class ChatBridge {
           console.warn('[Engine] failed to generate micro summary:', err);
         }
       }
+
+      // F-004：结束 Trace 会话，触发 .session.json/.spans.json 落盘
+      // 落盘失败仅 log，不影响主链路
+      if (deps?.trace && routeDecision) {
+        try {
+          await deps.trace.endSession();
+        } catch (err) {
+          console.warn('[Engine] trace endSession failed:', err);
+        }
+      }
     }
   }
 

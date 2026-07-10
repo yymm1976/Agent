@@ -4,13 +4,14 @@
 // createHook/deleteHook/listHookTemplates 及私有辅助方法 resolveHookConfigPath 委托至此。
 // 安全：所有 Hook 命令经 checkBashSecurity 扫描；configPath 越界校验拒绝路径穿越。
 
-import path from 'node:path';
 import { HookConfigRegistry } from '../../../src/hooks/registry.js';
 import type { HookConfig } from '../../../src/hooks/registry.js';
 import { getHookTemplates, getHookTemplateById } from '../../../src/hooks/templates.js';
 import type { HookTemplate } from '../../../src/hooks/templates.js';
 // C3 修复：Hook 命令安全扫描
 import { checkBashSecurity } from '../../../src/tools/security-enhanced.js';
+// F-001 修复：复用共享路径越界校验
+import { resolveHookConfigPath } from '../../../src/hooks/security.js';
 import type { EngineContext } from './engine-context.js';
 
 /**
@@ -26,19 +27,12 @@ export class HookBridge {
   /**
    * 统一解析 Hook 配置文件路径并执行边界校验
    * 安全：拒绝绝对路径 + resolve 后必须 startsWith cwd，防止路径穿越
+   * F-001 修复：复用共享模块 src/hooks/security.ts 的 resolveHookConfigPath
    * @returns 校验通过的绝对路径；校验失败返回 null
    */
   private resolveHookConfigPath(): string | null {
     const rawConfigPath = this.ctx.config.hooks?.configPath ?? '.routedev/hooks.json';
-    if (path.isAbsolute(rawConfigPath)) {
-      return null;
-    }
-    const resolvedConfigPath = path.resolve(this.ctx.options.cwd, rawConfigPath);
-    const cwdResolved = path.resolve(this.ctx.options.cwd);
-    if (!resolvedConfigPath.startsWith(cwdResolved + path.sep) && resolvedConfigPath !== cwdResolved) {
-      return null;
-    }
-    return resolvedConfigPath;
+    return resolveHookConfigPath(this.ctx.options.cwd, rawConfigPath);
   }
 
   /** 列出所有 Hook 配置 */

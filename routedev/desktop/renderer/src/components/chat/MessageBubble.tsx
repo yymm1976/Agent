@@ -23,7 +23,7 @@ function GoalMessageBubble({ goalId }: { goalId: string }) {
   );
   // Phase 71：加载 plan 修订历史 + 提供遗漏点检查回调
   // PlanRevision 与 GoalExecutionCard 内部 interface PlanRevision 结构一致
-  type LocalPlanRevision = { before: PlanStep[]; after: PlanStep[]; revisedAt: number };
+  type LocalPlanRevision = { before: PlanStep[]; after: PlanStep[]; revisedAt: string };
   const [planRevisions, setPlanRevisions] = useState<LocalPlanRevision[]>([]);
   useEffect(() => {
     // 异步加载修订历史，fail-open（无历史则空数组）

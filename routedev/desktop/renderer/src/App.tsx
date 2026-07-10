@@ -1,21 +1,24 @@
 // desktop/renderer/src/App.tsx
 // 应用根组件：页面路由 + 全局状态透传 + 主题应用 + 对话切换联动
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, lazy, Suspense } from 'react';
 import { AlertCircle, RotateCcw } from 'lucide-react';
 import { Layout } from './components/Layout.js';
 import { TitleBar } from './components/TitleBar.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { ChatPage } from './pages/ChatPage.js';
-import { NewTaskPage } from './pages/NewTaskPage.js';
-import { SettingsPage } from './pages/SettingsPage.js';
 import { SetupWizard } from './components/SetupWizard.js';
 import { StatusBanner } from './components/StatusBanner.js';
-import { DiscoveryPage, type RecentConversation, type SuggestedTask, generateSuggestedTasks } from './components/DiscoveryPage.js';
+import { type RecentConversation, type SuggestedTask } from './components/DiscoveryPage.js';
 import { Button } from './components/ui/button.js';
 import { useTheme } from './hooks/useTheme.js';
 import { initIPCListeners, loadInitialConfig, useRouteDevStore } from './store/useRouteDevStore.js';
 import { useProjectsStore } from './store/useProjectsStore.js';
+
+// F-023：懒加载非首屏页面，减小首屏 bundle 体积
+const SettingsPage = lazy(() => import('./pages/SettingsPage.js').then(m => ({ default: m.SettingsPage })));
+const NewTaskPage = lazy(() => import('./pages/NewTaskPage.js').then(m => ({ default: m.NewTaskPage })));
+const DiscoveryPage = lazy(() => import('./components/DiscoveryPage.js').then(m => ({ default: m.DiscoveryPage })));
 
 type PageId = 'chat' | 'newtask' | 'settings';
 
@@ -36,7 +39,7 @@ export default function App() {
   const isProcessing = useRouteDevStore((s) => s.isProcessing);
   const currentModel = useRouteDevStore((s) => s.currentModel);
   const pendingConfirm = useRouteDevStore((s) => s.pendingConfirm);
-  const tokenSnapshots = useRouteDevStore((s) => s.tokenSnapshots);
+  const lastTokenSnapshot = useRouteDevStore((s) => s.tokenSnapshots.at(-1));
   const sendMessage = useRouteDevStore((s) => s.sendMessage);
   const confirmTool = useRouteDevStore((s) => s.confirmTool);
   const stopGeneration = useRouteDevStore((s) => s.stopGeneration);
@@ -50,7 +53,7 @@ export default function App() {
   // 兼容子组件 props 形状：组装为 routeDev 对象传给 ChatPage / SettingsPage
   const routeDev = {
     config, configLoading, configError,
-    isProcessing, currentModel, pendingConfirm, tokenSnapshots, messages: routeDevMessages,
+    isProcessing, currentModel, pendingConfirm, lastTokenSnapshot, messages: routeDevMessages,
     sendMessage, confirmTool, stopGeneration, saveConfig, reloadConfig,
     deleteMessage, retryMessage,
   };
@@ -257,7 +260,12 @@ export default function App() {
       messageCount: c.messages.length,
     }))
   ).sort((a, b) => b.lastActiveAt - a.lastActiveAt).slice(0, 6);
-  const suggestedTasks: SuggestedTask[] = generateSuggestedTasks('unknown');
+  // F-023：内联 generateSuggestedTasks('unknown') 的结果，避免静态 import DiscoveryPage 模块导致懒加载失效
+  const suggestedTasks: SuggestedTask[] = [
+    { icon: 'Network', title: '解释项目架构', description: '梳理核心模块与数据流，给出架构概览', prompt: '请解释当前项目的核心架构' },
+    { icon: 'GitCompare', title: '审查代码变更', description: '审查当前分支相对主干的代码变更', prompt: '审查当前分支的代码变更' },
+    { icon: 'GitBranch', title: '开启分支实验', description: '在隔离分支上尝试新的实现方案', prompt: '为当前需求开启一个实验分支，尝试新的实现方案' },
+  ];
 
   return (
     // 使用 grid 替代 flex-col：确保 wrapper 所在 grid cell 有明确高度（minmax(0,1fr)），
@@ -275,52 +283,58 @@ export default function App() {
           >
             {page === 'chat' && <ChatPage {...routeDev} />}
             {page === 'newtask' && (
-              <NewTaskPage
-                initialProjectId={newTaskInitialProjectId}
-                onSend={handleNewTaskSend}
-                onCancel={() => setPage('chat')}
-              />
+              <Suspense fallback={<div className="flex min-h-0 items-center justify-center text-sm text-rd-textMuted">加载中...</div>}>
+                <NewTaskPage
+                  initialProjectId={newTaskInitialProjectId}
+                  onSend={handleNewTaskSend}
+                  onCancel={() => setPage('chat')}
+                />
+              </Suspense>
             )}
           </Layout>
           {settingsOpen && (
             <div className={`${settingsClosing ? 'rd-modal-backdrop-exit' : 'rd-modal-backdrop-enter'} fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6`}>
               <div className={`${settingsClosing ? 'rd-modal-exit' : 'rd-modal-enter'} h-[90vh] w-[min(1280px,94vw)] overflow-hidden rounded-3xl border border-rd-border bg-rd-background shadow-2xl`}>
-                <SettingsPage {...routeDev} onBack={handleCloseSettings} />
+                <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-rd-textMuted">加载中...</div>}>
+                  <SettingsPage {...routeDev} onBack={handleCloseSettings} />
+                </Suspense>
               </div>
             </div>
           )}
           {config?.discovery?.enabled !== false && (
-            <DiscoveryPage
-              open={discoveryOpen}
-              onClose={() => setDiscoveryOpen(false)}
-              recentConversations={recentConversations}
-              suggestedTasks={suggestedTasks}
-              onSelectTask={(prompt) => {
-                setDiscoveryOpen(false);
-                setPage('chat');
-                useRouteDevStore.getState().sendMessage(prompt);
-              }}
-              onSelectConversation={(id) => {
-                setDiscoveryOpen(false);
-                setPage('chat');
-                // 查找并切换对话
-                for (const p of projects) {
-                  const conv = p.conversations.find(c => c.id === id);
-                  if (conv) {
-                    useProjectsStore.getState().selectConversation(p.id, id);
-                    break;
+            <Suspense fallback={null}>
+              <DiscoveryPage
+                open={discoveryOpen}
+                onClose={() => setDiscoveryOpen(false)}
+                recentConversations={recentConversations}
+                suggestedTasks={suggestedTasks}
+                onSelectTask={(prompt) => {
+                  setDiscoveryOpen(false);
+                  setPage('chat');
+                  useRouteDevStore.getState().sendMessage(prompt);
+                }}
+                onSelectConversation={(id) => {
+                  setDiscoveryOpen(false);
+                  setPage('chat');
+                  // 查找并切换对话
+                  for (const p of projects) {
+                    const conv = p.conversations.find(c => c.id === id);
+                    if (conv) {
+                      useProjectsStore.getState().selectConversation(p.id, id);
+                      break;
+                    }
                   }
-                }
-              }}
-              onNewTask={() => {
-                setDiscoveryOpen(false);
-                setPage('newtask');
-              }}
-              onOpenSettings={() => {
-                setDiscoveryOpen(false);
-                setSettingsOpen(true);
-              }}
-            />
+                }}
+                onNewTask={() => {
+                  setDiscoveryOpen(false);
+                  setPage('newtask');
+                }}
+                onOpenSettings={() => {
+                  setDiscoveryOpen(false);
+                  setSettingsOpen(true);
+                }}
+              />
+            </Suspense>
           )}
         </ErrorBoundary>
       </div>

@@ -265,13 +265,22 @@ export function createGoalRunner(deps: GoalRunnerDeps) {
   ): Promise<void> {
     try {
       const revisionDir = config.plan?.revisionHistoryPath ?? '.routedev/plan-revisions/';
-      const absDir = path.isAbsolute(revisionDir)
-        ? revisionDir
-        : path.resolve(process.cwd(), revisionDir);
+      // F-003 修复：拒绝绝对路径，防止 revisionHistoryPath 越界到任意目录
+      if (path.isAbsolute(revisionDir)) {
+        logger.warn('[goal-runner] revisionHistoryPath 不允许绝对路径', { revisionDir });
+        return;
+      }
+      const cwdResolved = path.resolve(process.cwd());
+      const absDir = path.resolve(cwdResolved, revisionDir);
+      // F-003 修复：边界校验——解析后路径必须位于 cwd 之内
+      if (!absDir.startsWith(cwdResolved + path.sep) && absDir !== cwdResolved) {
+        logger.warn('[goal-runner] revisionHistoryPath 越界', { absDir });
+        return;
+      }
       await mkdir(absDir, { recursive: true });
       const filePath = path.join(absDir, `${gid}.jsonl`);
       const revision = {
-        revisedAt: Date.now(),
+        revisedAt: new Date().toISOString(),
         reason,
         before: beforeSteps.map(s => toDiffPlanStep(s)),
         after: afterSteps.map(s => toDiffPlanStep(s)),

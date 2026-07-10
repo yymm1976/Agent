@@ -34,7 +34,7 @@ const DEFAULT_SIMILARITY_THRESHOLD = 0.5;
  *
  * @param target KnowledgeGraph 类构造函数
  */
-export function applyCommunityMethods(target: any): void {
+export function applyCommunityMethods(target: typeof KnowledgeGraph): void {
   /**
    * Label Propagation 社区检测
    *

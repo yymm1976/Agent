@@ -201,6 +201,20 @@ export class AgentProfileManager {
   // ----------------------------------------------------------
 
   /**
+   * F-002 修复：防御性路径边界校验
+   *
+   * 防止 id 包含 `../` 等路径片段导致 path.join 越界到 profilesDir 之外。
+   * 校验逻辑：resolve 后的路径必须仍位于 profilesDir 之内。
+   */
+  private validateProfileId(id: string): void {
+    const resolvedDir = path.resolve(this.profilesDir, id);
+    const resolvedRoot = path.resolve(this.profilesDir);
+    if (!resolvedDir.startsWith(resolvedRoot + path.sep) && resolvedDir !== resolvedRoot) {
+      throw new Error(`Profile id 路径越界: ${id}`);
+    }
+  }
+
+  /**
    * 保存 Profile
    *
    * - 自定义 Profile：写盘到 ${profilesDir}/<id>/SKILL.md
@@ -213,6 +227,9 @@ export class AgentProfileManager {
       const msg = errors.map((e) => `${e.field}: ${e.message}`).join('; ');
       throw new Error(`Invalid AgentProfile: ${msg}`);
     }
+
+    // F-002 修复：防御性路径边界校验，防止 id 路径穿越
+    this.validateProfileId(profile.id);
 
     await this.ensureLoaded();
 
@@ -242,6 +259,8 @@ export class AgentProfileManager {
    * - 自定义 Profile 删除磁盘目录与缓存
    */
   async deleteProfile(id: string): Promise<void> {
+    // F-002 修复：防御性路径边界校验，防止 id 路径穿越
+    this.validateProfileId(id);
     await this.ensureLoaded();
     const profile = this.profiles.get(id);
     if (!profile) {
@@ -306,6 +325,8 @@ export class AgentProfileManager {
 
     const suffix = Math.random().toString(36).slice(2, 8);
     const newId = `${source.id}-copy-${suffix}`;
+    // F-002 修复：防御性路径边界校验，防止 newId 路径穿越
+    this.validateProfileId(newId);
     const now = Date.now();
     const copy: AgentProfile = {
       ...source,

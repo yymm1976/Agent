@@ -189,15 +189,17 @@ export function SettingsCommandsTab({
           <CardDescription>控制 Phase 49 实验性模块的接入开关（默认关闭，需显式开启）</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
+          {/* @deprecated Phase 49 Task 3.5 已删除 qualityGate.check，此配置无运行时消费方 */}
+          <div className="flex items-center justify-between opacity-60">
             <div>
-              <Label htmlFor="p49-quality">Skill 质量门</Label>
-              <p className="text-xs text-rd-textMuted">QualityGate：Skill 生成时可选调用的质量校验门。</p>
+              <Label htmlFor="p49-quality">Skill 质量门（已废弃）</Label>
+              <p className="text-xs text-rd-textMuted">已废弃：Phase 49 Task 3.5 已删除 qualityGate.check，此开关无运行时消费方，仅保留以兼容旧配置。</p>
             </div>
             <Switch
               id="p49-quality"
               checked={draft.phase49Integration?.qualityGateEnabled ?? true}
               onCheckedChange={(checked) => updatePhase49Integration({ qualityGateEnabled: checked })}
+              disabled
             />
           </div>
         </CardContent>

@@ -153,7 +153,7 @@ function VerificationBlock({ verification }: {
 interface PlanRevision {
   before: PlanStep[];
   after: PlanStep[];
-  revisedAt: number;
+  revisedAt: string;
 }
 
 /** diff 引擎单例（纯逻辑，无副作用，可安全复用） */

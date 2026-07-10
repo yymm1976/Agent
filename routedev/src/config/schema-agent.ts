@@ -643,7 +643,10 @@ export type Phase48IntegrationConfig = z.infer<typeof Phase48IntegrationConfigSc
 export const Phase49IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 双循环编排器接入（/goal 执行时可选调用） */
   dualLoopEnabled: z.boolean().default(true),
-  /** Skill 质量门接入（Skill 生成时可选调用） */
+  /**
+   * Skill 质量门接入（Skill 生成时可选调用）
+   * @deprecated Phase 49 Task 3.5 已删除 qualityGate.check，此配置无运行时消费方
+   */
   qualityGateEnabled: z.boolean().default(true),
 }));
 export type Phase49IntegrationConfig = z.infer<typeof Phase49IntegrationConfigSchema>;

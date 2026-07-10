@@ -67,6 +67,15 @@ function isValidProjectCwd(target: string): boolean {
   return true;
 }
 
+// F-008：IPC 错误脱敏——避免将系统错误原文（含绝对路径/errno）回传渲染层
+function safeError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  // 详细错误仅记日志，不回传渲染层
+  if (/EPERM|EACCES|ENOENT/.test(msg)) return '文件权限或路径错误';
+  if (/ENOSPC|EROFS/.test(msg)) return '磁盘空间不足或只读文件系统';
+  return '操作失败，请查看日志';
+}
+
 // electron-vite dev 模式下 app.isPackaged 可能返回 true，用多重判断
 // 陷阱 #194：`pnpm start:gui`（electron .）时 app.isPackaged=false 会被误判为 dev 模式，
 // 但实际没有 dev server 在 5173 端口运行，导致渲染进程加载 http://localhost:5173 失败白屏。
@@ -408,18 +417,39 @@ ipcMain.handle('plan:get-revisions', async (_event, goalId: string) => {
     const fs = await import('node:fs/promises');
     type PlanConfig = { plan?: { revisionHistoryPath?: string } };
     const cfg = (engine?.getConfig?.() ?? {}) as PlanConfig;
-    const revisionDir = cfg.plan?.revisionHistoryPath
-      ? path.resolve(cfg.plan.revisionHistoryPath)
-      : path.join(process.cwd(), '.routedev', 'plan-revisions');
+    // F-003 修复：拒绝绝对路径 + 边界校验，防止 revisionHistoryPath 越界
+    const cwdResolved = path.resolve(process.cwd());
+    let revisionDir: string;
+    if (cfg.plan?.revisionHistoryPath) {
+      const rawPath = cfg.plan.revisionHistoryPath;
+      if (path.isAbsolute(rawPath)) {
+        logger.warn('revisionHistoryPath 不允许绝对路径', { revisionHistoryPath: rawPath });
+        return { ok: true, revisions: [] };
+      }
+      revisionDir = path.resolve(cwdResolved, rawPath);
+      if (!revisionDir.startsWith(cwdResolved + path.sep) && revisionDir !== cwdResolved) {
+        logger.warn('revisionHistoryPath 越界', { revisionDir });
+        return { ok: true, revisions: [] };
+      }
+    } else {
+      revisionDir = path.join(cwdResolved, '.routedev', 'plan-revisions');
+    }
     const revisionFile = path.join(revisionDir, `${goalId}.jsonl`);
     const data = await fs.readFile(revisionFile, 'utf-8');
-    // 安全：JSON.parse 后校验 revision shape（before/after/revisedAt），丢弃畸形记录
+    // F-007 修复：JSON.parse 后校验 revision shape（before/after/revisedAt），
+    // 并验证 before/after 步骤结构（每项含 id/description 字符串），丢弃畸形记录
+    const isValidStep = (s: unknown): s is { id: string; description: string } =>
+      typeof s === 'object' && s !== null &&
+      typeof (s as Record<string, unknown>).id === 'string' &&
+      typeof (s as Record<string, unknown>).description === 'string';
     const revisions = data.trim().split('\n').filter(Boolean).map((line) => {
       try { return JSON.parse(line); } catch { return null; }
-    }).filter((r): r is { before: unknown; after: unknown; revisedAt: string } =>
-      r !== null && typeof r === 'object' &&
-      'before' in r && 'after' in r && typeof r.revisedAt === 'string',
-    );
+    }).filter((r): r is { before: Array<{ id: string; description: string }>; after: Array<{ id: string; description: string }>; revisedAt: string } => {
+      if (r === null || typeof r !== 'object') return false;
+      if (!('before' in r) || !('after' in r) || typeof r.revisedAt !== 'string') return false;
+      if (!Array.isArray(r.before) || !Array.isArray(r.after)) return false;
+      return r.before.every(isValidStep) && r.after.every(isValidStep);
+    });
     return { ok: true, revisions };
   } catch (error) {
     // 文件不存在或读取失败返回空（fail-open）
@@ -614,7 +644,7 @@ ipcMain.handle('config:save', async (_event, rawConfig: unknown): Promise<Config
     // 提示前端：provider/model 等结构性变更需调用 config:reload 才能真正生效。
     return { success: true, needsReload: true };
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
+    return { success: false, error: safeError(err) };
   }
 });
 
@@ -832,7 +862,7 @@ ipcMain.handle('fs:read', async (_event, filePath: string): Promise<{ data: stri
     const data = await fs.readFile(realPath, 'utf-8');
     return { data };
   } catch (err) {
-    return { data: '', error: err instanceof Error ? err.message : String(err) };
+    return { data: '', error: safeError(err) };
   }
 });
 
@@ -1218,12 +1248,16 @@ ipcMain.handle('profile:save', async (_event, rawPayload: unknown) => {
   if (payload.id.length === 0 || payload.name.length === 0) {
     return { success: false, error: 'id/name 不能为空' };
   }
+  // F-002 修复：id 字符集校验（与 profiles/types.ts validateProfile 一致）
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(payload.id)) {
+    return { success: false, error: 'id 格式非法：仅允许字母数字开头，含字母数字下划线连字符，1-64 字符' };
+  }
   return engine.saveProfile(payload);
 });
 
 ipcMain.handle('profile:delete', async (_event, id: string) => {
-  // F-034 修复：参数校验——id 必须是非空字符串且长度合理
-  if (typeof id !== 'string' || id.length === 0 || id.length > 256) {
+  // F-002/F-034 修复：id 字符集校验（与 profiles/types.ts validateProfile 一致）
+  if (typeof id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(id)) {
     return { success: false, error: '无效的参数' };
   }
   if (!engine) return { success: false, error: '引擎未初始化' };

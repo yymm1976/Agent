@@ -6,8 +6,7 @@
 
 import { useState, useMemo } from 'react';
 import { FileText, Copy, Package, History, Gauge } from 'lucide-react';
-import type { ChatMessage } from '../store/useRouteDevStore.js';
-import type { TokenProfileSnapshot } from '../../../../src/agent/token-profiler.js';
+import { useRouteDevStore, type ChatMessage } from '../store/useRouteDevStore.js';
 import { CheckpointTimeline } from './CheckpointTimeline.js';
 
 type PanelTab = 'artifacts' | 'checkpoints' | 'context';
@@ -17,8 +16,6 @@ export interface ArtifactPanelProps {
   messages: ChatMessage[];
   /** 当前项目 ID（传给 CheckpointTimeline） */
   projectId?: string;
-  /** token 快照列表（用于上下文 tab 显示消耗统计） */
-  tokenSnapshots: TokenProfileSnapshot[];
 }
 
 /** 单个产物的聚合信息 */
@@ -66,8 +63,10 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-export function ArtifactPanel({ messages, projectId, tokenSnapshots }: ArtifactPanelProps) {
+export function ArtifactPanel({ messages, projectId }: ArtifactPanelProps) {
   const [activeTab, setActiveTab] = useState<PanelTab>('artifacts');
+  // F-011：自行订阅 tokenSnapshots（仅本组件需要完整数组做趋势统计，避免父级 App/ChatPage 重渲染）
+  const tokenSnapshots = useRouteDevStore((s) => s.tokenSnapshots);
 
   // 提取产物列表
   const artifacts = useMemo(() => extractArtifacts(messages), [messages]);

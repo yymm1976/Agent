@@ -316,6 +316,13 @@ export function checkBashSecurity(command: string): BashSecurityResult {
     { pattern: /:\(\)\s*\{.*\};\s*:/, reason: 'fork 炸弹' },
     // chmod 777 根目录或系统目录
     { pattern: /\bchmod\s+777\s+\//, reason: 'chmod 777 根目录' },
+    // F-006 修复：数据外传 / 远程脚本执行 / 密钥读取模式
+    // curl/wget 管道到 shell：远程脚本执行（curl|bash）
+    { pattern: /\b(curl|wget)\s+.*\|\s*(bash|sh|zsh)\b/i, reason: '远程脚本执行（curl|bash）' },
+    // nc 反弹 shell：-e 标志把 stdin/stdout/stderr 绑定到网络连接
+    { pattern: /\bnc\s+.*-\w*e\w*/i, reason: 'nc 反弹 shell' },
+    // 读取密钥文件：cat ~/.ssh/id_rsa、*.pem、*.key 等
+    { pattern: /\bcat\s+.*\.(ssh|gnupg|pem|key)/i, reason: '读取密钥文件' },
   ];
   for (const { pattern, reason } of dangerousPatterns) {
     if (pattern.test(command)) {

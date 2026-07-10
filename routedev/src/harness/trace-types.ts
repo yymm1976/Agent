@@ -136,7 +136,10 @@ export type AuditAction =
   | 'session_start'
   | 'session_end'
   // Phase 68 Task 1：体制迁移记录
-  | 'regime_transition';
+  | 'regime_transition'
+  // Phase 40 Task 3：质量信号与用户反馈
+  | 'user_feedback'
+  | 'quality_signal';
 
 /** 审计记录 */
 export interface AuditRecord {

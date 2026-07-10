@@ -171,6 +171,7 @@ Phase 72 起每个 Phase 必须产出：
 1. `docs/phase-{N}-audit-report.md`（按本文件格式）
 2. 跑 `node --import tsx/esm scripts/detect-dead-code.ts` 并附 `dead-code-report.json` 摘要
 3. 把新 RISK 追加到本文件 §3 表格（或标注已闭环）
+4. **技术债同步**：新发现的技术债追加到 `docs/TECH_DEBT_TRACKER.md` §1；修复完成的项移至 §3。后续审查报告 findings 前必须对照该表，已排期项不重复报告。
 
 ---
 

@@ -113,7 +113,7 @@ export interface RecallV2Result {
  *
  * @param target KnowledgeGraph 类构造函数（需已应用 community 方法）
  */
-export function applyRecallMethods(target: any): void {
+export function applyRecallMethods(target: typeof KnowledgeGraph): void {
   /**
    * 双路径召回
    *

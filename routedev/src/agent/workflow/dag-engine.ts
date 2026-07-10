@@ -9,6 +9,8 @@
 //   - layeredSort：BFS 分层，同层入度为 0 的节点归到同一批
 //   - execute：按层 Promise.all 并行，同层内按 maxParallel 分批；失败重试 retryLimit 次
 
+import { logger } from '../../utils/logger.js';
+
 // ============================================================
 // 类型定义
 // ============================================================
@@ -256,7 +258,12 @@ export class DagEngine {
       try {
         const result = await executor(node, resolvedAction);
         return { id: node.id, success: true, result };
-      } catch {
+      } catch (error) {
+        logger.warn('[DAG] node execution failed, retrying', {
+          nodeId: node.id,
+          attempt,
+          error: error instanceof Error ? error.message : String(error),
+        });
         attempt += 1;
         // 累计失败次数 +1（跨 execute 调用累积）
         const prev = this.failureCounts.get(node.id) ?? 0;

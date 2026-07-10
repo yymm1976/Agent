@@ -1,7 +1,12 @@
 # RouteDev 配置参考
 
 > 本文档列出 RouteDev 所有配置项，按模块分组。
-> 配置文件位置：`~/.routedev/config.yaml`（全局）或项目根目录 `.routedev/config.yaml`（项目级）。
+> 配置文件位置：
+> - **全局配置**：平台特定 AppData 目录下的 `config.yaml`
+>   - Windows: `%APPDATA%\RouteDev\config.yaml`
+>   - macOS: `~/Library/Application Support/RouteDev/config.yaml`
+>   - Linux: `~/.config/routedev/config.yaml`
+> - **项目级配置**：项目根目录下的 `.routedev.yaml`
 > 所有配置项均通过 Zod Schema 校验，非法值会在启动时报错。
 
 ## 1. 顶层结构

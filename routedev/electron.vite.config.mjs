@@ -47,6 +47,12 @@ export default defineConfig({
       outDir: 'out/renderer',
       rollupOptions: {
         input: path.resolve(__dirname, 'desktop/renderer/index.html'),
+        output: {
+          manualChunks: {
+            'react-vendor': ['react', 'react-dom', 'zustand'],
+            'markdown-vendor': ['react-markdown', 'remark-gfm'],
+          },
+        },
       },
     },
   },

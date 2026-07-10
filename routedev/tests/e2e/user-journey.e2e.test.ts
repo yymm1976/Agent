@@ -1,4 +1,4 @@
-// tests/e2e/user-journey.test.ts
+// tests/e2e/user-journey.e2e.test.ts
 // Phase 28 Task 1：端到端用户旅程测试
 // 覆盖 10 个核心 E2E 场景，验证从用户视角的完整产品功能闭环
 // 使用 mock LLM client，不依赖真实 API

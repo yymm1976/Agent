@@ -21,6 +21,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '../types.js';
 import { checkPathBoundary } from './search-utils.js';
+// F-012 修复：引入 resolveSecurePath 解析 symlink 真实路径
+import { resolveSecurePath } from '../security-enhanced.js';
 // Phase 53 Task 7：配置保护守卫（阻止弱化安全/治理配置）
 import { ConfigGuard } from './config-guard.js';
 // 编辑历史单例：file-edit 写入前 push 原内容，/undo 命令弹栈恢复
@@ -244,6 +246,19 @@ export class FileEditTool implements ITool {
         success: false,
         output: '',
         error: boundaryError,
+        durationMs: 0,
+      };
+    }
+
+    // F-012 修复：Symlink 真实路径解析，防止通过符号链接逃逸目录边界
+    // checkPathBoundary 仅做字符串比较，resolveSecurePath 用 realpathSync 解析中间目录 symlink
+    const allowedDirs = context.allowedDirectories ?? [context.workingDirectory];
+    const secureResult = resolveSecurePath(filePath, allowedDirs);
+    if (!secureResult.allowed) {
+      return {
+        success: false,
+        output: '',
+        error: secureResult.reason ?? '路径校验失败',
         durationMs: 0,
       };
     }

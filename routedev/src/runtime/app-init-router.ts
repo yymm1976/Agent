@@ -27,6 +27,7 @@ import {
 } from '../skills/compositional-router.js';
 import { logger } from '../utils/logger.js';
 import * as path from 'node:path';
+import { registerShutdownHook } from './graceful-shutdown.js';
 import type { InitContext, AppDependencies, CompositionalRouterInstance } from './app-init.js';
 
 /**
@@ -98,6 +99,10 @@ export function createRouterSubsystem(ctx: InitContext): Partial<AppDependencies
     });
     routingHistory.load().catch(err => {
       logger.warn('RoutingHistory load failed', { error: err instanceof Error ? err.message : String(err) });
+    });
+    // F-005 修复：注册 shutdown hook，进程退出前 flush 路由决策样本落盘
+    registerShutdownHook(90, 'routing-history-flush', () => {
+      routingHistory?.flush();
     });
     const embedder = createEmbedder(clrCfg.memory.embeddingProvider);
     routingMemory = new RoutingMemory(routingHistory, embedder, {

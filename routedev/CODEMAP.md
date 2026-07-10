@@ -270,6 +270,7 @@
 
 ## docs/ — 文档（Phase 37 后）
 - `docs/ARCHITECTURE.md` — 架构总览
+- `docs/TECH_DEBT_TRACKER.md` — **技术债集中跟踪表**（Phase 79 立项，后续审查 findings 前必对照，避免重复报告已排期项）
 - `docs/PLUGIN_GUIDE.md` — 插件开发指南
 - `docs/SECURITY_AUDIT_v2.0.md` — v2.0 安全审计报告
 - `docs/PLUGIN_ECOSYSTEM_RESEARCH.md` — 插件生态兼容性研究报告（Phase 37 Task 4：MCP 桥梁/约定文件/插件市场/运行时差异四维度评估）

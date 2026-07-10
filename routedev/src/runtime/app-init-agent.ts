@@ -45,6 +45,8 @@ import { HookRunner } from '../agent/hooks.js';
 import { registerBuiltinHooks } from '../hooks/built-in.js';
 import { HookEnhancementManager } from '../hooks/hook-enhancement.js';
 import { getHookTemplates } from '../hooks/templates.js';
+// F-001 修复：Hook 路径越界校验 + 命令安全扫描（共享模块）
+import { resolveHookConfigPath, assertHookCommandSafe } from '../hooks/security.js';
 import { PathRouter } from '../agent/path-router.js';
 import { GoalAuditor } from '../agent/goal-audit.js';
 import { GoalPersistence } from '../agent/goal-persistence.js';
@@ -742,7 +744,13 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
     const registryModulePath = '../hooks/registry.js';
     import(registryModulePath)
       .then(async (mod: { HookConfigRegistry: new (configPath: string) => { load: () => Promise<void>; list: () => Array<{ id: string; enabled: boolean; [key: string]: unknown }>; get: (id: string) => { id: string; enabled: boolean; [key: string]: unknown } | undefined; add: (config: { id: string; enabled: boolean; [key: string]: unknown }) => void } }) => {
-        const hookRegistry = new mod.HookConfigRegistry(path.join(cwd, hooksCfg.configPath));
+        // F-001 修复：路径越界校验（拒绝绝对路径和穿越 cwd 的相对路径）
+        const configPath = resolveHookConfigPath(cwd, hooksCfg.configPath);
+        if (!configPath) {
+          logger.warn('hooks.configPath 越界，跳过 Hook 加载', { configPath: hooksCfg.configPath });
+          return;
+        }
+        const hookRegistry = new mod.HookConfigRegistry(configPath);
         await hookRegistry.load();
 
         // 注册内置 Hook 模板到 HookConfigRegistry
@@ -771,6 +779,18 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
         let registered = 0;
         for (const cfg of configs) {
           if (cfg.enabled === false) continue;
+          // F-001 修复：注册前对 Hook 命令执行安全扫描，拒绝危险命令
+          const cmd = typeof cfg.command === 'string' ? cfg.command : '';
+          if (cmd) {
+            const safety = assertHookCommandSafe(cmd);
+            if (!safety.ok) {
+              logger.warn('Hook 命令被安全策略拒绝，跳过注册', {
+                hookId: cfg.id,
+                reason: safety.reason,
+              });
+              continue;
+            }
+          }
           try {
             const adapterModulePath = '../hooks/adapter.js';
             const adapterMod = await import(adapterModulePath) as { configToDefinition: (cfg: unknown) => import('../agent/hooks.js').HookDefinition };

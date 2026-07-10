@@ -370,6 +370,12 @@ export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies
     }
   }
 
+  // F-033：注册知识图谱落盘 shutdown hook，进程退出前 flush 内存图到磁盘
+  // 优先级 95：晚于 session-memory（100），确保 session-memory 先落盘
+  registerShutdownHook(95, 'knowledge-graph-flush', () => {
+    contextManager.flushGraphToDisk();
+  });
+
   return {
     checkpointManager,
     contextManager,

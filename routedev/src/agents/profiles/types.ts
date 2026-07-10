@@ -121,6 +121,10 @@ export function validateProfile(profile: AgentProfile): AgentProfileValidationEr
   if (!profile.id || profile.id.trim().length === 0) {
     errors.push({ field: 'id', message: 'id must not be empty' });
   }
+  // F-002 修复：id 格式校验，防止路径穿越（仅允许字母、数字、下划线、连字符）
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(profile.id)) {
+    errors.push({ field: 'id', message: 'id 只能包含字母、数字、下划线、连字符，1-64 字符，字母数字开头' });
+  }
   if (!profile.name || profile.name.trim().length === 0) {
     errors.push({ field: 'name', message: 'name must not be empty' });
   }

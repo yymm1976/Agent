@@ -39,7 +39,8 @@ interface ChatPageProps {
   currentModel: string;
   pendingConfirm: PendingConfirm | null;
   config: AppConfig | null;
-  tokenSnapshots: TokenProfileSnapshot[];
+  /** F-011：App 仅订阅最后一条 snapshot 传入，避免完整数组订阅触发 App 重渲染 */
+  lastTokenSnapshot?: TokenProfileSnapshot;
   sendMessage: (text: string) => void;
   confirmTool: (approved: boolean, payload?: unknown) => void;
   stopGeneration: () => void;
@@ -49,7 +50,7 @@ interface ChatPageProps {
 }
 
 export function ChatPage({
-  messages, isProcessing, pendingConfirm, config, tokenSnapshots,
+  messages, isProcessing, pendingConfirm, config, lastTokenSnapshot,
   sendMessage, confirmTool, stopGeneration, saveConfig, deleteMessage, retryMessage,
 }: ChatPageProps) {
   const [dragOver, setDragOver] = useState(false);
@@ -115,7 +116,9 @@ export function ChatPage({
 
   // Phase 77：轮询会话状态卡数据（每 5 秒拉取，goal 执行中/已完成/失败时均展示）
   // 无活跃 goal 时聚合器返回 idle 状态，本组件在 idle 时不渲染卡片
+  // F-022：idle 时不启动 interval，避免空转轮询
   useEffect(() => {
+    if (!isProcessing) return;
     let cancelled = false;
     const poll = async () => {
       try {
@@ -126,7 +129,7 @@ export function ChatPage({
     poll();
     const timer = setInterval(poll, 5000);
     return () => { cancelled = true; clearInterval(timer); };
-  }, []);
+  }, [isProcessing]);
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -236,7 +239,7 @@ export function ChatPage({
   }, [stopGeneration]);
 
   const outputStyle = config?.ui?.outputStyle;
-  const tokenUsage = tokenSnapshots[tokenSnapshots.length - 1]?.totalEstimated ?? 0;
+  const tokenUsage = lastTokenSnapshot?.totalEstimated ?? 0;
   const autonomyMode = config?.autonomy?.defaultMode;
 
   return (
@@ -309,7 +312,6 @@ export function ChatPage({
           <ArtifactPanel
             messages={messages}
             projectId={currentProjectId ?? undefined}
-            tokenSnapshots={tokenSnapshots}
           />
         )}
       </div>

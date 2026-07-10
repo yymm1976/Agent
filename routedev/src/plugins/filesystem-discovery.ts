@@ -649,7 +649,12 @@ export function parseAgentYAML(yaml: string): AgentYAMLDefinition {
     }
   }
 
-  // 保留双断言：result 是 Record<string, unknown>（手写 YAML 解析器输出），
-  // AgentYAMLDefinition 是具体 interface，Record 与 interface 结构不充分重叠
+  // 运行时校验必填字段，避免手写 YAML 解析结果直接双断言导致类型不安全
+  if (typeof result.name !== 'string' || result.name.length === 0) {
+    throw new Error('AgentYAML: name 字段必填且必须是非空字符串');
+  }
+  if (typeof result.prompt !== 'string') {
+    throw new Error('AgentYAML: prompt 字段必填且必须是字符串');
+  }
   return result as unknown as AgentYAMLDefinition;
 }

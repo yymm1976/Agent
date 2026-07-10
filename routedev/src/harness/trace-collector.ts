@@ -518,9 +518,9 @@ export class TraceCollector {
     const sessions: TraceSession[] = [];
     try {
       const entries = await fs.readdir(dir);
-      for (const entry of entries) {
-        // 仅处理 YYYY-MM-DD 格式的日期目录
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(entry)) continue;
+      // F-009：对日期目录倒序排序（最新日期先扫描），累计达到 limit*2 条时提前 break
+      const sortedEntries = entries.filter(e => /^\d{4}-\d{2}-\d{2}$/.test(e)).sort().reverse();
+      for (const entry of sortedEntries) {
         const dayDir = path.join(dir, entry);
         let files: string[];
         try {
@@ -551,6 +551,8 @@ export class TraceCollector {
             });
           }
         }
+        // F-009：累计达到 limit*2 条时提前终止扫描（多读一些用于排序后裁剪）
+        if (sessions.length >= limit * 2) break;
       }
 
       return sessions

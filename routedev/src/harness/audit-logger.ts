@@ -24,9 +24,6 @@ export interface QualityMetadata {
   knowledgeNodeId?: string;
 }
 
-/** Phase 40 Task 3：扩展的审计动作类型（包含质量信号与用户反馈） */
-export type ExtendedAuditAction = AuditAction | 'user_feedback' | 'quality_signal';
-
 /** Phase 40 Task 3：扩展的审计记录（带 qualityMetadata） */
 export interface QualityAuditRecord extends AuditRecord {
   qualityMetadata?: QualityMetadata;
@@ -257,7 +254,7 @@ export class AuditLogger {
   logQualitySignal(signal: LoggableQualitySignal): void {
     if (!this.config.enabled) return;
 
-    const action: ExtendedAuditAction =
+    const action: AuditAction =
       signal.source === 'explicit' ? 'user_feedback' : 'quality_signal';
     const qualityMetadata: QualityMetadata = {
       source: signal.source,
@@ -267,11 +264,8 @@ export class AuditLogger {
       ...(signal.knowledgeNodeId !== undefined ? { knowledgeNodeId: signal.knowledgeNodeId } : {}),
     };
 
-    // 保留双断言：ExtendedAuditAction 含 'user_feedback'|'quality_signal'，
-    // AuditAction（trace-types.ts）不含这些字面量，联合类型不兼容；
-    // trace-types.ts 不在本任务修改范围，需 unknown 中转
     this.log(
-      action as unknown as AuditAction,
+      action,
       signal.signalType,
       {
         timestamp: signal.timestamp,

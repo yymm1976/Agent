@@ -733,7 +733,7 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
   _addTokenSnapshot: (snapshot) => {
     const state = get();
     set({
-      tokenSnapshots: [...state.tokenSnapshots, snapshot],
+      tokenSnapshots: [...state.tokenSnapshots, snapshot].slice(-200),
       // 同步更新 currentTier（来自路由决策）
       currentTier: snapshot.routeDecision ?? state.currentTier,
     });
@@ -792,7 +792,7 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
         });
       }
       set({
-        goalExecutions: [...state.goalExecutions, newExec],
+        goalExecutions: [...state.goalExecutions, newExec].slice(-50),
         messages,
       });
       return;

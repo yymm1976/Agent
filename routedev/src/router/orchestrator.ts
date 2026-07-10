@@ -189,7 +189,7 @@ export class RoutingOrchestrator {
   }
 
   private getAvailableModelConfigs() {
-    return (this.baseRouter as unknown as { getAvailableModels: () => Array<{ id: string; provider: string; tier: string }> }).getAvailableModels()
-      .map(m => ({ id: m.id, provider: m.provider, tier: m.tier as ScenarioTier }));
+    return this.baseRouter.getAvailableModels()
+      .map(m => ({ id: m.id, provider: m.providerId, tier: m.tier }));
   }
 }

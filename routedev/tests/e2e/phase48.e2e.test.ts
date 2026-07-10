@@ -1,4 +1,4 @@
-// tests/integration/phase48-e2e.test.ts
+// tests/e2e/phase48.e2e.test.ts
 // Phase 48 端到端集成测试：验证 Task 1-5 模块协同工作
 //
 // 蓝图 6.1 节定义的 5 个端到端场景：
@@ -68,7 +68,7 @@ async function writeFile(filePath: string, content: string): Promise<void> {
 describe('Phase 48 E2E — 场景 1：引用 + Anthropic Skill 联动', () => {
   it('用户 @unit-test 引用 Skill + file 引用 → CiteResolver 注入 skill prompt 并生成 read_file preflight', async () => {
     // --- 准备项目结构 ---
-    // anthropic_skills/unit-test/SKILL.md
+    // anthropicskills/unit-test/SKILL.md
     const skillContent = `---
 name: unit-test
 description: 当需要为指定代码生成单元测试时使用此 Skill
