@@ -74,7 +74,9 @@ desktop/main/index.ts          ← Electron 主进程入口
 4. **prompt 模板三级优先级**：`src/prompts/manager.ts` 三级：项目覆盖 `{project}/.routedev/prompts/{id}.md` → 用户 `{AppData}/prompts/{id}.md` → 内置 `BUILTIN_TEMPLATES`（代码内）。
 5. **Skill 系统**：`.routedev/skills/<name>/SKILL.md` 由 `src/plugins/filesystem-discovery.ts` 自动扫描加载。
 6. **AgentRole 类型碎片化警告**：`AgentRole` 在 `src/agents/profiles/types.ts`（主定义）、`src/agent/context-packer.ts`、`src/agent/delegation-gate.ts`、`desktop/shared/ipc-types.ts` 有 4 处定义，**这是已知技术债**，不要重复报告。
-7. **预存在的 engine-bridge.ts 类型错误**：`desktop/main/engine-bridge.ts(1224)` 和 `(1231)` 有 2 个 `AgentRole` 与 `AgentProfileRole` 不兼容的 TS 错误，**这是已知问题**（Phase 75-A4 CONCERN-1 记录），不要重复报告。
+7. **预存在的 engine-bridge.ts 类型错误**：`desktop/main/engine-bridge.ts(1471)` 和 `(1478)` 有 2 个 `AgentRole`/`AgentOutputFormat` 与 `AgentProfileRole`/`AgentProfileOutputFormat` 不兼容的 TS 错误，**这是已知问题**（Phase 75-A4 CONCERN-1 记录），不要重复报告。
+8. **预存在的 SettingsPage.tsx 类型错误**：`desktop/renderer/src/pages/SettingsPage.tsx(429)` 和 `(463)` 有 2 个 `AppConfig` 类型双重定义的 TS 错误（Two different types with this name exist），**这是已知问题**，不要重复报告。
+9. **调度器为预留功能**：`SettingsCommandsTab.tsx` 中的调度器 Card 已标注为"预留功能，当前不生效"并禁用控件，这是设计意图（调度器引擎未接入运行时），不要报告为"功能缺失"或"僵尸配置"。
 
 ### 2.4 审查范围
 
@@ -387,9 +389,12 @@ desktop/main/index.ts          ← Electron 主进程入口
 ### 7.1 已知技术债（不要重复报告）
 
 1. **AgentRole 类型碎片化**：4 处定义（profiles/types.ts / context-packer.ts / delegation-gate.ts / ipc-types.ts），Phase 75-A4 CONCERN-1 已记录
-2. **engine-bridge.ts 类型错误**：2 个 pre-existing TS 错误（AgentRole 与 AgentProfileRole 不兼容），Phase 75-A4 已确认
-3. **`.routedev/skills/writing-plans/SKILL.md` 不入库**：`.routedev/` 被 gitignore，Phase 75-B6 CONCERN 已记录，建议迁移到 `src/skills/builtin/`
-4. **commitlint.config.cjs**：Phase 75-A6 引入，因 `"type": "module"` 用 .cjs 后缀，待 npm install 后实测
+2. **engine-bridge.ts 类型错误**：2 个 pre-existing TS 错误（AgentRole/AgentOutputFormat 与 AgentProfileRole/AgentProfileOutputFormat 不兼容，L1471/L1478），Phase 75-A4 已确认
+3. **SettingsPage.tsx 类型错误**：2 个 pre-existing TS 错误（AppConfig 类型双重定义，L429/L463），已知问题
+4. **`.routedev/skills/writing-plans/SKILL.md` 不入库**：`.routedev/` 被 gitignore，Phase 75-B6 CONCERN 已记录，建议迁移到 `src/skills/builtin/`
+5. **commitlint.config.cjs**：Phase 75-A6 引入，因 `"type": "module"` 用 .cjs 后缀，待 npm install 后实测
+6. **调度器预留功能**：`SettingsCommandsTab.tsx` 调度器 Card 已禁用并标注"预留功能，当前不生效"，调度器引擎未接入运行时
+7. **classifier deterministic 类型断言**：`src/router/classifier.ts` L92 使用 `as unknown as ClassificationResult` 注入 `tier='deterministic'`（不在 ScenarioTier 枚举中），这是已知技术债（F-2.02 排期修复），正确修复需统一下游 10+ 处类型收窄，不要重复报告断言本身
 
 ### 7.2 审查边界
 
@@ -409,6 +414,9 @@ desktop/main/index.ts          ← Electron 主进程入口
 5. **SubAgent model 字段可选**：Phase 75-A3 过渡期，JSDoc 已标注"第二阶段计划强制必填"
 6. **reviewer verdict 三态**：Phase 75-B3 引入的 `clean / issues-found / cannot-verify` 是设计
 7. **progress-ledger append-only**：Phase 75-B2 的 JSONL append-only 是设计，不是"缺少 update/delete"
+8. **调度器预留功能**：`SettingsCommandsTab.tsx` 调度器 Card 已禁用并标注，是设计意图，不是"功能缺失"
+9. **Phase 77 新增能力**：trace 回放（`trace-replayer.ts`）、评分卡（`scorecard.ts`）、冷启动恢复（`goal-recovery.ts`）、会话状态卡（`session-status-aggregator.ts`）为 Phase 77 新增，通过 `/replay`、`/scorecard` 命令触发，是活代码
+10. **StepRow memo 包装**：`GoalExecutionCard.tsx` 中 `StepRow` 用 `memo()` 包装是性能优化设计，不是"不必要的包装"
 
 ---
 

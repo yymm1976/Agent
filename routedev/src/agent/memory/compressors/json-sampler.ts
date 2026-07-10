@@ -53,8 +53,10 @@ export function sampleJson(content: string, config: Partial<JsonSamplerConfig> =
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
-  } catch {
+  } catch (e) {
     // 不是合法 JSON，返回原文（让上层走 ksentence 路径）
+    // eslint-disable-next-line no-console
+    console.warn(`[json-sampler] JSON 解析失败，返回原文: ${e instanceof Error ? e.message : String(e)}`);
     return {
       compressed: content,
       originalTokens,

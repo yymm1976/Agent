@@ -118,7 +118,12 @@ export class ExecutionVerifier {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       return result.status === 0;
-    } catch {
+    } catch (e) {
+      // 编译失败（spawn 异常或超时），返回 false
+      logger.warn('[execution-verifier] runCompile: tsc 执行失败', {
+        projectPath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return false;
     }
   }
@@ -136,7 +141,12 @@ export class ExecutionVerifier {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       return result.status === 0;
-    } catch {
+    } catch (e) {
+      // 测试执行失败（spawn 异常或超时），返回 false
+      logger.warn('[execution-verifier] runTests: vitest 执行失败', {
+        projectPath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return false;
     }
   }

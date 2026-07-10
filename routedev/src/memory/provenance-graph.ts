@@ -140,8 +140,11 @@ export class ProvenanceGraph {
       try {
         const a = JSON.parse(line) as TypedArtifact;
         this.addArtifact(a);
-      } catch {
-        // skip corrupted lines
+      } catch (e) {
+        // 损坏行（JSON 解析失败），跳过继续解析下一行
+        logger.warn('[provenance-graph] deserialize: 跳过损坏的行', {
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
   }
@@ -151,8 +154,12 @@ export class ProvenanceGraph {
       const data = await readFile(filePath, 'utf-8');
       this.deserialize(data);
       logger.info('ProvenanceGraph: loaded from file', { filePath, count: this.artifacts.size });
-    } catch {
-      // file doesn't exist yet — that's fine
+    } catch (e) {
+      // 文件不存在或读取失败（ENOENT 是正常情况，首次启动尚未创建）
+      logger.debug('[provenance-graph] loadFromFile: 读取文件失败', {
+        filePath,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 

@@ -39,6 +39,8 @@ import type {
 import { createPluginSystem } from './plugin-init.js';
 import { LoopDetectionMiddleware } from '../agent/middleware/loop-detection.js';
 import { MentionResolverMiddleware } from '../agent/middleware/mention-resolver.js';
+// TD-04：PermissionEngine 接入 Agent Loop 的 onActing 中间件
+import { PermissionMiddleware } from '../agent/middleware/permission-middleware.js';
 import { HookRunner } from '../agent/hooks.js';
 import { registerBuiltinHooks } from '../hooks/built-in.js';
 import { HookEnhancementManager } from '../hooks/hook-enhancement.js';
@@ -447,6 +449,24 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   pluginSystem.middlewarePipeline.register('onUserMessage', mentionResolver.getHandler());
   logger.info('MentionResolverMiddleware registered', { cwd });
 
+  // TD-04：注册 PermissionMiddleware 到 onActing 阶段
+  // 让 PermissionEngine.check() 在工具执行前被实际调用，把三层决策（deny/confirm/auto）
+  // 转换为 ctx.metadata.permissionDenied / requiresConfirmation 标记，
+  // loop.ts 已有 fail-closed 分支消费 permissionDenied。
+  // 注册顺序：在 QualitySignalMiddleware 之前（同步注册，避免动态 import 导致的延迟挂载），
+  // 保证权限拦截优先于质量信号采集。
+  if (permissionEngine) {
+    const autonomyMode = config.autonomy?.defaultMode ?? 'semi';
+    const permissionMiddleware = new PermissionMiddleware(permissionEngine, autonomyMode);
+    pluginSystem.middlewarePipeline.register('onActing', permissionMiddleware.getHandler());
+    logger.info('PermissionMiddleware registered', {
+      autonomyMode,
+      sandboxLevel: permissionEngine.getSandboxLevel(),
+    });
+  } else {
+    logger.warn('PermissionMiddleware skipped: permissionEngine not available');
+  }
+
   // ===== Phase 39：CodeMapContextMiddleware 接线（fail-open 动态 import） =====
   const codegraphCfg = config.codegraph;
   if (codegraphCfg) {
@@ -619,8 +639,11 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
         registerShutdownHook(50, 'codemap-watcher', () => {
           try {
             watcher.close();
-          } catch {
+          } catch (e) {
             // fail-open：关闭失败不影响退出
+            logger.debug('[app-init-agent] codemap-watcher close 失败', {
+              error: e instanceof Error ? e.message : String(e),
+            });
           }
         });
       })
@@ -999,7 +1022,13 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
                 const dir = kind === 'macro' ? 'macros' : 'skills';
                 const file = path.join(cwd, '.routedev', dir, `${name}.md`);
                 return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : null;
-              } catch {
+              } catch (e) {
+                // 读取失败（ENOENT 或权限问题），返回 null
+                logger.debug('[app-init-agent] citeResolver readSkillOrMacro 失败', {
+                  name,
+                  kind,
+                  error: e instanceof Error ? e.message : String(e),
+                });
                 return null;
               }
             },

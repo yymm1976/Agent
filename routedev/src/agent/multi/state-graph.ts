@@ -185,8 +185,13 @@ export class ExecutionStateGraph {
     for (const stepId of toBlock) {
       try {
         this.transition(stepId, 'blocked', `upstream ${failedStepId} failed`);
-      } catch {
-        // 已经不是 pending 状态则跳过
+      } catch (e) {
+        // 已经不是 pending 状态则跳过（状态机转换失败的预期路径）
+        logger.debug('[state-graph] 状态转换失败，跳过', {
+          stepId,
+          failedStepId,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
   }

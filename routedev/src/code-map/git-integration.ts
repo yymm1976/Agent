@@ -65,7 +65,10 @@ export async function getSeedNodeIdsFromGit(
 export function getSeedNodeIdsFromCache(db: DB): Set<string> {
   try {
     return gitSeedCache.get(db) ?? new Set();
-  } catch {
+  } catch (e) {
+    // 缓存读取失败（WeakMap 异常极少见），返回空集合
+    // eslint-disable-next-line no-console
+    console.warn(`[git-integration] getSeedNodeIdsFromCache: 读取缓存失败: ${e instanceof Error ? e.message : String(e)}`);
     return new Set();
   }
 }
@@ -79,7 +82,9 @@ export async function refreshGitSeedCache(
   try {
     const seeds = await getSeedNodeIdsFromGit(db, cwd, recentCommits);
     gitSeedCache.set(db, seeds);
-  } catch {
+  } catch (e) {
     // fail-open：缓存更新失败时保留旧值或空集合，不抛错
+    // eslint-disable-next-line no-console
+    console.warn(`[git-integration] refreshGitSeedCache: 缓存更新失败: ${e instanceof Error ? e.message : String(e)}`);
   }
 }

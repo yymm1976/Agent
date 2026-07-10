@@ -90,7 +90,12 @@ export function truncateDoc(doc: string, maxBytes: number = 32768): string {
 async function readFileOrNull(filePath: string): Promise<string | null> {
   try {
     return await fs.readFile(filePath, 'utf-8');
-  } catch {
+  } catch (e) {
+    // 文件不存在或读取失败（ENOENT 是正常情况），返回 null 让调用方处理
+    logger.debug('[project-memory] readFileOrNull: 读取文件失败', {
+      filePath,
+      error: e instanceof Error ? e.message : String(e),
+    });
     return null;
   }
 }
@@ -102,7 +107,12 @@ async function fileExists(filePath: string): Promise<boolean> {
   try {
     await fs.stat(filePath);
     return true;
-  } catch {
+  } catch (e) {
+    // stat 失败（通常是 ENOENT），返回 false
+    logger.debug('[project-memory] fileExists: stat 失败', {
+      filePath,
+      error: e instanceof Error ? e.message : String(e),
+    });
     return false;
   }
 }
@@ -261,8 +271,12 @@ export class ProjectMemoryManager {
           result.files[key].size = stat.size;
         }
         result.files[key].lastModified = stat.mtimeMs;
-      } catch {
-        // 文件不存在
+      } catch (e) {
+        // stat 失败（通常是 ENOENT，文件已被删除）
+        logger.debug('[project-memory] getStats: stat 失败', {
+          filePath,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
 
@@ -326,8 +340,12 @@ export class ProjectMemoryManager {
     const filePath = path.join(this.getRoutedevDir(), 'MEMORY.md');
     try {
       await fs.unlink(filePath);
-    } catch {
-      // 文件不存在
+    } catch (e) {
+      // unlink 失败（通常是 ENOENT，文件本就不存在）
+      logger.debug('[project-memory] clearMemory: unlink 失败', {
+        filePath,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 
@@ -441,7 +459,12 @@ export class ProjectMemoryManager {
     try {
       await fs.stat(filePath);
       return true;
-    } catch {
+    } catch (e) {
+      // stat 失败（通常是 ENOENT），返回 false
+      logger.debug('[project-memory] fileExists (private): stat 失败', {
+        filePath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return false;
     }
   }
@@ -450,7 +473,12 @@ export class ProjectMemoryManager {
     try {
       const content = await fs.readFile(path.join(this.getRoutedevDir(), name), 'utf-8');
       return content;
-    } catch {
+    } catch (e) {
+      // 文件不存在或读取失败（ENOENT 是正常情况），返回 null
+      logger.debug('[project-memory] readFileIfExists: 读取文件失败', {
+        name,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return null;
     }
   }

@@ -315,7 +315,12 @@ export class MacroManager {
     try {
       frontObj = parseYaml(frontRaw) as Record<string, unknown>;
       if (!frontObj || typeof frontObj !== 'object') return null;
-    } catch {
+    } catch (e) {
+      // YAML 解析失败：frontmatter 格式错误，降级返回 null
+      logger.warn('[macro-manager] parseMacroMd: frontmatter YAML 解析失败', {
+        filePath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return null;
     }
 

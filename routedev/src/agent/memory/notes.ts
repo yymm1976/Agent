@@ -44,8 +44,12 @@ export class NotesManager {
   async readAll(): Promise<string> {
     try {
       return await fs.readFile(this.notesPath, 'utf-8');
-    } catch {
-      // 文件不存在时返回空字符串
+    } catch (e) {
+      // 文件不存在时返回空字符串（ENOENT 是正常情况）
+      logger.debug('[notes] readAll: 读取失败', {
+        notesPath: this.notesPath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return '';
     }
   }
@@ -66,8 +70,12 @@ export class NotesManager {
     try {
       const stats = await fs.stat(this.notesPath);
       return stats.size;
-    } catch {
-      // 文件不存在时返回 0
+    } catch (e) {
+      // 文件不存在时返回 0（ENOENT 是正常情况）
+      logger.debug('[notes] size: stat 失败', {
+        notesPath: this.notesPath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return 0;
     }
   }

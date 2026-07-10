@@ -15,6 +15,15 @@ import { logger } from '../../../src/utils/logger.js';
 import type { EngineContext, EngineBridges } from './engine-context.js';
 import type { PlanEditRequestPayload } from '../../shared/ipc-types.js';
 
+// TD-09：auto 模式下仍需用户确认的高风险工具集合
+// 即使自主度模式为 auto（全自动），这些具备破坏性或副作用的工具仍强制弹出确认框，
+// 防止 LLM 在无监督下执行危险操作（删库/覆盖文件/推送代码/派生子 Agent 等）。
+// 与 engine-bridge.ts 的 HIGH_RISK_TOOLS 保持一致语义，但此处用于 Agent Loop 内的确认决策，
+// HIGH_RISK_TOOLS 用于 IPC 直调拒绝（两道独立防线）。
+const AUTO_MODE_CONFIRM_TOOLS = new Set([
+  'shell_exec', 'git_op', 'file_write', 'spawn_agent',
+]);
+
 /**
  * Chat 领域桥接器
  *
@@ -147,12 +156,14 @@ export class ChatBridge {
           // 确保 sendChat 期间 updateConfig 修改的自主度对后续工具确认立即生效
           const currentMode = this.ctx.config.autonomy.defaultMode;
           if (currentMode === 'auto' && toolName !== 'ask_user') {
+            // TD-09：auto 模式下高风险工具仍需用户确认
+            // 防止 LLM 在无监督下执行 shell_exec/git_op/file_write/spawn_agent 等危险操作
+            if (AUTO_MODE_CONFIRM_TOOLS.has(toolName)) {
+              return this.requestUserConfirmation(toolName, args);
+            }
             return true;
           }
-          return new Promise<boolean | { approved: boolean; payload?: unknown }>((resolve) => {
-            this.ctx.pendingConfirmRef.current = { resolve, toolName };
-            options.onToolConfirmRequest(toolName, args);
-          });
+          return this.requestUserConfirmation(toolName, args);
         },
       })) {
         switch (event.type) {
@@ -289,6 +300,26 @@ export class ChatBridge {
         }
       }
     }
+  }
+
+  /**
+   * TD-09：请求用户确认工具调用
+   *
+   * 通过 onToolConfirmRequest 回调把确认请求推送到渲染进程，
+   * 同时把 resolver 存入 pendingConfirmRef，等待 resolveToolConfirm 在
+   * IPC chat:confirm-tool 触发时 resolve。
+   *
+   * 抽取为独立方法供 onConfirmTool 在 auto/semi 两条路径复用，
+   * 避免重复内联 Promise 逻辑。
+   */
+  private requestUserConfirmation(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<boolean | { approved: boolean; payload?: unknown }> {
+    return new Promise((resolve) => {
+      this.ctx.pendingConfirmRef.current = { resolve, toolName };
+      this.ctx.options.onToolConfirmRequest(toolName, args);
+    });
   }
 
   resolveToolConfirm(approved: boolean, payload?: unknown): void {

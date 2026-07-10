@@ -159,8 +159,12 @@ export class ExperimentManager {
       let content = '';
       try {
         content = fs.readFileSync(gitignorePath, 'utf-8');
-      } catch {
-        // .gitignore 不存在，创建新的
+      } catch (e) {
+        // .gitignore 不存在（首次创建），创建新的
+        logger.debug('[experiment-manager] .gitignore 读取失败，将创建新文件', {
+          gitignorePath,
+          error: e instanceof Error ? e.message : String(e),
+        });
         content = '';
       }
       // 检查是否已包含 .routedev/ 规则
@@ -186,8 +190,12 @@ export class ExperimentManager {
       if (Array.isArray(parsed)) {
         this.experiments = parsed;
       }
-    } catch {
-      // 文件不存在或损坏，从空列表开始
+    } catch (e) {
+      // 文件不存在或损坏：实验注册表丢失，从空列表开始
+      logger.warn('[experiment-manager] 加载实验注册表失败，从空列表开始', {
+        registryPath: this.registryPath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       this.experiments = [];
     }
   }
@@ -513,12 +521,21 @@ export class ExperimentManager {
         '-m',
         `采纳实验 ${exp.id}: ${exp.name}`,
       ]);
-    } catch {
+    } catch (mergeErr) {
       // 合并失败（非零退出码），中止合并
+      logger.warn('[experiment-manager] 采纳实验合并失败，尝试中止合并', {
+        expId,
+        branch: exp.branch,
+        error: mergeErr instanceof Error ? mergeErr.message : String(mergeErr),
+      });
       try {
         await this.execGit(['merge', '--abort']);
-      } catch {
+      } catch (abortErr) {
         // 忽略 abort 错误（可能没有正在进行的合并）
+        logger.debug('[experiment-manager] merge --abort 失败（可能无进行中的合并）', {
+          expId,
+          error: abortErr instanceof Error ? abortErr.message : String(abortErr),
+        });
       }
       return {
         success: false,
@@ -704,8 +721,12 @@ export class ExperimentManager {
           if (f) files.add(f);
         }
       }
-    } catch {
-      // HEAD 不存在（空仓库）或其他错误，忽略
+    } catch (e) {
+      // HEAD 不存在（空仓库）或其他错误，降级为空集
+      logger.debug('[experiment-manager] git diff HEAD 失败（可能是空仓库）', {
+        cwd,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
 
     // git ls-files --others --exclude-standard（未跟踪文件，排除 .gitignore）
@@ -721,8 +742,12 @@ export class ExperimentManager {
           if (f) files.add(f);
         }
       }
-    } catch {
-      // 忽略错误
+    } catch (e) {
+      // git ls-files 失败，忽略未跟踪文件
+      logger.warn('[experiment-manager] git ls-files 失败，未跟踪文件将不被收集', {
+        cwd,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
 
     return Array.from(files).sort();
@@ -748,7 +773,14 @@ export class ExperimentManager {
       const output = result.stdout.trim();
       if (!output) return [];
       return output.split('\n').map(f => f.trim()).filter(Boolean).sort();
-    } catch {
+    } catch (e) {
+      // git diff 失败（分支已被删除或 baseCommit 不可达），降级返回空数组
+      logger.warn('[experiment-manager] 获取实验变更文件失败', {
+        expId,
+        baseCommit: exp.baseCommit,
+        branch: exp.branch,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return [];
     }
   }

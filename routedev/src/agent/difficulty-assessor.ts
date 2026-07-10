@@ -43,7 +43,10 @@ export class DifficultyAssessor {
         return this.fallbackAssessment(requirement, parsed.reasoning);
       }
       return parsed;
-    } catch {
+    } catch (e) {
+      // LLM 评估失败（API 异常或解析错误），降级到 fallback 评估
+      // eslint-disable-next-line no-console
+      console.warn(`[difficulty-assessor] LLM 评估失败，降级处理: ${e instanceof Error ? e.message : String(e)}`);
       return this.fallbackAssessment(requirement);
     }
   }

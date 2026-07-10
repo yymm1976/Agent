@@ -133,8 +133,10 @@ export class HybridRetriever {
       const topK = scored.slice(0, this.config.topK);
 
       return topK;
-    } catch {
-      // fail-open：检索失败返回空
+    } catch (e) {
+      // fail-open：检索失败返回空，避免影响主流程
+      // eslint-disable-next-line no-console
+      console.warn(`[hybrid-retriever] 检索失败，返回空结果: ${e instanceof Error ? e.message : String(e)}`);
       return [];
     }
   }

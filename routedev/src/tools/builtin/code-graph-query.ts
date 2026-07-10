@@ -185,8 +185,10 @@ export class CodeGraphQueryTool implements ITool {
     } finally {
       try {
         db.close();
-      } catch {
-        // ignore close errors
+      } catch (e) {
+        // ignore close errors（db.close 失败不影响结果）
+        // eslint-disable-next-line no-console
+        console.warn(`[code-graph-query] db.close 失败: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   }

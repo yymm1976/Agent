@@ -13,9 +13,18 @@ function isWritable(dir: string): boolean {
     mkdirSync(dir, { recursive: true });
     const probe = join(dir, `.write-probe-${process.pid}`);
     writeFileSync(probe, '');
-    try { unlinkSync(probe); } catch { /* 忽略 */ }
+    try {
+      unlinkSync(probe);
+    } catch (e) {
+      // 清理探测文件失败不影响可写性判断
+      // eslint-disable-next-line no-console
+      console.warn(`[paths] 清理探测文件失败: ${e instanceof Error ? e.message : String(e)}`);
+    }
     return true;
-  } catch {
+  } catch (e) {
+    // 目录不可写（权限不足或路径无效），返回 false 让调用方尝试下一个候选目录
+    // eslint-disable-next-line no-console
+    console.warn(`[paths] 目录不可写: ${dir} - ${e instanceof Error ? e.message : String(e)}`);
     return false;
   }
 }

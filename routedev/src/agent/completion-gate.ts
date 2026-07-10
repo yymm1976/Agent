@@ -269,7 +269,12 @@ export class CompletionGate {
       try {
         const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
         return typeof pkg.scripts?.test === 'string' && !/no test specified/i.test(pkg.scripts.test);
-      } catch {
+      } catch (e) {
+        // package.json 解析失败（JSON 格式错误或读取异常），视为无测试
+        logger.debug('[completion-gate] package.json 解析失败', {
+          pkgPath,
+          error: e instanceof Error ? e.message : String(e),
+        });
         return false;
       }
     }

@@ -120,7 +120,12 @@ export class BranchPersistence {
     let raw: string;
     try {
       raw = await fsp.readFile(filePath, 'utf8');
-    } catch {
+    } catch (e) {
+      // 文件读取失败（可能是 ENOENT 或权限问题），返回 not-found 让调用方尝试 .bak
+      logger.warn('[branch-persistence] 读取文件失败', {
+        filePath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return { ok: false, error: 'file-not-found' };
     }
 
@@ -160,7 +165,12 @@ export class BranchPersistence {
         .filter(f => f.startsWith('snap-') && f.endsWith('.jsonl'))
         .sort()
         .reverse();
-    } catch {
+    } catch (e) {
+      // 快照目录读取失败（可能是 ENOENT 或权限问题），降级返回空列表
+      logger.warn('[branch-persistence] 读取快照目录失败', {
+        snapshotDir: this.snapshotDir,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return [];
     }
   }
@@ -395,8 +405,12 @@ export class BranchPersistence {
   private async ensureDir(dir: string): Promise<void> {
     try {
       await fsp.mkdir(dir, { recursive: true });
-    } catch {
-      // 并发创建时可能 EEXIST，忽略
+    } catch (e) {
+      // 并发创建时可能 EEXIST，忽略；其他错误（权限不足）需记录日志
+      logger.warn('[branch-persistence] ensureDir 失败', {
+        dir,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 }

@@ -200,8 +200,10 @@ function tryLoadBackup(globalPath: string, projectPath?: string): AppConfig | nu
       console.warn('[config] 主配置验证失败，已从 .bak 备份恢复配置');
       return backupResult.data;
     }
-  } catch {
+  } catch (e) {
     // 备份恢复失败，返回 null 让调用方抛出原始错误
+    // eslint-disable-next-line no-console
+    console.warn(`[config] 备份恢复失败: ${e instanceof Error ? e.message : String(e)}`, { backupPath });
   }
   return null;
 }

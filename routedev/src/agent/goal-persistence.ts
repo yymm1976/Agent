@@ -185,8 +185,12 @@ export class GoalPersistence {
           await fs.unlink(file);
           cleaned++;
         }
-      } catch {
-        // 文件可能在扫描中被删，忽略
+      } catch (e) {
+        // 文件可能在扫描中被删（ENOENT）或权限不足，忽略
+        logger.debug('[goal-persistence] cleanupOldGoals: stat/unlink 失败', {
+          file,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
     if (cleaned > 0) {
@@ -263,7 +267,12 @@ export class GoalPersistence {
     try {
       const raw = await fs.readFile(filePath, 'utf-8');
       return JSON.parse(raw) as PersistedGoal;
-    } catch {
+    } catch (e) {
+      // 读取或解析失败（ENOENT 或 JSON 损坏），返回 null
+      logger.debug('[goal-persistence] tryReadGoalFile: 读取/解析失败', {
+        filePath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return null;
     }
   }

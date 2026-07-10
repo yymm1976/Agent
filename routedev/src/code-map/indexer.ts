@@ -147,7 +147,10 @@ export async function indexFile(
   let content: string;
   try {
     content = await fsp.readFile(filePath, 'utf-8');
-  } catch {
+  } catch (e) {
+    // 读取失败（ENOENT 或权限问题），跳过该文件
+    // eslint-disable-next-line no-console
+    console.warn(`[indexer] 读取文件失败，跳过 ${filePath}: ${e instanceof Error ? e.message : String(e)}`);
     return { nodeCount: 0, edgeCount: 0, skipped: true };
   }
 

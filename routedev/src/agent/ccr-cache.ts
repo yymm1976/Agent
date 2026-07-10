@@ -37,8 +37,10 @@ let DatabaseSyncCtor: DatabaseSyncConstructor | null = null;
 try {
   const mod = requireFromESM('node:sqlite') as { DatabaseSync: DatabaseSyncConstructor };
   DatabaseSyncCtor = mod.DatabaseSync;
-} catch {
+} catch (e) {
   // fail-open：node:sqlite 不可用（Electron 未包含实验性模块），降级为内存 Map
+  // eslint-disable-next-line no-console
+  console.warn(`[CCRCache] node:sqlite 不可用，降级为内存 Map: ${e instanceof Error ? e.message : String(e)}`);
 }
 
 export interface CCRRecord {
@@ -69,7 +71,10 @@ function serializeMessages(messages: LLMMessage[]): string {
 function deserializeMessages(s: string): LLMMessage[] | null {
   try {
     return JSON.parse(s) as LLMMessage[];
-  } catch {
+  } catch (e) {
+    // JSON 解析失败：缓存内容损坏，降级返回 null（调用方视为未命中缓存）
+    // eslint-disable-next-line no-console
+    console.warn(`[CCRCache] 反序列化消息失败，降级返回 null: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
 }
@@ -266,8 +271,10 @@ export class CCRCache {
     if (this.db) {
       try {
         this.db.close();
-      } catch {
-        // 忽略关闭错误
+      } catch (e) {
+        // 关闭失败不影响主流程，记录警告
+        // eslint-disable-next-line no-console
+        console.warn(`[CCRCache] 关闭数据库连接失败: ${e instanceof Error ? e.message : String(e)}`);
       }
       this.db = null;
     }

@@ -34,8 +34,11 @@ let DatabaseSyncCtor: DatabaseSyncConstructor | null = null;
 try {
   const mod = requireFromESM('node:sqlite') as { DatabaseSync: DatabaseSyncConstructor };
   DatabaseSyncCtor = mod.DatabaseSync;
-} catch {
+} catch (e) {
   // fail-open：node:sqlite 不可用（Electron 未包含实验性模块），降级为纯内存模式
+  logger.debug('MemoryStore: node:sqlite 不可用，降级为纯内存模式', {
+    error: e instanceof Error ? e.message : String(e),
+  });
 }
 
 /**

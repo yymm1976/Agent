@@ -454,7 +454,11 @@ export class UnifiedReviewer {
         summary: data.summary || '审查完成',
         tokenUsage,
       };
-    } catch {
+    } catch (e) {
+      // 审查结果 JSON 解析失败，默认通过（fail-open，避免审查器故障阻塞流程）
+      logger.warn('[unified-reviewer] 审查结果 JSON 解析失败，默认通过', {
+        error: e instanceof Error ? e.message : String(e),
+      });
       return {
         passed: true,
         issues: [],

@@ -122,8 +122,10 @@ export class ListDirectoryTool implements ITool {
         if (lstat.isDirectory()) type = 'directory';
         else if (lstat.isSymbolicLink()) type = 'symlink';
         entries.push({ name, type, size: lstat.size });
-      } catch {
+      } catch (e) {
         // lstat 失败（可能是 broken symlink），跳过
+        // eslint-disable-next-line no-console
+        console.warn(`[list-directory] lstat 失败，跳过 ${fullPath}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 

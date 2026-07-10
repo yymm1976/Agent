@@ -125,7 +125,12 @@ export class CheckpointWriter {
     }
     try {
       return await fs.readFile(this.notesPath, 'utf-8');
-    } catch {
+    } catch (e) {
+      // 读取失败（ENOENT 是正常情况），返回空字符串
+      logger.debug('[checkpoint-writer] readNotes: 读取失败', {
+        notesPath: this.notesPath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return '';
     }
   }
@@ -147,8 +152,12 @@ export class CheckpointWriter {
   private async clearNotes(): Promise<void> {
     try {
       await fs.writeFile(this.notesPath, '', 'utf-8');
-    } catch {
-      // 忽略
+    } catch (e) {
+      // 清空失败不影响主流程（文件可能被其他进程占用）
+      logger.debug('[checkpoint-writer] clearNotes: 清空失败', {
+        notesPath: this.notesPath,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 
@@ -243,7 +252,11 @@ export class CheckpointWriter {
         designDecisions: Array.isArray(parsed.designDecisions) ? parsed.designDecisions : [],
         miscNotes: Array.isArray(parsed.miscNotes) ? parsed.miscNotes : [],
       };
-    } catch {
+    } catch (e) {
+      // JSON 解析失败，返回 null 让调用方降级
+      logger.debug('[checkpoint-writer] JSON 解析失败，返回 null', {
+        error: e instanceof Error ? e.message : String(e),
+      });
       return null;
     }
   }

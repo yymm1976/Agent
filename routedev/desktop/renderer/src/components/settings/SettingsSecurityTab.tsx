@@ -80,6 +80,31 @@ export function SettingsSecurityTab({
 }: SettingsSecurityTabProps) {
   return (
     <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+      {/* TD-09：autonomy=auto 时显示红色强警告框 */}
+      {draft.autonomy?.defaultMode === 'auto' && (
+        <div
+          role="alert"
+          className="rounded-md border-2 border-red-600 bg-red-50 p-4 dark:bg-red-950/40"
+        >
+          <div className="flex items-start gap-2">
+            <span className="text-xl leading-none">⚠️</span>
+            <div className="space-y-1">
+              <p className="font-semibold text-red-700 dark:text-red-400">
+                自主度模式为 Auto（全自动）—— 高风险操作仍需确认
+              </p>
+              <p className="text-sm text-red-600 dark:text-red-300">
+                当前自主度设为 <code className="rounded bg-red-100 px-1 dark:bg-red-900/60">auto</code>，
+                大多数工具调用将自动批准。为安全起见，以下高风险工具在 auto 模式下
+                <strong>仍会弹出确认框</strong>：<code className="rounded bg-red-100 px-1 dark:bg-red-900/60">shell_exec</code>、
+                <code className="rounded bg-red-100 px-1 dark:bg-red-900/60">git_op</code>、
+                <code className="rounded bg-red-100 px-1 dark:bg-red-900/60">file_write</code>、
+                <code className="rounded bg-red-100 px-1 dark:bg-red-900/60">spawn_agent</code>。
+                如需完全自动执行所有工具，请审慎评估风险后再切换至更宽松的策略。
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       <Card>
         <CardHeader>
           <CardTitle>安全设置</CardTitle>
@@ -467,7 +492,7 @@ export function SettingsSecurityTab({
           <CardTitle>沙箱级与审批级覆盖</CardTitle>
           <CardDescription>
             Phase 47 Task 4 引入的权限双旋钮：沙箱级决定工具能执行的操作范围；
-            审批级决定是否每次询问用户。两项已配置到 PermissionEngine（运行时接线排期中，当前由 SecurityChecker 提供基础防护）。
+            审批级决定是否每次询问用户。两项已通过 PermissionMiddleware 接入 Agent Loop。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

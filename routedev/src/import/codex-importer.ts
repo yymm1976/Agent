@@ -239,8 +239,12 @@ export class CodexInstructionImporter {
         if (stat.size === 0) {
           warnings.push(`文件为空：${relPath}`);
         }
-      } catch {
-        // stat 失败不影响整体
+      } catch (e) {
+        // stat 失败不影响整体（可能是 ENOENT 或权限问题）
+        logger.debug('[codex-importer] stat 失败，跳过空文件检查', {
+          relPath,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
 
@@ -332,8 +336,12 @@ export class CodexInstructionImporter {
         if (Math.floor(stat.mtimeMs) !== Math.floor(last)) {
           return true;
         }
-      } catch {
+      } catch (e) {
         // stat 失败视为更新（文件可能被删除）
+        logger.debug('[codex-importer] stat 失败，视为已更新', {
+          relPath,
+          error: e instanceof Error ? e.message : String(e),
+        });
         return true;
       }
     }

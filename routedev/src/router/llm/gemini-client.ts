@@ -196,8 +196,10 @@ export class GeminiClient extends BaseLLMClient {
             if (fr) {
               lastFinishReason = this.mapFinishReason(fr);
             }
-          } catch {
+          } catch (e) {
             // 跳过无法解析的 chunk（可能是心跳或部分数据）
+            // eslint-disable-next-line no-console
+            console.warn(`[gemini-client] 跳过无法解析的 chunk: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
       }
@@ -214,8 +216,10 @@ export class GeminiClient extends BaseLLMClient {
             inputTokens = chunk.usageMetadata.promptTokenCount ?? inputTokens;
             outputTokens = chunk.usageMetadata.candidatesTokenCount ?? outputTokens;
           }
-        } catch {
-          // 忽略解析错误
+        } catch (e) {
+          // 忽略解析错误（缓冲区剩余数据通常不完整）
+          // eslint-disable-next-line no-console
+          console.warn(`[gemini-client] 缓冲区剩余数据解析失败: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
 

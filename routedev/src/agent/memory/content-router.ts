@@ -57,7 +57,10 @@ function looksLikeJson(content: string): boolean {
   try {
     JSON.parse(trimmed);
     return true;
-  } catch {
+  } catch (e) {
+    // JSON 解析失败，返回 false（非 JSON 内容检测的正常路径）
+    // eslint-disable-next-line no-console
+    console.warn(`[content-router] JSON 检测失败: ${e instanceof Error ? e.message : String(e)}`);
     return false;
   }
 }

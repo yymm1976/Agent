@@ -80,8 +80,10 @@ export class QualitySignalMiddleware {
     if (signal.modelId) {
       try {
         getGlobalQualityAggregator().recordSignal(signal.modelId, isNegativeSignal(signal));
-      } catch {
+      } catch (e) {
         // 聚合器失败不影响中间件主流程
+        // eslint-disable-next-line no-console
+        console.warn(`[quality-signal] 聚合器记录失败: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   }

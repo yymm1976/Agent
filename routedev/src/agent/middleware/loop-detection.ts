@@ -22,7 +22,10 @@ function computeArgsHash(args: Record<string, unknown> | undefined): number {
   if (!args) return djb2Hash('');
   try {
     return djb2Hash(JSON.stringify(args));
-  } catch {
+  } catch (e) {
+    // JSON.stringify 失败（循环引用等），降级到 String(args)
+    // eslint-disable-next-line no-console
+    console.warn(`[loop-detection] computeArgsHash: JSON.stringify 失败，降级处理: ${e instanceof Error ? e.message : String(e)}`);
     return djb2Hash(String(args));
   }
 }

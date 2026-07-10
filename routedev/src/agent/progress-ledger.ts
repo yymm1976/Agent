@@ -102,8 +102,10 @@ export async function readProgress(cwd?: string): Promise<ProgressEntry[]> {
     if (!trimmed) continue;
     try {
       result.push(JSON.parse(trimmed) as ProgressEntry);
-    } catch {
+    } catch (e) {
       // 单行损坏跳过，保持 ledger 其余部分可用（resilience）
+      // eslint-disable-next-line no-console
+      console.warn(`[progress-ledger] 跳过损坏的行: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   return result;

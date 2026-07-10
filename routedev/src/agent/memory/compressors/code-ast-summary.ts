@@ -62,8 +62,10 @@ export async function summarizeCode(content: string, filePath?: string): Promise
           symbolCount: astResult.signatures.length,
         };
       }
-    } catch {
+    } catch (e) {
       // AST 提取失败（WASM 未加载 / 解析异常），降级到正则
+      // eslint-disable-next-line no-console
+      console.warn(`[code-ast-summary] AST 提取失败，降级到正则: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

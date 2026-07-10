@@ -115,8 +115,10 @@ export async function importArtifact(repoRoot: string): Promise<string | null> {
   let artifactBuf: Buffer;
   try {
     artifactBuf = await fsp.readFile(artifactPath);
-  } catch {
-    // artifact 不存在：调用方走 fullIndex
+  } catch (e) {
+    // artifact 不存在（ENOENT）或读取失败：调用方走 fullIndex
+    // eslint-disable-next-line no-console
+    console.warn(`[artifact] 读取 artifact 失败，将走全量索引: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
 
@@ -144,7 +146,10 @@ export async function artifactExists(repoRoot: string): Promise<boolean> {
   try {
     await fsp.access(path.join(repoRoot, ARTIFACT_REL_PATH));
     return true;
-  } catch {
+  } catch (e) {
+    // access 失败（通常是 ENOENT），返回 false
+    // eslint-disable-next-line no-console
+    console.warn(`[artifact] artifactExists: 检测失败: ${e instanceof Error ? e.message : String(e)}`);
     return false;
   }
 }

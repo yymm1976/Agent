@@ -706,8 +706,10 @@ function rankByPPROrScore(
         .map(n => ({ ...n, rankScore: scores.get(n.id) ?? 0 }))
         .sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0))
         .slice(0, maxResults);
-    } catch {
+    } catch (e) {
       // PPR 计算失败：fail-open 回退原 rankScore 排序
+      // eslint-disable-next-line no-console
+      console.warn(`[querier] PPR 计算失败，回退原 rankScore 排序: ${e instanceof Error ? e.message : String(e)}`);
       return filtered
         .sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0))
         .slice(0, maxResults);
@@ -739,7 +741,10 @@ async function readSnippetAsync(
       content: snippetLines.join('\n'),
       symbolName,
     };
-  } catch {
+  } catch (e) {
+    // 文件读取失败（ENOENT 或权限问题），返回 null
+    // eslint-disable-next-line no-console
+    console.warn(`[querier] readSnippetAsync: 读取文件失败 ${fullPath}: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
 }
@@ -764,7 +769,10 @@ async function readSnippet(
       content: snippetLines.join('\n'),
       symbolName,
     };
-  } catch {
+  } catch (e) {
+    // 文件读取失败（ENOENT 或权限问题），返回 null
+    // eslint-disable-next-line no-console
+    console.warn(`[querier] readSnippet: 读取文件失败 ${fullPath}: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
 }

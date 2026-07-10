@@ -120,8 +120,11 @@ export class ToolResultSanitizer {
       const parsed = JSON.parse(content);
       const redacted = filterSensitiveFields(parsed);
       return JSON.stringify(redacted);
-    } catch {
-      // 非 JSON 内容或解析失败，跳过脱敏
+    } catch (e) {
+      // 非 JSON 内容或解析失败，跳过脱敏（正常路径，纯文本输出无需脱敏）
+      logger.debug('[result-sanitizer] 非 JSON 内容，跳过脱敏', {
+        error: e instanceof Error ? e.message : String(e),
+      });
       return content;
     }
   }

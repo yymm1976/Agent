@@ -144,8 +144,12 @@ export class ReadTracker {
       await access(normalizedPath);
       this.existenceCache.set(normalizedPath, true);
       return true;
-    } catch {
-      // 不缓存 false：文件可能随后被创建
+    } catch (e) {
+      // 不缓存 false：文件可能随后被创建（ENOENT 是正常情况）
+      logger.debug('[read-tracker] 文件不存在', {
+        normalizedPath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return false;
     }
   }

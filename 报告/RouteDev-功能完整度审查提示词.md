@@ -1,9 +1,9 @@
 # RouteDev 功能完整度审查提示词
 
-> **版本：** v1.0（2026-07-08）
+> **版本：** v1.1（2026-07-10）
 > **适用项目：** RouteDev（Electron 桌面 AI 编程助手）
 > **审查类型：** 功能完整度审查（非代码质量审查）
-> **审查基线代码版本：** v4.5.4（Phase 60 发布版 + Phase 61-73 后续迭代）
+> **审查基线代码版本：** v4.5.4（Phase 60 发布版 + Phase 61-77 后续迭代）
 
 ---
 
@@ -609,6 +609,21 @@
 - **`ui.components.tracePanel`** — 默认关闭
 - **`adversarial` 对抗性验证** — 默认关闭（`enabled: false`）
 - **`phase49Integration` 6 个开关** — 默认 false，属实验性功能（注意：若开启后应工作，开启后不工作算 Broken）
+- **调度器（scheduler）** — `SettingsCommandsTab.tsx` 中调度器 Card 已禁用并标注"预留功能，当前不生效"，调度器引擎未接入运行时，不算缺失
+- **`directoryBoundary`** — 默认 false（Phase 77 审查后调整），路径校验由 hookConfigPath 统一处理，不算缺失
+
+### Phase 77 新增能力（已实现，不要报告为 Missing）
+
+- **Trace 回放**（`src/harness/trace-replayer.ts`）— 通过 `/replay` 命令触发，UI 在 `ReplayView.tsx`
+- **评分卡**（`src/harness/scorecard.ts`）— 通过 `/scorecard` 命令触发，UI 在 `ScorecardView.tsx`
+- **冷启动恢复**（`src/runtime/goal-recovery.ts`）— 启动时自动检测未完成 goal，UI 在 `RecoveryPrompt.tsx`
+- **会话状态卡**（`src/agent/session-status-aggregator.ts`）— UI 在 `SessionStatusCard.tsx`
+
+### 配置默认值已修正（不要报告漂移）
+
+- `goalIntegration.persistenceEnabled` — 默认 true（已修正，文档与 schema 一致）
+- `goalIntegration.auditEnabled` — 默认 true（已修正）
+- `delegationIntegration` 5 个开关 — 全部默认 true（已修正）
 
 ### 评估指标（学术性，无用户可见产物）
 
@@ -675,6 +690,6 @@
 
 ---
 
-**审查提示词版本：** v1.0
-**最后更新：** 2026-07-08
+**审查提示词版本：** v1.1
+**最后更新：** 2026-07-10
 **维护者：** RouteDev 审查提示词设计师

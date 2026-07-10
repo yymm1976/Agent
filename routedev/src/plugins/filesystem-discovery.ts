@@ -378,8 +378,12 @@ export class FilesystemDiscovery {
           logger.debug('Plugin discovered', { name, path: path.join(pluginsDir, entry) });
         }
       }
-    } catch {
-      // plugins 目录不存在，正常情况
+    } catch (e) {
+      // plugins 目录不存在（ENOENT 正常情况）或读取失败
+      logger.debug('[skill-discovery] 读取 plugins 目录失败', {
+        pluginsDir,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
 
     return plugins;
@@ -402,8 +406,12 @@ export class FilesystemDiscovery {
           hooks.push(name);
         }
       }
-    } catch {
-      // hooks 目录不存在，正常情况
+    } catch (e) {
+      // hooks 目录不存在（ENOENT 正常情况）或读取失败
+      logger.debug('[skill-discovery] 读取 hooks 目录失败', {
+        hooksDir,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
 
     return hooks;
@@ -472,12 +480,19 @@ export class FilesystemDiscovery {
    * @returns 是否删除成功
    */
   async deleteSkill(name: string): Promise<boolean> {
+    // skillDir 提到 try 之前，便于 catch 块日志记录目标路径
+    const skillDir = resolveSkillDir(this.basePath, name);
     try {
-      const skillDir = resolveSkillDir(this.basePath, name);
       await fs.rm(skillDir, { recursive: true, force: true });
       logger.info('Skill deleted', { name, path: skillDir });
       return true;
-    } catch {
+    } catch (e) {
+      // 删除失败（可能是 ENOENT 或权限问题），返回 false 让调用方处理
+      logger.warn('[skill-discovery] 删除 Skill 失败', {
+        name,
+        skillDir,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return false;
     }
   }

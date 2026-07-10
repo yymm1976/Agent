@@ -241,16 +241,20 @@ export class PermissionEngine {
    *
    * Phase 40 Task 1：集成 TrustGradientManager
    * Phase 47 Task 4：沙箱级 + 审批级双旋钮
+   * TD-06：TrustGradient requiresConfirmation=true 时强制 confirm（不被 auto 规则/auto 模式 fallback 覆盖）
    *
    * 检查顺序（陷阱 #136：沙箱级判断必须在审批级之前）：
    *   0. 沙箱级检查（确定性 deny）— 工具类别不在当前沙箱允许列表中 → deny
    *   1. deny 规则检查（最高优先级，不可被临时授权绕过）
    *   2. TrustGradientManager 检查（如果注入了）
    *      - checkOperation() 返回临时放行 → 返回 auto
-   *      - checkOperation() 返回需要确认 → 继续后续规则检查
+   *      - checkOperation() 返回需要确认 → 设置 trustRequiresConfirmation 标志，
+   *        后续 auto 规则 / auto 模式 fallback 都会被强制升级为 confirm
    *      - checkOperation() 返回拦截（plan 模式）→ 返回 deny
    *   3. confirm/auto 规则检查
+   *      - 若 trustRequiresConfirmation=true，auto 规则命中会被强制升级为 confirm
    *   4. 默认 confirm
+   *      - 若 trustRequiresConfirmation=true，auto 模式 fallback 也会被强制升级为 confirm
    *   5. 审批级检查（陷阱 #135：always-ask 在 headless 模式下自动 deny）
    *      - never-ask：confirm → auto（不询问）
    *      - always-ask：headless → deny；非 headless → auto 升级为 confirm
@@ -294,6 +298,9 @@ export class PermissionEngine {
     }
 
     // 2. TrustGradientManager 检查（如果注入了）
+    // TD-06：requiresConfirmation=true 时记录标志，后续 auto 决策会被强制升级为 confirm
+    let trustRequiresConfirmation = false;
+    let trustReason: string | undefined;
     if (this.trustManager) {
       const isWriteOp = this.isWriteOperation(toolName);
       const trustResult = this.trustManager.checkOperation(toolName, args, isWriteOp);
@@ -311,7 +318,11 @@ export class PermissionEngine {
           reason: trustResult.reason,
         };
       }
-      // 需要确认 → 继续后续规则检查
+      // 需要确认 → 记录标志，继续后续规则检查
+      // TD-06：trust "分数低于阈值" 对应 trustResult.requiresConfirmation=true，
+      // 后续 auto 规则命中或 auto 模式 fallback 都会被强制升级为 confirm
+      trustRequiresConfirmation = true;
+      trustReason = trustResult.reason;
     }
 
     // 3. confirm 次之
@@ -325,8 +336,16 @@ export class PermissionEngine {
     }
 
     // auto 命中 → 放行（仍需经过审批级检查）
+    // TD-06：trustRequiresConfirmation=true 时强制升级为 confirm
     const autoRule = matched.find(r => r.layer === 'auto');
     if (autoRule) {
+      if (trustRequiresConfirmation) {
+        return this.applyApproval(category, {
+          decision: 'confirm',
+          matchedRuleId: autoRule.id,
+          reason: `${autoRule.description} [TrustGradient 强制确认: ${trustReason ?? '信任级别要求确认'}]`,
+        });
+      }
       return this.applyApproval(category, {
         decision: 'auto',
         matchedRuleId: autoRule.id,
@@ -336,6 +355,13 @@ export class PermissionEngine {
 
     // 4. 无规则命中 → 按 autonomy mode fallback
     // auto 模式放行，semi/manual 模式需确认
+    // TD-06：trustRequiresConfirmation=true 时强制升级为 confirm（即使 auto 模式也不放行）
+    if (trustRequiresConfirmation) {
+      return this.applyApproval(category, {
+        decision: 'confirm',
+        reason: `Fallback: TrustGradient 强制确认 (mode=${mode}, ${trustReason ?? '信任级别要求确认'})`,
+      });
+    }
     return this.applyApproval(category, {
       decision: mode === 'auto' ? 'auto' : 'confirm',
       reason: 'Fallback: 无匹配规则，按自主度模式决定',

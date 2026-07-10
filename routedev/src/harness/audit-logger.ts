@@ -133,8 +133,12 @@ export class AuditLogger {
         if (computedBuf.length !== recordBuf.length || !crypto.timingSafeEqual(computedBuf, recordBuf)) {
           return false; // 哈希不匹配，记录被篡改
         }
-      } catch {
-        return false; // hash 格式无效
+      } catch (e) {
+        // hash 格式无效（hex 解码失败或长度不匹配），视为篡改
+        logger.warn('[audit-logger] 哈希链验证：hash 格式无效', {
+          error: e instanceof Error ? e.message : String(e),
+        });
+        return false;
       }
       prevHash = record.hash;
     }
@@ -301,8 +305,12 @@ export class AuditLogger {
           }
         }
       }
-    } catch {
-      // 目录不存在
+    } catch (e) {
+      // 目录不存在或读取失败（ENOENT 是正常情况，首次启动尚未创建审计目录）
+      logger.debug('[audit-logger] cleanup: 读取审计目录失败', {
+        dir,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
 
     if (removedCount > 0) {
@@ -332,8 +340,12 @@ export class AuditLogger {
           if (!line.trim()) continue;
           try {
             records.push(JSON.parse(line));
-          } catch {
-            // 跳过损坏行
+          } catch (e) {
+            // 损坏行（JSON 解析失败），跳过继续解析下一行
+            logger.warn('[audit-logger] listToday: 跳过损坏的审计行', {
+              file,
+              error: e instanceof Error ? e.message : String(e),
+            });
           }
         }
       }
@@ -341,7 +353,12 @@ export class AuditLogger {
       return records
         .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
         .slice(0, limit);
-    } catch {
+    } catch (e) {
+      // 读取今日审计目录失败（ENOENT 是正常情况），返回空数组
+      logger.debug('[audit-logger] listToday: 读取审计目录失败', {
+        dayDir,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return [];
     }
   }

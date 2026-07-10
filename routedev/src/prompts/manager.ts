@@ -665,7 +665,12 @@ export class PromptTemplateManager {
     try {
       await this.getTemplate(id);
       return true;
-    } catch {
+    } catch (e) {
+      // 模板不存在或加载失败，返回 false
+      logger.debug('[prompt-manager] hasTemplate: 模板不存在或加载失败', {
+        id,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return false;
     }
   }
@@ -702,7 +707,12 @@ export class PromptTemplateManager {
     let template: PromptTemplate;
     try {
       template = await this.getTemplate(id);
-    } catch {
+    } catch (e) {
+      // 模板不存在或加载失败，返回缺失标记
+      logger.debug('[prompt-manager] validate: 模板不存在或加载失败', {
+        id,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return { missing: ['模板不存在'], hasExample: false };
     }
 

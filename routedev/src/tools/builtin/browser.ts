@@ -271,7 +271,10 @@ export class BrowserTool implements ITool {
     try {
       // @ts-ignore — puppeteer 是可选依赖，未安装时 import 会抛错
       puppeteer = await import('puppeteer');
-    } catch {
+    } catch (e) {
+      // puppeteer 未安装（可选依赖），返回明确的错误提示
+      // eslint-disable-next-line no-console
+      console.warn(`[browser] puppeteer 未安装: ${e instanceof Error ? e.message : String(e)}`);
       return {
         success: false,
         output: '',
@@ -322,8 +325,10 @@ export class BrowserTool implements ITool {
       if (browser) {
         try {
           await browser.close();
-        } catch {
-          // 关闭失败静默
+        } catch (e) {
+          // 关闭失败静默（不影响主流程）
+          // eslint-disable-next-line no-console
+          console.warn(`[browser] puppeteer 关闭失败: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
     }

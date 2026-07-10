@@ -203,8 +203,12 @@ export class SkillMarketManager {
         const parsed = SkillMdParser.parse(raw);
         metadata = parsed.metadata;
         version = parsed.metadata.version || '0.0.0';
-      } catch {
-        // 忽略解析失败
+      } catch (e) {
+        // 解析失败（SKILL.md 格式错误或读取失败），忽略并使用默认值
+        logger.debug('[market-manager] SKILL.md 解析失败', {
+          draftPath,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
 
       items.push({
@@ -523,7 +527,12 @@ export class SkillMarketManager {
       const raw = fsSync.readFileSync(metaPath, 'utf-8');
       const meta = JSON.parse(raw) as MarketMetadataFile;
       return meta.versions || [];
-    } catch {
+    } catch (e) {
+      // 读取或解析失败（ENOENT 或 JSON 损坏），返回空数组
+      logger.debug('[market-manager] getVersions: 读取/解析失败', {
+        metaPath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return [];
     }
   }

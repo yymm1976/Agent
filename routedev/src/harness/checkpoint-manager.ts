@@ -394,7 +394,12 @@ export class CheckpointManager {
     try {
       const content = await fs.readFile(this.goalPlanPath, 'utf-8');
       return JSON.parse(content) as GoalPlan;
-    } catch {
+    } catch (e) {
+      // 目标计划文件不存在或损坏，降级返回 null（可能是首次启动）
+      logger.warn('[checkpoint-manager] 加载目标计划失败', {
+        goalPlanPath: this.goalPlanPath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return null;
     }
   }
@@ -403,8 +408,12 @@ export class CheckpointManager {
   async clearGoalPlan(): Promise<void> {
     try {
       await fs.unlink(this.goalPlanPath);
-    } catch {
-      // 文件不存在，忽略
+    } catch (e) {
+      // 文件不存在视为正常；其他错误（权限不足）需记录日志
+      logger.warn('[checkpoint-manager] 清除目标计划失败', {
+        goalPlanPath: this.goalPlanPath,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 
@@ -445,8 +454,12 @@ export class CheckpointManager {
       if (Array.isArray(parsed)) {
         this.checkpoints = parsed;
       }
-    } catch {
-      // 文件不存在或损坏，从空列表开始
+    } catch (e) {
+      // 文件不存在或损坏：检查点元数据丢失，从空列表开始（可能影响回滚能力）
+      logger.error('[checkpoint-manager] 加载检查点元数据失败，从空列表开始', {
+        metadataPath: this.metadataPath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       this.checkpoints = [];
     }
   }

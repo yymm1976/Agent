@@ -396,8 +396,12 @@ export class OpenAIClient extends BaseLLMClient {
       let parsedArgs: Record<string, unknown> = {};
       try {
         parsedArgs = JSON.parse(fn?.arguments || '{}');
-      } catch {
+      } catch (e) {
         // 非法 JSON 降级为空对象，让上层工具执行时报参数错误（比整个请求崩溃更优雅）
+        logger.warn('[openai] tool_calls.arguments JSON 解析失败，降级为空对象', {
+          toolName: fn?.name,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
       return {
         id: tc.id,

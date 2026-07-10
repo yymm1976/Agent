@@ -278,8 +278,11 @@ export class ScenarioClassifier {
             confidence: parsed.confidence || 0.5,
             reasoning: parsed.reasoning || 'LLM classification',
           };
-        } catch {
-          // 忽略
+        } catch (e) {
+          // JSON 解析失败：LLM 返回的 JSON 格式错误，回退到 complex
+          logger.warn('[classifier] LLM 响应 JSON 解析失败', {
+            error: e instanceof Error ? e.message : String(e),
+          });
         }
       }
     }

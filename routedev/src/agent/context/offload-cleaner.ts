@@ -76,8 +76,12 @@ async function cleanOrphanOffload(
           await rm(sessionDir, { recursive: true, force: true });
           logger.debug('孤儿 offload 目录已清理', { dir: sessionDir, ageMs });
         }
-      } catch {
+      } catch (e) {
         // 单个目录失败不影响其他目录清理
+        logger.debug('[offload-cleaner] 清理单个会话目录失败', {
+          sessionDir,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
   } catch (err) {

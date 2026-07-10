@@ -26,7 +26,7 @@
 ## 二、项目架构与生产路径
 
 ### 2.1 技术栈
-- TypeScript 6.x + Electron 33 + React 19（strict 模式，ESM）
+- TypeScript 6.x + Electron 34 + React 19（strict 模式，ESM）
 - 桌面应用，无 CLI 入口（CLI 已在 Phase 72 退役）
 - 构建工具：electron-vite + tsc
 
@@ -240,7 +240,7 @@ Step 7: 确认是否仅 app-init 实例化但无消费
 
 ### 5.3 已清理区域（不需要重复审查）
 
-以下已在六轮清理中处理，除非有新代码引入，否则不需要重复审查：
+以下已在六轮清理 + Phase 77 死代码自审中处理，除非有新代码引入，否则不需要重复审查：
 - `src/agent/execution-orchestrator.ts` — 已删除（第五轮）
 - `src/scheduler/` — 整目录已删除（第五轮）
 - `src/memory/incremental-extractor.ts` — 已删除（第五轮）
@@ -248,6 +248,11 @@ Step 7: 确认是否仅 app-init 实例化但无消费
 - `src/skills/sdk-loader.ts` + `sdk.ts` — 已删除（第四轮）
 - `src/agent/context/system-prompt-builder.ts` — 已删除（第四轮）
 - `src/cli/` — 已重命名为 `src/runtime/` 并清理（第三轮）
+- **Phase 77 死代码自审删除的 4 项**：
+  - `formatTimeline` 函数 — 已删除（GoalExecutionCard.tsx 内未使用）
+  - `getTraceStepBoundaries` 函数 — 已删除（trace 组件内未使用）
+  - `StepBoundary` 类型 import — 已删除（未使用的 import）
+  - `currentGoalId` 旧变量 — 已删除（被 profile.currentGoalId 替代）
 
 ---
 
@@ -390,6 +395,16 @@ Step 7: 确认是否仅 app-init 实例化但无消费
 - `desktop/main/engine-bridge.ts`
 - `desktop/renderer/src/App.tsx`
 - 所有 `desktop/renderer/src/components/*.tsx`
+
+**Phase 77 新增模块（活代码，通过 /replay /scorecard 命令触发）**：
+- `src/harness/trace-replayer.ts` — Trace 回放引擎
+- `src/harness/scorecard.ts` — 评分卡
+- `src/runtime/goal-recovery.ts` — 冷启动恢复管理器
+- `src/agent/session-status-aggregator.ts` — 会话状态聚合器
+- `desktop/renderer/src/components/trace/ReplayView.tsx` — 回放 UI
+- `desktop/renderer/src/components/trace/ScorecardView.tsx` — 评分卡 UI
+- `desktop/renderer/src/components/goal/RecoveryPrompt.tsx` — 恢复提示 UI
+- `desktop/renderer/src/components/session/SessionStatusCard.tsx` — 状态卡 UI
 
 ---
 

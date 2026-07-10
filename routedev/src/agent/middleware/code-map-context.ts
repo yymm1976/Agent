@@ -345,8 +345,12 @@ export class CodeMapContextMiddleware {
       let symbols: Array<{ name: string; kind: string; signature: string | null }> = [];
       try {
         symbols = getTopSymbolsByFile(db, file.filePath, CodeMapContextMiddleware.SYMBOLS_PER_FILE);
-      } catch {
+      } catch (e) {
         // 查询失败跳过此文件的符号行
+        logger.debug('[code-map-context] getTopSymbolsByFile 查询失败', {
+          filePath: file.filePath,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
       const fileLines: string[] = [`  ${file.filePath}`];
       for (const sym of symbols) {
@@ -387,8 +391,12 @@ export class CodeMapContextMiddleware {
           content: snippetLines.join('\n'),
           symbolName: node.name,
         });
-      } catch {
+      } catch (e) {
         // 文件不存在或读取失败：fail-open 跳过
+        logger.debug('[code-map-context] 读取代码片段失败，跳过', {
+          filePath: node.filePath,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
     return snippets;

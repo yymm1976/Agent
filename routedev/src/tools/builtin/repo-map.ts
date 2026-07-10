@@ -96,8 +96,10 @@ export class RepoMapTool implements ITool {
             metadata: { source: 'code-map-db', fileCount: dbResult.fileCount },
           };
         }
-      } catch {
+      } catch (e) {
         // DB 查询失败 → 降级到 regex（fail-open）
+        // eslint-disable-next-line no-console
+        console.warn(`[repo-map] DB 查询失败，降级到 regex: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 
@@ -149,7 +151,10 @@ export class RepoMapTool implements ITool {
     let db: DB;
     try {
       db = initDatabase(dbPath);
-    } catch {
+    } catch (e) {
+      // 数据库初始化失败（node:sqlite 不可用或 DB 损坏），返回 null 触发 regex 降级
+      // eslint-disable-next-line no-console
+      console.warn(`[repo-map] initDatabase 失败，降级到 regex: ${e instanceof Error ? e.message : String(e)}`);
       return null;
     }
 
@@ -179,8 +184,10 @@ export class RepoMapTool implements ITool {
     } finally {
       try {
         db.close();
-      } catch {
-        // ignore close errors
+      } catch (e) {
+        // ignore close errors（db.close 失败不影响结果）
+        // eslint-disable-next-line no-console
+        console.warn(`[repo-map] db.close 失败: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   }

@@ -242,8 +242,11 @@ export class WorkerExecutor {
             tokenUsage: { inputTokens: 0, outputTokens: 0 },
           };
         }
-      } catch {
+      } catch (e) {
         // fail-open：熔断器检查异常时放行（避免监控组件故障阻断主流程）
+        logger.warn('[worker-executor] 熔断器检查异常，放行调用', {
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
 
@@ -453,8 +456,12 @@ export class WorkerExecutor {
     if (this.circuitBreaker) {
       try {
         this.circuitBreaker.recordResult(outcome.success);
-      } catch {
+      } catch (e) {
         // fail-open：记录异常不影响结果返回
+        logger.warn('[worker-executor] 熔断器记录结果异常', {
+          success: outcome.success,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
 
@@ -471,8 +478,13 @@ export class WorkerExecutor {
           capturedCacheCreationTokens,
           capturedInputTokens,
         );
-      } catch {
+      } catch (e) {
         // fail-open：统计异常不影响结果返回
+        logger.warn('[worker-executor] 缓存统计记录异常', {
+          workerId,
+          goalId: task.goalId,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
 

@@ -32,8 +32,10 @@ let DatabaseSyncCtor: DatabaseSyncConstructor | null = null;
 try {
   const mod = requireFromESM('node:sqlite') as { DatabaseSync: DatabaseSyncConstructor };
   DatabaseSyncCtor = mod.DatabaseSync;
-} catch {
+} catch (e) {
   // fail-open：node:sqlite 不可用（Electron 未包含实验性模块），降级为 null
+  // eslint-disable-next-line no-console
+  console.warn(`[database] node:sqlite 不可用，降级为 null: ${e instanceof Error ? e.message : String(e)}`);
 }
 
 export type DB = DatabaseSyncLike;
@@ -128,8 +130,10 @@ export function initDatabase(dbPath: string): DB {
   // 旧 DB 的表不含此列，ALTER TABLE ADD COLUMN 补上；列已存在时忽略错误
   try {
     db.exec('ALTER TABLE unresolved_refs ADD COLUMN import_source TEXT');
-  } catch {
-    // 列已存在或表不存在，忽略
+  } catch (e) {
+    // 列已存在或表不存在，忽略（旧 DB 兼容的正常路径）
+    // eslint-disable-next-line no-console
+    console.warn(`[database] ALTER TABLE 添加 import_source 列失败（可能已存在）: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   return db;

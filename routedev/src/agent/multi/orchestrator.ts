@@ -482,7 +482,11 @@ export class Orchestrator {
         });
       }
       return result;
-    } catch {
+    } catch (e) {
+      // JSON 解析失败（LLM 返回的格式错误），返回 null 让调用方降级
+      logger.warn('[orchestrator] parsePlanFromLlm: JSON 解析失败', {
+        error: e instanceof Error ? e.message : String(e),
+      });
       return null;
     }
   }

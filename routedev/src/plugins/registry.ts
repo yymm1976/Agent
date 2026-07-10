@@ -223,8 +223,15 @@ export class PluginRegistry {
       let entries: string[] = [];
       try {
         entries = await readdir(dir);
-      } catch {
-        // 目录不存在或不可读——静默跳过
+      } catch (e) {
+        // 目录不存在或不可读——静默跳过（ENOENT 是正常情况）
+        const code = (e as NodeJS.ErrnoException)?.code;
+        if (code !== 'ENOENT') {
+          logger.warn('[plugin-registry] 读取插件目录失败，跳过', {
+            dir,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
         continue;
       }
 
@@ -234,7 +241,12 @@ export class PluginRegistry {
         try {
           const s = await stat(pluginDir);
           isDir = s.isDirectory();
-        } catch {
+        } catch (e) {
+          // stat 失败（可能是 ENOENT 或权限问题），跳过该条目
+          logger.debug('[plugin-registry] stat 失败，跳过插件条目', {
+            pluginDir,
+            error: e instanceof Error ? e.message : String(e),
+          });
           continue;
         }
         if (!isDir) continue;

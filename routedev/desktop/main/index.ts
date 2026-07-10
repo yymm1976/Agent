@@ -30,6 +30,8 @@ import { createSplash } from './splash.js';
 import { createTray } from './tray.js';
 import { initUpdater } from './updater.js';
 import { listCatalog, searchCatalog } from './mcp-catalog.js';
+// TD-08：IPC 参数统一校验工具
+import { ipcGuard } from './ipc-guard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -338,9 +340,20 @@ app.on('before-quit', async (event) => {
 
 // 聊天：发送消息
 // I26 修复：添加输入验证，确保空消息和异常情况都能将错误反馈到前端
-ipcMain.on('chat:send', (_event, payload: ChatSendPayload) => {
-  // I26 修复：输入验证——空消息或非字符串消息直接反馈错误，不进入引擎
-  if (!payload || typeof payload.text !== 'string' || payload.text.trim().length === 0) {
+// TD-08：用 ipcGuard 统一参数校验
+ipcMain.on('chat:send', (_event, rawPayload: unknown) => {
+  let payload: ChatSendPayload;
+  try {
+    payload = ipcGuard.object<ChatSendPayload>({
+      text: ipcGuard.string(100000),
+    })(rawPayload);
+  } catch (err) {
+    sendChatStream({ type: 'error', error: err instanceof Error ? err.message : '无效的参数' });
+    sendChatStream({ type: 'done' });
+    return;
+  }
+  // I26 修复：输入验证——空消息直接反馈错误，不进入引擎
+  if (payload.text.trim().length === 0) {
     sendChatStream({ type: 'error', error: '消息内容不能为空' });
     sendChatStream({ type: 'done' });
     return;
@@ -432,9 +445,17 @@ ipcMain.handle('goal:list-resumable', async (): Promise<import('../shared/ipc-ty
 });
 
 // 恢复指定 goal 的执行
-ipcMain.handle('goal:resume', async (_event, goalId: string): Promise<{ success: boolean; error?: string }> => {
-  if (!goalId || typeof goalId !== 'string' || goalId.length > 256) {
-    return { success: false, error: '无效的 goalId' };
+// TD-08：用 ipcGuard 统一参数校验（goal:start 在本项目中由 chat:send 携 /goal 命令触发，
+// 此处对最接近的 goal:resume 做参数校验重构）
+ipcMain.handle('goal:resume', async (_event, rawGoalId: unknown): Promise<{ success: boolean; error?: string }> => {
+  let goalId: string;
+  try {
+    goalId = ipcGuard.string(256)(rawGoalId);
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : '无效的 goalId' };
+  }
+  if (goalId.length === 0) {
+    return { success: false, error: 'goalId 不能为空' };
   }
   try {
     return (await engine?.resumeGoal?.(goalId)) ?? { success: false, error: '引擎未初始化' };
@@ -511,7 +532,15 @@ ipcMain.handle('config:get', async (): Promise<import('../../src/config/schema.j
 });
 
 // 配置：保存
-ipcMain.handle('config:save', async (_event, config: import('../../src/config/schema.js').AppConfig): Promise<ConfigSaveResult> => {
+// TD-08：用 ipcGuard 统一参数校验（AppConfig 字段众多，此处用 object({}) 校验非空对象，
+// passthrough 策略保留全部字段供 saveConfig 持久化）
+ipcMain.handle('config:save', async (_event, rawConfig: unknown): Promise<ConfigSaveResult> => {
+  let config: import('../../src/config/schema.js').AppConfig;
+  try {
+    config = ipcGuard.object<import('../../src/config/schema.js').AppConfig & Record<string, unknown>>({})(rawConfig) as import('../../src/config/schema.js').AppConfig;
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : '无效的参数' };
+  }
   try {
     await saveConfig(config);
     // 同步更新 engine 内部配置，确保自主度等设置实时生效
@@ -544,14 +573,27 @@ ipcMain.handle('command:execute', async (_event, payload: CommandExecutePayload)
   return engine?.executeCommand(payload.text) ?? { error: '引擎未初始化' };
 });
 
+// IPC tool:execute 允许的工具白名单（仅设置页所需工具）
+// TD-07：拒绝白名单外的工具，防止渲染进程被劫持后通过 IPC 调用任意工具
+const IPC_TOOL_WHITELIST = new Set([
+  'test_connection',
+  'list_directory',
+  'read_file',
+]);
+
 // 工具执行（用于设置页中的测试按钮等）
 ipcMain.handle('tool:execute', async (_event, payload: ToolExecutePayload): Promise<unknown> => {
+  // TD-07：白名单校验——非白名单工具直接拒绝
   if (!payload || typeof payload.name !== 'string' || payload.name.length === 0 || payload.name.length > 256) {
-    return { error: '无效的参数' };
+    return { success: false, error: '无效的参数' };
+  }
+  if (!IPC_TOOL_WHITELIST.has(payload.name)) {
+    console.warn(`[IPC] tool:execute 拒绝非白名单工具: ${payload.name}`);
+    return { success: false, error: '该工具不允许通过 IPC 直接调用' };
   }
   // 安全：args 必须是对象（或 null/undefined），拒绝数组/原始值
   if (payload.args != null && (typeof payload.args !== 'object' || Array.isArray(payload.args))) {
-    return { error: '无效的参数' };
+    return { success: false, error: '无效的参数' };
   }
   return engine?.executeTool(payload.name, payload.args) ?? { error: '引擎未初始化' };
 });
@@ -636,12 +678,25 @@ ipcMain.handle('skill:toggle', async (_event, payload: { name: string; enabled: 
   return engine?.toggleSkill(payload.name, payload.enabled) ?? false;
 });
 
-ipcMain.handle('skill:create', async (_event, payload: import('../shared/ipc-types.js').SkillCreatePayload) => {
-  // 安全：运行时校验 payload shape，防止畸形/恶意输入
-  if (!payload || typeof payload.name !== 'string' || payload.name.length === 0 || payload.name.length > 256 ||
-      typeof payload.description !== 'string' || typeof payload.content !== 'string' ||
-      !Array.isArray(payload.keywords)) {
-    return { success: false, error: '无效的参数' };
+ipcMain.handle('skill:create', async (_event, rawPayload: unknown) => {
+  // TD-08：用 ipcGuard 统一参数校验
+  let payload: import('../shared/ipc-types.js').SkillCreatePayload;
+  try {
+    payload = ipcGuard.object<import('../shared/ipc-types.js').SkillCreatePayload>({
+      name: ipcGuard.string(256),
+      description: ipcGuard.string(10000),
+      content: ipcGuard.string(1000000),
+      keywords: (v: unknown) => {
+        if (!Array.isArray(v)) throw new Error('keywords 必须是数组');
+        return v as string[];
+      },
+    })(rawPayload);
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : '无效的参数' };
+  }
+  // 安全：name 不能为空
+  if (payload.name.length === 0) {
+    return { success: false, error: 'name 不能为空' };
   }
   return engine?.createSkill(payload.name, payload.description, payload.keywords, payload.content)
     ?? { success: false, error: '引擎未初始化' };
@@ -1015,23 +1070,41 @@ ipcMain.handle('profile:list', async () => {
   return engine.listProfiles();
 });
 
-ipcMain.handle('profile:save', async (_event, payload: import('../shared/ipc-types.js').ProfileSavePayload) => {
+ipcMain.handle('profile:save', async (_event, rawPayload: unknown) => {
   if (!engine) return { success: false, error: '引擎未初始化' };
-  // F-034 修复：参数校验——防止畸形/恶意 payload 写入 Profile 文件
-  if (!payload || typeof payload !== 'object') {
-    return { success: false, error: '无效的参数' };
+  // TD-08：用 ipcGuard 统一参数校验
+  // ProfileSavePayload 字段众多（systemPrompt 等），此处校验关键字段，
+  // passthrough 策略保留其余字段供 saveProfile 完整持久化
+  let payload: import('../shared/ipc-types.js').ProfileSavePayload;
+  try {
+    payload = ipcGuard.object<import('../shared/ipc-types.js').ProfileSavePayload>({
+      id: ipcGuard.string(256),
+      name: ipcGuard.string(256),
+      role: (v: unknown) => {
+        if (typeof v !== 'string' || !AGENT_PROFILE_ROLES.includes(v as never)) {
+          throw new Error('无效的 role');
+        }
+        return v as import('../shared/ipc-types.js').AgentProfileRole;
+      },
+      allowedTools: (v: unknown) => {
+        if (!Array.isArray(v)) throw new Error('allowedTools 必须是数组');
+        return v as string[];
+      },
+      forbiddenTools: (v: unknown) => {
+        if (!Array.isArray(v)) throw new Error('forbiddenTools 必须是数组');
+        return v as string[];
+      },
+      boundSkills: (v: unknown) => {
+        if (!Array.isArray(v)) throw new Error('boundSkills 必须是数组');
+        return v as string[];
+      },
+    })(rawPayload);
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : '无效的参数' };
   }
-  if (typeof payload.id !== 'string' || payload.id.length === 0 || payload.id.length > 256 ||
-      typeof payload.name !== 'string' || payload.name.length === 0 || payload.name.length > 256) {
-    return { success: false, error: '无效的参数' };
-  }
-  const validRoles = AGENT_PROFILE_ROLES;
-  if (!validRoles.includes(payload.role)) {
-    return { success: false, error: '无效的参数' };
-  }
-  if (!Array.isArray(payload.allowedTools) || !Array.isArray(payload.forbiddenTools) ||
-      !Array.isArray(payload.boundSkills)) {
-    return { success: false, error: '无效的参数' };
+  // F-034 修复：id/name 不能为空
+  if (payload.id.length === 0 || payload.name.length === 0) {
+    return { success: false, error: 'id/name 不能为空' };
   }
   return engine.saveProfile(payload);
 });

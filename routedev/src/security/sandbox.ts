@@ -266,8 +266,12 @@ export class CommandSandbox {
         });
         try {
           child.kill('SIGKILL');
-        } catch {
-          // 忽略 kill 错误
+        } catch (e) {
+          // 超时 kill 失败（子进程可能已退出），降级为 debug 日志
+          logger.debug('[sandbox] timeout kill 失败', {
+            command,
+            error: e instanceof Error ? e.message : String(e),
+          });
         }
       }, this.options.timeout);
 
@@ -285,8 +289,12 @@ export class CommandSandbox {
             });
             try {
               child.kill('SIGKILL');
-            } catch {
-              // 忽略
+            } catch (e) {
+              // stdout 超限 kill 失败（子进程可能已退出），降级为 debug 日志
+              logger.debug('[sandbox] stdout 超限 kill 失败', {
+                command,
+                error: e instanceof Error ? e.message : String(e),
+              });
             }
             return;
           }
@@ -308,8 +316,12 @@ export class CommandSandbox {
             });
             try {
               child.kill('SIGKILL');
-            } catch {
-              // 忽略
+            } catch (e) {
+              // stderr 超限 kill 失败（子进程可能已退出），降级为 debug 日志
+              logger.debug('[sandbox] stderr 超限 kill 失败', {
+                command,
+                error: e instanceof Error ? e.message : String(e),
+              });
             }
             return;
           }

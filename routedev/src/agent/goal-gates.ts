@@ -150,7 +150,10 @@ export class GoalGateManager {
       const content = await fs.readFile(this.gatesFile, 'utf-8');
       this.gates = JSON.parse(content) as FrozenGates;
       return this.gates;
-    } catch {
+    } catch (e) {
+      // 读取或解析失败（ENOENT 是正常情况，文件尚未创建），返回 null
+      // eslint-disable-next-line no-console
+      console.warn(`[goal-gates] load: 读取/解析 gates 文件失败 ${this.gatesFile}: ${e instanceof Error ? e.message : String(e)}`);
       return null;
     }
   }

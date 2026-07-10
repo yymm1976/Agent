@@ -101,7 +101,12 @@ export class AgentProfileManager {
       let stat: fsSync.Stats;
       try {
         stat = await fs.stat(entryPath);
-      } catch {
+      } catch (e) {
+        // stat 失败（可能是 ENOENT 或权限问题），跳过该条目
+        logger.debug('[agent-profile-manager] stat 失败，跳过条目', {
+          entryPath,
+          error: e instanceof Error ? e.message : String(e),
+        });
         continue;
       }
       if (!stat.isDirectory()) continue;
@@ -433,7 +438,12 @@ export class AgentProfileManager {
     try {
       frontObj = parseYaml(frontRaw) as Record<string, unknown>;
       if (!frontObj || typeof frontObj !== 'object') return null;
-    } catch {
+    } catch (e) {
+      // YAML 解析失败：frontmatter 格式错误，降级返回 null
+      logger.warn('[agent-profile-manager] SKILL.md frontmatter YAML 解析失败', {
+        frontRaw: frontRaw.slice(0, 100),
+        error: e instanceof Error ? e.message : String(e),
+      });
       return null;
     }
 

@@ -16,8 +16,10 @@ export function countTokens(text: string): number {
   if (!text) return 0;
   try {
     return getEncoder().encode(text).length;
-  } catch {
+  } catch (e) {
     // fail-open：tiktoken wasm 加载失败时回退到 length/4
+    // eslint-disable-next-line no-console
+    console.warn(`[token-counter] tiktoken 编码失败，回退到 length/4: ${e instanceof Error ? e.message : String(e)}`);
     return Math.ceil(text.length / 4);
   }
 }

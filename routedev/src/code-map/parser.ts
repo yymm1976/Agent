@@ -80,7 +80,10 @@ function findWtsModulePath(): string | null {
   try {
     const req = createRequire(typeof __filename !== 'undefined' ? __filename : fileURLToPath(import.meta.url));
     return req.resolve('web-tree-sitter');
-  } catch {
+  } catch (e) {
+    // web-tree-sitter 模块未安装或路径解析失败
+    // eslint-disable-next-line no-console
+    console.warn(`[parser] 解析 web-tree-sitter 模块路径失败: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
 }
@@ -127,7 +130,10 @@ export async function loadLanguage(lang: Language): Promise<TSLanguage | null> {
   let wasmPath: string;
   try {
     wasmPath = req.resolve(`tree-sitter-wasms/out/${wasmName}`);
-  } catch {
+  } catch (e) {
+    // WASM 文件路径解析失败（包未安装）
+    // eslint-disable-next-line no-console
+    console.warn(`[parser] 解析 ${wasmName} WASM 路径失败: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
   if (!fs.existsSync(wasmPath)) return null;
@@ -165,7 +171,10 @@ export async function parseFile(filePath: string, content: string): Promise<Pars
   try {
     const tree = parser.parse(content);
     return { tree, language: lang };
-  } catch {
+  } catch (e) {
+    // 解析失败（语法错误或解析器内部错误），返回 null 让调用方降级处理
+    // eslint-disable-next-line no-console
+    console.warn(`[parser] 解析文件失败 ${filePath}: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   } finally {
     parser.delete();

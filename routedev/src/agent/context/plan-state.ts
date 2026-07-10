@@ -62,8 +62,10 @@ export class PlanState {
     if (raw === null || raw === '') return null;
     try {
       return JSON.parse(raw) as Plan;
-    } catch {
+    } catch (e) {
       // fail-open：JSON 解析失败返回 null，不抛异常
+      // eslint-disable-next-line no-console
+      console.warn(`[plan-state] JSON 解析失败，返回 null: ${e instanceof Error ? e.message : String(e)}`);
       return null;
     }
   }

@@ -388,7 +388,19 @@ export class RouteDevEngine {
   // executeTool（保留在 RouteDevEngine，阶段3 TD-07 增加权限校验）
   // ============================================================
 
+  // TD-07：高风险工具不允许通过 IPC 直接调用（必须经 Agent Loop）
+  // 这些工具具备破坏性或副作用（执行任意命令/写文件/Git 操作/派生子 Agent/浏览器自动化），
+  // 必须经过 Agent Loop 的权限确认流程，防止渲染进程被劫持后绕过确认直接调用
+  private static readonly HIGH_RISK_TOOLS = new Set([
+    'shell_exec', 'file_write', 'git_op', 'spawn_agent', 'browser',
+  ]);
+
   async executeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+    // TD-07：高风险工具拒绝——必须通过 Agent Loop 调用
+    if (RouteDevEngine.HIGH_RISK_TOOLS.has(name)) {
+      return { success: false, error: '高风险工具必须通过 Agent Loop 调用' };
+    }
+
     if (!this.ctx.deps) return { error: '引擎未初始化' };
 
     // F-N016 修复：test_connection 工具未在 ToolExecutor 注册，

@@ -209,8 +209,11 @@ export function registerBuiltinHooks(
             durationMs: Number(data.toolDuration ?? 0),
             agentId: payload.agentId ?? '',
           });
-        } catch {
+        } catch (e) {
           // fail-open：analytics 失败不影响 hook 流
+          logger.warn('[builtin-hooks] analytics-post-tool-use 失败', {
+            error: e instanceof Error ? e.message : String(e),
+          });
         }
         return { action: 'continue' };
       },

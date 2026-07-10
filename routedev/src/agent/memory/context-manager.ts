@@ -287,8 +287,11 @@ export class ContextManager {
           hitRate: stats.hitRate,
           l1Size: stats.l1Size,
         });
-      } catch {
+      } catch (e) {
         // fail-open：缓存统计异常不影响压缩主流程
+        logger.debug('[context-manager] 缓存统计异常', {
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
 
@@ -667,8 +670,11 @@ export class ContextManager {
       const filePath = join(getAppDataDir(), 'memory', 'current-checkpoint.json');
       const content = await readFile(filePath, 'utf-8');
       this.currentCheckpoint = JSON.parse(content);
-    } catch {
-      // 文件不存在，忽略
+    } catch (e) {
+      // 文件不存在（ENOENT 是正常情况）或解析失败，忽略
+      logger.debug('[context-manager] loadCheckpoint: 读取/解析失败', {
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 
@@ -711,8 +717,12 @@ export class ContextManager {
       const data = fs.readFileSync(graphPath, 'utf-8');
       this.knowledgeGraph = KnowledgeGraph.fromJSON(data);
       logger.debug('知识图谱已从磁盘加载', { path: graphPath });
-    } catch {
+    } catch (e) {
       // 文件不存在或损坏，保持空图谱
+      logger.debug('[context-manager] loadGraphFromDisk: 读取/解析失败', {
+        graphPath,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 

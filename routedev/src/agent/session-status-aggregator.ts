@@ -124,8 +124,10 @@ export async function aggregateSessionStatus(deps: AggregateSessionStatusDeps): 
   let goal: PersistedGoal | null = null;
   try {
     goal = await goalPersistence.load(currentGoalId);
-  } catch {
+  } catch (e) {
     // load 失败降级为 idle（持久化层错误不应阻塞 UI）
+    // eslint-disable-next-line no-console
+    console.warn(`[session-status-aggregator] goal 加载失败，降级为 idle: ${e instanceof Error ? e.message : String(e)}`);
     return buildIdleStatus();
   }
 
@@ -139,8 +141,10 @@ export async function aggregateSessionStatus(deps: AggregateSessionStatusDeps): 
     try {
       const snapshot = blackboard.getSnapshot();
       factsValues = snapshot.projectFacts.map((f) => `${f.key}: ${f.value}`);
-    } catch {
+    } catch (e) {
       // 黑板读取失败忽略，事实列表降级为空
+      // eslint-disable-next-line no-console
+      console.warn(`[session-status-aggregator] 黑板读取失败，事实列表降级为空: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

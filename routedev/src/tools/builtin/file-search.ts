@@ -98,8 +98,10 @@ export class FileSearchTool implements ITool {
             if (matches.length > 0) {
               results.push(`${relativePath}\n${matches.join('\n')}`);
             }
-          } catch {
+          } catch (e) {
             // 二进制文件或权限不足，跳过
+            // eslint-disable-next-line no-console
+            console.warn(`[file-search] 读取文件失败，跳过 ${relativePath}: ${e instanceof Error ? e.message : String(e)}`);
           }
         } else {
           results.push(relativePath);

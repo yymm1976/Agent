@@ -505,7 +505,12 @@ export class TraceCollector {
         let files: string[];
         try {
           files = await fs.readdir(dayDir);
-        } catch {
+        } catch (e) {
+          // 日期目录读取失败（可能是 ENOENT 或权限问题），跳过该目录
+          logger.warn('[trace-collector] 读取日期目录失败，跳过', {
+            dayDir,
+            error: e instanceof Error ? e.message : String(e),
+          });
           continue;
         }
         for (const file of files) {
@@ -518,8 +523,12 @@ export class TraceCollector {
             if (session.id && !this.sessionPathCache.has(session.id)) {
               this.sessionPathCache.set(session.id, path.join(dayDir, `${session.id}.trace.jsonl`));
             }
-          } catch {
-            // 跳过损坏文件
+          } catch (e) {
+            // session.json 读取或解析失败，跳过该损坏文件
+            logger.warn('[trace-collector] session.json 解析失败，跳过', {
+              file: path.join(dayDir, file),
+              error: e instanceof Error ? e.message : String(e),
+            });
           }
         }
       }
@@ -527,7 +536,12 @@ export class TraceCollector {
       return sessions
         .sort((a, b) => b.startTime - a.startTime)
         .slice(0, limit);
-    } catch {
+    } catch (e) {
+      // 存储根目录读取失败，降级返回空列表
+      logger.warn('[trace-collector] 列出会话失败', {
+        dir,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return [];
     }
   }
@@ -545,7 +559,13 @@ export class TraceCollector {
         .split('\n')
         .filter(line => line.trim())
         .map(line => JSON.parse(line));
-    } catch {
+    } catch (e) {
+      // trace.jsonl 读取或解析失败，降级返回空数组
+      logger.warn('[trace-collector] 读取会话记录失败', {
+        sessionId,
+        filePath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return [];
     }
   }
@@ -560,7 +580,13 @@ export class TraceCollector {
     try {
       const content = await fs.readFile(filePath, 'utf-8');
       return JSON.parse(content) as TraceSession;
-    } catch {
+    } catch (e) {
+      // session.json 读取或解析失败，降级返回 null
+      logger.warn('[trace-collector] 读取会话元数据失败', {
+        sessionId,
+        filePath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return null;
     }
   }
@@ -576,7 +602,13 @@ export class TraceCollector {
       const content = await fs.readFile(filePath, 'utf-8');
       const parsed = JSON.parse(content);
       return Array.isArray(parsed) ? (parsed as TraceSpan[]) : [];
-    } catch {
+    } catch (e) {
+      // spans.json 读取或解析失败，降级返回空数组
+      logger.warn('[trace-collector] 读取会话 spans 失败', {
+        sessionId,
+        filePath,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return [];
     }
   }
@@ -801,12 +833,22 @@ export class TraceCollector {
           // 命中：缓存 trace.jsonl 路径，返回目标 suffix 的完整路径
           this.sessionPathCache.set(sessionId, tracePath);
           return path.join(dayDir, `${sessionId}.${suffix}`);
-        } catch {
-          // 该日期目录下无此会话，继续
+        } catch (e) {
+          // 该日期目录下无此会话，继续扫描下一个目录（正常控制流）
+          logger.debug('[trace-collector] 定位会话文件：当前日期目录无此会话', {
+            sessionId,
+            dayDir: entry,
+            error: e instanceof Error ? e.message : String(e),
+          });
         }
       }
-    } catch {
-      // 存储根目录不存在
+    } catch (e) {
+      // 存储根目录不存在或读取失败
+      logger.warn('[trace-collector] 定位会话文件失败：存储根目录不可读', {
+        sessionId,
+        dir,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
     return null;
   }

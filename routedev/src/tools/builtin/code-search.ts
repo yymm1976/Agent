@@ -190,8 +190,10 @@ export class CodeSearchTool implements ITool {
             if (results.length >= maxResults) break;
           }
         }
-      } catch {
-        // skip
+      } catch (e) {
+        // skip（文件读取或正则匹配失败，跳过该文件）
+        // eslint-disable-next-line no-console
+        console.warn(`[code-search] 读取文件失败，跳过 ${relativePath}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 

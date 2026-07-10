@@ -293,7 +293,12 @@ export class ClaudePluginImporter {
     let entries: fsSync.Dirent[];
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
+    } catch (e) {
+      // 目录不存在（ENOENT）或读取失败，返回空数组
+      logger.debug('[claude-plugin-importer] listFiles: 读取目录失败', {
+        dir,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return results;
     }
     for (const entry of entries) {
