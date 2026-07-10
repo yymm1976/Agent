@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DifficultyAssessor } from './difficulty-assessor.js';
-import type { GoalPlan } from './goal-types.js';
+import { DifficultyAssessor } from '../../src/agent/difficulty-assessor.js';
+import type { GoalPlan } from '../../src/agent/goal-types.js';
 
 function makePlan(overrides: Partial<GoalPlan> = {}): GoalPlan {
   return {

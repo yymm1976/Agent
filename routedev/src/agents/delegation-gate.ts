@@ -10,38 +10,31 @@
 //   2. 必需输入（design_doc / write_file_list / diff / task_description）是否齐备
 //   3. 共享上下文包是否足够（estimatedTokens >= 100）
 
-/** 子 Agent 角色 */
-export type AgentRole = 'researcher' | 'executor' | 'reviewer' | 'custom';
+// AgentRole 统一从 profiles/types.ts 导入（TD-01 类型统一重构）
+import type { AgentRole } from './profiles/types.js';
+// 保留 re-export 以兼容现有从 delegation-gate 导入 AgentRole 的引用方
+export type { AgentRole };
 
-/** 委托门控规则（按角色配置） */
-interface DelegationGateRules {
-  researcher: {
-    when: string[]; // ['need_facts', 'impact_analysis', 'unknown_domain']
-    maxParallel: number;
-    requires: string[]; // ['task_description']
-  };
-  executor: {
-    when: string[];
-    maxParallel: number;
-    requires: string[]; // ['design_doc', 'write_file_list']
-  };
-  reviewer: {
-    when: string[];
-    maxParallel: number;
-    requires: string[]; // ['diff', 'design_doc']
-  };
-  custom: {
-    when: string[];
-    maxParallel: number;
-    requires: string[];
-  };
+/** 单个角色的委托门控规则 */
+interface DelegationGateRule {
+  when: string[];
+  maxParallel: number;
+  requires: string[];
 }
+
+/** 委托门控规则（按角色配置，覆盖所有 AgentRole） */
+type DelegationGateRules = Record<AgentRole, DelegationGateRule>;
 
 /** 默认门控规则 */
 export const DEFAULT_GATE_RULES: DelegationGateRules = {
   researcher: { when: ['need_facts', 'impact_analysis', 'unknown_domain'], maxParallel: 3, requires: ['task_description'] },
   executor: { when: ['design_confirmed', 'task_isolated'], maxParallel: 2, requires: ['design_doc', 'write_file_list'] },
   reviewer: { when: ['after_execution', 'before_merge'], maxParallel: 2, requires: ['diff', 'design_doc'] },
+  // TD-01：补齐扩展角色门控规则
+  planner: { when: ['need_plan', 'task_decomposition'], maxParallel: 2, requires: ['task_description'] },
+  verifier: { when: ['after_execution', 'need_verification'], maxParallel: 2, requires: ['diff', 'design_doc'] },
+  synthesizer: { when: ['need_synthesis', 'multi_source_merge'], maxParallel: 2, requires: ['task_description'] },
+  'review-planner': { when: ['before_execution', 'plan_review'], maxParallel: 2, requires: ['task_description'] },
   custom: { when: ['manual'], maxParallel: 2, requires: ['task_description'] },
 };
 
@@ -163,6 +156,11 @@ export class DelegationGate {
     lines.push(`- researcher: maxParallel=${r.researcher.maxParallel}, requires=[${r.researcher.requires.join(', ')}], when=[${r.researcher.when.join(', ')}]`);
     lines.push(`- executor: maxParallel=${r.executor.maxParallel}, requires=[${r.executor.requires.join(', ')}], when=[${r.executor.when.join(', ')}]`);
     lines.push(`- reviewer: maxParallel=${r.reviewer.maxParallel}, requires=[${r.reviewer.requires.join(', ')}], when=[${r.reviewer.when.join(', ')}]`);
+    // TD-01：补齐扩展角色门控规则说明
+    lines.push(`- planner: maxParallel=${r.planner.maxParallel}, requires=[${r.planner.requires.join(', ')}], when=[${r.planner.when.join(', ')}]`);
+    lines.push(`- verifier: maxParallel=${r.verifier.maxParallel}, requires=[${r.verifier.requires.join(', ')}], when=[${r.verifier.when.join(', ')}]`);
+    lines.push(`- synthesizer: maxParallel=${r.synthesizer.maxParallel}, requires=[${r.synthesizer.requires.join(', ')}], when=[${r.synthesizer.when.join(', ')}]`);
+    lines.push(`- review-planner: maxParallel=${r['review-planner'].maxParallel}, requires=[${r['review-planner'].requires.join(', ')}], when=[${r['review-planner'].when.join(', ')}]`);
     lines.push(`- custom: maxParallel=${r.custom.maxParallel}, requires=[${r.custom.requires.join(', ')}], when=[${r.custom.when.join(', ')}]`);
     lines.push('');
     lines.push('## 必需输入说明');

@@ -134,7 +134,7 @@ describe('Phase 51 场景 1: 端到端委托流程', () => {
     const decision = decideDelegation('build login component', {
       hardDelegationTypes: ['frontend'],
       refuseIfSpecialistUnavailable: true,
-      specialistAvailability: { researcher: true, executor: true, reviewer: true, custom: true },
+      specialistAvailability: { researcher: true, executor: true, reviewer: true, planner: true, verifier: true, synthesizer: true, 'review-planner': true, custom: true },
     });
     expect(decision.mode).toBe('delegate');
     expect(decision.targetRole).toBe('executor');
@@ -147,6 +147,10 @@ describe('Phase 51 场景 1: 端到端委托流程', () => {
         executor: ['researcher', 'reviewer'],
         researcher: [],
         reviewer: [],
+        planner: [],
+        verifier: [],
+        synthesizer: [],
+        'review-planner': [],
         custom: [],
       },
     });
@@ -162,7 +166,7 @@ describe('Phase 51 场景 1: 端到端委托流程', () => {
       targetRole: 'researcher',
       policy: {
         maxDepth: 2,
-        delegationTargets: { executor: ['researcher'], researcher: [], reviewer: [], custom: [] },
+        delegationTargets: { executor: ['researcher'], researcher: [], reviewer: [], planner: [], verifier: [], synthesizer: [], 'review-planner': [], custom: [] },
       },
     };
     const child = createChildRegistry(parentRegistry, 'general', undefined, delegationContext);
@@ -179,7 +183,7 @@ describe('Phase 51 场景 1: 端到端委托流程', () => {
       targetRole: 'researcher',
       policy: {
         maxDepth: 2,
-        delegationTargets: { executor: ['researcher'], researcher: [], reviewer: [], custom: [] },
+        delegationTargets: { executor: ['researcher'], researcher: [], reviewer: [], planner: [], verifier: [], synthesizer: [], 'review-planner': [], custom: [] },
       },
     };
     const child = createChildRegistry(parentRegistry, 'general', undefined, delegationContext);
@@ -247,7 +251,7 @@ describe('Phase 51 场景 1: 端到端委托流程', () => {
     const guard = createDelegationGuard({
       hardDelegationTypes: ['frontend'],
       refuseIfSpecialistUnavailable: false,
-      specialistAvailability: { researcher: true, executor: true, reviewer: true, custom: true },
+      specialistAvailability: { researcher: true, executor: true, reviewer: true, planner: true, verifier: true, synthesizer: true, 'review-planner': true, custom: true },
     });
     // delegate 模式下 write 工具被拦截
     const blocked = guard('write', 'build login component');
@@ -267,14 +271,14 @@ describe('Phase 51 场景 1: 端到端委托流程', () => {
     const decision = decideDelegation(taskDesc, {
       hardDelegationTypes: ['frontend'],
       refuseIfSpecialistUnavailable: false,
-      specialistAvailability: { researcher: true, executor: true, reviewer: true, custom: true },
+      specialistAvailability: { researcher: true, executor: true, reviewer: true, planner: true, verifier: true, synthesizer: true, 'review-planner': true, custom: true },
     });
     expect(decision.mode).toBe('delegate');
     expect(decision.targetRole).toBe('executor');
     // 3. 权限
     const perm = canDelegate(0, 'executor', 'researcher', {
       maxDepth: 2,
-      delegationTargets: { executor: ['researcher'], researcher: [], reviewer: [], custom: [] },
+      delegationTargets: { executor: ['researcher'], researcher: [], reviewer: [], planner: [], verifier: [], synthesizer: [], 'review-planner': [], custom: [] },
     });
     expect(perm.ok).toBe(true);
     // 4. 子注册表（保留 spawn_agent）
@@ -284,7 +288,7 @@ describe('Phase 51 场景 1: 端到端委托流程', () => {
       targetRole: 'researcher',
       policy: {
         maxDepth: 2,
-        delegationTargets: { executor: ['researcher'], researcher: [], reviewer: [], custom: [] },
+        delegationTargets: { executor: ['researcher'], researcher: [], reviewer: [], planner: [], verifier: [], synthesizer: [], 'review-planner': [], custom: [] },
       },
     });
     expect(childRegistry.has('spawn_agent')).toBe(true);

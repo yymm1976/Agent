@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { GoalPlan } from './goal-types.js';
-import { StateMigration } from './state-migration.js';
+import type { GoalPlan } from '../../src/agent/goal-types.js';
+import { StateMigration } from '../../src/agent/state-migration.js';
 
 function makePlan(): GoalPlan {
   return {

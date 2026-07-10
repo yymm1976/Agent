@@ -10,6 +10,8 @@ import type { GoalEvent } from '../../src/agent/goal-types.js';
 import type { TraceSession } from '../../src/harness/trace-types.js';
 import type { TimelineEvent } from '../../src/harness/trace-replayer.js';
 import type { Scorecard } from '../../src/harness/scorecard.js';
+// TD-01：AgentRole / AgentOutputFormat 统一从 profiles/types.ts 导入，消除重复定义
+import type { AgentRole, AgentOutputFormat } from '../../src/agents/profiles/types.js';
 
 export type { AppConfig, TokenProfileSnapshot, GoalEvent };
 // Phase 77：运行回放与评分卡类型（re-export 供渲染层使用）
@@ -119,12 +121,18 @@ export interface SkillRouteResult {
 // Phase 48 Task 4 接线修复：Agent Profile 管理 IPC 类型
 // ============================================================
 
-/** Agent Profile 角色（类型由 AGENT_PROFILE_ROLES 派生，保证白名单与类型同源） */
-export const AGENT_PROFILE_ROLES = ['researcher', 'executor', 'reviewer', 'custom'] as const;
-export type AgentProfileRole = typeof AGENT_PROFILE_ROLES[number];
+/**
+ * Agent Profile 角色（TD-01：统一为 AgentRole 别名，与 src/agents/profiles/types.ts 同源）
+ * AGENT_PROFILE_ROLES 常量保留供 UI 枚举使用，已包含所有 AgentRole 值
+ */
+export const AGENT_PROFILE_ROLES = [
+  'researcher', 'executor', 'reviewer', 'planner',
+  'verifier', 'synthesizer', 'review-planner', 'custom',
+] as const;
+export type AgentProfileRole = AgentRole;
 
-/** Agent Profile 输出格式 */
-export type AgentProfileOutputFormat = 'research_report' | 'code_change' | 'review_report' | 'custom';
+/** Agent Profile 输出格式（TD-01：统一为 AgentOutputFormat 别名，与 src/agents/profiles/types.ts 同源） */
+export type AgentProfileOutputFormat = AgentOutputFormat;
 
 /** Agent Profile 质疑严重级别 */
 export type AgentProfileChallengeSeverity = 'blocking' | 'warning';

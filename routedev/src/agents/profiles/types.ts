@@ -25,7 +25,7 @@ export type AgentRole =
   | 'custom';
 
 /** 输出格式 */
-type AgentOutputFormat =
+export type AgentOutputFormat =
   | 'research_report'
   | 'code_change'
   | 'review_report'

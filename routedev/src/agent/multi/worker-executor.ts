@@ -46,7 +46,9 @@ import type { CircuitBreaker } from '../circuit-breaker.js';
 import type { CacheStatsTracker } from '../../router/cache-optimizer.js';
 // Phase 54 Task 2：ContextPacker 接线（type-only import，避免运行时循环依赖）
 // 注：ContextPackage 已被 Phase 50 Task 9 清理为非 export，这里用 ReturnType 推导 pack() 的返回类型
-import type { ContextPacker, AgentRole, ContextSources } from '../../agents/context-packer.js';
+// TD-01：AgentRole 统一从 profiles/types.ts 导入（单一来源）
+import type { ContextPacker, ContextSources } from '../../agents/context-packer.js';
+import type { AgentRole } from '../../agents/profiles/types.js';
 // Phase 54：接入 AgentProfile——用 profile.systemPrompt 替换 WORKER_ROLE_PROMPTS 短句
 // 让每个 Worker 拥有独立的完整 systemPrompt（含角色规则、工具白名单、输出格式契约）
 import type { AgentProfileManager } from '../../agents/profiles/manager.js';

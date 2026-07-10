@@ -3,8 +3,10 @@
 // Task 2：子 Agent 上下文打包器
 
 import { countTokens } from '../code-map/token-counter.js';
-
-export type AgentRole = 'researcher' | 'executor' | 'reviewer' | 'custom';
+// AgentRole 统一从 profiles/types.ts 导入（TD-01 类型统一重构）
+import type { AgentRole } from './profiles/types.js';
+// 保留 re-export 以兼容现有从 context-packer 导入 AgentRole 的引用方
+export type { AgentRole };
 
 interface RelevantSymbol {
   id: string;
@@ -82,6 +84,11 @@ export const ROLE_WEIGHTS: Record<
   researcher: { codeMap: 0.9, taskBoundary: 0.5, memory: 0.2, facts: 0.2, parentReasoning: 0.1 },
   executor: { codeMap: 0.8, taskBoundary: 1.0, memory: 0.6, facts: 0.5, parentReasoning: 0.2 },
   reviewer: { codeMap: 0.5, taskBoundary: 0.9, memory: 0.5, facts: 0.3, parentReasoning: 0.6 },
+  // TD-01：补齐扩展角色权重（沿用相近角色的策略，保持 reviewer 的 parentReasoning 唯一最高）
+  planner: { codeMap: 0.6, taskBoundary: 0.9, memory: 0.4, facts: 0.3, parentReasoning: 0.5 },
+  verifier: { codeMap: 0.7, taskBoundary: 0.8, memory: 0.4, facts: 0.4, parentReasoning: 0.3 },
+  synthesizer: { codeMap: 0.5, taskBoundary: 0.6, memory: 0.5, facts: 0.5, parentReasoning: 0.5 },
+  'review-planner': { codeMap: 0.5, taskBoundary: 0.9, memory: 0.5, facts: 0.3, parentReasoning: 0.5 },
   custom: { codeMap: 0.5, taskBoundary: 0.5, memory: 0.5, facts: 0.5, parentReasoning: 0.5 },
 };
 

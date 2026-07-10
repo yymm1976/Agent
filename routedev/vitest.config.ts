@@ -9,7 +9,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['tests/**/*.test.{ts,tsx}', 'test/**/*.test.{ts,tsx}', 'src/**/*.test.{ts,tsx}'],
+    include: ['tests/**/*.test.{ts,tsx}', 'test/**/*.test.{ts,tsx}'],
     // e2e 测试需要串行执行（Electron 单实例限制）
     pool: 'forks',
     fileParallelism: false,

@@ -20,7 +20,7 @@ import { ToolRegistry } from '../registry.js';
 import type { AgentProfileManager } from '../../agents/profiles/manager.js';
 import type { AgentProfile, AgentRole } from '../../agents/profiles/types.js';
 // Phase 50 Task 3：接入子 Agent 委托体系核心模块（默认 enabled: false，开关在 config.delegationIntegration）
-import { ContextPacker, type AgentRole as PackerAgentRole } from '../../agents/context-packer.js';
+import { ContextPacker } from '../../agents/context-packer.js';
 import { DelegationGate, type DelegationTask, type ParentAgent, type ContextPackageInfo } from '../../agents/delegation-gate.js';
 import { DelegationEnforcer } from '../../agents/delegation-enforcer.js';
 import { DelegationContractManager, type DelegationContract } from '../../agents/delegation-contract.js';
@@ -31,6 +31,8 @@ import { canDelegate, decideDelegation, createDelegationGuard, type DelegationPe
 import { createSubAgentSession, extractFinalAnswer, type SubAgentSessionScope } from '../../agents/subagent-session.js';
 // CR-4b：接入 result-schemas（子 Agent 结构化返回校验/格式化）
 import { validateSubAgentResult, formatResultForParent, RESULT_SCHEMAS } from '../../agents/result-schemas.js';
+// TD-01：validateSubAgentResult 的 schema 参数类型（替代 as any）
+import type { ZodType } from 'zod';
 // CR-4b：接入 activity-store（子 Agent 活动面板追踪）
 import { AgentActivityStore, truncatePreview, buildLineage } from '../../agents/activity-store.js';
 // Phase 52 Task 1：Skill 生命周期管理（spawn 完成后记录执行，仅类型引入避免循环依赖）
@@ -109,12 +111,12 @@ export function resolveProfileForSubagent(
 export interface DelegationContext {
   currentDepth: number;
   /** 当前 Agent 角色（I-3 修复：原缺失导致 canDelegate 参数错误） */
-  currentRole: string;
+  currentRole: AgentRole;
   policy: {
     maxDepth: number;
-    delegationTargets: Record<string, string[]>;
+    delegationTargets: Record<AgentRole, AgentRole[]>;
   };
-  targetRole: string;
+  targetRole: AgentRole;
 }
 
 /**
@@ -147,12 +149,13 @@ export function createChildRegistry(
     // 新模式：根据四维约束决定是否保留 spawn_agent
     // I-3 修复：原把 currentRole 和 targetRole 都设为 targetRole，破坏目标合法性检查
     // CR-4a：currentRole 缺失时默认 custom 角色，确保 canDelegate 不收到 undefined
-    const currentRole = delegationContext.currentRole || 'custom';
+    // TD-01：DelegationContext 字段已统一为 AgentRole 类型，无需 as any
+    const currentRole: AgentRole = delegationContext.currentRole || 'custom';
     const permission = canDelegate(
       delegationContext.currentDepth,
-      currentRole as any,  // AgentRole — 当前角色（已确保非空）
-      delegationContext.targetRole as any,   // AgentRole — 目标角色
-      delegationContext.policy as any,
+      currentRole,
+      delegationContext.targetRole,
+      delegationContext.policy,
     );
     if (!permission.ok || (permission.nextDepth ?? 0) >= delegationContext.policy.maxDepth) {
       // 深度用尽或不可委派，移除 spawn_agent
@@ -252,7 +255,7 @@ export interface DetachedSessionOptions {
  */
 export function createDetachedSessionContext(
   parentSessionId: string,
-  role: string,
+  role: AgentRole,
   profile: AgentProfile | null,
   depth: number,
   options: DetachedSessionOptions,
@@ -260,7 +263,7 @@ export function createDetachedSessionContext(
   if (!options.enabled || !profile) return null;
   return createSubAgentSession(
     parentSessionId,
-    role as any,  // AgentRole
+    role,
     profile,
     depth,
   );
@@ -440,8 +443,8 @@ export interface DelegationIntegrationDeps {
   skillLifecycleManager?: SkillLifecycleManager;
 }
 
-/** SubagentType → PackerAgentRole 映射（用于 ContextPacker） */
-function subagentTypeToPackerRole(subagentType: SubagentType): PackerAgentRole {
+/** SubagentType → AgentRole 映射（用于 ContextPacker，TD-01：统一为 AgentRole） */
+function subagentTypeToPackerRole(subagentType: SubagentType): AgentRole {
   switch (subagentType) {
     case 'researcher': return 'researcher';
     case 'coder': return 'executor';
@@ -651,9 +654,9 @@ export function wrapSpawnAgentWithDelegation(
       try {
         activityId = deps.activityStore.startActivity({
           id: agentId,
-          lineage: buildLineage(deps.parentRole as any, role),
+          lineage: buildLineage(deps.parentRole, role),
           depth: deps.currentDepth ?? 0,
-          role: role as any,
+          role,
           taskPreview: truncatePreview(normalizedParams.description),
         });
       } catch (error) {
@@ -709,9 +712,10 @@ export function wrapSpawnAgentWithDelegation(
         }
         if (parsed !== undefined && typeof parsed === 'object') {
           const roleStr = role as string;
-          const schemas = RESULT_SCHEMAS as Record<string, unknown>;
+          // TD-01：用 ZodType 替代 unknown，消除 schema as any
+          const schemas = RESULT_SCHEMAS as Record<string, ZodType>;
           const schema = schemas[roleStr] ?? schemas.custom;
-          const validated = validateSubAgentResult(parsed, schema as any);
+          const validated = validateSubAgentResult(parsed, schema);
           if (validated.success) {
             // 校验通过：用 formatResultForParent 格式化为父 Agent 可读文本
             result.result = formatResultForParent(parsed, roleStr);

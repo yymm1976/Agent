@@ -10,7 +10,7 @@ import { ModelRouter } from '../../src/router/router.js';
 import { buildRouterConfig } from '../../src/router/config.js';
 import { createAppDependencies } from '../../src/runtime/app-init.js';
 import type { AppDependencies } from '../../src/runtime/app-init.js';
-import type { ChatStreamPayload, MCPStatus, MCPConnectionResult, MCPInstallResult, MCPInstallPayload, SkillInstallPayload, AgentProfileInfo, AgentProfileDetail, ProfileSavePayload, ProfileOpResult, GoalEvent, PlanEditRequestPayload, AgentProfileRole, AgentProfileOutputFormat, ResumableGoalIpcInfo } from '../shared/ipc-types.js';
+import type { ChatStreamPayload, MCPStatus, MCPConnectionResult, MCPInstallResult, MCPInstallPayload, SkillInstallPayload, AgentProfileInfo, AgentProfileDetail, ProfileSavePayload, ProfileOpResult, GoalEvent, PlanEditRequestPayload, ResumableGoalIpcInfo } from '../shared/ipc-types.js';
 import type { TokenProfileSnapshot } from '../../src/agent/token-profiler.js';
 import { VisionAssistant, type ImageInput } from '../../src/agent/vision.js';
 import { notifyRoutingFallback } from '../../src/runtime/notification.js';
@@ -1542,11 +1542,10 @@ export class RouteDevEngine {
 
   /** AgentProfile -> AgentProfileDetail（含完整字段） */
   private toProfileDetail(profile: AgentProfile): AgentProfileDetail {
-    // 字段集与 AgentProfile 一致；仅 role / outputFormat 因 IPC 侧枚举收窄需显式断言
+    // TD-01：AgentProfileRole/AgentProfileOutputFormat 已统一为 AgentRole/AgentOutputFormat 别名，
+    // 不再需要显式断言（IPC 侧与 src 侧类型同源）
     return {
       ...profile,
-      role: profile.role as AgentProfileRole,
-      outputFormat: profile.outputFormat as AgentProfileOutputFormat,
     };
   }
 

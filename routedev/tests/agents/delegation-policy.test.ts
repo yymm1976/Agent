@@ -17,12 +17,13 @@ import {
   TASK_TYPE_KEYWORDS,
   type DelegationMode,
 } from '../../src/agents/delegation-policy.js';
+import type { AgentRole } from '../../src/agents/profiles/types.js';
 
-// 测试用的策略对象工厂
+// 测试用的策略对象工厂（TD-01：specialistAvailability 需覆盖所有 AgentRole 键）
 function makePolicy(overrides: {
   hardDelegationTypes?: string[];
   refuseIfSpecialistUnavailable?: boolean;
-  specialistAvailability?: Record<string, boolean>;
+  specialistAvailability?: Record<AgentRole, boolean>;
 } = {}) {
   return {
     hardDelegationTypes: overrides.hardDelegationTypes ?? ['frontend', 'research', 'review'],
@@ -31,6 +32,10 @@ function makePolicy(overrides: {
       researcher: true,
       executor: true,
       reviewer: true,
+      planner: true,
+      verifier: true,
+      synthesizer: true,
+      'review-planner': true,
       custom: true,
     },
   };
@@ -103,7 +108,7 @@ describe('Phase 51 Task 3: delegation-policy 单元测试', () => {
   it('2.2 decideDelegation: delegate 模式——硬委派类型 + 专家可用', () => {
     const policy = makePolicy({
       hardDelegationTypes: ['frontend'],
-      specialistAvailability: { researcher: false, executor: true, reviewer: false, custom: true },
+      specialistAvailability: { researcher: false, executor: true, reviewer: false, planner: true, verifier: true, synthesizer: true, 'review-planner': true, custom: true },
     });
     const result = decideDelegation('build login component', policy);
     expect(result.mode).toBe('delegate');
@@ -115,7 +120,7 @@ describe('Phase 51 Task 3: delegation-policy 单元测试', () => {
     const policy = makePolicy({
       hardDelegationTypes: ['research'],
       refuseIfSpecialistUnavailable: true,
-      specialistAvailability: { researcher: false, executor: true, reviewer: true, custom: true },
+      specialistAvailability: { researcher: false, executor: true, reviewer: true, planner: true, verifier: true, synthesizer: true, 'review-planner': true, custom: true },
     });
     const result = decideDelegation('search codebase architecture', policy);
     expect(result.mode).toBe('refuse');
@@ -128,7 +133,7 @@ describe('Phase 51 Task 3: delegation-policy 单元测试', () => {
     const policy = makePolicy({
       hardDelegationTypes: ['review'],
       refuseIfSpecialistUnavailable: false,
-      specialistAvailability: { researcher: true, executor: true, reviewer: false, custom: true },
+      specialistAvailability: { researcher: true, executor: true, reviewer: false, planner: true, verifier: true, synthesizer: true, 'review-planner': true, custom: true },
     });
     const result = decideDelegation('review code changes', policy);
     expect(result.mode).toBe('allow');
@@ -138,7 +143,7 @@ describe('Phase 51 Task 3: delegation-policy 单元测试', () => {
   it('2.5 decideDelegation: 非硬委派类型——即使专家可用也由主 Agent 执行', () => {
     const policy = makePolicy({
       hardDelegationTypes: ['frontend'], // 仅 frontend 硬委派
-      specialistAvailability: { researcher: true, executor: true, reviewer: true, custom: true },
+      specialistAvailability: { researcher: true, executor: true, reviewer: true, planner: true, verifier: true, synthesizer: true, 'review-planner': true, custom: true },
     });
     // review 类型不在 hardDelegationTypes 中 → allow
     const result = decideDelegation('review the code', policy);
@@ -157,6 +162,10 @@ describe('Phase 51 Task 3: delegation-policy 单元测试', () => {
         executor: ['researcher', 'reviewer'],
         researcher: [],
         reviewer: [],
+        planner: [],
+        verifier: [],
+        synthesizer: [],
+        'review-planner': [],
         custom: [],
       },
     });
@@ -167,7 +176,7 @@ describe('Phase 51 Task 3: delegation-policy 单元测试', () => {
   it('3.2 canDelegate: 深度超限 → ok=false 且 reason 含最大深度', () => {
     const result = canDelegate(2, 'executor', 'researcher', {
       maxDepth: 2,
-      delegationTargets: { executor: ['researcher'], researcher: [], reviewer: [], custom: [] },
+      delegationTargets: { executor: ['researcher'], researcher: [], reviewer: [], planner: [], verifier: [], synthesizer: [], 'review-planner': [], custom: [] },
     });
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('最大委托深度');
@@ -176,7 +185,7 @@ describe('Phase 51 Task 3: delegation-policy 单元测试', () => {
   it('3.3 canDelegate: 目标不合法 → ok=false 且 reason 含允许列表', () => {
     const result = canDelegate(0, 'executor', 'custom', {
       maxDepth: 2,
-      delegationTargets: { executor: ['researcher'], researcher: [], reviewer: [], custom: [] },
+      delegationTargets: { executor: ['researcher'], researcher: [], reviewer: [], planner: [], verifier: [], synthesizer: [], 'review-planner': [], custom: [] },
     });
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('不允许委派');
@@ -190,7 +199,7 @@ describe('Phase 51 Task 3: delegation-policy 单元测试', () => {
   it('4.1 createDelegationGuard: 写工具(edit/write/bash)在 delegate 模式下被拦截', () => {
     const guard = createDelegationGuard(makePolicy({
       hardDelegationTypes: ['frontend'],
-      specialistAvailability: { researcher: true, executor: true, reviewer: true, custom: true },
+      specialistAvailability: { researcher: true, executor: true, reviewer: true, planner: true, verifier: true, synthesizer: true, 'review-planner': true, custom: true },
     }));
 
     // "build login component" 是 frontend 类型，硬委派 + 专家可用 → delegate
@@ -206,7 +215,7 @@ describe('Phase 51 Task 3: delegation-policy 单元测试', () => {
     const guard = createDelegationGuard(makePolicy({
       hardDelegationTypes: ['frontend'],
       refuseIfSpecialistUnavailable: true,
-      specialistAvailability: { researcher: true, executor: false, reviewer: true, custom: true },
+      specialistAvailability: { researcher: true, executor: false, reviewer: true, planner: true, verifier: true, synthesizer: true, 'review-planner': true, custom: true },
     }));
 
     // frontend → executor specialist 不可用 + refuseIfUnavailable=true → refuse
@@ -218,7 +227,7 @@ describe('Phase 51 Task 3: delegation-policy 单元测试', () => {
   it('4.3 createDelegationGuard: 读工具(read/grep/glob)始终放行（即使任务被硬委派）', () => {
     const guard = createDelegationGuard(makePolicy({
       hardDelegationTypes: ['frontend'],
-      specialistAvailability: { researcher: true, executor: true, reviewer: true, custom: true },
+      specialistAvailability: { researcher: true, executor: true, reviewer: true, planner: true, verifier: true, synthesizer: true, 'review-planner': true, custom: true },
     }));
 
     // 即使任务为 delegate 模式，读工具也应放行
