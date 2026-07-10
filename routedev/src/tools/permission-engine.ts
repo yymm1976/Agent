@@ -299,33 +299,34 @@ export class PermissionEngine {
 
     // 2. TrustGradientManager 检查（如果注入了）
     // TD-06：requiresConfirmation=true 时记录标志，后续 auto 决策会被强制升级为 confirm
+    // F-008 修复：临时放行不再直接 return，改为设置标志后继续检查 confirm 规则
+    //   避免绕过 confirm 规则（confirm 优先级应高于 trust 临时放行）
     let trustRequiresConfirmation = false;
     let trustReason: string | undefined;
+    let trustAutoAllowed = false;
     if (this.trustManager) {
       const isWriteOp = this.isWriteOperation(toolName);
       const trustResult = this.trustManager.checkOperation(toolName, args, isWriteOp);
-      // 临时放行 → 返回 auto（仍需经过审批级检查）
+      // 临时放行 → 仅记录标志，不直接 return（继续检查 confirm 规则）
       if (trustResult.allowed && !trustResult.requiresConfirmation) {
-        return this.applyApproval(category, {
-          decision: 'auto',
-          reason: trustResult.reason,
-        });
-      }
-      // 拦截（plan 模式）→ 返回 deny（最终决策，不经过审批级）
-      if (!trustResult.allowed) {
+        trustAutoAllowed = true;
+        trustReason = trustResult.reason;
+      } else if (!trustResult.allowed) {
+        // 拦截（plan 模式）→ 返回 deny（最终决策，不经过审批级）
         return {
           decision: 'deny',
           reason: trustResult.reason,
         };
+      } else {
+        // 需要确认 → 记录标志，继续后续规则检查
+        // TD-06：trust "分数低于阈值" 对应 trustResult.requiresConfirmation=true，
+        // 后续 auto 规则命中或 auto 模式 fallback 都会被强制升级为 confirm
+        trustRequiresConfirmation = true;
+        trustReason = trustResult.reason;
       }
-      // 需要确认 → 记录标志，继续后续规则检查
-      // TD-06：trust "分数低于阈值" 对应 trustResult.requiresConfirmation=true，
-      // 后续 auto 规则命中或 auto 模式 fallback 都会被强制升级为 confirm
-      trustRequiresConfirmation = true;
-      trustReason = trustResult.reason;
     }
 
-    // 3. confirm 次之
+    // 3. confirm 次之（confirm 优先级高于 trust 临时放行）
     const confirmRule = matched.find(r => r.layer === 'confirm');
     if (confirmRule) {
       return this.applyApproval(category, {
@@ -354,6 +355,13 @@ export class PermissionEngine {
     }
 
     // 4. 无规则命中 → 按 autonomy mode fallback
+    // F-008 修复：trustAutoAllowed 时直接返回 auto（已过 confirm 检查，无 confirm 规则命中）
+    if (trustAutoAllowed) {
+      return this.applyApproval(category, {
+        decision: 'auto',
+        reason: trustReason ?? 'TrustGradient 临时放行',
+      });
+    }
     // auto 模式放行，semi/manual 模式需确认
     // TD-06：trustRequiresConfirmation=true 时强制升级为 confirm（即使 auto 模式也不放行）
     if (trustRequiresConfirmation) {

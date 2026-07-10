@@ -19,6 +19,29 @@ const DEFAULT_TIMEOUT_MS = 30000;
 /** 响应体最大 1MB */
 const MAX_BODY_BYTES = 1024 * 1024;
 
+// ============================================================
+// Puppeteer 最小类型接口（F-026：替代 any，仅覆盖项目实际使用的 API）
+// puppeteer 是可选依赖，未安装时动态 import 会抛错，因此用自定义接口而非 @types/puppeteer
+// ============================================================
+interface PuppeteerPage {
+  goto(url: string, opts?: unknown): Promise<unknown>;
+  setUserAgent(userAgent: string): Promise<void>;
+  setViewport(opts: unknown): Promise<void>;
+  setContent(html: string): Promise<void>;
+  content(): Promise<string>;
+  screenshot(opts: unknown): Promise<Buffer>;
+  waitForTimeout(ms: number): Promise<void>;
+  close(): Promise<void>;
+  on(event: string, handler: (...args: unknown[]) => void): void;
+}
+interface PuppeteerBrowser {
+  newPage(): Promise<PuppeteerPage>;
+  close(): Promise<void>;
+}
+interface PuppeteerModule {
+  launch(opts: Record<string, unknown>): Promise<PuppeteerBrowser>;
+}
+
 /** browser 工具参数 */
 export interface BrowserToolArgs {
   action: 'fetch' | 'screenshot' | 'extract';
@@ -267,10 +290,11 @@ export class BrowserTool implements ITool {
     start: number,
   ): Promise<ToolResult> {
     // 动态探测 puppeteer 是否可用（不强制依赖）
-    let puppeteer: any;
+    let puppeteer: PuppeteerModule | null = null;
     try {
-      // @ts-ignore — puppeteer 是可选依赖，未安装时 import 会抛错
-      puppeteer = await import('puppeteer');
+      // puppeteer 是可选依赖，未安装时 import 会抛错；用 as unknown as 转换为最小接口
+      const mod = await import('puppeteer');
+      puppeteer = mod as unknown as PuppeteerModule;
     } catch (e) {
       // puppeteer 未安装（可选依赖），返回明确的错误提示
       // eslint-disable-next-line no-console
@@ -284,9 +308,10 @@ export class BrowserTool implements ITool {
       };
     }
 
-    let browser: any;
+    let browser: PuppeteerBrowser | null = null;
     try {
-      browser = await puppeteer.launch({ headless: 'new' });
+      // puppeteer 在此处非空（上方 try 已赋值，catch 会提前 return）
+      browser = await puppeteer!.launch({ headless: 'new' });
       const page = await browser.newPage();
       await page.setUserAgent(USER_AGENT);
 

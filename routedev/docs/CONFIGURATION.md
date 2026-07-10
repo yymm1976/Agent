@@ -85,6 +85,8 @@ delegationIntegration:
 
 ### 2.4 ui.components（Task 7：React 组件接入）
 
+> ⚠️ 以下 UI 组件配置项已随终端 UI 退役（Phase 72）废弃，仅作历史参考。桌面端不消费这些配置。
+
 ```yaml
 ui:
   components:
@@ -199,6 +201,6 @@ ui:
 ## 5. 配置热重载
 
 RouteDev 支持配置热重载：修改配置文件后无需重启，引擎会自动重新初始化。配置变更时：
-- `ConfigReloadUI` 组件在顶部弹出通知（受 `ui.components.configReloadNotice` 开关控制）
+- ~~`ConfigReloadUI` 组件在顶部弹出通知（受 `ui.components.configReloadNotice` 开关控制）~~（已废弃：终端 UI 退役后该组件已删除，桌面端不消费此配置）
 - 受影响的模块会重新创建实例（如 `GoalAuditor`、`ContextPacker` 等）
 - 对话历史和当前执行状态会保留

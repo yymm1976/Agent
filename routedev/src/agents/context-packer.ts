@@ -5,8 +5,6 @@
 import { countTokens } from '../code-map/token-counter.js';
 // AgentRole 统一从 profiles/types.ts 导入（TD-01 类型统一重构）
 import type { AgentRole } from './profiles/types.js';
-// 保留 re-export 以兼容现有从 context-packer 导入 AgentRole 的引用方
-export type { AgentRole };
 
 interface RelevantSymbol {
   id: string;

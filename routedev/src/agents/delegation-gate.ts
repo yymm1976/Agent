@@ -12,8 +12,6 @@
 
 // AgentRole 统一从 profiles/types.ts 导入（TD-01 类型统一重构）
 import type { AgentRole } from './profiles/types.js';
-// 保留 re-export 以兼容现有从 delegation-gate 导入 AgentRole 的引用方
-export type { AgentRole };
 
 /** 单个角色的委托门控规则 */
 interface DelegationGateRule {

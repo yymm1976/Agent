@@ -354,7 +354,6 @@ export class SecurityChecker implements ISecurityChecker {
     // 同时无法拦截 "rm" 在引号内或大写变体
     const parsed = parseCommand(command);
     const commandsToCheck = parsed.subCommands && parsed.subCommands.length > 0 ? parsed.subCommands : [parsed];
-    const commandName = parsed.command.toLowerCase();
 
     // 白名单检查：匹配命令名（首 token），不再子串匹配
     if (this.commandWhitelist.length > 0) {
@@ -406,7 +405,6 @@ export class SecurityChecker implements ISecurityChecker {
       };
     }
 
-    void commandName;
     return { allowed: true, requiresConfirmation: false };
   }
 

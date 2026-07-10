@@ -79,6 +79,13 @@ import type { PermissionEngine } from '../tools/permission-engine.js';
 import type { ToolResultSanitizer } from '../tools/result-sanitizer.js';
 import type { PlanState } from '../agent/context/plan-state.js';
 import type { TaskOrchestrator } from '../agent/task-orchestrator.js';
+// F-027：Phase 70 上下文压缩模块类型（InitContext.p70* 字段原为 unknown，替换为具体类型）
+import type { ToolOutputBudgetManager } from '../agent/memory/tool-output-budget.js';
+import type { MessageGrouper } from '../agent/memory/message-grouper.js';
+import type { ActionChainDetector } from '../agent/memory/action-chain-detector.js';
+import type { AutoCompactGuardian } from '../agent/memory/auto-compact-guardian.js';
+import type { CompactPromptEngine } from '../agent/memory/compact-prompt-engine.js';
+import type { SessionMemoryStore } from '../agent/memory/session-memory-store.js';
 
 // 子系统装配函数导入
 import { createObservabilitySubsystem } from './app-init-observability.js';
@@ -225,12 +232,12 @@ export interface InitContext {
   branchManager?: BranchManager;
   visionAssistant?: VisionAssistant | undefined;
   p70Cfg?: AppConfig['phase70Integration'];
-  p70ToolOutputBudgetManager?: unknown;
-  p70MessageGrouper?: unknown;
-  p70ActionChainDetector?: unknown;
-  p70AutoCompactGuardian?: unknown;
-  p70CompactPromptEngine?: unknown;
-  p70SessionMemoryStore?: unknown;
+  p70ToolOutputBudgetManager?: ToolOutputBudgetManager;
+  p70MessageGrouper?: MessageGrouper;
+  p70ActionChainDetector?: ActionChainDetector;
+  p70AutoCompactGuardian?: AutoCompactGuardian;
+  p70CompactPromptEngine?: CompactPromptEngine;
+  p70SessionMemoryStore?: SessionMemoryStore;
   p70SessionMemoryPersistentPath?: string;
 
   // ===== 由 tools 子系统写入 =====

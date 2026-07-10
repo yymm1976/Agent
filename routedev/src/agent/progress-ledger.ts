@@ -1,4 +1,8 @@
 // @experimental 未接入生产路径
+// @experimental 未接入生产路径 — 以下功能已实现并有测试覆盖，
+// 但 goal-runner.ts 未 import 此模块。如需接入，请在 goal-runner 的
+// executeSingleStep 成功后调用 appendProgress，在 resumeGoalPlan 中调用 getNextTaskToRun。
+// 在接入前请补充集成测试。
 // src/agent/progress-ledger.ts
 // Phase 75-B2：Durable Progress Ledger
 // 借鉴 Superpowers v6：append-only 进度日志，compaction 后从 ledger + git log 恢复

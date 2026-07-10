@@ -141,7 +141,7 @@
 ### src/prompts/ — Prompt 模板系统
 **职责：** 统一管理所有 Prompt 模板（三级优先级：项目>用户>内置）
 **关键文件：**
-- `manager.ts` — Prompt 模板管理器（387 行）
+- `manager.ts` — Prompt 模板管理器（817 行）
 - `types.ts` — Prompt 模板系统类型定义（75 行）
 **依赖：** utils/、config/
 
@@ -250,7 +250,7 @@
 - `tests/router/` — 路由层测试（classifier/config/llm/router/token-counter/tracker + classifier-fallback/llm-phase29/router-ismodelavailable）
 - `tests/runtime/` — 核心运行时测试（app-init/doctor/notification/goal-integration，4 个文件）
 - `tests/tools/` — 工具框架测试（adapter/advanced/builtin/mcp/permission-engine/registry/security/tool-response + command-parser/permission-engine-deny/security-command/shell-exec-env）
-- `tests/utils/` — 工具测试（retry/stall-detector/token-estimate）
+- `tests/utils/` — 工具测试（retry/token-estimate）
 - `tests/scripts/` — 脚本测试（verify）
 
 ## scripts/ — 工程脚本（Phase 47 后）

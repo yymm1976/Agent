@@ -582,7 +582,7 @@ export function wrapSpawnAgentWithDelegation(
           profileId,
           grant: {
             readFiles: [],
-            allowedTools: ['spawn_agent', 'file_read', 'file_write', 'file_edit', 'shell_exec'],
+            allowedTools: ['file_read', 'file_write', 'file_edit', 'shell_exec'],
             maxTokens: 10000,
             maxSteps: normalizedParams.maxIterations ?? 20,
             canChallenge: true,

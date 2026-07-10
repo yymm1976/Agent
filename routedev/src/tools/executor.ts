@@ -63,7 +63,16 @@ export class ToolExecutor implements IToolExecutor {
       // P1-1 修复：list_directory 也需要路径校验（防止路径逃逸）
       // P0-1 修复：web_fetch 需要网络校验（SSRF 防护）
       // C3 修复：透传 requiresConfirmation，未配置回调时安全默认拒绝
-      if (this.securityChecker) {
+      // F-001 修复：fail-closed — 未注入 SecurityChecker 时拒绝执行并记录 error 日志
+      if (!this.securityChecker) {
+        logger.error('SecurityChecker not injected, failing closed', { toolName });
+        return {
+          success: false,
+          output: '',
+          error: '安全检查器未初始化，拒绝执行（fail-closed）',
+          durationMs: Date.now() - startTime,
+        };
+      }
       // 文件操作类工具：检查路径
       if (this.isFileOperation(toolName, args)) {
         const filePath = (args.path as string) ?? (args.filePath as string);
@@ -161,7 +170,6 @@ export class ToolExecutor implements IToolExecutor {
             };
           }
         }
-      }
       }
 
       // 4. 执行工具

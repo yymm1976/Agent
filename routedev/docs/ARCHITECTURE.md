@@ -36,7 +36,8 @@ RouteDev 采用五层架构，自下而上依次为：
 ### 2.2 Agent 层 (`src/agent/`)
 - **ReActAgentLoop**：核心 ReAct 循环（think → act → observe → answer）
 - **GoalParser / GoalVerifier**：目标分解与验证
-- **DurableExecutor**：持久化执行器，断点恢复
+- **GoalPersistence**：目标持久化（写入 .routedev/goals/），支持崩溃恢复
+- **CheckpointManager**：基于 Git 的代码检查点与回滚
 - **ComposePipeline**：四阶段自动编排（requirements → coding → testing → review）
 - **Orchestrator / WorkerExecutor**：多 Agent 编排
 - **BranchManager**：分支对话管理
@@ -55,7 +56,7 @@ RouteDev 采用五层架构，自下而上依次为：
 ### 2.4 Desktop 层 (`desktop/`)
 - **main/index.ts**：Electron 主进程，窗口管理 + IPC 注册
 - **main/engine-bridge.ts**：引擎桥接，desktop 与 `src/runtime/` 的唯一连接点，包含 `sendChat`（含 Trajectory 汇总 / CircuitBreaker / 微摘要）+ `executeCommand` + `/goal` 执行
-- **renderer/**：React GUI（SettingsPage / ChatPage / TokenPage / TracePage）
+- **renderer/**：React GUI（SettingsPage / ChatPage / NewTaskPage）
 - **preload/**：安全 IPC API 暴露
 
 ### 2.5 运行时层 (`src/runtime/`)

@@ -359,9 +359,9 @@ export class FileEditTool implements ITool {
         }
         modified = result.modified;
         appliedSummary = {
-          count: result.appliedEdits.length,
+          count: result.appliedEdits.filter(e => e.replaced).length,
           mode: 'replace',
-          detail: { appliedEdits: result.appliedEdits },
+          detail: { appliedEdits: result.appliedEdits, unmatchedCount: result.appliedEdits.filter(e => !e.replaced).length },
         };
       }
 
@@ -462,9 +462,14 @@ export class FileEditTool implements ITool {
       // 返回 diff 预览（始终返回，便于调用方展示）
       const diffPreview = generateDiffPreview(original, modified);
 
+      // F-007：count 已改为实际成功数；存在未匹配项时追加提示，避免谎报
+      const unmatchedCount = (appliedSummary.detail.unmatchedCount as number) ?? 0;
+      const replaceHint = unmatchedCount > 0
+        ? `（其中 ${unmatchedCount} 处因前序编辑影响未匹配，请检查）`
+        : '';
       const outputMessage = action === 'edit_lines'
         ? `文件编辑成功: ${args.path} (edit_lines 行 ${appliedSummary.detail.startLine}-${appliedSummary.detail.actualEndLine}, ${lines} 行, ${stats.size} 字节)`
-        : `文件编辑成功: ${args.path} (应用 ${appliedSummary.count} 处替换, ${lines} 行, ${stats.size} 字节)`;
+        : `文件编辑成功: ${args.path} (应用 ${appliedSummary.count} 处替换, ${lines} 行, ${stats.size} 字节)${replaceHint}`;
 
       return {
         success: true,

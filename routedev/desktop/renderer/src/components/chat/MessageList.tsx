@@ -4,7 +4,7 @@
 // Phase 74-C：从 ChatPage.tsx 抽离，保持渲染结果完全一致
 // Phase 74-D：在 fork 点（有分支派生的消息）上方内联渲染 BranchSwitcher
 
-import { useRef, useCallback, useMemo } from 'react';
+import { useRef, useCallback, useMemo, memo } from 'react';
 import type { ChatMessage } from '../../store/useRouteDevStore.js';
 import type { Conversation } from '../../store/useProjectsStore.js';
 import type { OutputStyle } from '../ToolCallCard.js';
@@ -12,7 +12,7 @@ import { TaskBlock } from './TaskBlock.js';
 import { MessageBubble } from './MessageBubble.js';
 import { BranchSwitcher } from './BranchSwitcher.js';
 
-export function MessageList({
+function MessageListImpl({
   messages,
   isProcessing,
   outputStyle,
@@ -206,3 +206,6 @@ export function MessageList({
     </>
   );
 }
+
+// F-035：用 React.memo 包装，避免父组件每次渲染都触发 MessageList 重渲染
+export const MessageList = memo(MessageListImpl);

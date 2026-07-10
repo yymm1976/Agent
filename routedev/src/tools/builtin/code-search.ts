@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '../types.js';
-import { walkDir, isIgnoredPath, matchGlob } from './search-utils.js';
+import { walkDir, isIgnoredPath, matchGlob, checkPathBoundary } from './search-utils.js';
 
 export class CodeSearchTool implements ITool {
   readonly definition: ToolDefinition = {
@@ -61,16 +61,13 @@ export class CodeSearchTool implements ITool {
     const filePattern = args.filePattern as string | undefined;
     const maxResults = (args.maxResults as number) ?? 20;
 
-    // 路径边界校验：防止路径遍历攻击（如 ../../etc/passwd）
-    const allowedDirs = context.allowedDirectories ?? [context.workingDirectory];
-    const isAllowed = allowedDirs.some(dir =>
-      searchPath === dir || searchPath.startsWith(dir + path.sep),
-    );
-    if (!isAllowed) {
+    // F-020 修复：统一使用 checkPathBoundary 进行路径边界校验（与其他文件工具一致）
+    const boundaryError = checkPathBoundary(searchPath, context);
+    if (boundaryError) {
       return {
         success: false,
         output: '',
-        error: `搜索路径超出项目边界: ${args.path ?? searchPath}`,
+        error: boundaryError,
         durationMs: 0,
       };
     }

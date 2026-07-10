@@ -1,12 +1,29 @@
 // src/agent/completion-gate.ts
 // Phase 31 Task 6.4：独立代码验证门（Completion Gate）
 // 不信任 LLM 的"已完成"判断——通过 typecheck/lint/tests 独立验证
-// 通过 spawnSync 调用外部进程，必须设 timeout，否则可能永久阻塞
+// 通过 spawn 调用外部进程（异步），必须设 timeout，否则可能永久阻塞
 
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { logger } from '../utils/logger.js';
+
+// F-034：spawnSync 阻塞事件循环，改用 spawn + Promise 包装异步执行
+function runCommandAsync(
+  cmd: string,
+  args: string[],
+  options: { timeout: number; cwd: string; shell?: boolean },
+): Promise<{ status: number | null; signal: string | null; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, options);
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf-8'); });
+    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString('utf-8'); });
+    child.on('close', (code, signal) => resolve({ status: code, signal, stdout, stderr }));
+    child.on('error', () => resolve({ status: -1, signal: null, stdout, stderr }));
+  });
+}
 
 // --- 类型 ---
 
@@ -95,7 +112,7 @@ export class CompletionGate {
 
     // 1. TypeScript 编译检查（如果有 tsconfig.json）
     if (existsSync(join(projectPath, 'tsconfig.json'))) {
-      checks.push(this.runTypecheck(projectPath, modifiedFiles));
+      checks.push(await this.runTypecheck(projectPath, modifiedFiles));
     }
 
     // 2. Lint 检查（如果有 eslint 配置）
@@ -107,12 +124,12 @@ export class CompletionGate {
       existsSync(join(projectPath, 'eslint.config.mjs')) ||
       existsSync(join(projectPath, 'eslint.config.ts'))
     ) {
-      checks.push(this.runLint(projectPath, modifiedFiles));
+      checks.push(await this.runLint(projectPath, modifiedFiles));
     }
 
     // 3. 测试运行（如果项目有测试配置）
     if (await this.hasTestConfig(projectPath)) {
-      checks.push(this.runTests(projectPath, modifiedFiles));
+      checks.push(await this.runTests(projectPath, modifiedFiles));
     }
 
     const passed = checks.every((c) => c.ok || c.skipped);
@@ -126,13 +143,12 @@ export class CompletionGate {
   /**
    * TypeScript 编译检查
    */
-  private runTypecheck(projectPath: string, _files: string[]): GateCheck {
+  private async runTypecheck(projectPath: string, _files: string[]): Promise<GateCheck> {
     const start = Date.now();
     try {
-      const result = spawnSync('npx', ['tsc', '--noEmit'], {
+      const result = await runCommandAsync('npx', ['tsc', '--noEmit'], {
         cwd: projectPath,
         timeout: TYPECHECK_TIMEOUT,
-        encoding: 'utf-8',
         shell: process.platform === 'win32', // Windows 需要 shell
       });
 
@@ -167,13 +183,12 @@ export class CompletionGate {
   /**
    * Lint 检查
    */
-  private runLint(projectPath: string, _files: string[]): GateCheck {
+  private async runLint(projectPath: string, _files: string[]): Promise<GateCheck> {
     const start = Date.now();
     try {
-      const result = spawnSync('npx', ['eslint', '.', '--max-warnings=0'], {
+      const result = await runCommandAsync('npx', ['eslint', '.', '--max-warnings=0'], {
         cwd: projectPath,
         timeout: LINT_TIMEOUT,
-        encoding: 'utf-8',
         shell: process.platform === 'win32',
       });
 
@@ -208,7 +223,7 @@ export class CompletionGate {
   /**
    * 测试运行——只运行与修改文件相关的测试
    */
-  private runTests(projectPath: string, files: string[]): GateCheck {
+  private async runTests(projectPath: string, files: string[]): Promise<GateCheck> {
     const start = Date.now();
     try {
       // 优先用 vitest --related（只运行相关测试），fallback 到 vitest run
@@ -219,10 +234,9 @@ export class CompletionGate {
       // C2 修复：Windows 上不使用 shell:true，避免 files 路径命令注入
       // 直接调用 npx.cmd（Windows 上 npx 是 .cmd 批处理，必须带 .cmd 后缀才能不用 shell）
       const cmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-      const result = spawnSync(cmd, args, {
+      const result = await runCommandAsync(cmd, args, {
         cwd: projectPath,
         timeout: TEST_TIMEOUT,
-        encoding: 'utf-8',
       });
 
       const duration = Date.now() - start;
@@ -231,7 +245,7 @@ export class CompletionGate {
         ? (result.stdout || '').substring(0, OUTPUT_MAX_CHARS)
         : (result.stdout || result.stderr || '').substring(0, OUTPUT_MAX_CHARS);
 
-      // 超时检测：spawnSync 超时后 status 为 null
+      // 超时检测：spawn 超时后 status 为 null
       if (result.status === null && result.signal === 'SIGTERM') {
         return {
           name: 'tests',

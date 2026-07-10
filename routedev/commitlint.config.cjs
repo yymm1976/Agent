@@ -13,7 +13,10 @@ module.exports = {
     ]],
     // scope 必须在白名单内（与 CONTRIBUTING.md 第 2 节一致）
     'scope-enum': [2, 'always', [
-      'router', 'agent', 'skill', 'ui', 'setting', 'infra', 'docs'
+      'router', 'agent', 'skill', 'ui', 'setting', 'infra', 'docs',
+      'tools', 'config', 'desktop', 'runtime', 'harness', 'memory',
+      'prompts', 'security', 'plugins', 'macros', 'code-map', 'hooks',
+      'agents', 'mcp', 'tests'
     ]],
     'scope-case': [2, 'always', 'lower-case'],
   },

@@ -32,6 +32,8 @@ import { initUpdater } from './updater.js';
 import { listCatalog, searchCatalog } from './mcp-catalog.js';
 // TD-08：IPC 参数统一校验工具
 import { ipcGuard } from './ipc-guard.js';
+// F-032：fail-open 降级日志
+import { logger } from '../../src/utils/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -412,8 +414,9 @@ ipcMain.handle('plan:get-revisions', async (_event, goalId: string) => {
       'before' in r && 'after' in r && typeof r.revisedAt === 'string',
     );
     return { ok: true, revisions };
-  } catch {
+  } catch (error) {
     // 文件不存在或读取失败返回空（fail-open）
+    logger.warn('plan revisions fail-open', { error: error instanceof Error ? error.message : String(error) });
     return { ok: true, revisions: [] };
   }
 });
@@ -438,8 +441,9 @@ ipcMain.handle('plan:check-omissions', async (_event, goalId: string) => {
 ipcMain.handle('goal:list-resumable', async (): Promise<import('../shared/ipc-types.js').ResumableGoalIpcInfo[]> => {
   try {
     return (await engine?.listResumableGoals?.()) ?? [];
-  } catch {
+  } catch (error) {
     // fail-open：任何异常返回空数组，不阻塞 UI
+    logger.warn('goal:list-resumable fail-open', { error: error instanceof Error ? error.message : String(error) });
     return [];
   }
 });

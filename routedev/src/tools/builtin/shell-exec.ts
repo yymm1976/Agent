@@ -200,11 +200,12 @@ export class ShellExecTool implements ITool {
         // 避免 spawn timeout 与手动 setTimeout 同时触发 SIGTERM 的竞态
       });
 
+      let sigkillTimer: NodeJS.Timeout | undefined;
       const timeout = setTimeout(() => {
         killed = true;
         child.kill('SIGTERM');
         // 5 秒后强制 kill
-        setTimeout(() => child.kill('SIGKILL'), 5000);
+        sigkillTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
       }, timeoutMs);
 
       child.stdout?.on('data', (data: Buffer) => {
@@ -227,6 +228,7 @@ export class ShellExecTool implements ITool {
 
       child.on('error', (error) => {
         clearTimeout(timeout);
+        if (sigkillTimer) clearTimeout(sigkillTimer);
         resolve({
           success: false,
           output: '',
@@ -237,6 +239,7 @@ export class ShellExecTool implements ITool {
 
       child.on('close', (code, signal) => {
         clearTimeout(timeout);
+        if (sigkillTimer) clearTimeout(sigkillTimer);
 
         if (killed) {
           resolve({

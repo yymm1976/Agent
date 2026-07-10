@@ -617,6 +617,7 @@ export class PromptTemplateManager {
     }
 
     if (!template) {
+      logger.warn('Prompt template not found after all levels', { id });
       throw new Error(`Template not found: ${id}`);
     }
 
@@ -768,6 +769,7 @@ export class PromptTemplateManager {
     // M3 修复：校验模板 ID，防止路径遍历攻击（如 ../../etc/passwd）
     // 仅允许字母、数字、点、下划线、连字符
     if (!/^[a-zA-Z0-9._-]+$/.test(id)) {
+      logger.warn('Invalid template ID rejected', { id });
       return null;
     }
     const filePath = path.join(dir, `${id}.md`);

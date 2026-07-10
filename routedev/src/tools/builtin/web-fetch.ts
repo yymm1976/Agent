@@ -88,7 +88,8 @@ export class WebFetchTool implements ITool {
         };
       }
 
-      const rawContent = await this.fetchUrl(url, 0);
+      // F-002 修复：传递 checkSSRF 已校验的 IP，fetchUrl 复用该 IP 防止 DNS rebinding（TOCTOU 漏洞）
+      const rawContent = await this.fetchUrl(url, 0, ssrfResult.resolvedIp);
       const text = this.htmlToText(rawContent);
 
       // 截断到最大字符数
@@ -125,7 +126,7 @@ export class WebFetchTool implements ITool {
   }
 
   /** 抓取 URL 内容（带重定向深度限制和 SSRF 重新校验） */
-  private fetchUrl(url: string, redirectDepth: number): Promise<string> {
+  private fetchUrl(url: string, redirectDepth: number, resolvedIp?: string): Promise<string> {
     return new Promise((resolve, reject) => {
       // P0-1 修复：重定向深度限制
       const maxDepth = getMaxRedirectDepth();
@@ -136,14 +137,29 @@ export class WebFetchTool implements ITool {
 
       const protocol = url.startsWith('https:') ? https : http;
 
-      const req = protocol.get(url, {
+      // F-002 修复：复用 checkSSRF 已校验的 IP，通过自定义 lookup 固定 DNS 解析结果
+      // 消除 checkSSRF 与 fetchUrl 两次独立 DNS 解析导致的 DNS rebinding（TOCTOU）风险
+      const requestOptions: http.RequestOptions = {
         headers: {
           'User-Agent': USER_AGENT,
           'Accept': 'text/html,application/xhtml+xml,text/plain,*/*',
           'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         },
         timeout: REQUEST_TIMEOUT_MS,
-      }, (res) => {
+      };
+      if (resolvedIp) {
+        const ipFamily = resolvedIp.includes(':') ? 6 : 4;
+        // 自定义 lookup：强制复用已校验的 IP，不再触发独立 DNS 解析
+        requestOptions.lookup = ((
+          _hostname: string,
+          _options: unknown,
+          callback: (err: Error | null, address: string, family?: number) => void,
+        ) => {
+          callback(null, resolvedIp, ipFamily);
+        }) as unknown as NonNullable<typeof requestOptions.lookup>;
+      }
+
+      const req = protocol.get(url, requestOptions, (res) => {
         // 处理重定向
         if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           const redirectUrl = res.headers.location;
@@ -158,7 +174,8 @@ export class WebFetchTool implements ITool {
               reject(new Error(`重定向目标被 SSRF 防护拦截: ${ssrfResult.reason}`));
               return;
             }
-            this.fetchUrl(fullRedirectUrl, redirectDepth + 1).then(resolve).catch(reject);
+            // F-002 修复：传递重定向校验后的 IP，递归复用防止 DNS rebinding
+            this.fetchUrl(fullRedirectUrl, redirectDepth + 1, ssrfResult.resolvedIp).then(resolve).catch(reject);
           }).catch(reject);
           return;
         }
