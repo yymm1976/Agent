@@ -349,6 +349,15 @@ export const SEARCH_ENGINES = [
 // ===== 保存前清理 =====
 
 /**
+ * 检测掩码 API Key（maskApiKey 产生的格式为 "首4****尾4" 或 "****"）
+ * G-001：渲染层在保存前过滤掩码 key，避免掩码值覆盖磁盘真实密钥
+ * 掩码 key 的 provider 不应被包含在 cleanedDraft 中，让主进程保留磁盘真实值
+ */
+function isMaskedApiKey(key: string): boolean {
+  return key.includes('****');
+}
+
+/**
  * 保存前清理 draft：过滤空 provider/model、修复路由规则 modelId、过滤 fallbackChain
  * Phase 74-G：从 SettingsPage.handleSave 抽离的纯函数（原 L1048-1103）
  *
@@ -363,9 +372,11 @@ export const SEARCH_ENGINES = [
  */
 export function cleanDraftForSave(draft: AppConfig): AppConfig {
   // 保存前清理：过滤掉 apiKey 为空的 provider（apiKey 是最关键字段）
+  // G-001：同时过滤掩码 apiKey（含 **** 模式），掩码 provider 不传入 saveConfig，
+  // 让主进程保留磁盘真实值，避免掩码字符串覆盖真实密钥
   // name 为空时自动用 id 作为 name，避免用户只填了部分字段导致被过滤
   const validProviders: ProviderConfig[] = draft.providers
-    .filter((p) => p.apiKey.trim())
+    .filter((p) => p.apiKey.trim() && !isMaskedApiKey(p.apiKey.trim()))
     .map((p) => ({
       ...p,
       id: p.id.trim(),

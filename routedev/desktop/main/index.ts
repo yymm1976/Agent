@@ -282,7 +282,8 @@ app.whenReady().then(async () => {
         mainWindow?.webContents.send('chat:tool-confirm-request', { toolName, params });
       },
       onConfigReloaded: (cfg) => {
-        mainWindow?.webContents.send('config:reloaded', cfg);
+        // G-002 修复：推送前对敏感字段脱敏，防止明文 apiKey 泄露到渲染进程
+        mainWindow?.webContents.send('config:reloaded', maskSensitiveConfig(cfg));
       },
       // Phase 54：Goal 执行结构化事件转发到渲染进程
       onGoalEvent: sendGoalEvent,
@@ -507,6 +508,12 @@ function maskApiKey(key: string | undefined): string | undefined {
   return key.slice(0, 4) + '****' + key.slice(-4);
 }
 
+/** G-001 修复：检测 API Key 是否为掩码值（包含 **** 占位符） */
+function isMaskedApiKey(key: string | undefined): boolean {
+  if (!key || typeof key !== 'string') return false;
+  return key.includes('****');
+}
+
 /** 脱敏配置中的所有敏感 apiKey 字段（providers 数组 + llmProviders 快捷配置） */
 function maskSensitiveConfig(config: import('../../src/config/schema.js').AppConfig): import('../../src/config/schema.js').AppConfig {
   const masked = { ...config };
@@ -546,6 +553,45 @@ ipcMain.handle('config:save', async (_event, rawConfig: unknown): Promise<Config
     return { success: false, error: err instanceof Error ? err.message : '无效的参数' };
   }
   try {
+    // G-001 修复：保存前检测掩码 apiKey，用磁盘真实值回填，防止掩码覆盖真实密钥
+    // 渲染进程通过 config:get 拿到的是脱敏配置，若用户未修改 apiKey 直接保存，
+    // 掩码值会覆盖真实密钥导致后续 LLM 调用失败
+    const hasMaskedKey =
+      (Array.isArray(config.providers) && config.providers.some(p => isMaskedApiKey(p.apiKey))) ||
+      (config.llmProviders && (
+        isMaskedApiKey(config.llmProviders.gemini?.apiKey) ||
+        isMaskedApiKey(config.llmProviders.deepseek?.apiKey) ||
+        isMaskedApiKey(config.llmProviders.qwen?.apiKey)
+      ));
+    if (hasMaskedKey) {
+      const diskConfig = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+      // 回填 providers 数组中的掩码 apiKey
+      if (Array.isArray(config.providers) && Array.isArray(diskConfig.providers)) {
+        config.providers = config.providers.map(p => {
+          if (isMaskedApiKey(p.apiKey)) {
+            const diskProvider = diskConfig.providers.find(d => d.id === p.id);
+            if (diskProvider && !isMaskedApiKey(diskProvider.apiKey)) {
+              return { ...p, apiKey: diskProvider.apiKey };
+            }
+          }
+          return p;
+        });
+      }
+      // 回填 llmProviders 中的掩码 apiKey
+      if (config.llmProviders && diskConfig.llmProviders) {
+        const lp = config.llmProviders;
+        const dlp = diskConfig.llmProviders;
+        if (isMaskedApiKey(lp.gemini?.apiKey) && !isMaskedApiKey(dlp.gemini?.apiKey)) {
+          lp.gemini = { ...lp.gemini!, apiKey: dlp.gemini!.apiKey };
+        }
+        if (isMaskedApiKey(lp.deepseek?.apiKey) && !isMaskedApiKey(dlp.deepseek?.apiKey)) {
+          lp.deepseek = { ...lp.deepseek!, apiKey: dlp.deepseek!.apiKey };
+        }
+        if (isMaskedApiKey(lp.qwen?.apiKey) && !isMaskedApiKey(dlp.qwen?.apiKey)) {
+          lp.qwen = { ...lp.qwen!, apiKey: dlp.qwen!.apiKey };
+        }
+      }
+    }
     await saveConfig(config);
     // 同步更新 engine 内部配置，确保自主度等设置实时生效
     engine?.updateConfig(config);
@@ -562,7 +608,8 @@ ipcMain.handle('config:reload', async (): Promise<import('../../src/config/schem
   try {
     const cfg = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
     await engine?.reloadConfig(cfg);
-    return cfg;
+    // G-002 修复：返回前对敏感字段脱敏，防止明文 apiKey 泄露到渲染进程
+    return maskSensitiveConfig(cfg);
   } catch (err) {
     console.error('[config:reload] 重载配置失败:', err);
     throw new Error(`重载配置失败: ${err instanceof Error ? err.message : String(err)}`);
@@ -582,7 +629,7 @@ ipcMain.handle('command:execute', async (_event, payload: CommandExecutePayload)
 const IPC_TOOL_WHITELIST = new Set([
   'test_connection',
   'list_directory',
-  'read_file',
+  'file_read',
 ]);
 
 // 工具执行（用于设置页中的测试按钮等）
@@ -622,13 +669,22 @@ ipcMain.handle('mcp:catalog:list', async (_event, category?: string): Promise<MC
 });
 
 // 按关键词搜索目录
+// G-020 修复：校验 query 为字符串且长度 <= 1000，防止超长输入耗尽资源
 ipcMain.handle('mcp:catalog:search', async (_event, query: string): Promise<MCPCatalogResult> => {
+  if (typeof query !== 'string' || query.length > 1000) {
+    return { entries: [], total: 0 };
+  }
   return searchCatalog(query);
 });
 
 // 一键安装：添加到配置 + 立即连接 + 持久化
+// G-020 修复：校验 payload 为对象且含 catalogId 字段（字符串 <= 256）
 ipcMain.handle('mcp:install', async (_event, payload: MCPInstallPayload): Promise<MCPInstallResult> => {
   if (!engine) return { success: false, error: '引擎未初始化' };
+  if (!payload || typeof payload !== 'object' ||
+      typeof payload.catalogId !== 'string' || payload.catalogId.length === 0 || payload.catalogId.length > 256) {
+    return { success: false, error: '无效的参数' };
+  }
   const result = await engine.installServer(payload);
   // 安装成功后持久化配置（即使连接失败，配置也已写入内存，需要持久化）
   if (result.serverId) {
@@ -717,7 +773,11 @@ ipcMain.handle('skill:reload', async () => {
   return engine?.reloadSkills() ?? { count: 0 };
 });
 
+// G-020 修复：校验 taskDescription 为字符串且长度 <= 10000
 ipcMain.handle('skill:route', async (_event, taskDescription: string) => {
+  if (typeof taskDescription !== 'string' || taskDescription.length === 0 || taskDescription.length > 10000) {
+    return { skills: [] };
+  }
   return { skills: engine?.routeSkills(taskDescription) ?? [] };
 });
 
@@ -834,7 +894,9 @@ ipcMain.on('project:set-cwd', (_event, cwd: string) => {
   if (!engine || !cwd) return;
   const resolved = path.resolve(cwd);
   // 必须在授权集合内，或通过基础校验（启动时初始 cwd 由 engine 初始化注入）
-  if (!authorizedCwds.has(resolved) && !isValidProjectCwd(resolved)) {
+  // G-014 修复：授权与校验应为"与"关系——既未授权又未通过校验才拒绝改为任一不满足即拒绝
+  // 原逻辑 && 意味着"未授权 且 未通过校验"才拒绝，导致未授权但通过基础校验的路径被放行
+  if (!authorizedCwds.has(resolved) || !isValidProjectCwd(resolved)) {
     console.error('[project:set-cwd] 拒绝未授权的工作目录:', resolved);
     return;
   }

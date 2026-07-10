@@ -208,7 +208,7 @@ export class ToolExecutor implements IToolExecutor {
 
   /** 判断是否为网络操作类工具（P0-1：SSRF 防护） */
   private isNetworkOperation(toolName: string, args: Record<string, unknown>): boolean {
-    return (toolName === 'web_fetch' || toolName === 'web_search') && 'url' in args;
+    return (toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'browser') && 'url' in args;
   }
 
   /**

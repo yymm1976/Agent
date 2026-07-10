@@ -52,6 +52,9 @@ export class TraceCollector {
   /** Phase 77：sessionId → trace.jsonl 文件路径缓存，避免每次读取都扫描全部日期目录 */
   private sessionPathCache: Map<string, string> = new Map();
 
+  /** 敏感字段名正则（不区分大小写） */
+  private static readonly SENSITIVE_KEYS = /^(authorization|cookie|token|apikey|api_key|secret|password)$/i;
+
   constructor(config?: Partial<TraceCollectorConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
@@ -143,11 +146,13 @@ export class TraceCollector {
   ): TraceSpan | null {
     if (!this.config.enabled || !this.currentSession) return null;
 
+    const sanitizedArgs = this.sanitizeArgs(args);
+
     const span = this.createSpan('tool_call', {
       type: 'tool_call',
       toolName,
       toolCallId,
-      args,
+      args: sanitizedArgs,
       approvalRequired,
     });
 
@@ -156,10 +161,25 @@ export class TraceCollector {
       sessionId: this.currentSession.id,
       spanId: span.id,
       event: 'tool_call_start',
-      data: { toolName, args, approvalRequired },
+      data: { toolName, args: sanitizedArgs, approvalRequired },
     });
 
     return span;
+  }
+
+  /** 递归脱敏工具参数中的敏感字段 */
+  private sanitizeArgs(args: Record<string, unknown>): Record<string, unknown> {
+    const cleaned: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(args)) {
+      if (TraceCollector.SENSITIVE_KEYS.test(k)) {
+        cleaned[k] = '****';
+      } else if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+        cleaned[k] = this.sanitizeArgs(v as Record<string, unknown>);
+      } else {
+        cleaned[k] = v;
+      }
+    }
+    return cleaned;
   }
 
   /** 记录工具结果 */

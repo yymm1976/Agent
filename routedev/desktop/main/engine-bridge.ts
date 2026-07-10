@@ -395,6 +395,10 @@ export class RouteDevEngine {
     'shell_exec', 'file_write', 'git_op', 'spawn_agent', 'browser',
   ]);
 
+  // G-017 修复：敏感环境变量前缀正则，匹配的变量不注入工具执行环境
+  // 防止云凭据/数据库密码/Token 等通过 process.env 泄露到工具子进程
+  private static readonly SENSITIVE_ENV_PREFIX = /^(AWS_|AZURE_|GCP_|DATABASE_|.*SECRET|.*TOKEN|.*PASSWORD|ROUTEDEV_CONFIG)/i;
+
   async executeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
     // TD-07：高风险工具拒绝——必须通过 Agent Loop 调用
     if (RouteDevEngine.HIGH_RISK_TOOLS.has(name)) {
@@ -411,10 +415,13 @@ export class RouteDevEngine {
     }
 
     try {
-      // F-013/F-012 修复：过滤 process.env 中的 undefined 值，避免不安全断言
+      // G-017 修复：过滤 process.env 中的 undefined 值及敏感前缀变量
+      // 防止云凭据/数据库密码/Token 等通过环境变量泄露到工具子进程
       const env: Record<string, string> = {};
       for (const [k, v] of Object.entries(process.env)) {
-        if (v !== undefined) env[k] = v;
+        if (v !== undefined && !RouteDevEngine.SENSITIVE_ENV_PREFIX.test(k)) {
+          env[k] = v;
+        }
       }
       const result = await this.ctx.deps.toolExecutor.execute(name, args, {
         workingDirectory: this.ctx.options.cwd,
@@ -683,6 +690,11 @@ export class RouteDevEngine {
         const template = getHookTemplateById(payload.templateId);
         if (!template) {
           return { success: false, error: `未找到模板 "${payload.templateId}"` };
+        }
+        // G-021 修复：模板命令也需经过 bash 安全扫描，防止内置模板被篡改后注入危险命令
+        const templateBashResult = checkBashSecurity(template.code);
+        if (!templateBashResult.allowed) {
+          return { success: false, error: '模板命令被安全策略拒绝' };
         }
         // 生成唯一 ID：模板 id + 时间戳后缀，避免重复创建时 ID 冲突
         const hookId = `${template.id}-${Date.now()}`;

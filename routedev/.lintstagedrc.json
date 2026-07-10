@@ -1,3 +1,3 @@
 {
-  "*.{ts,tsx,js,jsx,mjs}": ["tsc --noEmit --incremental", "tsc --noEmit -p desktop/tsconfig.desktop.json --incremental"]
+  "*.{ts,tsx,js,jsx,mjs}": ["tsc --noEmit -p tsconfig.json --incremental", "tsc --noEmit -p desktop/tsconfig.desktop.json --incremental"]
 }

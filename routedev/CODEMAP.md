@@ -1,6 +1,6 @@
 # RouteDev — 代码库索引（CODEMAP）
 > 搜索代码前先读本文件定位目标模块，再进入具体文件。
-> 最后更新：2026-07-10（行数失真修复：schema.ts 248→1967、defaults.ts 93→808；原 2026-07-08 失真修复：删除 src/evaluation/ 条目、补齐已删除文件标注、修正文件名漂移）
+> 最后更新：2026-07-11（行数漂移修复：schema.ts 1967→239、loop.ts 1957→715、trace-collector.ts 380→855、defaults.ts 808→805、graph.ts 1160→1159；原 2026-07-08 失真修复：删除 src/evaluation/ 条目、补齐已删除文件标注、修正文件名漂移）
 
 ## 目录总览
 - `src/runtime/` — 核心运行时（装配工厂 + 目标执行器 + 通知 + 插件初始化 + shutdown）
@@ -44,7 +44,7 @@
 ### src/agent/ — Agent 引擎层
 **职责：** ReAct 循环、目标分解与验证、分支管理、记忆维护、多 Agent 协作、工作模式、权限门控
 **关键文件：**
-- `loop.ts` — ReAct Agent Loop 核心引擎，不做路由和分类；集成中间件管线（2026-07-07 统计 1957 行）
+- `loop.ts` — ReAct Agent Loop 核心引擎，不做路由和分类；集成中间件管线（2026-07-11 统计 715 行）
 - `loop-config.ts` — Loop 的配置和事件类型（63 行）
 - `types.ts` — Agent 层核心类型：状态、ReAct 步骤、记忆、目标（127 行）
 - `middleware.ts` — Agent 中间件管线（五阶段：onAgent/onReasoning/onActing/onModelCall/onSystemPrompt）（58 行）
@@ -65,7 +65,7 @@
 - `work-modes.ts` — WorkModeController + GuardedToolExecutorAdapter（build/plan/compose 三模式）（180 行）
 - `memory/checkpoint-writer.ts` — CheckpointWriter：独立记忆维护子 Agent（212 行）
 - `memory/context-manager.ts` — 上下文管理器：token 监控 → checkpoint → 压缩（2026-07-07 统计 877 行）；Phase 38 增强：知识图谱跨会话持久化（.routedev/memory/knowledge-graph.json）
-- `memory/graph.ts` — KnowledgeGraph：PPR + 双路径召回 + Label Propagation 社区检测 + 模式聚类 + 置信度评分（Phase 36 增强）（2026-07-07 统计 1160 行）；Phase 38 增强：improve() 反馈 + forget() 遗忘 + recallV2() 多策略检索
+- `memory/graph.ts` — KnowledgeGraph：PPR + 双路径召回 + Label Propagation 社区检测 + 模式聚类 + 置信度评分（Phase 36 增强）（2026-07-11 统计 1159 行）；Phase 38 增强：improve() 反馈 + forget() 遗忘 + recallV2() 多策略检索
 - `memory/types.ts` — 增量 Checkpoint + 上下文压缩类型（110 行）
 - `memory/dream-to-graph.ts` — Dream → KnowledgeGraph 信息流：归纳三步（合并同类/冲突检测/时效淘汰）（Phase 36）（236 行）（已删除：Phase 56 死代码清理）
 - `multi/blackboard.ts` — 公共黑板：Worker 间共享任务共识（105 行）
@@ -89,15 +89,15 @@
 ### src/config/ — 配置系统
 **职责：** YAML 配置加载 + Zod Schema 校验 + 热重载
 **关键文件：**
-- `schema.ts` — 全局配置 Zod Schema，配置系统的"宪法"（1967 行，2026-07-10 统计）
+- `schema.ts` — 全局配置 Zod Schema，配置系统的"宪法"（239 行，2026-07-11 统计）
 - `loader.ts` — 配置加载器：YAML 解析 + 环境变量 + 全局/项目合并（163 行）
-- `defaults.ts` — 默认配置值（显式可读备份）（808 行，2026-07-10 统计）
+- `defaults.ts` — 默认配置值（显式可读备份）（805 行，2026-07-11 统计）
 **依赖：** 无外部模块依赖（被所有模块引用）
 
 ### src/harness/ — 可观测性层
 **职责：** Trace 收集、Audit 日志、Git 检查点、实验分支管理
 **关键文件：**
-- `trace-collector.ts` — Trace 收集器：被动记录 Agent 执行事件流（380 行）
+- `trace-collector.ts` — Trace 收集器：被动记录 Agent 执行事件流（855 行，2026-07-11 统计）
 - `checkpoint-manager.ts` — 检查点管理器：基于 Git 的代码快照与回滚（287 行）
 - `audit-logger.ts` — 审计日志器：记录敏感/关键操作到 JSONL（178 行）
 - `tracing-executor.ts` — 装饰器：为 ToolExecutorAdapter 注入 Trace + Audit（97 行）

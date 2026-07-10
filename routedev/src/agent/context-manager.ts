@@ -117,6 +117,12 @@ export class LoopContextManager {
 
   /** 排队 follow-up 消息 */
   followUp(content: string): void {
+    // 队列深度上限：防止异常积压导致上下文超限
+    const MAX_FOLLOWUP_QUEUE = 50;
+    if (this.followUpQueue.length >= MAX_FOLLOWUP_QUEUE) {
+      logger.warn('Follow-up 队列已满，淘汰最旧条目', { queueSize: this.followUpQueue.length });
+      this.followUpQueue.shift();
+    }
     this.followUpQueue.push({ role: 'follow_up', content, enqueuedAt: Date.now() });
     logger.debug('Follow-up message enqueued', { queueSize: this.followUpQueue.length });
   }

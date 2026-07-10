@@ -296,7 +296,8 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
   },
 
   clearMessages: () => {
-    set({ messages: [] });
+    // G-008：清空对话时同步清空遥测与 Goal 集合，避免无界增长残留
+    set({ messages: [], tokenSnapshots: [], traceEvents: [], goalExecutions: [] });
     window.routedev.command.execute({ text: '/clear' });
   },
 
@@ -734,7 +735,8 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
 
   _addTraceEvent: (span) => {
     const state = get();
-    set({ traceEvents: [...state.traceEvents, span] });
+    // G-008：保留最近 500 条 trace 事件，避免遥测集合无界增长
+    set({ traceEvents: [...state.traceEvents, span].slice(-500) });
   },
 
   // Phase 54：聚合 GoalEvent 到 goalExecutions（按 goalId 索引，就地刷新）
@@ -826,6 +828,10 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
             activity: event.activity,
             timestamp: event.timestamp,
           });
+          // G-008：每个 step 保留最近 100 条活动，避免 Goal 活动无界增长
+          if (step.activities.length > 100) {
+            step.activities = step.activities.slice(-100);
+          }
         }
         break;
       }

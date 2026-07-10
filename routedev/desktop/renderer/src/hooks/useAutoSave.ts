@@ -60,8 +60,9 @@ export function useAutoSave({
     const cleanedDraft = cleanDraftForSave(draft);
     setSaving(true);
     const result = await saveConfig(cleanedDraft);
-    // saveConfig 内部已调用 reload；若额外提供 reloadConfig 则再调用一次
-    if (result.success && reloadConfig) {
+    // G-016：saveConfig 仅更新内存，需显式调用 reloadConfig 才能重建 deps
+    // 仅当主进程标记 needsReload 时才调用，避免无谓的重载
+    if (result.success && result.needsReload && reloadConfig) {
       try {
         await reloadConfig();
       } catch (err) {

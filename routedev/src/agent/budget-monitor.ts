@@ -140,6 +140,10 @@ export class BudgetMonitor {
    */
   recordToolCall(toolName: string): void {
     this.toolCallHistory.push(toolName);
+    // 保留最近 100 条（检测逻辑最多用最近 50 条）
+    if (this.toolCallHistory.length > 100) {
+      this.toolCallHistory = this.toolCallHistory.slice(-100);
+    }
   }
 
   /**

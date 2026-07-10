@@ -5,6 +5,8 @@
 
 import type { AppConfig } from '../../../src/config/schema.js';
 import { createLLMClient } from '../../../src/router/llm/index.js';
+// G-006 修复：test_connection 增加 SSRF 防护
+import { checkSSRF } from '../../../src/tools/security-enhanced.js';
 import type { EngineContext } from './engine-context.js';
 
 /**
@@ -56,6 +58,13 @@ export class ConfigBridge {
       return { success: false, error: `未找到 provider: ${providerId}（请先保存配置）` };
     }
     const modelId = provider.models[0]?.id ?? '';
+
+    // G-006 修复：baseUrl SSRF 防护——拒绝指向内网/私有 IP 的请求
+    // 防止渲染进程被劫持后通过 test_connection 探测内网服务
+    const ssrfResult = await checkSSRF(baseUrl);
+    if (!ssrfResult.allowed) {
+      return { success: false, error: `baseUrl 被安全策略拒绝：${ssrfResult.reason}` };
+    }
 
     try {
       const client = createLLMClient({

@@ -28,6 +28,21 @@ issue 标题、commit message、PR 标题的 `scope` 字段必须取自以下白
 | `setting` | 设置页 / 配置系统（ConfigValidationError、env 替换、profile 加载） |
 | `infra` | 基础设施（构建脚本、CI、vitest 配置、husky、commitlint、perf-gate） |
 | `docs` | 文档（AGENTS.md、CODEMAP.md、CHANGELOG.md、README、本文件） |
+| `tools` | 工具框架（工具注册表、执行器、权限引擎、安全检查、内置工具、MCP 集成） |
+| `config` | 配置系统模块（YAML 加载、Zod Schema 校验、defaults 默认值、热重载） |
+| `desktop` | Electron 桌面应用（主进程、preload、renderer、shared IPC 类型） |
+| `runtime` | 核心运行时（app-init 装配工厂、goal-runner、通知分级、插件初始化、shutdown） |
+| `harness` | 可观测性层（Trace 收集、Audit 日志、Git 检查点、实验分支管理） |
+| `memory` | 项目记忆与知识图谱（.routedev/ 目录管理、context-manager、checkpoint-writer、KnowledgeGraph） |
+| `prompts` | Prompt 模板系统（三级优先级：项目 > 用户 > 内置） |
+| `security` | 安全层（沙箱、完整性清单、审计面板、path/command/domain 检查） |
+| `plugins` | 插件系统（theme/tool/hook/router 四类插件、注册表、文件系统发现、Skills 按需加载） |
+| `macros` | 宏命令系统（`!name` 触发器引用预定义多步操作） |
+| `code-map` | 代码地图（多语言 extractor、PageRank 排序、增量索引、查询器） |
+| `hooks` | 内置钩子注册（文件变更验证、会话生命周期日志） |
+| `agents` | Agent Profile 模板与子 Agent 生命周期管理 |
+| `mcp` | MCP 集成（Claude Bridge MCP、MCP 客户端、MCP 工具包装器） |
+| `tests` | 测试（单元测试、e2e、集成测试、测试基础设施、vitest 配置） |
 
 > 新增 scope 必须先开 `[infra] issue`，PR 通过后同步更新本表 + `commitlint.config.cjs` 的 `scope-enum`。
 
