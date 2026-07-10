@@ -115,6 +115,18 @@ Task 总数：A1-A5（5）+ B1-B4（4）+ C1-C2（2）+ D1-D7（7）+ E1-E3（3�
 | R6 | 调用方完整性 | E3 | `system-prompt-builder.ts` | 含 D1/D2 残留改动 | Phase 72 在首个 commit 中清理 |
 | R7 | 流程 | E1 | git commit 中断 | 父 Agent 已补提交，需后续 Phase 验证 | Phase 72 起强制 `git log -1 --stat` 复核 |
 
+### 3.0 RISK 闭环状态（2026-07-10 技术债修复阶段 5 更新）
+
+| # | 状态 | 闭环说明 |
+|---|------|----------|
+| R1 | ✅ 已闭环 | `recallToPromptWithEpisodes` 已在后续 Phase 删除（grep 零结果） |
+| R2 | ⏸️ 评估后保持现状 | 子 Agent 输入为结构化参数，不需要 @-mention 解析；MentionResolverMiddleware 仅服务于用户消息层 |
+| R3 | ⏸️ 已接受 | `defaults.ts` 历史遗留不影响功能，schema.ts 已独立维护 |
+| R4 | ✅ 已闭环 | TD-18 增强：watcher.ts 添加自动重连机制（最多 5 次，延迟 3s），保持 Node 22 原生 fs.watch，不依赖 chokidar |
+| R5 | ✅ 已闭环 | `audit-dead-code.ts` 已删除（grep 仅在本文档中有引用），`detect-dead-code.ts` 为唯一脚本 |
+| R6 | ✅ 已闭环 | `system-prompt-builder.ts` 已删除（文件不存在） |
+| R7 | ✅ 已闭环 | CONTRIBUTING.md 已包含 commit 验证规范 |
+
 ### 3.1 RISK 升级评估
 
 依据 [subagent-audit-process.md §5.2](./subagent-audit-process.md#52-risk-升级为-fatal-的条件)，RISK 在连续 2 个 Phase 内未解决将升级为 FATAL。Phase 71 内的 7 项 RISK 在 Phase 73 之前必须闭环或显式说明延后理由，否则 Phase 73 交叉审查时自动升级。
