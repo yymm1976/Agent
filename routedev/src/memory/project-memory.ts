@@ -300,7 +300,9 @@ export class ProjectMemoryManager {
     let existing = '';
     try {
       existing = await fs.readFile(filePath, 'utf-8');
-    } catch {
+    } catch (e) {
+      // F-N005 修复：读取 MEMORY.md 失败需记录日志（fail-open，仍用空字符串继续）
+      logger.warn('[project-memory] 读取 MEMORY.md 失败', { error: e });
       existing = '';
     }
 
@@ -366,7 +368,9 @@ export class ProjectMemoryManager {
       const lines = content.split('\n').filter(l => l.trim());
       const records = lines.map(line => JSON.parse(line) as DecisionRecord);
       return limit ? records.slice(-limit) : records;
-    } catch {
+    } catch (e) {
+      // F-N005 修复：decisions.log 解析失败需记录日志（fail-open，返回空数组）
+      logger.warn('[project-memory] decisions.log 解析失败', { error: e });
       return [];
     }
   }

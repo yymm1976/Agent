@@ -163,7 +163,7 @@ export class CodeGraphQueryTool implements ITool {
           result = this.doImpactAnalysis(db, args, start);
           break;
         case 'search_symbols':
-          result = this.doSearchSymbols(db, args, context.workingDirectory, start);
+          result = await this.doSearchSymbols(db, args, context.workingDirectory, start);
           break;
         default:
           result = {
@@ -305,16 +305,16 @@ export class CodeGraphQueryTool implements ITool {
   }
 
   /** search_symbols：按关键词搜索符号 */
-  private doSearchSymbols(
+  private async doSearchSymbols(
     db: DB,
     args: Record<string, unknown>,
     rootDir: string,
     start: number,
-  ): ToolResult {
+  ): Promise<ToolResult> {
     const query = args.query as string;
     const maxResults = (args.maxResults as number) ?? 20;
 
-    const ctx = explore(db, query, rootDir, {
+    const ctx = await explore(db, query, rootDir, {
       maxResults,
       includeSnippets: false,
       includeCallPaths: false,

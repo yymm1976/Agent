@@ -123,6 +123,8 @@ const MAX_EXAMPLE_EXECUTION_IDS = 5;
 const MAX_EXAMPLE_TASK_DESCRIPTIONS = 5;
 /** 一天毫秒数 */
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** 执行历史记录上限（超出时淘汰最旧记录，避免无界增长） */
+const MAX_EXECUTIONS = 50;
 
 // ============================================================
 // SkillLifecycleManager
@@ -248,6 +250,10 @@ export class SkillLifecycleManager {
 
     // 追加执行记录
     memory.executions.push(record);
+    // 超出上限时淘汰最旧记录（避免无界增长）
+    if (memory.executions.length > MAX_EXECUTIONS) {
+      memory.executions.shift();
+    }
 
     // 按结果分支处理
     if (record.outcome === 'success') {

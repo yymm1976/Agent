@@ -26,6 +26,20 @@ const ALLOWED_ENV_KEYS = new Set([
   'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
 ]);
 
+/**
+ * F-N004 修复：process.env 继承白名单
+ * 仅从 process.env 中继承子进程运行所必需的环境变量，
+ * 防止完整透传 process.env 导致潜在敏感信息（如 API Key、CI 密钥等）泄露给子进程。
+ * 包含 Windows 平台必需变量（SYSTEMROOT/USERPROFILE/APPDATA/LOCALAPPDATA），
+ * 缺失 SYSTEMROOT 会导致 Windows 上 spawn 失败。
+ */
+const INHERITED_ENV_KEYS = new Set([
+  'PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'TERM', 'SHELL',
+  'SYSTEMROOT', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA',
+  'NODE_ENV', 'EDITOR', 'PAGER',
+  'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
+]);
+
 export class ShellExecTool implements ITool {
   // 熔断器：连续失败 5 次后开路 30 秒，防止系统不稳定
   private circuit = new CircuitBreaker({ failureThreshold: 5, resetTimeoutMs: 30000 });
@@ -167,10 +181,19 @@ export class ShellExecTool implements ITool {
         }
       }
 
+      // F-N004 修复：process.env 按白名单过滤后再继承，防止敏感环境变量泄露给子进程
+      // 缺失 SYSTEMROOT 会导致 Windows 上 spawn 失败，因此 Windows 必需变量已包含在白名单中
+      const inheritedEnv: Record<string, string> = {};
+      for (const [key, value] of Object.entries(process.env)) {
+        if (INHERITED_ENV_KEYS.has(key) && value !== undefined) {
+          inheritedEnv[key] = value;
+        }
+      }
+
       const startTime = Date.now();
       const child = spawn(shell, shellArgs, {
         cwd,
-        env: { ...process.env, ...filteredEnv },
+        env: { ...inheritedEnv, ...filteredEnv },
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
         // M5 修复：移除 spawn 的 timeout 选项，仅保留手动 setTimeout（含 SIGKILL 兜底）

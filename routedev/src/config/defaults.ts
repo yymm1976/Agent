@@ -93,17 +93,14 @@ export const DEFAULT_CONFIG: AppConfig = {
   autonomy: {
     defaultMode: 'semi',
     // 自动批准只读安全工具，避免频繁打断用户
-    // 写入/执行类工具（file_write、file_edit、shell_exec、git_op、spawn_agent）仍需确认
+    // 写入/执行/网络类工具（file_write、file_edit、shell_exec、git_op、spawn_agent、web_search、web_fetch、todo_write）仍需确认
     autoApprovePatterns: [
       'file_read',
       'file_search',
       'code_search',
       'list_directory',
       'repo_map',
-      'web_search',
-      'web_fetch',
       'notes',
-      'todo_write',
     ],
     confirmTimeout: 30000,
   },

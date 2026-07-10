@@ -5,6 +5,7 @@
 > 审计流程参见 [subagent-audit-process.md](./subagent-audit-process.md)。
 >
 > 报告生成时间：Phase 71 Task F2（纪律层收尾）。
+> 本报告反映 Phase 71 时点状态，后续 Phase 可能已变更相关实现。
 
 ---
 

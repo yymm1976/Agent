@@ -1,3 +1,4 @@
+// @experimental 未接入生产路径
 // src/agent/progress-ledger.ts
 // Phase 75-B2：Durable Progress Ledger
 // 借鉴 Superpowers v6：append-only 进度日志，compaction 后从 ledger + git log 恢复

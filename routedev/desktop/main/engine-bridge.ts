@@ -3,7 +3,7 @@
 
 import type { AppConfig } from '../../src/config/schema.js';
 import type { LLMMessage, ScenarioTier, RoutingResult } from '../../src/router/types.js';
-import { LLMClientManager } from '../../src/router/llm/index.js';
+import { LLMClientManager, createLLMClient } from '../../src/router/llm/index.js';
 import { TokenTracker } from '../../src/router/tracker.js';
 import { ScenarioClassifier } from '../../src/router/classifier.js';
 import { ModelRouter } from '../../src/router/router.js';
@@ -1079,6 +1079,14 @@ export class RouteDevEngine {
 
   async executeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
     if (!this.deps) return { error: '引擎未初始化' };
+
+    // F-N016 修复：test_connection 工具未在 ToolExecutor 注册，
+    // 此处内联处理——用传入的 baseUrl/apiKey 临时构造 LLM 客户端做轻量连通性测试，
+    // 避免渲染进程调用不存在的工具导致失败。
+    if (name === 'test_connection') {
+      return this.handleTestConnection(args);
+    }
+
     try {
       // F-013/F-012 修复：过滤 process.env 中的 undefined 值，避免不安全断言
       const env: Record<string, string> = {};
@@ -1094,6 +1102,53 @@ export class RouteDevEngine {
       return { output: result.output, success: result.success, error: result.error };
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * F-N016 修复：内联处理 test_connection 工具调用
+   *
+   * test_connection 未在 ToolExecutor 注册，此处用传入的 baseUrl/apiKey 临时构造一个
+   * LLM 客户端，发送一条 maxTokens=1 的极简请求以验证连通性与凭据有效性。
+   * protocol 与 modelId 从当前已保存配置中按 providerId 查找（测试草稿值时仍用已保存的 protocol）。
+   *
+   * @returns { success: boolean; error?: string }
+   */
+  private async handleTestConnection(
+    args: Record<string, unknown>,
+  ): Promise<{ success: boolean; error?: string }> {
+    const providerId = String(args.providerId ?? '');
+    const baseUrl = String(args.baseUrl ?? '');
+    const apiKey = String(args.apiKey ?? '');
+    if (!providerId || !baseUrl || !apiKey) {
+      return { success: false, error: '缺少 providerId / baseUrl / apiKey 参数' };
+    }
+
+    // 从当前已保存配置中查找 protocol 与可用模型 id
+    const provider = this.config.providers.find((p) => p.id === providerId);
+    if (!provider) {
+      return { success: false, error: `未找到 provider: ${providerId}（请先保存配置）` };
+    }
+    const modelId = provider.models[0]?.id ?? '';
+
+    try {
+      const client = createLLMClient({
+        id: providerId,
+        protocol: provider.protocol,
+        baseUrl,
+        apiKey,
+        timeoutMs: 15000,
+      });
+      // 轻量连通性测试：maxTokens=1 的极简请求
+      await client.complete({
+        model: modelId,
+        messages: [{ role: 'user', content: 'ping' }],
+        maxTokens: 1,
+        timeoutMs: 15000,
+      });
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 

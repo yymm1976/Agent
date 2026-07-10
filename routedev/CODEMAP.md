@@ -129,10 +129,11 @@
 > **注：** `/consolidate-memory` 命令未实现为独立 slash 命令，记忆整合通过自动触发（context-manager 的 checkpoint 压缩 + project-memory 的会话级维护）。原 `/dream` 命令已在 Phase 60 删除 deprecated alias。
 
 ### src/plugins/ — 插件系统
-**职责：** 四种插件类型（theme/tool/hook/router）+ 注册表 + SDK
+**职责：** 四种插件类型（theme/tool/hook/router）+ 注册表 + 文件系统发现 + Skills 按需加载路由
 **关键文件：**
 - `types.ts` — 插件基础接口 + 四种特化类型（128 行）
 - `registry.ts` — PluginRegistry：discover/load/init/destroy/enable/disable（375 行）
+- `filesystem-discovery.ts` — FilesystemDiscovery 文件系统发现（扫描 .routedev/ 自动发现 Skills/Plugins/Hooks，文件名即身份）+ SkillsRouter 按需加载路由（description 关键词匹配）+ 四级扩展成本梯度（zero/low/medium/high）+ parseAgentYAML 声明式 Agent 定义解析
 - `sdk.ts` — 四个 define*Plugin 辅助函数（163 行）（已删除：Phase 59 死代码清理）
 - `index.ts` — 导出聚合（5 行）（已删除：Phase 59 死代码清理）
 **依赖：** agent/（中间件管线）、tools/（工具注册表）、utils/

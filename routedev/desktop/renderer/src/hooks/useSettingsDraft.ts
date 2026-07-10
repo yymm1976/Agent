@@ -527,10 +527,13 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
     setTestingProvider(index);
     setTestResults((prev) => ({ ...prev, [index]: null }));
     try {
-      await window.routedev.tool.execute({
+      const res = await window.routedev.tool.execute({
         name: 'test_connection',
         args: { providerId: provider.id, baseUrl: provider.baseUrl, apiKey: provider.apiKey },
-      });
+      }) as { success?: boolean; error?: string };
+      if (!res?.success) {
+        throw new Error(res?.error ?? '连接失败：工具未注册或返回错误');
+      }
       setTestResults((prev) => ({ ...prev, [index]: { success: true, message: '连接成功' } }));
     } catch (err) {
       setTestResults((prev) => ({

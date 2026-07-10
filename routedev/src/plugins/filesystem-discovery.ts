@@ -348,8 +348,12 @@ export class FilesystemDiscovery {
           }
         }
       }
-    } catch {
-      // skills 目录不存在，正常情况
+    } catch (e) {
+      // F-N005 修复：readdir 失败时区分 ENOENT（目录不存在，正常情况）与其他错误
+      // ENOENT 静默处理；其他错误（如权限不足、磁盘故障）记录 warn 日志
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        logger.warn('[skill-discovery] skills 目录读取失败', { error: e });
+      }
     }
 
     return skills;

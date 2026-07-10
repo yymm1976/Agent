@@ -205,8 +205,12 @@ export class MemoryStore {
         this.embeddings.set(id, normalized);
         // 持久化 embedding（fail-open）
         this.persistEmbedding(id, normalized);
-      } catch {
-        // fail-open：embedding 失败不阻塞写入，原文已存
+      } catch (e) {
+        // F-N005 修复：embedding 失败需记录日志（fail-open：不阻塞写入，原文已存）
+        logger.warn('MemoryStore: embedding 计算失败', {
+          id,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
     // 持久化记忆条目到 DB（fail-open）
@@ -391,8 +395,12 @@ export class MemoryStore {
             ...(meta.topics !== undefined ? { topics: meta.topics } : {}),
           };
           this.memories.set(row.id, entry);
-        } catch {
-          // 单行损坏跳过
+        } catch (e) {
+          // F-N005 修复：单行 JSON 解析失败需记录日志（fail-open：跳过该行，不影响其他行）
+          logger.warn('MemoryStore: memories 单行解析失败，已跳过', {
+            id: row.id,
+            error: e instanceof Error ? e.message : String(e),
+          });
         }
       }
       // 加载 embeddings
@@ -403,8 +411,12 @@ export class MemoryStore {
           if (Array.isArray(vec)) {
             this.embeddings.set(row.id, vec);
           }
-        } catch {
-          // 单行损坏跳过
+        } catch (e) {
+          // F-N005 修复：单行 embedding 解析失败需记录日志（fail-open：跳过该行，不影响其他行）
+          logger.warn('MemoryStore: embeddings 单行解析失败，已跳过', {
+            id: row.id,
+            error: e instanceof Error ? e.message : String(e),
+          });
         }
       }
     } catch (err) {

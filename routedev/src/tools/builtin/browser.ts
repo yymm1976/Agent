@@ -269,7 +269,7 @@ export class BrowserTool implements ITool {
     // 动态探测 puppeteer 是否可用（不强制依赖）
     let puppeteer: any;
     try {
-      // @ts-expect-error — puppeteer 是可选依赖，未安装时 import 会抛错
+      // @ts-ignore — puppeteer 是可选依赖，未安装时 import 会抛错
       puppeteer = await import('puppeteer');
     } catch {
       return {

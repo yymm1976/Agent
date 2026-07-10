@@ -119,8 +119,9 @@ export interface SkillRouteResult {
 // Phase 48 Task 4 接线修复：Agent Profile 管理 IPC 类型
 // ============================================================
 
-/** Agent Profile 角色 */
-export type AgentProfileRole = 'researcher' | 'executor' | 'reviewer' | 'custom';
+/** Agent Profile 角色（类型由 AGENT_PROFILE_ROLES 派生，保证白名单与类型同源） */
+export const AGENT_PROFILE_ROLES = ['researcher', 'executor', 'reviewer', 'custom'] as const;
+export type AgentProfileRole = typeof AGENT_PROFILE_ROLES[number];
 
 /** Agent Profile 输出格式 */
 export type AgentProfileOutputFormat = 'research_report' | 'code_change' | 'review_report' | 'custom';

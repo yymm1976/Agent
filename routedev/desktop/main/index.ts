@@ -22,6 +22,7 @@ import type {
   ExperimentInfo,
   HookInfo,
 } from '../shared/ipc-types.js';
+import { AGENT_PROFILE_ROLES } from '../shared/ipc-types.js';
 import { loadConfig } from '../../src/config/loader.js';
 import { saveConfig } from './config-store.js';
 import { RouteDevEngine } from './engine-bridge.js';
@@ -197,7 +198,7 @@ function createWindow(splash?: BrowserWindow | null): void {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src ${connectSrc}`,
+          `default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src ${connectSrc}`,
         ],
       },
     });
@@ -468,9 +469,45 @@ ipcMain.on('chat:sync-history', (_event, messages: import('../../src/router/type
   engine?.syncConversationHistory(messages);
 });
 
+// ============================================================
+// F-N010 修复：config:get 返回前对敏感字段脱敏
+// 防止渲染进程（潜在 XSS）通过 config:get 获取完整 apiKey
+// 注意：config:save 仍接收完整 key，不做脱敏
+// ============================================================
+
+/** 脱敏单个 API Key：保留首尾各 4 位，中间用 **** 替换；过短或空值返回脱敏占位 */
+function maskApiKey(key: string | undefined): string | undefined {
+  if (!key) return key;
+  if (key.length <= 8) return '****';
+  return key.slice(0, 4) + '****' + key.slice(-4);
+}
+
+/** 脱敏配置中的所有敏感 apiKey 字段（providers 数组 + llmProviders 快捷配置） */
+function maskSensitiveConfig(config: import('../../src/config/schema.js').AppConfig): import('../../src/config/schema.js').AppConfig {
+  const masked = { ...config };
+  // 脱敏 providers 数组中的 apiKey
+  if (Array.isArray(masked.providers)) {
+    masked.providers = masked.providers.map(p => ({
+      ...p,
+      apiKey: maskApiKey(p.apiKey) ?? '',
+    }));
+  }
+  // 脱敏 llmProviders 中的 apiKey（gemini/deepseek/qwen，ollama 无需 apiKey）
+  if (masked.llmProviders) {
+    const lp = { ...masked.llmProviders };
+    if (lp.gemini) lp.gemini = { ...lp.gemini, apiKey: maskApiKey(lp.gemini.apiKey) ?? '' };
+    if (lp.deepseek) lp.deepseek = { ...lp.deepseek, apiKey: maskApiKey(lp.deepseek.apiKey) ?? '' };
+    if (lp.qwen) lp.qwen = { ...lp.qwen, apiKey: maskApiKey(lp.qwen.apiKey) ?? '' };
+    masked.llmProviders = lp;
+  }
+  return masked;
+}
+
 // 配置：读取
 ipcMain.handle('config:get', async (): Promise<import('../../src/config/schema.js').AppConfig> => {
-  return loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+  const config = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+  // F-N010 修复：对敏感字段脱敏后再返回渲染进程，防止 apiKey 泄露
+  return maskSensitiveConfig(config);
 });
 
 // 配置：保存
@@ -988,7 +1025,7 @@ ipcMain.handle('profile:save', async (_event, payload: import('../shared/ipc-typ
       typeof payload.name !== 'string' || payload.name.length === 0 || payload.name.length > 256) {
     return { success: false, error: '无效的参数' };
   }
-  const validRoles = ['researcher', 'executor', 'reviewer', 'custom'];
+  const validRoles = AGENT_PROFILE_ROLES;
   if (!validRoles.includes(payload.role)) {
     return { success: false, error: '无效的参数' };
   }

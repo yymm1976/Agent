@@ -26,7 +26,6 @@ issue 标题、commit message、PR 标题的 `scope` 字段必须取自以下白
 | `skill` | Skill 系统（SKILL.md 加载、Skill 匹配、pitfalls-guide） |
 | `ui` | 前端 UI（React 组件、Electron renderer、设置页交互） |
 | `setting` | 设置页 / 配置系统（ConfigValidationError、env 替换、profile 加载） |
-| `cli` | CLI 工具（命令解析、custom-commands 模板、headless 入口） |
 | `infra` | 基础设施（构建脚本、CI、vitest 配置、husky、commitlint、perf-gate） |
 | `docs` | 文档（AGENTS.md、CODEMAP.md、CHANGELOG.md、README、本文件） |
 
@@ -133,7 +132,7 @@ Phase 75-A6 引入 `husky` / `lint-staged` / `@commitlint/cli` / `@commitlint/co
 | 依赖 | 必要性 |
 |------|--------|
 | `husky` | 唯一能在 npm install 后自动激活 git hook 的主流方案，替代手写 `.git/hooks/*`（手写 hook 不进版本库，团队成员无法共享） |
-| `lint-staged` | 只对暂存文件跑检查，避免全量 typecheck 浪费时间；当前 RouteDev 无 eslint/prettier，先做提示位，后续接入 eslint 时升级 |
+| `lint-staged` | 对暂存的 ts 文件触发全工程 typecheck（根 tsconfig + desktop/tsconfig.desktop.json）；当前 RouteDev 无 eslint/prettier，先做提示位，后续接入 eslint 时升级 |
 | `@commitlint/cli` | 强制 commitlint 在 commit-msg 阶段执行，是 scope 白名单 + TECH-DEBT tag 检查的执行器 |
 | `@commitlint/config-conventional` | Conventional Commits 基线规则，RouteDev 在此基础上覆盖 `scope-enum` / `type-enum` |
 

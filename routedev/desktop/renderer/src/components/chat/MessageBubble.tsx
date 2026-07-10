@@ -2,7 +2,7 @@
 // 用户/助手消息气泡：Markdown 渲染、工具调用卡片、Goal 卡片、操作按钮
 // Phase 74-C：从 ChatPage.tsx 抽离，保持渲染结果完全一致
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, memo } from 'react';
 import {
   Sparkles, Wrench, Copy, Trash2, RefreshCw, GitFork, Check,
 } from 'lucide-react';
@@ -55,7 +55,7 @@ function GoalMessageBubble({ goalId }: { goalId: string }) {
   );
 }
 
-export function MessageBubble({
+const MessageBubble = memo(function MessageBubble({
   message,
   messageRef,
   outputStyle,
@@ -215,4 +215,6 @@ export function MessageBubble({
       </div>
     </div>
   );
-}
+});
+
+export { MessageBubble };

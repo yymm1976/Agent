@@ -3,7 +3,7 @@
 // 保留现有弱边框美学；增强项：A1 ANSI / A2 头尾保留 / A3 行级 diff / A4 accept-reject /
 //   A5 StatusBadge / A6 关键参数预览 / A7 ToolIcon 着色 / A8 shimmer 边框
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, memo } from 'react';
 import {
   Loader2, CheckCircle, XCircle, Wrench, FileText, FolderSearch, FileEdit, FilePlus,
   Terminal, Search, ListChecks, Bot, ChevronDown, ChevronRight,
@@ -729,7 +729,7 @@ export function SubAgentRow({
 // 单个工具调用卡片（保留兼容）
 // ============================================================
 
-export function ToolCallCard({
+const ToolCallCard = memo(function ToolCallCard({
   toolName,
   status,
   args,
@@ -757,7 +757,9 @@ export function ToolCallCard({
       )}
     </div>
   );
-}
+});
+
+export { ToolCallCard };
 
 /** 分组工具调用卡片（保留兼容） */
 export function ToolCallGroup({ items }: { items: ToolCallItem[] }) {

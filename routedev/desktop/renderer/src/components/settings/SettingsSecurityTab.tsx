@@ -467,7 +467,7 @@ export function SettingsSecurityTab({
           <CardTitle>沙箱级与审批级覆盖</CardTitle>
           <CardDescription>
             Phase 47 Task 4 引入的权限双旋钮：沙箱级决定工具能执行的操作范围；
-            审批级决定是否每次询问用户。两项已通过 app-init 接线到 PermissionEngine。
+            审批级决定是否每次询问用户。两项已配置到 PermissionEngine（运行时接线排期中，当前由 SecurityChecker 提供基础防护）。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

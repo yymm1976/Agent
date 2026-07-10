@@ -3,7 +3,6 @@
 
 import path from 'node:path';
 import fsp from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
 import type {
   CodeMapNode,
   CodeMapEdge,
@@ -78,12 +77,12 @@ export function searchBySymbolName(db: DB, query: string, limit = 20): CodeMapNo
 }
 
 /** 关键词搜索符号 */
-export function explore(
+export async function explore(
   db: DB,
   query: string,
   rootDir: string,
   options?: QueryOptions,
-): CodeContext {
+): Promise<CodeContext> {
   const maxResults = options?.maxResults ?? 20;
   const keywords = query.toLowerCase().split(/\s+/).filter(Boolean);
 
@@ -176,7 +175,7 @@ export function explore(
   if (options?.includeSnippets !== false) {
     for (const node of matched.slice(0, 10)) {
       const fullPath = path.join(rootDir, node.filePath);
-      const snippet = readSnippet(fullPath, node.startLine, node.endLine, node.name);
+      const snippet = await readSnippet(fullPath, node.startLine, node.endLine, node.name);
       if (snippet) snippets.push(snippet);
     }
   }
@@ -745,15 +744,15 @@ async function readSnippetAsync(
   }
 }
 
-/** 同步版读取片段（简化：只读起始行附近） */
-function readSnippet(
+/** 读取源代码片段（异步：避免查询路径上的同步文件 IO 阻塞） */
+async function readSnippet(
   fullPath: string,
   startLine: number,
   endLine: number,
   symbolName?: string,
-): CodeSnippet | null {
+): Promise<CodeSnippet | null> {
   try {
-    const content = readFileSync(fullPath, 'utf-8');
+    const content = await fsp.readFile(fullPath, 'utf-8');
     const lines = content.split('\n');
     const start = Math.max(0, startLine);
     const end = Math.min(lines.length - 1, endLine);

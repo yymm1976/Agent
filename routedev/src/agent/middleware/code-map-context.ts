@@ -190,7 +190,7 @@ export class CodeMapContextMiddleware {
     let exploreNodes: CodeMapNode[] = [];
     if (userQuery.trim()) {
       try {
-        const result = explore(db, userQuery, this.rootDir, {
+        const result = await explore(db, userQuery, this.rootDir, {
           maxResults: 10,
           includeSnippets: false,
           includeCallPaths: false,

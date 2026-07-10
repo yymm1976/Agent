@@ -293,6 +293,8 @@ const TARGET_TOKEN_RATIO = 0.6;
 const SUMMARY_INPUT_MAX_CHARS = 8000;
 /** MemoryRecallInjector 单次召回最大记忆条数（config.memory 无此字段） */
 const MAX_RECALL_MEMORIES = 5;
+/** 工具执行超时（ms）—— ToolRegistryAdapter / CommandSandbox 共用 */
+const TOOL_EXECUTION_TIMEOUT_MS = 30_000;
 
 /**
  * 创建 App 所需的全部服务依赖
@@ -663,7 +665,7 @@ export function createAppDependencies(
   // fail-open：装配失败不阻塞主流程，ShellExecTool 仍可正常工作（仅缺少沙箱前置校验）
   try {
     const sandbox = new CommandSandbox({
-      timeout: 30_000,
+      timeout: TOOL_EXECUTION_TIMEOUT_MS,
       maxOutputBytes: 1024 * 1024,
     });
     shellExecTool.setSandbox(sandbox);
@@ -697,7 +699,7 @@ export function createAppDependencies(
     workingDirectory: cwd,
     allowedDirectories: [cwd],
     environment: { ...process.env, ...webSearchEnv } as Record<string, string>,
-    timeoutMs: 30000,
+    timeoutMs: TOOL_EXECUTION_TIMEOUT_MS,
   });
   // Phase 34：让工具执行通过 TraceCollector 记录 span
   adapter.setTraceCollector(trace);
@@ -924,7 +926,7 @@ export function createAppDependencies(
           workingDirectory: cwd,
           allowedDirectories: [cwd],
           environment: { ...process.env, ...webSearchEnv } as Record<string, string>,
-          timeoutMs: 30000,
+          timeoutMs: TOOL_EXECUTION_TIMEOUT_MS,
         });
         childAdapter.setTraceCollector(trace);
         const childGuardedAdapter = new GuardedToolExecutorAdapter(
