@@ -58,9 +58,8 @@ interface TSLanguage {
 interface WTSModule {
   init(opts?: unknown): Promise<void>;
   Language: { load(input: string | Uint8Array): Promise<TSLanguage> };
-  new ():
-    | TSParser
-    | Promise<TSParser>;
+  // 运行时 new Parser() 同步返回 TSParser；原声明为联合类型是过度保守，导致 createParser 需要双断言
+  new (): TSParser;
 }
 
 // ---- 加载 web-tree-sitter ----
@@ -146,8 +145,9 @@ export async function loadLanguage(lang: Language): Promise<TSLanguage | null> {
 
 /** 创建新解析器 */
 export function createParser(lang: TSLanguage): TSParser {
-  const ParserCtor = getWts() as unknown as { new (): TSParser };
-  const parser = new ParserCtor();
+  // WTSModule 接口已声明 new(): TSParser，无需双断言
+  const Wts = getWts();
+  const parser = new Wts();
   parser.setLanguage(lang);
   return parser;
 }

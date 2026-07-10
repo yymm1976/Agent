@@ -20,7 +20,8 @@ export class MCPTool implements ITool {
   ) {
     const inputSchema = mcpToolDef.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
     const schemaProperties = inputSchema.properties ?? {};
-    this.definition = {
+    // 借助 ToolDefinition 上下文类型推断字面量（type:'object' / category:'mcp'），无需断言
+    const definition: ToolDefinition = {
       name: namespacedName,
       description: `[MCP:${serverEntry.name}] ${mcpToolDef.description ?? ''}`,
       parameters: {
@@ -31,7 +32,8 @@ export class MCPTool implements ITool {
       },
       requiresApproval: true,
       category: 'mcp',
-    } as unknown as ToolDefinition;
+    };
+    this.definition = definition;
     this.client = client;
     this.originalName = mcpToolDef.name;
     this.metadata = {

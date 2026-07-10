@@ -219,15 +219,14 @@ export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies
   if (phase53PrefixCacheCfg?.enabled) {
     const prefixCacheModulePath = '../agent/memory/prefix-cache.js';
     import(prefixCacheModulePath)
-      .then((mod: { PrefixAwareCache: new (opts?: { blockSize?: number; l1MaxSize?: number }) => unknown }) => {
+      .then((mod: { PrefixAwareCache: new (opts?: { blockSize?: number; l1MaxSize?: number }) => import('../agent/memory/prefix-cache.js').PrefixAwareCache }) => {
         const cache = new mod.PrefixAwareCache({
           blockSize: phase53PrefixCacheCfg.blockSize,
           l1MaxSize: phase53PrefixCacheCfg.l1MaxSize,
         });
-        // feature-detect：方法可能由其他子代理添加（避免硬依赖）
-        const cm = contextManager as unknown as { setPrefixCache?: (c: unknown) => void };
-        if (typeof cm.setPrefixCache === 'function') {
-          cm.setPrefixCache(cache);
+        // setPrefixCache 已在 ContextManager 声明；保留 typeof 守卫兼容装配顺序
+        if (typeof contextManager.setPrefixCache === 'function') {
+          contextManager.setPrefixCache(cache);
           logger.debug('PrefixAwareCache injected', { via: 'setPrefixCache' });
         }
       })

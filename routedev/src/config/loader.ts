@@ -181,7 +181,8 @@ function tryLoadBackup(globalPath: string, projectPath?: string): AppConfig | nu
     if (typeof parsed !== 'object' || Array.isArray(parsed)) return null;
 
     // 重新走合并流程：默认值 + 备份全局配置 + 项目级配置
-    let backupConfig: Record<string, unknown> = { ...DEFAULT_CONFIG } as unknown as Record<string, unknown>;
+    // DEFAULT_CONFIG 是 AppConfig（强类型），spread 后用对象字面量注解避免双重断言
+    let backupConfig: Record<string, unknown> = { ...DEFAULT_CONFIG };
     backupConfig = deepMerge(backupConfig, parsed as Record<string, unknown>);
 
     if (projectPath) {
@@ -243,7 +244,8 @@ export function loadConfig(options?: {
   const globalPath = options?.globalConfigPath ?? getGlobalConfigPath();
 
   // 1. 从默认值开始（作为合并基底）
-  let config: Record<string, unknown> = { ...DEFAULT_CONFIG } as unknown as Record<string, unknown>;
+  // spread 后用对象字面量注解，TS 允许 spread 结果赋值给更宽泛的 Record 类型
+  let config: Record<string, unknown> = { ...DEFAULT_CONFIG };
 
   // 2. 合并全局配置
   const globalConfig = loadYamlFile(globalPath);

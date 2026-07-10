@@ -51,7 +51,8 @@ export class TransformersEmbedder implements Embedder {
     try {
       const mod = await import('@xenova/transformers' as string);
       const pipe = await mod.pipeline('feature-extraction', modelId);
-      this.pipeline = pipe as unknown as typeof this.pipeline;
+      // mod 为动态 import（非字面量路径）返回 any，pipe 即目标函数类型，直接赋值
+      this.pipeline = pipe;
       this.ready = true;
       return true;
     } catch (e) {

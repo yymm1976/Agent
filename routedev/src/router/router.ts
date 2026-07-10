@@ -17,7 +17,6 @@ import type {
 import type { ClassificationResult } from './types.js';
 import type { ProviderConfig, ExecutionConfig } from '../config/schema.js';
 import type { PluginRegistry } from '../plugins/registry.js';
-import type { DeterministicClassificationResult } from './classifier.js';
 import { TokenTracker } from './tracker.js';
 import { logger } from '../utils/logger.js';
 
@@ -27,6 +26,13 @@ interface ModelDefinition {
   providerId: string;
   tier: ScenarioTier;
 }
+
+/**
+ * TD-13：非 deterministic 路径的分类结果（tier 收窄为 ScenarioTier）
+ * 用于 route() 在 deterministic 分支提前 return 后的类型收窄，
+ * 使下游 clampTier/findRule/degrade 等接收 ScenarioTier 的方法无需 as 断言
+ */
+type NonDeterministicClassification = Omit<ClassificationResult, 'tier'> & { tier: ScenarioTier };
 
 /**
  * Phase 40 Task 2：扩展的路由结果
@@ -346,15 +352,16 @@ export class ModelRouter {
   async route(classification: ClassificationResult): Promise<DeterministicRoutingResult> {
     // Phase 40 Task 2：deterministic 路由分支
     // 命中确定性规则时跳过正常路由决策链，标记 deterministic=true 供调用方跳过 LLM 调用
-    const detClassification = classification as DeterministicClassificationResult;
-    if (detClassification.tier === 'deterministic') {
+    // TD-13：ClassificationResult 已统一支持 deterministic 路径，无需 as 断言；
+    //        分支内直接访问 classification.matchedRuleId；分支 return 后 tier 自动收窄为 ScenarioTier
+    if (classification.tier === 'deterministic') {
       // 使用最低成本模型（simple tier）作为占位
       // 调用方根据 deterministic 标记跳过 LLM 调用，model 字段仅用于审计/日志
       const simpleRule = this.findRule('simple');
       const placeholderModel = simpleRule?.modelId ? this.models.get(simpleRule.modelId) : null;
       if (placeholderModel) {
         logger.debug('Deterministic route hit, skipping LLM', {
-          matchedRuleId: detClassification.matchedRuleId,
+          matchedRuleId: classification.matchedRuleId,
           placeholderModel: placeholderModel.id,
         });
         return {
@@ -365,14 +372,14 @@ export class ModelRouter {
           degraded: false,
           enableCache: false,
           deterministic: true,
-          matchedRuleId: detClassification.matchedRuleId,
+          matchedRuleId: classification.matchedRuleId,
         };
       }
       // 没有配置 simple tier 模型时，尝试任意可用模型作为占位
       const anyModel = this.getAvailableModels()[0];
       if (anyModel) {
         logger.debug('Deterministic route hit (fallback placeholder model)', {
-          matchedRuleId: detClassification.matchedRuleId,
+          matchedRuleId: classification.matchedRuleId,
           placeholderModel: anyModel.id,
         });
         return {
@@ -383,7 +390,7 @@ export class ModelRouter {
           degraded: false,
           enableCache: false,
           deterministic: true,
-          matchedRuleId: detClassification.matchedRuleId,
+          matchedRuleId: classification.matchedRuleId,
         };
       }
       // 完全没有配置模型：抛错让调用方感知
@@ -392,7 +399,9 @@ export class ModelRouter {
 
     // Phase 42：根据推理模式调整 tier
     // 死代码清理：reasoningMode 未接入后端，clampTier 为恒等映射，保留 clampedClassification 以最小化改动
-    const clampedClassification: ClassificationResult = {
+    // TD-13：deterministic 分支已 return，此处 classification.tier 已收窄为 ScenarioTier，
+    //        clampedClassification 类型为 NonDeterministicClassification，下游无需 as 断言
+    const clampedClassification: NonDeterministicClassification = {
       ...classification,
       tier: this.clampTier(classification.tier),
     };
@@ -507,8 +516,9 @@ export class ModelRouter {
   /**
    * Phase 27 Task 2：尝试用 RouterPlugin 进行路由决策
    * 插件返回 null 或未安装时返回 null，由调用方 fallback 到默认路由
+   * TD-13：参数类型收窄为 NonDeterministicClassification（deterministic 分支已在 route() 提前 return）
    */
-  private async tryPluginRoute(classification: ClassificationResult): Promise<RoutingResult | null> {
+  private async tryPluginRoute(classification: NonDeterministicClassification): Promise<RoutingResult | null> {
     const routerPlugin = this.pluginRegistry?.getActiveRouterPlugin();
     if (!routerPlugin || !routerPlugin.route) return null;
 

@@ -63,9 +63,11 @@ export class GoalRecoveryManager {
         const completedSteps = goal.plan.steps.filter(s => s.status === 'completed').length;
         // PersistedGoal.updatedAt 在 save 时被写成 Date.now()（number），
         // 但旧数据可能存在 ISO 字符串——同时兼容
-        const updatedMs = typeof goal.updatedAt === 'number'
-          ? goal.updatedAt
-          : new Date(goal.updatedAt as unknown as string).getTime();
+        // 经 number | string 中间类型，让 typeof 缩窄在分支内生效，无需双重断言
+        const updatedAt: number | string = goal.updatedAt;
+        const updatedMs = typeof updatedAt === 'number'
+          ? updatedAt
+          : new Date(updatedAt).getTime();
         const isStale = Number.isFinite(updatedMs) && (now - updatedMs) > STALE_THRESHOLD_MS;
         infos.push({ goal, completedSteps, totalSteps, isStale });
       }

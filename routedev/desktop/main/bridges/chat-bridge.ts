@@ -62,7 +62,10 @@ export class ChatBridge {
 
     try {
       const classifyResult = await classifier.classify({ query: text });
-      this.ctx.currentTier = classifyResult.tier;
+      // deterministic 走规则路径，currentTier 仅供 UI 显示，保持默认 'simple'
+      if (classifyResult.tier !== 'deterministic') {
+        this.ctx.currentTier = classifyResult.tier;
+      }
       routeDecision = await modelRouter.route(classifyResult);
       const fallbackNotice = notifyRoutingFallback(routeDecision);
       if (fallbackNotice) {

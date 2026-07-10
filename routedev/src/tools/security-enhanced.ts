@@ -390,15 +390,21 @@ const SENSITIVE_FIELD_PATTERNS = [
  * @param depth 递归深度（防止循环引用）
  */
 export function filterSensitiveFields<T>(obj: T, depth = 0): T {
+  // 委托给 unknown 实现避免泛型 T 与分支返回类型间的双重断言；
+  // unknown → T 为单重断言（unknown 与任意类型可比）
+  return filterSensitiveFieldsImpl(obj, depth) as T;
+}
+
+function filterSensitiveFieldsImpl(obj: unknown, depth: number): unknown {
   if (depth > 10 || obj === null || obj === undefined) return obj;
 
   if (typeof obj === 'string') {
     // I6 修复：仅过滤明确前缀的 API Key 或高熵字符串
-    return filterSensitiveString(obj) as unknown as T;
+    return filterSensitiveString(obj);
   }
 
   if (Array.isArray(obj)) {
-    return obj.map(item => filterSensitiveFields(item, depth + 1)) as unknown as T;
+    return obj.map(item => filterSensitiveFieldsImpl(item, depth + 1));
   }
 
   if (typeof obj === 'object') {
@@ -407,10 +413,10 @@ export function filterSensitiveFields<T>(obj: T, depth = 0): T {
       if (SENSITIVE_FIELD_PATTERNS.some(p => p.test(key))) {
         result[key] = '[REDACTED]';
       } else {
-        result[key] = filterSensitiveFields(value, depth + 1);
+        result[key] = filterSensitiveFieldsImpl(value, depth + 1);
       }
     }
-    return result as unknown as T;
+    return result;
   }
 
   return obj;

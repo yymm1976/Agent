@@ -52,6 +52,8 @@ export class ContentDeduplicator {
         savedTokens += this.estimateTokensFn(content);
         if (this.config.replaceWithReference) {
           const marker = `[...DEDUP:hash=${hash.slice(0, 12)} first=#${existingIndex}...]`;
+          // 保留双断言：marker 是 string，T 是泛型（items 元素类型），
+          // string 与任意 T 结构不兼容，泛型设计固有限制需 unknown 中转
           result.push(marker as unknown as T);
         }
       } else {

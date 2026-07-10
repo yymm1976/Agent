@@ -221,7 +221,8 @@ export class BranchPersistence {
     const firstObj = JSON.parse(lines[0]) as Record<string, unknown>;
     if (firstObj && Array.isArray(firstObj['nodes']) && firstObj['type'] !== 'header') {
       // 旧单 JSON 格式 → 迁移为 PersistedConversationTree
-      return this.migrateOldSingleJson(firstObj as unknown as PersistedConversationTree);
+      // migrateOldSingleJson 入参改为 Record<string, unknown>，避免 firstObj 双断言
+      return this.migrateOldSingleJson(firstObj);
     }
 
     let header: JsonlLine | null = null;
@@ -240,6 +241,8 @@ export class BranchPersistence {
         case 'message':
         case 'compaction':
         case 'branch_summary':
+          // 保留双断言：JSONL 反序列化场景，obj 是 Record<string, unknown>，
+          // BranchNode 是联合类型（含字面量 type），单次断言 TS 报不充分重叠
           nodes.push(obj as unknown as BranchNode);
           break;
         // Phase 73 Part D：旧 JSONL 格式迁移——{ type:'node', ...fields } → { type:'message', ...fields }
@@ -254,6 +257,7 @@ export class BranchPersistence {
         case 'branch': {
           const { type: _t, ...rest } = obj;
           void _t;
+          // 保留双断言：rest 是 Omit<Record,'type'>，BranchInfo 是具体 interface，结构不兼容
           branches.push(rest as unknown as BranchInfo);
           break;
         }
@@ -286,13 +290,19 @@ export class BranchPersistence {
    *
    * 旧格式为整文件一个 JSON 对象 { version, nodes, branches, ... }，
    * 其中 nodes 数组的元素没有 type 字段。迁移时为每个节点添加 type:'message'。
+   *
+   * 入参用 Record<string, unknown> 而非 PersistedConversationTree：
+   *   旧数据节点可能无 type 字段，与 BranchNode 联合类型不一致，
+   *   用 unknown 入参让内部单次断言即可，避免 as unknown as 双断言。
    */
-  private migrateOldSingleJson(old: PersistedConversationTree): PersistedConversationTree {
-    const migratedNodes: BranchNode[] = (old.nodes || []).map((n) => {
+  private migrateOldSingleJson(old: Record<string, unknown>): PersistedConversationTree {
+    const rawNodes = (old['nodes'] as unknown[] | undefined) ?? [];
+    const migratedNodes: BranchNode[] = rawNodes.map((n) => {
       // 旧格式节点无 type 字段或 type 为 'node'，统一迁移为 MessageNode
-      const nodeType = (n as unknown as { type?: string }).type;
+      // n 为 unknown（来自 unknown[]），单次断言即可读取 type 字段
+      const nodeType = (n as { type?: string }).type;
       if (!nodeType || nodeType === 'node') {
-        const rest = { ...(n as unknown as Record<string, unknown>) };
+        const rest = { ...(n as Record<string, unknown>) };
         delete rest['type'];
         return { type: 'message', ...(rest as Omit<MessageNode, 'type'>) };
       }
@@ -300,12 +310,12 @@ export class BranchPersistence {
     });
     return {
       version: 1,
-      activeBranchId: old.activeBranchId ?? null,
-      activeBranchKey: old.activeBranchKey ?? null,
+      activeBranchId: (old['activeBranchId'] as string | null | undefined) ?? null,
+      activeBranchKey: (old['activeBranchKey'] as string | null | undefined) ?? null,
       nodes: migratedNodes,
-      branches: old.branches ?? [],
-      historyNodeIds: old.historyNodeIds ?? [],
-      lastModifiedAt: old.lastModifiedAt ?? Date.now(),
+      branches: (old['branches'] as BranchInfo[] | undefined) ?? [],
+      historyNodeIds: (old['historyNodeIds'] as string[] | undefined) ?? [],
+      lastModifiedAt: (old['lastModifiedAt'] as number | undefined) ?? Date.now(),
     };
   }
 

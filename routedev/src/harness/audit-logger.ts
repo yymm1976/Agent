@@ -267,7 +267,9 @@ export class AuditLogger {
       ...(signal.knowledgeNodeId !== undefined ? { knowledgeNodeId: signal.knowledgeNodeId } : {}),
     };
 
-    // 使用类型断言绕过 AuditAction 限制（trace-types.ts 不在本任务修改范围）
+    // 保留双断言：ExtendedAuditAction 含 'user_feedback'|'quality_signal'，
+    // AuditAction（trace-types.ts）不含这些字面量，联合类型不兼容；
+    // trace-types.ts 不在本任务修改范围，需 unknown 中转
     this.log(
       action as unknown as AuditAction,
       signal.signalType,

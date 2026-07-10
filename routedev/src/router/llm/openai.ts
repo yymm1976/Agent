@@ -218,7 +218,9 @@ export class OpenAIClient extends BaseLLMClient {
     const messages = this.convertMessages(options.messages, options.systemPrompt);
     const tools = options.tools ? this.convertTools(options.tools) : undefined;
 
-    const params: ChatCompletionCreateParams = {
+    // 交集 Record<string, unknown> 允许写入 SDK 未声明的厂商扩展字段（prompt_cache_key 等），
+    // 避免 as unknown as Record<string, unknown> 双重断言
+    const params: ChatCompletionCreateParams & Record<string, unknown> = {
       model: options.model,
       messages,
       max_tokens: this.getMaxTokens(options),
@@ -237,13 +239,13 @@ export class OpenAIClient extends BaseLLMClient {
     // 同一 cache_key 的请求会复用前缀缓存，降低 token 消耗
     if (options.enableCache) {
       // 使用 model 名作为 cache key 的基础，确保同模型的请求复用缓存
-      (params as unknown as Record<string, unknown>).prompt_cache_key = `routedev-${options.model}`;
+      params.prompt_cache_key = `routedev-${options.model}`;
     }
 
     // P2-11：结构化输出（response_format json_schema）
     // OpenAI 支持通过 response_format 强制模型输出符合 JSON Schema 的内容
     if (options.responseFormat && options.responseFormat.type === 'json_schema') {
-      (params as unknown as Record<string, unknown>).response_format = {
+      params.response_format = {
         type: 'json_schema',
         json_schema: {
           name: options.responseFormat.jsonSchema.name,

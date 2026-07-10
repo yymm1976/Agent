@@ -173,7 +173,10 @@ export class RoutingOrchestrator {
     const allModels = this.getAvailableModelConfigs();
     const model = allModels.find(m => m.id === modelId);
     if (!model) return 0.3;
-    const tierIndex = tierOrder.indexOf(classification.tier);
+    // TD-13：classification.tier 现为 ScenarioTier | 'deterministic'，
+    //        'deterministic' 不在 tierOrder 中，indexOf 返回 -1（与原运行时行为一致）
+    const tier = classification.tier;
+    const tierIndex = tier === 'deterministic' ? -1 : tierOrder.indexOf(tier);
     const modelTierIndex = tierOrder.indexOf(model.tier);
     const distance = Math.abs(tierIndex - modelTierIndex);
     return Math.max(0, 1 - distance * 0.25);

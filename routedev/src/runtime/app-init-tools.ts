@@ -263,17 +263,16 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   if (phase53BudgetCfg?.enabled) {
     const budgetMonitorModulePath = '../agent/budget-monitor.js';
     import(budgetMonitorModulePath)
-      .then((mod: { BudgetMonitor: new (opts: { tokenLimit: number; costLimit?: number; tokenWarnRatio?: number; toolLoopThreshold?: number }) => unknown }) => {
+      .then((mod: { BudgetMonitor: new (opts: { tokenLimit: number; costLimit?: number; tokenWarnRatio?: number; toolLoopThreshold?: number }) => import('../agent/budget-monitor.js').BudgetMonitor }) => {
         const monitor = new mod.BudgetMonitor({
           tokenLimit: config.router.budget.dailyLimit,
           costLimit: phase53BudgetCfg.costLimitPerSession,
           tokenWarnRatio: phase53BudgetCfg.tokenWarnRatio,
           toolLoopThreshold: phase53BudgetCfg.toolLoopThreshold,
         });
-        // feature-detect：方法可能由其他子代理添加
-        const loop = agentLoop as unknown as { setBudgetMonitor?: (m: unknown) => void };
-        if (typeof loop.setBudgetMonitor === 'function') {
-          loop.setBudgetMonitor(monitor);
+        // setBudgetMonitor 已在 ReActAgentLoop 声明；保留 typeof 守卫兼容装配顺序
+        if (typeof agentLoop.setBudgetMonitor === 'function') {
+          agentLoop.setBudgetMonitor(monitor);
           logger.debug('BudgetMonitor injected', {
             via: 'setBudgetMonitor',
             tokenLimit: config.router.budget.dailyLimit,
@@ -303,14 +302,13 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   if (trustCfg) {
     const trustModulePath = '../tools/trust-gradient.js';
     import(trustModulePath)
-      .then((mod: { TrustGradientManager: new (sessionId: string, level?: string) => { setLevel: (l: string) => void; getLevel: () => string } }) => {
+      .then((mod: { TrustGradientManager: new (sessionId: string, level?: string) => import('../tools/trust-gradient.js').TrustGradientManager }) => {
         const sessionId = trace!.getSessionId() ?? `app-${Date.now()}`;
         const trustManager = new mod.TrustGradientManager(sessionId, trustCfg.baseLevel);
         trustManager.setLevel(trustCfg.baseLevel);
-        // 注入 PermissionEngine（feature-detect：方法可能由其他子代理添加）
-        const engine = permissionEngine as unknown as { setTrustGradientManager?: (m: unknown) => void };
-        if (typeof engine.setTrustGradientManager === 'function') {
-          engine.setTrustGradientManager(trustManager);
+        // setTrustGradientManager 已在 PermissionEngine 声明；保留 typeof 守卫兼容装配顺序
+        if (typeof permissionEngine.setTrustGradientManager === 'function') {
+          permissionEngine.setTrustGradientManager(trustManager);
         }
         logger.info('TrustGradientManager registered', {
           baseLevel: trustCfg.baseLevel,
@@ -360,10 +358,9 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
           engine.addPolicy(p);
         }
       }
-      // 注册到 AgentLoop 的输入/工具调用链（feature-detect：方法可能由其他子代理添加）
-      const loop = agentLoop as unknown as { setPolicyEngine?: (e: unknown) => void };
-      if (typeof loop.setPolicyEngine === 'function') {
-        loop.setPolicyEngine(engine);
+      // setPolicyEngine 已在 ReActAgentLoop 声明；保留 typeof 守卫兼容装配顺序
+      if (typeof agentLoop.setPolicyEngine === 'function') {
+        agentLoop.setPolicyEngine(engine);
       }
       logger.info('PolicyEngine registered', {
         intentGuard: policiesCfg.intentGuard,

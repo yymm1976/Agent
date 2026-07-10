@@ -351,7 +351,9 @@ export class MCPClientManager {
    */
   private killChildProcess(state: ConnectionState): void {
     try {
-      const transport = (state.client as unknown as { transport?: { child?: { kill?: () => void; killed?: boolean; pid?: number } } }).transport;
+      // Client 类型未公开 transport 字段，但运行时持有；transport 为可选字段，
+      // 与 Client 结构兼容，单重断言即可
+      const transport = (state.client as { transport?: { child?: { kill?: () => void; killed?: boolean; pid?: number } } }).transport;
       const child = transport?.child;
       if (child && typeof child.kill === 'function' && !child.killed) {
         child.kill();

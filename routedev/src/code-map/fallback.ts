@@ -21,8 +21,9 @@ export class CodeMapFallback {
   static async checkTreeSitterAvailability(): Promise<{ available: boolean; reason?: string }> {
     try {
       // 动态 import 避免 tree-sitter 不可用时影响整个模块加载
-      // 注：web-tree-sitter 的实际类型与最小声明不一致（init 在 Parser 静态方法上），
-      //     先转 unknown 再转目标类型，避免 TypeScript 类型重叠检查失败
+      // 保留双断言：web-tree-sitter 的 d.ts (export = Parser) 在 esModuleInterop 下
+      // 被 TS 包装为 { default: typeof Parser }，static init 在 default 上而非 mod 顶层，
+      // 单次断言无法覆盖 default 与直挂两种 interop 形态，需 unknown 中转
       const mod = await import('web-tree-sitter') as unknown as {
         default?: { init: (opts?: unknown) => Promise<void> };
         init?: (opts?: unknown) => Promise<void>;

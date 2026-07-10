@@ -50,6 +50,8 @@ export class ToolRegistryAdapter implements ToolExecutorAdapter {
     return this.registry.list().map(tool => ({
       name: tool.definition.name,
       description: tool.definition.description,
+      // 保留双断言：ToolParameterSchema 含字面量 type:'object'，与 Record<string, unknown>
+      // 不充分重叠；LLMToolDefinition 在 router/types.ts（EXCLUDED），无法改 parameters 类型
       parameters: tool.definition.parameters as unknown as Record<string, unknown>,
     }));
   }

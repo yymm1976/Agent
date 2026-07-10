@@ -149,7 +149,8 @@ function getDeclaredPermissions(manifest: PluginManifest): PluginPermission[] {
 
 /** 单个插件的内部记录：实例 + 清单 + 目录 + 状态 */
 interface PluginRecord {
-  instance: Plugin;
+  // 加载失败时 instance 为 null（避免 null as unknown as Plugin 双断言）
+  instance: Plugin | null;
   manifest: PluginManifest;
   pluginDir: string;
   /** 加载是否成功 */
@@ -350,7 +351,7 @@ export class PluginRegistry {
       const errorMsg = err instanceof Error ? err.message : String(err);
       logger.warn(`Plugin load failed: ${manifest.id}`, { error: errorMsg });
       this.plugins.set(manifest.id, {
-        instance: null as unknown as Plugin,
+        instance: null,
         manifest,
         pluginDir,
         loaded: false,
@@ -395,7 +396,8 @@ export class PluginRegistry {
       try {
         // C5 修复：为每个插件创建受限的初始化上下文（基于声明的权限）
         const restrictedContext = createRestrictedContext(record.manifest, baseContext);
-        // 1. 调用插件 init()
+        // 1. 调用插件 init()（record.error 已跳过加载失败项，instance 此处非空）
+        if (!record.instance) continue;
         await record.instance.init(restrictedContext);
         record.loaded = true;
 
@@ -418,6 +420,8 @@ export class PluginRegistry {
    */
   private bridgePlugin(record: PluginRecord): boolean {
     const plugin = record.instance;
+    // instance 可能为 null（加载失败），bridgePlugin 仅在 init 成功后调用，但防御性检查
+    if (!plugin) return false;
     if (!plugin.enabled) return true;
 
     // C5 修复：获取插件声明的权限

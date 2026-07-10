@@ -522,13 +522,13 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   if (trustCfg) {
     const trustModulePath = '../tools/trust-gradient.js';
     import(trustModulePath)
-      .then((mod: { TrustGradientManager: new (sessionId: string, level?: string) => { setLevel: (l: string) => void; getLevel: () => string } }) => {
+      .then((mod: { TrustGradientManager: new (sessionId: string, level?: string) => import('../tools/trust-gradient.js').TrustGradientManager }) => {
         const sessionId = trace!.getSessionId() ?? `app-${Date.now()}`;
         const trustManager = new mod.TrustGradientManager(sessionId, trustCfg.baseLevel);
         trustManager.setLevel(trustCfg.baseLevel);
-        const engine = permissionEngine! as unknown as { setTrustGradientManager?: (m: unknown) => void };
-        if (typeof engine.setTrustGradientManager === 'function') {
-          engine.setTrustGradientManager(trustManager);
+        // setTrustGradientManager 已在 PermissionEngine 声明；保留 typeof 守卫兼容装配顺序
+        if (typeof permissionEngine!.setTrustGradientManager === 'function') {
+          permissionEngine!.setTrustGradientManager(trustManager);
         }
         logger.info('TrustGradientManager registered', {
           baseLevel: trustCfg.baseLevel,
@@ -676,23 +676,22 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   if (phase53BreakerCfg?.enabled) {
     const breakerModulePath = '../agent/circuit-breaker.js';
     import(breakerModulePath)
-      .then((mod: { CircuitBreaker: new (config?: { failureThreshold?: number; resetTimeout?: number; halfOpenMaxAttempts?: number }) => unknown }) => {
+      .then((mod: { CircuitBreaker: new (config?: { failureThreshold?: number; resetTimeout?: number; halfOpenMaxAttempts?: number }) => import('../agent/circuit-breaker.js').CircuitBreaker }) => {
         const breaker = new mod.CircuitBreaker({
           failureThreshold: phase53BreakerCfg.failureThreshold,
           resetTimeout: phase53BreakerCfg.resetTimeout,
           halfOpenMaxAttempts: phase53BreakerCfg.halfOpenMaxAttempts,
         });
-        // feature-detect：delegationLifecycle 的 setter 可能由其他子代理添加
-        const dl = delegationLifecycle as unknown as { setCircuitBreaker?: (b: unknown) => void } | null;
-        if (dl && typeof dl.setCircuitBreaker === 'function') {
-          dl.setCircuitBreaker(breaker);
+        // setCircuitBreaker 已在 SubAgentLifecycle 声明；保留 typeof 守卫兼容装配顺序
+        if (delegationLifecycle && typeof delegationLifecycle.setCircuitBreaker === 'function') {
+          delegationLifecycle.setCircuitBreaker(breaker);
         }
         logger.debug('CircuitBreaker injected', {
           via: 'setCircuitBreaker',
           failureThreshold: phase53BreakerCfg.failureThreshold,
           targets: {
             workerExecutor: false,
-            delegationLifecycle: !!dl && typeof dl.setCircuitBreaker === 'function',
+            delegationLifecycle: !!delegationLifecycle && typeof delegationLifecycle.setCircuitBreaker === 'function',
           },
         });
       })
@@ -1132,10 +1131,10 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
             error: e instanceof Error ? e.message : String(e),
           });
         });
-        // 注入到 agentLoop（feature-detect）
-        const loop = agentLoop as unknown as { setMacroManager?: (m: unknown) => void };
-        if (typeof loop.setMacroManager === 'function') {
-          loop.setMacroManager(macroManager);
+        // setMacroManager 已在 ReActAgentLoop 声明；保留 typeof 守卫兼容装配顺序
+        // agentLoop 在本装配阶段已由 createToolSubsystem 创建（类型可选以兼容装配顺序）
+        if (typeof agentLoop!.setMacroManager === 'function') {
+          agentLoop!.setMacroManager(macroManager);
         }
         logger.info('Phase 48 macros module integrated', { enabled: true });
       })

@@ -649,5 +649,7 @@ export function parseAgentYAML(yaml: string): AgentYAMLDefinition {
     }
   }
 
+  // 保留双断言：result 是 Record<string, unknown>（手写 YAML 解析器输出），
+  // AgentYAMLDefinition 是具体 interface，Record 与 interface 结构不充分重叠
   return result as unknown as AgentYAMLDefinition;
 }

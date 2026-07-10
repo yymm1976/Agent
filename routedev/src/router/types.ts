@@ -102,12 +102,25 @@ export interface TokenBudget {
 // 场景分类结果
 // ============================================================
 
-/** 分类器输出 */
+/**
+ * 分类结果来源
+ * TD-13：统一 deterministic 与非 deterministic 路径的类型，消除 classifier.ts 中的 as unknown as 断言
+ */
+export type ClassificationSource = 'rule' | 'llm' | 'deterministic';
+
+/**
+ * 分类器输出（统一支持 deterministic 与非 deterministic 路径）
+ * - 非 deterministic 路径：tier 为 ScenarioTier，source 为 'rule' | 'llm'
+ * - deterministic 路径：tier 为 'deterministic'，source 为 'deterministic'，matchedRuleId 携带规则 ID
+ */
 export interface ClassificationResult {
-  tier: ScenarioTier;
+  /** 场景等级；deterministic 规则命中时为 'deterministic'（不在 ScenarioTier 枚举中，通过联合类型扩展） */
+  tier: ScenarioTier | 'deterministic';
   confidence: number;
   reasoning: string;
-  source: 'rule' | 'llm';
+  source: ClassificationSource;
+  /** deterministic 命中时携带的规则 ID，供路由层透传；其他路径无此字段 */
+  matchedRuleId?: string;
 }
 
 /** 分类器上下文（Phase 32 Task 4.6：为 LLM 分类提供项目背景信息） */

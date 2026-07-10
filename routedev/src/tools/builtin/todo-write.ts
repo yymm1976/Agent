@@ -169,7 +169,8 @@ export class TodoWriteTool implements ITool {
               success: true,
               output: '待办列表为空',
               durationMs: 0,
-              metadata: snapshot as unknown as Record<string, unknown>,
+              // Object.fromEntries 返回 Record<string, unknown>，避免 snapshot 强类型到 Record 的双断言
+              metadata: Object.fromEntries(Object.entries(snapshot)),
             };
           }
 
@@ -187,7 +188,8 @@ export class TodoWriteTool implements ITool {
             success: true,
             output: formatted + summary,
             durationMs: 0,
-            metadata: snapshot as unknown as Record<string, unknown>,
+            // Object.fromEntries 返回 Record<string, unknown>，避免 snapshot 强类型到 Record 的双断言
+            metadata: Object.fromEntries(Object.entries(snapshot)),
           };
         }
 
