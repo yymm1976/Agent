@@ -31,9 +31,13 @@ import { createTray } from './tray.js';
 import { initUpdater } from './updater.js';
 import { listCatalog, searchCatalog } from './mcp-catalog.js';
 // TD-08：IPC 参数统一校验工具
-import { ipcGuard } from './ipc-guard.js';
+// Phase 79 Task 7：createValidatedHandler 统一 IPC handler 参数校验中间件
+import { ipcGuard, createValidatedHandler } from './ipc-guard.js';
 // F-032：fail-open 降级日志
 import { logger } from '../../src/utils/logger.js';
+// F-027/F-029：Zod schema 用于 config:save / hook:create 的完整 payload 校验
+import { z } from 'zod';
+import { AppConfigSchema } from '../../src/config/schema.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -252,6 +256,14 @@ function createWindow(splash?: BrowserWindow | null): void {
     }
     return { action: 'deny' };
   });
+
+  // F-044 修复：will-navigate 拦截——渲染进程导航仅允许 file://（本地构建产物）
+  // 和 http://localhost:（dev server），阻止通过超链接/重定向跳转到外部站点导致 XSS/钓鱼
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith('file://') && !url.startsWith('http://localhost:')) {
+      event.preventDefault();
+    }
+  });
 }
 
 app.whenReady().then(async () => {
@@ -303,7 +315,8 @@ app.whenReady().then(async () => {
       },
     });
     // C2 修复：将初始工作目录登记为已授权
-    authorizedCwds.add(path.resolve(process.cwd()));
+    // F-038 修复：与 add/has 统一 toLowerCase 归一化
+    authorizedCwds.add(path.resolve(process.cwd()).toLowerCase());
     await engine.initialize();
   } catch (err) {
     console.error('Engine initialization failed:', err);
@@ -377,6 +390,8 @@ ipcMain.on('chat:send', (_event, rawPayload: unknown) => {
     return;
   }
   engine.sendChat(payload.text).catch((err: Error) => {
+    // F-059 修复：记录错误日志便于主进程侧排障
+    console.error('[chat:send] failed:', err);
     // I26 修复：确保所有异常都反馈到前端，并发送 done 事件终止 loading 状态
     sendChatStream({ type: 'error', error: err.message || '发送消息时发生未知错误' });
     sendChatStream({ type: 'done' });
@@ -415,12 +430,12 @@ ipcMain.handle('plan:get-revisions', async (_event, goalId: string) => {
   try {
     const path = await import('node:path');
     const fs = await import('node:fs/promises');
-    type PlanConfig = { plan?: { revisionHistoryPath?: string } };
-    const cfg = (engine?.getConfig?.() ?? {}) as PlanConfig;
+    // F-046 修复：删除局部 PlanConfig 类型，使用真实 AppConfig 类型
+    const cfg = engine?.getConfig?.();
     // F-003 修复：拒绝绝对路径 + 边界校验，防止 revisionHistoryPath 越界
     const cwdResolved = path.resolve(process.cwd());
     let revisionDir: string;
-    if (cfg.plan?.revisionHistoryPath) {
+    if (cfg?.plan?.revisionHistoryPath) {
       const rawPath = cfg.plan.revisionHistoryPath;
       if (path.isAbsolute(rawPath)) {
         logger.warn('revisionHistoryPath 不允许绝对路径', { revisionHistoryPath: rawPath });
@@ -502,6 +517,10 @@ ipcMain.handle('goal:resume', async (_event, rawGoalId: unknown): Promise<{ succ
   if (goalId.length === 0) {
     return { success: false, error: 'goalId 不能为空' };
   }
+  // F-045 修复：goalId 字符集正则校验，防止路径穿越/注入
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(goalId)) {
+    return { success: false, error: 'goalId 含非法字符' };
+  }
   try {
     return (await engine?.resumeGoal?.(goalId)) ?? { success: false, error: '引擎未初始化' };
   } catch (err) {
@@ -536,6 +555,22 @@ ipcMain.on('chat:sync-history', (_event, messages: import('../../src/router/type
   if (!Array.isArray(messages) || messages.length > 10000) {
     console.error('[chat:sync-history] 无效 messages');
     return;
+  }
+  // F-037 修复：逐条校验消息 role/content，禁止 renderer 发送 role: 'system'
+  const validRoles = ['user', 'assistant', 'tool'];
+  for (const msg of messages) {
+    if (!msg || typeof msg !== 'object') {
+      console.error('[chat:sync-history] 消息非对象');
+      return;
+    }
+    if (typeof msg.role !== 'string' || !validRoles.includes(msg.role)) {
+      console.error('[chat:sync-history] 非法 role:', msg.role);
+      return;
+    }
+    if (typeof msg.content !== 'string') {
+      console.error('[chat:sync-history] content 非字符串');
+      return;
+    }
   }
   engine?.syncConversationHistory(messages);
 });
@@ -577,6 +612,19 @@ function maskSensitiveConfig(config: import('../../src/config/schema.js').AppCon
     if (lp.qwen) lp.qwen = { ...lp.qwen, apiKey: maskApiKey(lp.qwen.apiKey) ?? '' };
     masked.llmProviders = lp;
   }
+  // F-041 修复：脱敏 webSearch 中的所有 *ApiKey 字段
+  if (masked.webSearch) {
+    const ws = { ...masked.webSearch };
+    ws.glmApiKey = maskApiKey(ws.glmApiKey) ?? '';
+    ws.metasoApiKey = maskApiKey(ws.metasoApiKey) ?? '';
+    ws.baiduApiKey = maskApiKey(ws.baiduApiKey) ?? '';
+    ws.tavilyApiKey = maskApiKey(ws.tavilyApiKey) ?? '';
+    ws.bingApiKey = maskApiKey(ws.bingApiKey) ?? '';
+    ws.perplexityApiKey = maskApiKey(ws.perplexityApiKey) ?? '';
+    ws.exaApiKey = maskApiKey(ws.exaApiKey) ?? '';
+    ws.braveApiKey = maskApiKey(ws.braveApiKey) ?? '';
+    masked.webSearch = ws;
+  }
   return masked;
 }
 
@@ -588,12 +636,12 @@ ipcMain.handle('config:get', async (): Promise<import('../../src/config/schema.j
 });
 
 // 配置：保存
-// TD-08：用 ipcGuard 统一参数校验（AppConfig 字段众多，此处用 object({}) 校验非空对象，
-// passthrough 策略保留全部字段供 saveConfig 持久化）
+// F-027 修复：用完整 Zod Schema parse 替代 ipcGuard.object({}) + as 强制转换，
+// 确保 config:save 入参符合 AppConfig 结构（含 security.sandbox / permissionProfile 等安全字段）
 ipcMain.handle('config:save', async (_event, rawConfig: unknown): Promise<ConfigSaveResult> => {
   let config: import('../../src/config/schema.js').AppConfig;
   try {
-    config = ipcGuard.object<import('../../src/config/schema.js').AppConfig & Record<string, unknown>>({})(rawConfig) as import('../../src/config/schema.js').AppConfig;
+    config = AppConfigSchema.parse(rawConfig);
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : '无效的参数' };
   }
@@ -607,6 +655,17 @@ ipcMain.handle('config:save', async (_event, rawConfig: unknown): Promise<Config
         isMaskedApiKey(config.llmProviders.gemini?.apiKey) ||
         isMaskedApiKey(config.llmProviders.deepseek?.apiKey) ||
         isMaskedApiKey(config.llmProviders.qwen?.apiKey)
+      )) ||
+      // F-041 修复：webSearch.*ApiKey 掩码检测
+      (config.webSearch && (
+        isMaskedApiKey(config.webSearch.glmApiKey) ||
+        isMaskedApiKey(config.webSearch.metasoApiKey) ||
+        isMaskedApiKey(config.webSearch.baiduApiKey) ||
+        isMaskedApiKey(config.webSearch.tavilyApiKey) ||
+        isMaskedApiKey(config.webSearch.bingApiKey) ||
+        isMaskedApiKey(config.webSearch.perplexityApiKey) ||
+        isMaskedApiKey(config.webSearch.exaApiKey) ||
+        isMaskedApiKey(config.webSearch.braveApiKey)
       ));
     if (hasMaskedKey) {
       const diskConfig = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
@@ -636,6 +695,17 @@ ipcMain.handle('config:save', async (_event, rawConfig: unknown): Promise<Config
           lp.qwen = { ...lp.qwen!, apiKey: dlp.qwen!.apiKey };
         }
       }
+      // F-041 修复：回填 webSearch 中的掩码 apiKey
+      if (config.webSearch && diskConfig.webSearch) {
+        const ws = config.webSearch;
+        const dws = diskConfig.webSearch;
+        const webSearchKeys = ['glmApiKey', 'metasoApiKey', 'baiduApiKey', 'tavilyApiKey', 'bingApiKey', 'perplexityApiKey', 'exaApiKey', 'braveApiKey'] as const;
+        for (const key of webSearchKeys) {
+          if (isMaskedApiKey(ws[key]) && !isMaskedApiKey(dws[key])) {
+            ws[key] = dws[key];
+          }
+        }
+      }
     }
     await saveConfig(config);
     // 同步更新 engine 内部配置，确保自主度等设置实时生效
@@ -649,25 +719,37 @@ ipcMain.handle('config:save', async (_event, rawConfig: unknown): Promise<Config
 });
 
 // 配置：重新加载
-ipcMain.handle('config:reload', async (): Promise<import('../../src/config/schema.js').AppConfig> => {
-  try {
-    const cfg = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
-    await engine?.reloadConfig(cfg);
-    // G-002 修复：返回前对敏感字段脱敏，防止明文 apiKey 泄露到渲染进程
-    return maskSensitiveConfig(cfg);
-  } catch (err) {
-    console.error('[config:reload] 重载配置失败:', err);
-    throw new Error(`重载配置失败: ${err instanceof Error ? err.message : String(err)}`);
-  }
-});
+// Phase 79 Task 7：用 createValidatedHandler 包装（无参数 handler，校验层留空）
+ipcMain.handle('config:reload', createValidatedHandler<undefined, import('../../src/config/schema.js').AppConfig>(
+  'config:reload',
+  () => null, // 无参数 handler，无需参数校验
+  async () => {
+    try {
+      const cfg = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+      await engine?.reloadConfig(cfg);
+      // G-002 修复：返回前对敏感字段脱敏，防止明文 apiKey 泄露到渲染进程
+      return maskSensitiveConfig(cfg);
+    } catch (err) {
+      console.error('[config:reload] 重载配置失败:', err);
+      throw new Error(`重载配置失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  },
+));
 
 // 命令执行（用于 GUI 中的快捷命令，如 /clear、/status 等）
-ipcMain.handle('command:execute', async (_event, payload: CommandExecutePayload): Promise<unknown> => {
-  if (!payload || typeof payload.text !== 'string' || payload.text.length === 0 || payload.text.length > 10000) {
-    return { error: '无效的参数' };
-  }
-  return engine?.executeCommand(payload.text) ?? { error: '引擎未初始化' };
-});
+// Phase 79 Task 7：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('command:execute', createValidatedHandler<CommandExecutePayload, unknown>(
+  'command:execute',
+  (args) => {
+    if (!args || typeof args !== 'object') return '参数必须是对象';
+    const p = args as CommandExecutePayload;
+    if (typeof p.text !== 'string' || p.text.length === 0 || p.text.length > 10000) return '无效的参数';
+    return null;
+  },
+  async (args) => {
+    return engine?.executeCommand(args.text) ?? { error: '引擎未初始化' };
+  },
+));
 
 // IPC tool:execute 允许的工具白名单（仅设置页所需工具）
 // TD-07：拒绝白名单外的工具，防止渲染进程被劫持后通过 IPC 调用任意工具
@@ -678,21 +760,29 @@ const IPC_TOOL_WHITELIST = new Set([
 ]);
 
 // 工具执行（用于设置页中的测试按钮等）
-ipcMain.handle('tool:execute', async (_event, payload: ToolExecutePayload): Promise<unknown> => {
-  // TD-07：白名单校验——非白名单工具直接拒绝
-  if (!payload || typeof payload.name !== 'string' || payload.name.length === 0 || payload.name.length > 256) {
-    return { success: false, error: '无效的参数' };
-  }
-  if (!IPC_TOOL_WHITELIST.has(payload.name)) {
-    console.warn(`[IPC] tool:execute 拒绝非白名单工具: ${payload.name}`);
-    return { success: false, error: '该工具不允许通过 IPC 直接调用' };
-  }
-  // 安全：args 必须是对象（或 null/undefined），拒绝数组/原始值
-  if (payload.args != null && (typeof payload.args !== 'object' || Array.isArray(payload.args))) {
-    return { success: false, error: '无效的参数' };
-  }
-  return engine?.executeTool(payload.name, payload.args) ?? { error: '引擎未初始化' };
-});
+// Phase 79 Task 7：用 createValidatedHandler 包装，统一参数校验
+// 与 Task 4 权限层配合：权限校验在 handler 内部执行（参数校验之后）
+ipcMain.handle('tool:execute', createValidatedHandler<ToolExecutePayload, unknown>(
+  'tool:execute',
+  (args) => {
+    if (!args || typeof args !== 'object') return '参数必须是对象';
+    const p = args as ToolExecutePayload;
+    // TD-07：白名单校验——非白名单工具直接拒绝
+    if (typeof p.name !== 'string' || p.name.length === 0 || p.name.length > 256) return '无效的 name';
+    if (!IPC_TOOL_WHITELIST.has(p.name)) {
+      console.warn(`[IPC] tool:execute 拒绝非白名单工具: ${p.name}`);
+      return '该工具不允许通过 IPC 直接调用';
+    }
+    // 安全：args 必须是对象（或 null/undefined），拒绝数组/原始值
+    if (p.args != null && (typeof p.args !== 'object' || Array.isArray(p.args))) return '无效的 args';
+    return null;
+  },
+  async (args) => {
+    // Phase 79 Task 4：传入 callContext 标记 IPC 来源
+    // executeTool 内部据此放行，无 callContext 时 fail-closed 拒绝（防止绕过 Loop 直接调 IPC）
+    return engine?.executeTool(args.name, args.args, { source: 'ipc' }) ?? { error: '引擎未初始化' };
+  },
+));
 
 // MCP 状态
 ipcMain.handle('mcp:status', async (): Promise<MCPStatus> => {
@@ -859,6 +949,12 @@ ipcMain.handle('fs:read', async (_event, filePath: string): Promise<{ data: stri
       return { data: '', error: '文件被安全策略保护' };
     }
     const fs = await import('node:fs/promises');
+    // F-036 修复：读取前检查文件大小，超过 5MB 拒绝读取，防止大文件耗尽内存
+    const fileStats = await fs.stat(realPath);
+    const MAX_READ_SIZE = 5 * 1024 * 1024; // 5MB
+    if (fileStats.size > MAX_READ_SIZE) {
+      return { data: '', error: '文件过大（超过 5MB 限制）' };
+    }
     const data = await fs.readFile(realPath, 'utf-8');
     return { data };
   } catch (err) {
@@ -882,8 +978,9 @@ ipcMain.handle('fs:select-folder', async (_event, defaultPath?: string): Promise
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   // C2 修复：选择器返回的路径记入授权集合
+  // F-038 修复：add/has 统一 toLowerCase 归一化，避免大小写差异导致授权校验不一致
   const selected = path.resolve(result.filePaths[0]);
-  authorizedCwds.add(selected);
+  authorizedCwds.add(selected.toLowerCase());
   return selected;
 });
 
@@ -946,10 +1043,12 @@ ipcMain.handle('fs:open-folder', async (_event, filePath: string): Promise<boole
 ipcMain.on('project:set-cwd', (_event, cwd: string) => {
   if (!engine || !cwd) return;
   const resolved = path.resolve(cwd);
+  // F-038 修复：授权集合检查使用 toLowerCase 归一化（与 add 时一致）
+  const normalizedKey = resolved.toLowerCase();
   // 必须在授权集合内，或通过基础校验（启动时初始 cwd 由 engine 初始化注入）
   // G-014 修复：授权与校验应为"与"关系——既未授权又未通过校验才拒绝改为任一不满足即拒绝
   // 原逻辑 && 意味着"未授权 且 未通过校验"才拒绝，导致未授权但通过基础校验的路径被放行
-  if (!authorizedCwds.has(resolved) || !isValidProjectCwd(resolved)) {
+  if (!authorizedCwds.has(normalizedKey) || !isValidProjectCwd(resolved)) {
     console.error('[project:set-cwd] 拒绝未授权的工作目录:', resolved);
     return;
   }
@@ -1050,28 +1149,37 @@ ipcMain.handle('hook:toggle', async (_event, payload: { hookId: string; enabled:
 });
 
 // 创建自定义 Hook（模板模式或自定义模式）
-// 参数 payload：{ templateId: string } 或 { name, event, code, description?, ... }
+// F-029 修复：用 Zod schema 对完整 payload parse 替代手动 as 强制转换，
+// 覆盖 condition/failBehavior/priority/timeout 等字段
+const hookCreateSchema = z.union([
+  z.object({
+    templateId: z.string().min(1).max(256),
+  }),
+  z.object({
+    name: z.string().min(1).max(256),
+    event: z.string().min(1).max(256),
+    code: z.string().min(1).max(100000),
+    description: z.string().max(10000).optional(),
+    priority: z.number().int().optional(),
+    condition: z.object({
+      toolName: z.string().max(256).optional(),
+      filePattern: z.string().max(1024).optional(),
+    }).optional(),
+    failBehavior: z.enum(['warn', 'block', 'silent']).optional(),
+  }),
+]);
 ipcMain.handle('hook:create', async (_event, payload: unknown): Promise<{ success: boolean; hookId?: string; error?: string }> => {
   if (!payload || typeof payload !== 'object') {
     return { success: false, error: '无效的参数' };
   }
-  const p = payload as { templateId?: string; name?: string; event?: string; code?: string };
-  const hasTemplateId = typeof p.templateId === 'string' && p.templateId.length > 0 && p.templateId.length <= 256;
-  const hasName = typeof p.name === 'string' && p.name.length > 0 && p.name.length <= 256;
-  if (!hasTemplateId && !hasName) {
-    return { success: false, error: '无效的参数' };
-  }
-  // F-N026 修复：自定义模式（有 name 无 templateId）时补 event/code 校验
-  if (!hasTemplateId && hasName) {
-    if (typeof p.event !== 'string' || p.event.length === 0 || p.event.length > 256) {
-      return { success: false, error: '无效的 event' };
-    }
-    if (typeof p.code !== 'string' || p.code.length === 0 || p.code.length > 100000) {
-      return { success: false, error: '无效的 code' };
-    }
+  let parsed: z.infer<typeof hookCreateSchema>;
+  try {
+    parsed = hookCreateSchema.parse(payload);
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : '无效的参数' };
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
-  return engine.createHook(payload as Parameters<typeof engine.createHook>[0]);
+  return engine.createHook(parsed);
 });
 
 // 删除自定义 Hook

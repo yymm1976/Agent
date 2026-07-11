@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { logger } from '../utils/logger.js';
 import type { DB } from './database.js';
 
 /**
@@ -49,13 +50,13 @@ export function exportArtifact(db: DB, repoRoot: string): { ratio: number; artif
   // 1. VACUUM INTO 临时文件（必须在 db 连接上执行，会生成一个干净的副本）
   try {
     // 清理可能残留的临时文件
-    try { fs.unlinkSync(tmpVacuumPath); } catch { /* 忽略不存在 */ }
+    try { fs.unlinkSync(tmpVacuumPath); } catch (e) { logger.debug('cleanup failed', { error: e instanceof Error ? e.message : String(e) }); }
     // VACUUM INTO 要求路径用单引号包裹，路径内的单引号需转义为 ''
     const escapedPath = tmpVacuumPath.replace(/'/g, "''");
     db.exec(`VACUUM INTO '${escapedPath}'`);
   } catch (e) {
     console.warn(`[artifact] VACUUM INTO 失败，跳过导出: ${(e as Error).message}`);
-    try { fs.unlinkSync(tmpVacuumPath); } catch { /* 忽略 */ }
+    try { fs.unlinkSync(tmpVacuumPath); } catch (e) { logger.debug('cleanup failed', { error: e instanceof Error ? e.message : String(e) }); }
     return null;
   }
 
@@ -73,12 +74,12 @@ export function exportArtifact(db: DB, repoRoot: string): { ratio: number; artif
     fs.writeFileSync(artifactPath, compressed);
   } catch (e) {
     console.warn(`[artifact] zstd 压缩写入失败: ${(e as Error).message}`);
-    try { fs.unlinkSync(tmpVacuumPath); } catch { /* 忽略 */ }
+    try { fs.unlinkSync(tmpVacuumPath); } catch (e) { logger.debug('cleanup failed', { error: e instanceof Error ? e.message : String(e) }); }
     return null;
   }
 
   // 3. 删除临时文件
-  try { fs.unlinkSync(tmpVacuumPath); } catch { /* 忽略 */ }
+  try { fs.unlinkSync(tmpVacuumPath); } catch (e) { logger.debug('cleanup failed', { error: e instanceof Error ? e.message : String(e) }); }
 
   // 4. 压缩比校验
   const ratio = compressedSize > 0 ? originalSize / compressedSize : 0;

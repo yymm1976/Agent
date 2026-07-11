@@ -17,8 +17,6 @@ export type {
   ApprovalLevel,
   ToolCategory,
   AutonomyMode,
-  ChannelEntryConfig,
-  ChannelType,
   ConfigLayeringConfig,
   DelegationPolicyConfig,
   Phase52IntegrationConfig,
@@ -26,6 +24,7 @@ export type {
   ResultSchemaConfig,
   ReviewerPolicyConfig,
   SandboxLevel,
+  PacksConfig,
 } from '../../src/config/schema.js';
 
 // re-export 被 desktop/ 实际使用的常量（值）

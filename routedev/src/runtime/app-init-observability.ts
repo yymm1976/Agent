@@ -30,6 +30,8 @@ import {
 } from '../observability/analytics-queue.js';
 import { logger } from '../utils/logger.js';
 import * as path from 'node:path';
+// Phase 80 Task 2：本地使用计数器
+import { UsageCounter } from '../observability/usage-counter.js';
 import type { InitContext, AppDependencies } from './app-init.js';
 
 /**
@@ -71,7 +73,12 @@ export function createObservabilitySubsystem(ctx: InitContext): Partial<AppDepen
   const blackboard = new Blackboard();
   const trace = new TraceCollector({ storageDir: undefined });
   const audit = new AuditLogger(trace.getSessionId() ?? 'app');
+  // TD: ProjectMemoryManager set 后无 get 消费方，数据流断裂，待接入或清理
   const projectMemory = new ProjectMemoryManager(cwd, config.projectMemory);
+
+  // Phase 80 Task 2：创建本地使用计数器（仅本地，禁止云上报，fail-open）
+  // 供工具执行 / slash 命令 / Pack 加载等关键路径调用 increment 累加计数
+  const usageCounter = new UsageCounter();
 
   // Phase 71 Task D7：注册 offload 清理钩子
   // - 启动时立即清理 7 天前的孤儿文件（防止异常退出累积）
@@ -105,6 +112,7 @@ export function createObservabilitySubsystem(ctx: InitContext): Partial<AppDepen
   loadProjectDoc(cwd, config.projectDoc).then((doc) => {
     if (doc) {
       logger.info('ProjectDoc loaded', { length: doc.length });
+      // TD: ProjectMemoryManager set 后无 get 消费方，数据流断裂，待接入或清理
       projectMemory.setProjectDoc(doc);
     } else {
       logger.debug('ProjectDoc: no project document found');
@@ -118,9 +126,12 @@ export function createObservabilitySubsystem(ctx: InitContext): Partial<AppDepen
   ctx.audit = audit;
   ctx.prompts = prompts;
   ctx.blackboard = blackboard;
+  // TD: ProjectMemoryManager set 后无 get 消费方，数据流断裂，待接入或清理
   ctx.projectMemory = projectMemory;
   ctx.offloadSessionId = offloadSessionId;
   ctx.offloadRootDir = offloadRootDir;
+  // Phase 80 Task 2：写入 ctx 供 tools 子系统注入 ToolExecutor
+  ctx.usageCounter = usageCounter;
 
   // ===== Phase 53 Task 12：Doctor 健康检查（受 config.phase53Integration.doctor.runOnStartup 守护） =====
   // 启动时异步运行环境探测，结果输出到 logger；不阻塞主流程
@@ -191,5 +202,6 @@ export function createObservabilitySubsystem(ctx: InitContext): Partial<AppDepen
     blackboard,
     trace,
     audit,
+    usageCounter,
   };
 }

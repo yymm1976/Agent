@@ -82,14 +82,6 @@ export const DEFAULT_CONFIG: AppConfig = {
     integrityManifestPath: '.routedev/integrity-manifest.json',
     // approval 为可选字段，不配置时使用引擎内置的 DEFAULT_APPROVAL
   },
-  channels: {
-    entries: [],
-    port: 9800,
-    maxResponseLength: 2000,
-    requestTimeout: 60000,
-    // Phase 53 接线修复：默认不信任反代头，未启用 Bearer Token 认证
-    trustProxy: false,
-  },
   autonomy: {
     defaultMode: 'semi',
     // 自动批准只读安全工具，避免频繁打断用户
@@ -284,24 +276,26 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   // Phase 40：渐进式信任配置（7 级信任梯度 + 临时授权 + 偏好持久化）
   trust: {
+    // F-011：freeze 层 TrustGradient 配置清理——baseLevel 置 'default'（最保守），临时授权关闭
     baseLevel: 'default',
-    enableTemporaryGrants: true,
+    enableTemporaryGrants: false,
     grantTTLMinutes: 30,
     enablePersistentPreferences: false,
     maxPersistentGrants: 200,
   },
   // Phase 40：质量监测配置（隐式反馈检测 + 信号保留 + 知识图谱自动改进）
+  // Phase 81 Task 3：enableImplicitFeedback 默认 false（freeze 层 F-02，packs.trustGradient 可恢复）
   quality: {
-    enableImplicitFeedback: true,
+    enableImplicitFeedback: false,
     negativeSignalThreshold: 0.4,
     signalRetentionDays: 30,
-    autoImproveKnowledgeGraph: true,
+    autoImproveKnowledgeGraph: false,
     debounceMs: 3000,
   },
   // Phase 40：用户经验配置（三级经验等级 + 行为差异化 + System Prompt 注入）
   expertise: {
     level: 'intermediate',
-    enableAutoSuggestion: true,
+    enableAutoSuggestion: false,
     outputStyleOverride: null,
   },
   // Phase 41：代码地图配置（升级版自研引擎：tree-sitter + SQLite + PageRank）
@@ -334,7 +328,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   reasoningMode: 'balanced',
   // Phase 43：子 Agent 配置（并行上限 + 角色门控）
   subAgents: {
-    enabled: true,
+    enabled: false,
     maxParallel: 3,
     defaultRole: 'executor',
     gateRules: {
@@ -351,7 +345,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     softStopRatio: 0.9,
     // Phase 55 Task 4：执行路径路由器默认值（explicitRoute 为 optional，不设置）
     executionRouter: {
-      mode: 'auto',
+      mode: 'single',
       singleAgentMaxSteps: 2,
       dagMaxDomains: 1,
     },
@@ -467,17 +461,19 @@ export const DEFAULT_CONFIG: AppConfig = {
   // Phase 50 Task 2：多 Agent 编排模块接入开关（默认全部 false）
   // Phase 55 RISK 1 修复：原值 true 与 schema(default:false) 和注释矛盾，统一改为 false
   // 用户需在设置页显式开启（保守启用，配合 legacy fallback）
+  // Phase 83 Task 2：conflictDetectionEnabled 冻结 conflict detector，默认 false 不接入生产调度
   orchestrationIntegration: {
     strategyEnabled: false,
     stateGraphEnabled: false,
+    conflictDetectionEnabled: false,
   },
   // Phase 50 Task 3：子 Agent 委托体系模块接入开关（默认全部 false）
   delegationIntegration: {
-    contextPackerEnabled: true,
-    delegationGateEnabled: true,
-    delegationEnforcerEnabled: true,
-    lifecycleEnabled: true,
-    scoreCardEnabled: true,
+    contextPackerEnabled: false,
+    delegationGateEnabled: false,
+    delegationEnforcerEnabled: false,
+    lifecycleEnabled: false,
+    scoreCardEnabled: false,
   },
   // Phase 50 Task 5：Phase 48 模块接入确认开关（默认全部 true）
   phase48Integration: {
@@ -490,12 +486,12 @@ export const DEFAULT_CONFIG: AppConfig = {
   // Phase 59：routingFunnelEnabled 已删除（批次1，routing-funnel.ts Phase 50 已删，僵尸配置）
   // Phase 59：skillFlowEnabled/contextUsagePanelEnabled/evaluationFrameworkEnabled 已删除（对应模块已删，开关无效）
   phase49Integration: {
-    dualLoopEnabled: true,
+    dualLoopEnabled: false,
     qualityGateEnabled: true,
   },
   // Phase 51：外部开源借鉴落地配置（默认全部 false，保守启用）
   reviewerPolicy: {
-    tieredReviewEnabled: true,
+    tieredReviewEnabled: false,
     tinyTaskStepThreshold: 5,
     bigTaskStepThreshold: 30,
     midWorkReviewRatio: 0.5,
@@ -570,10 +566,10 @@ export const DEFAULT_CONFIG: AppConfig = {
       autoApplyRefinement: false,
     },
     // Task 3：有界局部恢复
-    boundedRecovery: { enabled: true, maxBacktrack: 3, artifactBinding: true, validateConsistency: true },
+    boundedRecovery: { enabled: false, maxBacktrack: 3, artifactBinding: true, validateConsistency: true },
     // Task 4：组合技能路由
     compositionalRouting: {
-      enabled: true,
+      enabled: false,
       maxDecompositionIterations: 2,
       semanticRetrieval: true,
       maxParallelSkills: 2,
@@ -637,14 +633,14 @@ export const DEFAULT_CONFIG: AppConfig = {
     },
     // Task 10：DAG 工作流引擎
     dagEngine: {
-      enabled: true,
+      enabled: false,
       maxParallel: 3,
       retryLimit: 2,
       humanEscalationThreshold: 3,
     },
     // Task 11：熔断器模式
     circuitBreaker: {
-      enabled: true,
+      enabled: false,
       failureThreshold: 5,
       resetTimeout: 60000,
       halfOpenMaxAttempts: 1,
@@ -657,7 +653,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   // Phase 61：ACRouter 闭环模型路由
   closedLoopRouting: {
-    enabled: true,
+    enabled: false,
     history: {
       maxRecords: 20000,
       persistPath: '.routedev/routing-history.jsonl',
@@ -682,22 +678,22 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   // Phase 62：动态工作流模式与隔离治理——已删除（ExecutionOrchestrator 死代码清理）
   stateExternalization: {
-    enabled: true,
+    enabled: false,
     kSentenceCompression: {
-      enabled: true,
+      enabled: false,
       k: 4,
       keywordWeight: 0.5,
       lengthWeight: 0.3,
       positionWeight: 0.2,
     },
     contentDedup: {
-      enabled: true,
+      enabled: false,
       hashAlgorithm: 'sha256' as const,
       minLength: 50,
       replaceWithReference: true,
     },
     budgetAwareRendering: {
-      enabled: true,
+      enabled: false,
       contextWindow: 200000,
       softNotifyThreshold: 0.5,
       triggerThreshold: 0.8,
@@ -710,7 +706,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   // 消费链：app-init.ts L2638 读 msCfg.store.embeddingProvider → 传入 MemoryStore 构造
   // → memory-store.ts L61 按 provider 值分支处理（bi-encoder 模式由 setEmbedder 注入外部 embedder）
   memorySystem: {
-    enabled: true,
+    enabled: false,
     store: {
       enabled: true,
       dbPath: '.routedev/memory.db',
@@ -801,5 +797,34 @@ export const DEFAULT_CONFIG: AppConfig = {
     omissionCheckEnabled: false,
     omissionCheckModel: 'fast',
     revisionHistoryPath: '.routedev/plan-revisions/',
+  },
+  // Phase 81 Task 1：工具注册档位（默认 core，仅注册 ≤10 个核心工具；full 恢复全部工具）
+  tools: {
+    profile: 'core',
+    fileEdit: {
+      requireConfirmation: false,
+    },
+  },
+  // Phase 81 Task 3+4：Pack 装配开关聚合
+  // 默认全部 false——非 Core 模块退出默认装配（冷处理：保留源码，仅退出装配）
+  // 用户在配置中显式 enabled:true 可恢复对应 Pack 的装配
+  packs: {
+    // Extended Pack
+    goalAdvanced: { enabled: false },     // extended-pack
+    multiAgent: { enabled: false },       // extended-pack
+    adversarial: { enabled: false },      // extended-pack
+    skillLifecycle: { enabled: false },   // extended-pack
+    // Standard Pack
+    browserWeb: { enabled: false },       // standard-pack
+    codeMap: { enabled: false },          // standard-pack
+    ccrCompression: { enabled: false },   // standard-pack
+    vfsPlan: { enabled: false },          // standard-pack
+    harness: { enabled: false },          // standard-pack
+    integrity: { enabled: false },        // standard-pack
+    compose: { enabled: false },          // standard-pack
+    // Freeze
+    trustGradient: { enabled: false },    // freeze
+    kgAdvanced: { enabled: false },       // freeze
+    acRouter: { enabled: false },         // freeze
   },
 };

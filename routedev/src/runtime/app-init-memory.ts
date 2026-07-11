@@ -64,6 +64,18 @@ const MAX_RECALL_MEMORIES = 5;
 export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies> {
   const { config, cwd, checkpointClient, clientManager, currentModel } = ctx;
 
+  // Phase 81 Task 3：KG 高级算法（社区检测，freeze 层 F-03）条件装配
+  // 默认 false → 仅保留基础存储/查询 + 精确路径召回；enabled:true 恢复社区检测
+  if (config.packs?.kgAdvanced?.enabled) {
+    const graphModulePath = '../agent/memory/graph.js';
+    import(graphModulePath)
+      .then(({ initKnowledgeGraphAdvanced }: { initKnowledgeGraphAdvanced: () => void }) => {
+        initKnowledgeGraphAdvanced();
+        logger.info('KG advanced algorithms enabled (community detection)');
+      })
+      .catch((err) => { logger.warn('KG advanced init fail-open', { error: err instanceof Error ? err.message : String(err) }); });
+  }
+
   // ===== 记忆与上下文 =====
   const checkpointManager = new CheckpointManager({
     enabled: config.checkpoint.enabled,
@@ -277,7 +289,7 @@ export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies
   let localMaintenance: LocalMaintenancePolicy | undefined;
 
   const msCfg = config.memorySystem;
-  if (msCfg?.enabled) {
+  if (msCfg?.enabled && config.packs?.kgAdvanced?.enabled) {
     memoryStore = new MemoryStore({
       enabled: msCfg.store.enabled,
       dbPath: msCfg.store.dbPath,
@@ -297,19 +309,7 @@ export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies
       reorganizeRatio: msCfg.localMaintenance.reorganizeRatio,
       minAccessCount: msCfg.localMaintenance.minAccessCount,
     });
-    // [I-3] UnifiedMemoryStore 桥接 MemoryStore + KnowledgeGraph（P0.2）
-    // Phase 75：codebase-memory.ts 源文件已删除（Phase 59 删除实例化后沦为死代码，无外部消费方）
-    // 使用变量路径让 TypeScript 无法静态解析，避免模块缺失时 typecheck 失败
-    const unifiedMemoryModulePath = '../memory/unified-memory.js';
-    import(unifiedMemoryModulePath)
-      .then(({ UnifiedMemoryStoreImpl }) => {
-        const knowledgeGraph = contextManager?.getKnowledgeGraph?.() ?? null;
-        const unifiedMemory = new UnifiedMemoryStoreImpl(memoryStore!, knowledgeGraph);
-        logger.info('UnifiedMemoryStore initialized', {
-          hasKnowledgeGraph: knowledgeGraph !== null,
-        });
-      })
-      .catch((err) => { logger.warn('UnifiedMemory fail-open', { error: err instanceof Error ? err.message : String(err) }); });
+    // F-020 删除死代码：UnifiedMemoryStoreImpl 创建块已移除（Phase 59 后无外部消费方）
     logger.info('Phase 65: Memory system refactor enabled', {
       store: msCfg.store.enabled,
       hybridRetriever: msCfg.hybridRetriever.enabled,

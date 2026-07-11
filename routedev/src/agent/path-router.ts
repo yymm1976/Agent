@@ -7,7 +7,7 @@
 //
 // Phase 58 改动：
 //   - 删除 'legacy' 路径（executePlanWithMultiAgent 已删）
-//   - ExecutionRouterOptions.mode 从 'auto'|'legacy'|'explicit' 收窄为 'auto'|'explicit'
+//   - ExecutionRouterOptions.mode 从 'auto'|'legacy'|'explicit' 收窄为 'auto'|'explicit'|'single'
 //   - route() 未注入路由器时回退到 'single'（而非 'legacy'）
 //   - 合并 LevelPathRouter 的 selectPath / detectLevelSwitch 到此类
 
@@ -26,10 +26,10 @@ import type { DifficultyLevel } from './difficulty-assessor.js';
  */
 export type ExecutionRoute = 'single' | 'dag' | 'compose';
 
-/** ExecutionRouter 选项（Phase 58：mode 删除 'legacy'） */
+/** ExecutionRouter 选项（Phase 58：mode 删除 'legacy'；F-012 新增 'single'） */
 export interface ExecutionRouterOptions {
-  /** 判定模式：auto（自动判定）/ explicit（显式指定） */
-  mode: 'auto' | 'explicit';
+  /** 判定模式：auto（自动判定）/ explicit（显式指定）/ single（强制单 Agent） */
+  mode: 'auto' | 'explicit' | 'single';
   /** mode=explicit 时生效，指定具体路径 */
   explicitRoute?: ExecutionRoute;
   /** 单 Agent 路径的最大步数（默认 2） */
@@ -110,6 +110,11 @@ export class PathRouter {
    * mode=auto → 启发式判定
    */
   route(plan: GoalPlan, options: ExecutionRouterOptions): ExecutionRoute {
+    // F-012：mode=single 强制单 Agent 路径（goalAdvanced pack 未启用时使用）
+    if (options.mode === 'single') {
+      return 'single';
+    }
+
     // mode=explicit：返回用户指定的路径
     if (options.mode === 'explicit' && options.explicitRoute) {
       return options.explicitRoute;

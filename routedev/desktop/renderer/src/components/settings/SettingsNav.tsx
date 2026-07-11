@@ -6,7 +6,7 @@ import {
   Server, Palette, Route, Zap, Plug, GraduationCap, Sparkles, Radio,
   Target, FileText, BookOpen, Webhook, Brain, BarChart3, Map as MapIcon,
   Shield, ShoppingBag, Users, Gauge, ShieldCheck, Split, CheckCircle2,
-  Folder, Archive, Info, ChevronDown, ChevronRight,
+  Folder, Archive, Info, ChevronDown, ChevronRight, Layers,
 } from 'lucide-react';
 
 /** 设置页所有 Tab id（mainTabs + advancedTabs） */
@@ -24,7 +24,9 @@ export type TabId =
   // Phase 52 配置补 UI 入口（I-1）
   | 'resultSchema' | 'configLayering'
   // Phase 53 集成 tab（Phase 60 合并 Phase 52）
-  | 'phase53Integration';
+  | 'phase53Integration'
+  // Phase 81 Task 5：能力分层（Core / Extended / Standard / Freeze）
+  | 'packs';
 
 interface SettingsNavProps {
   /** 当前激活的 Tab id */
@@ -50,7 +52,7 @@ export function SettingsNav({ activeTab, setActiveTab, advancedExpanded, setAdva
     { id: 'appearance', label: '外观', icon: Palette },
     { id: 'router', label: '路由规则', icon: Route },
     { id: 'execution', label: '执行', icon: Zap },
-    { id: 'mcp', label: '插件与 MCP', icon: Plug },
+    { id: 'mcp', label: '插件与 MCP (Pack)', icon: Plug },
     // CLI 退役遗留，桌面端不消费 — 隐藏 Tab（sounds 配置运行时无消费方）
     // { id: 'sounds', label: '提示音', icon: Bell },
     { id: 'expertise', label: '引导', icon: GraduationCap },
@@ -63,10 +65,10 @@ export function SettingsNav({ activeTab, setActiveTab, advancedExpanded, setAdva
     { id: 'memory', label: '记忆', icon: Brain },
     { id: 'optimization', label: '统计', icon: BarChart3 },
     { id: 'commands', label: '命令与工具', icon: Target },
-    { id: 'codemap', label: '代码地图', icon: MapIcon },
+    { id: 'codemap', label: '代码地图 (Pack)', icon: MapIcon },
     { id: 'policies', label: '策略引擎', icon: Shield },
     { id: 'market', label: '市场', icon: ShoppingBag },
-    { id: 'subagents', label: '子 Agent', icon: Users },
+    { id: 'subagents', label: '子 Agent (Pack)', icon: Users },
   ] as const;
 
   const advancedTabs = [
@@ -76,6 +78,7 @@ export function SettingsNav({ activeTab, setActiveTab, advancedExpanded, setAdva
     { id: 'phase53Integration', label: '安全与治理', icon: ShieldCheck },
     { id: 'resultSchema', label: '结果格式', icon: CheckCircle2 },
     { id: 'configLayering', label: '配置分层', icon: Folder },
+    { id: 'packs', label: '能力分层', icon: Layers },
     { id: 'security', label: '安全设置', icon: Shield },
     // CLI 退役遗留，桌面端不消费 — 隐藏 Tab（无 Webhook 服务器消费 channels 配置）
     // { id: 'channels', label: '渠道', icon: Radio },

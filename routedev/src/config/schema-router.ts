@@ -120,39 +120,6 @@ export const RouterConfigSchema = z.object({
 });
 export type RouterConfig = z.infer<typeof RouterConfigSchema>;
 
-// --- 渠道配置（Phase 13） ---
-
-export const ChannelTypeSchema = z.enum(['wechat-work', 'telegram', 'slack']);
-export type ChannelType = z.infer<typeof ChannelTypeSchema>;
-
-export const ChannelEntrySchema = z.object({
-  id: z.string().min(1),
-  type: ChannelTypeSchema,
-  enabled: z.boolean().default(true),
-  options: z.record(z.string(), z.string()).default({}),
-});
-
-export const ChannelsConfigSchema = z.object({
-  entries: z.array(ChannelEntrySchema).default([]),
-  port: z.number().positive().int().default(9800),
-  publicUrl: z.string().optional(),
-  maxResponseLength: z.number().positive().int().default(2000),
-  requestTimeout: z.number().positive().int().default(60000),
-  /**
-   * Webhook Bearer Token 认证（Phase 53 接线修复）
-   * 配置后所有 webhook 请求需带 `Authorization: Bearer <token>` 头；
-   * 未配置时为开发模式，跳过认证（由 devModeAuth 控制是否要求认证）
-   */
-  authToken: z.string().optional(),
-  /**
-   * 是否信任 X-Forwarded-For 头（Phase 53 接线修复）
-   * 反向代理场景才应启用；直连时禁用以防客户端伪造 IP 绕过速率限制
-   */
-  trustProxy: z.boolean().default(false),
-});
-export type ChannelsConfig = z.infer<typeof ChannelsConfigSchema>;
-export type ChannelEntryConfig = z.infer<typeof ChannelEntrySchema>;
-
 // --- 推理模式配置（Phase 42） ---
 // fast（快速）/ balanced（均衡）/ accurate（精准）
 // 状态：已定义未消费 — router.ts 注释明确说明未接入后端

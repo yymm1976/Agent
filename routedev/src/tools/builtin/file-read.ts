@@ -13,6 +13,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { buildTool, type ITool, type ToolDefinition, type ToolResult, type ToolExecutionContext, type ValidationResult } from '../types.js';
 import { checkPathBoundary } from './search-utils.js';
+// F-034：引入 resolveSecurePath 解析 symlink 真实路径（与 file-write.ts 一致）
+import { resolveSecurePath } from '../security-enhanced.js';
 
 /** 最大读取字节数（1MB），超过则拒绝读取 */
 const MAX_READ_BYTES = 1024 * 1024;
@@ -81,9 +83,23 @@ export const fileReadTool = buildTool({
       };
     }
 
+    // F-034：Symlink 真实路径解析，防止通过符号链接逃逸目录边界
+    // checkPathBoundary 仅做字符串比较，resolveSecurePath 用 realpathSync 解析中间目录 symlink
+    const allowedDirs = context.allowedDirectories ?? [context.workingDirectory];
+    const secureResult = resolveSecurePath(filePath, allowedDirs);
+    if (!secureResult.allowed) {
+      return {
+        success: false,
+        output: '',
+        error: secureResult.reason ?? '路径校验失败',
+        durationMs: 0,
+      };
+    }
+    const realPath = secureResult.realPath;
+
     try {
       // P1-9：读取前检查文件大小，防止大文件撑爆上下文
-      const stats = await fs.stat(filePath);
+      const stats = await fs.stat(realPath);
       if (stats.size > MAX_READ_BYTES) {
         return {
           success: false,
@@ -94,7 +110,7 @@ export const fileReadTool = buildTool({
         };
       }
 
-      const content = await fs.readFile(filePath, 'utf-8');
+      const content = await fs.readFile(realPath, 'utf-8');
 
       // 如果有行号范围，截取指定行
       if (startLine > 1 || endLine) {

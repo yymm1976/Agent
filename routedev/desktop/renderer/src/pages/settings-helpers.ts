@@ -8,8 +8,6 @@ import type {
   ModelConfig,
   RouterRule,
   MCPServerEntryConfig,
-  ChannelEntryConfig,
-  ChannelType,
 } from '../../../shared/config-types.js';
 
 // ===== 通用解析 =====
@@ -173,94 +171,6 @@ export function mcpServerToForm(server: MCPServerEntryConfig): McpFormState {
     cwd: '',
     headers: keyValueToText(config.headers),
     connectTimeout: server.connectTimeout ? String(server.connectTimeout) : '',
-  };
-}
-
-// ===== 渠道 options 配置 =====
-
-/** 渠道凭据字段定义 */
-export interface ChannelOptionField {
-  key: string;
-  label: string;
-  /** 是否为敏感字段（密码类型） */
-  sensitive: boolean;
-  /** 是否必填 */
-  required: boolean;
-  /** 说明文字 */
-  hint: string;
-}
-
-/**
- * 获取指定渠道类型的凭据字段定义
- * 不同渠道需要不同的 options key
- */
-export function getChannelOptionFields(type: ChannelType): ChannelOptionField[] {
-  switch (type) {
-    case 'telegram':
-      return [
-        { key: 'botToken', label: 'Bot Token', sensitive: true, required: true, hint: '从 @BotFather 获取，格式 123456:ABC-DEF...' },
-        { key: 'allowedUserIds', label: '允许的用户 ID', sensitive: false, required: false, hint: '逗号分隔的 Telegram user ID，留空不限制' },
-        { key: 'pollIntervalMs', label: '轮询间隔(ms)', sensitive: false, required: false, hint: '长轮询间隔，默认 1000' },
-      ];
-    case 'wechat-work':
-      return [
-        { key: 'corpId', label: '企业 ID', sensitive: false, required: true, hint: '企业微信管理后台获取' },
-        { key: 'corpSecret', label: '应用密钥', sensitive: true, required: true, hint: '与 corpId 配合，用于获取 access_token' },
-        { key: 'token', label: '验证 Token', sensitive: true, required: true, hint: '用于签名验证（生产模式必须配置）' },
-        { key: 'encodingAESKey', label: 'AES 密钥', sensitive: true, required: false, hint: '43 字符 EncodingAESKey，启用消息加解密' },
-        { key: 'agentId', label: '应用 AgentId', sensitive: false, required: false, hint: '发送消息时需要' },
-      ];
-    case 'slack':
-      return [
-        { key: 'botToken', label: 'Bot Token', sensitive: true, required: true, hint: '格式 xoxb-...，从 Slack App 获取' },
-        { key: 'signingSecret', label: 'Signing Secret', sensitive: true, required: false, hint: '用于请求签名验证（生产模式必须配置）' },
-        { key: 'appToken', label: 'App Token', sensitive: true, required: false, hint: '格式 xapp-...，Socket Mode 需要' },
-      ];
-    default:
-      return [];
-  }
-}
-
-/**
- * 检查渠道类型是否有适配器实现
- * discord 类型已从 ChannelTypeSchema 移除，所有合法类型均有适配器实现
- */
-export function isChannelTypeSupported(_type: ChannelType): boolean {
-  return true;
-}
-
-/**
- * 从表单字段构造渠道 options 对象
- * 过滤掉空值
- */
-export function constructChannelOptions(
-  type: ChannelType,
-  formValues: Record<string, string>,
-): Record<string, string> {
-  const fields = getChannelOptionFields(type);
-  const options: Record<string, string> = {};
-  for (const field of fields) {
-    const value = formValues[field.key]?.trim();
-    if (value) {
-      options[field.key] = value;
-    }
-  }
-  return options;
-}
-
-/**
- * 构造完整的 ChannelEntryConfig
- */
-export function constructChannelEntry(
-  id: string,
-  type: ChannelType,
-  formValues: Record<string, string>,
-): ChannelEntryConfig {
-  return {
-    id,
-    type,
-    enabled: true,
-    options: constructChannelOptions(type, formValues),
   };
 }
 

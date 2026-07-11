@@ -103,8 +103,11 @@ export class ShellExecTool implements ITool {
 
     // C3 修复：校验 cwd 在允许目录内，防止通过绝对路径 workingDirectory 逃逸到任意目录
     const allowedDirs = context.allowedDirectories ?? [context.workingDirectory];
+    // F-039：Windows 平台路径大小写不敏感，比较前用 path.resolve + toLowerCase() 归一化
+    const normalizedCwd = path.resolve(cwd).toLowerCase();
     const isCwdAllowed = allowedDirs.some(dir => {
-      const rel = path.relative(dir, cwd);
+      const normalizedDir = path.resolve(dir).toLowerCase();
+      const rel = path.relative(normalizedDir, normalizedCwd);
       return !rel.startsWith('..') && !path.isAbsolute(rel);
     });
     if (!isCwdAllowed) {

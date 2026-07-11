@@ -268,10 +268,7 @@ export class OpenAIClient extends BaseLLMClient {
    *
    * OpenAI/DeepSeek API 对消息格式的要求：
    * - tool_use（工具调用请求）：必须作为 role: assistant 消息的 tool_calls 字段
-   * - tool_result（工具调用结果）：必须作为独立的 role: tool 消息，不能嵌套在其他消息的 content 里
-   *
-   * 修复前 bug：tool_result 被错误地 push 到 content 数组里，导致 DeepSeek 报
-   * "missing field type" 错误（400 Bad Request）
+   * - 注意：tool_result 必须作为独立 role: tool 消息，不能嵌套在其他消息的 content 里
    */
   private convertMessages(
     messages: LLMMessage[],

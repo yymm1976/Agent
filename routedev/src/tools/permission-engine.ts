@@ -16,6 +16,7 @@ import type { AutonomyMode } from '../config/schema.js';
 import { parseCommand } from './command-parser.js';
 import type { ParsedCommand } from './command-parser.js';
 import type { TrustGradientManager } from './trust-gradient.js';
+import { logger } from '../utils/logger.js';
 
 /** 权限决策结果（三层） */
 type PermissionDecision = 'deny' | 'confirm' | 'auto';
@@ -223,9 +224,11 @@ export class PermissionEngine {
 
   /**
    * Phase 40 Task 1：注入 TrustGradientManager
+   * Phase 79: TrustGradient Freeze — 注入后仅用于 /trust 命令查询和用户显式临时授权检查
    *
-   * 注入后，check() 方法会在 deny 规则之后、confirm/auto 规则之前
-   * 调用 TrustGradientManager.checkOperation() 进行信任梯度检查
+   * 注入后，check() 方法会：
+   *   - 调用 hasTemporaryGrant() 检查用户显式授予的临时授权（保留）
+   *   - 调用 checkOperation() 仅记录日志，不影响权限决策（level-based 动态决策已旁路）
    */
   setTrustGradientManager(manager: TrustGradientManager): void {
     this.trustManager = manager;
@@ -241,20 +244,17 @@ export class PermissionEngine {
    *
    * Phase 40 Task 1：集成 TrustGradientManager
    * Phase 47 Task 4：沙箱级 + 审批级双旋钮
-   * TD-06：TrustGradient requiresConfirmation=true 时强制 confirm（不被 auto 规则/auto 模式 fallback 覆盖）
+   * Phase 79: TrustGradient Freeze — 旁路 level-based 动态决策，仅保留用户显式临时授权
    *
    * 检查顺序（陷阱 #136：沙箱级判断必须在审批级之前）：
    *   0. 沙箱级检查（确定性 deny）— 工具类别不在当前沙箱允许列表中 → deny
    *   1. deny 规则检查（最高优先级，不可被临时授权绕过）
-   *   2. TrustGradientManager 检查（如果注入了）
-   *      - checkOperation() 返回临时放行 → 返回 auto
-   *      - checkOperation() 返回需要确认 → 设置 trustRequiresConfirmation 标志，
-   *        后续 auto 规则 / auto 模式 fallback 都会被强制升级为 confirm
-   *      - checkOperation() 返回拦截（plan 模式）→ 返回 deny
+   *   2. TrustGradientManager 检查（如果注入了）— Phase 79 Freeze
+   *      - hasTemporaryGrant() 返回 true（用户显式授权）→ 设置 trustAutoAllowed 标志
+   *      - checkOperation() 仅记录日志，不影响决策（level-based 动态决策已旁路）
    *   3. confirm/auto 规则检查
-   *      - 若 trustRequiresConfirmation=true，auto 规则命中会被强制升级为 confirm
-   *   4. 默认 confirm
-   *      - 若 trustRequiresConfirmation=true，auto 模式 fallback 也会被强制升级为 confirm
+   *   4. 无规则命中 → 按 autonomy mode fallback
+   *      - trustAutoAllowed=true 时返回 auto（用户显式临时授权）
    *   5. 审批级检查（陷阱 #135：always-ask 在 headless 模式下自动 deny）
    *      - never-ask：confirm → auto（不询问）
    *      - always-ask：headless → deny；非 headless → auto 升级为 confirm
@@ -298,31 +298,26 @@ export class PermissionEngine {
     }
 
     // 2. TrustGradientManager 检查（如果注入了）
-    // TD-06：requiresConfirmation=true 时记录标志，后续 auto 决策会被强制升级为 confirm
-    // F-008 修复：临时放行不再直接 return，改为设置标志后继续检查 confirm 规则
-    //   避免绕过 confirm 规则（confirm 优先级应高于 trust 临时放行）
-    let trustRequiresConfirmation = false;
-    let trustReason: string | undefined;
+    // Phase 79: TrustGradient Freeze — 不做动态升级
+    // 旁路 checkOperation 的 level-based 动态决策（plan deny / requiresConfirmation 强制升级 / level-based auto 放行），
+    // 仅保留用户显式授予的临时授权（hasTemporaryGrant），checkOperation 仅由其内部 logger 记录日志用于审计
     let trustAutoAllowed = false;
+    let trustReason: string | undefined;
     if (this.trustManager) {
-      const isWriteOp = this.isWriteOperation(toolName);
-      const trustResult = this.trustManager.checkOperation(toolName, args, isWriteOp);
-      // 临时放行 → 仅记录标志，不直接 return（继续检查 confirm 规则）
-      if (trustResult.allowed && !trustResult.requiresConfirmation) {
+      // 仅检查用户显式授予的临时授权（非自动提权，保留）
+      if (this.trustManager.hasTemporaryGrant(toolName, args)) {
         trustAutoAllowed = true;
-        trustReason = trustResult.reason;
-      } else if (!trustResult.allowed) {
-        // 拦截（plan 模式）→ 返回 deny（最终决策，不经过审批级）
-        return {
-          decision: 'deny',
-          reason: trustResult.reason,
-        };
-      } else {
-        // 需要确认 → 记录标志，继续后续规则检查
-        // TD-06：trust "分数低于阈值" 对应 trustResult.requiresConfirmation=true，
-        // 后续 auto 规则命中或 auto 模式 fallback 都会被强制升级为 confirm
-        trustRequiresConfirmation = true;
-        trustReason = trustResult.reason;
+        trustReason = 'TrustGradient 临时授权有效（用户显式授权）';
+      }
+      // Phase 79: checkOperation 仅由其内部 logger 记录日志，结果不影响决策
+      // 原 plan 模式 deny、requiresConfirmation 强制升级、level-based auto 放行全部旁路
+      const isWriteOp = this.isWriteOperation(toolName);
+      // F-064：checkOperation 异常时 fail-open，避免信任评估异常导致工具调用被阻断
+      try {
+        const trustResult = this.trustManager.checkOperation(toolName, args, isWriteOp);
+        void trustResult;
+      } catch (e) {
+        logger.warn('trustManager.checkOperation failed (fail-open)', { toolName, error: e instanceof Error ? e.message : String(e) });
       }
     }
 
@@ -337,16 +332,8 @@ export class PermissionEngine {
     }
 
     // auto 命中 → 放行（仍需经过审批级检查）
-    // TD-06：trustRequiresConfirmation=true 时强制升级为 confirm
     const autoRule = matched.find(r => r.layer === 'auto');
     if (autoRule) {
-      if (trustRequiresConfirmation) {
-        return this.applyApproval(category, {
-          decision: 'confirm',
-          matchedRuleId: autoRule.id,
-          reason: `${autoRule.description} [TrustGradient 强制确认: ${trustReason ?? '信任级别要求确认'}]`,
-        });
-      }
       return this.applyApproval(category, {
         decision: 'auto',
         matchedRuleId: autoRule.id,
@@ -355,19 +342,11 @@ export class PermissionEngine {
     }
 
     // 4. 无规则命中 → 按 autonomy mode fallback
-    // F-008 修复：trustAutoAllowed 时直接返回 auto（已过 confirm 检查，无 confirm 规则命中）
+    // Phase 79: trustAutoAllowed（用户显式临时授权）时直接返回 auto
     if (trustAutoAllowed) {
       return this.applyApproval(category, {
         decision: 'auto',
         reason: trustReason ?? 'TrustGradient 临时放行',
-      });
-    }
-    // auto 模式放行，semi/manual 模式需确认
-    // TD-06：trustRequiresConfirmation=true 时强制升级为 confirm（即使 auto 模式也不放行）
-    if (trustRequiresConfirmation) {
-      return this.applyApproval(category, {
-        decision: 'confirm',
-        reason: `Fallback: TrustGradient 强制确认 (mode=${mode}, ${trustReason ?? '信任级别要求确认'})`,
       });
     }
     return this.applyApproval(category, {
@@ -484,6 +463,24 @@ export class PermissionEngine {
 // 默认规则集
 // ============================================================
 
+/**
+ * F-097：共享谓词 — 判断路径是否指向系统目录
+ *
+ * 同时覆盖 Unix（/etc, /proc, /sys, /dev, /boot, /root）和
+ * Windows（C:\Windows, C:\Program Files, C:\ProgramData, C:\System32
+ * 及用户目录下 AppData\Local\Microsoft）系统目录。
+ */
+function isSystemDirPath(p: string): boolean {
+  // Unix 系统目录
+  if (/^\/(etc|proc|sys|dev|boot|root)\//.test(p)) return true;
+  // Windows 系统目录（不区分大小写、支持正反斜杠）
+  const normalized = p.replace(/\\/g, '/').toLowerCase();
+  if (/^[a-z]:\/(windows|program files|programdata|system32)/.test(normalized)) return true;
+  // Windows 用户目录下的系统关键路径
+  if (/^[a-z]:\/users\/[^/]+\/appdata\/local\/microsoft\//.test(normalized)) return true;
+  return false;
+}
+
 /** 默认 deny 规则（不可覆盖） */
 export const DEFAULT_DENY_RULES: PermissionRule[] = [
   {
@@ -558,17 +555,8 @@ export const DEFAULT_DENY_RULES: PermissionRule[] = [
     layer: 'deny',
     toolPattern: 'file_write',
     // C6 修复：同时检查 Unix 和 Windows 系统目录
-    argsPredicate: a => {
-      const p = String(a.path ?? '');
-      // Unix 系统目录
-      if (/^\/(etc|proc|sys|dev|boot|root)\//.test(p)) return true;
-      // Windows 系统目录（不区分大小写、支持正反斜杠）
-      const normalized = p.replace(/\\/g, '/').toLowerCase();
-      if (/^[a-z]:\/(windows|program files|programdata|system32)/.test(normalized)) return true;
-      // Windows 用户目录下的系统关键路径
-      if (/^[a-z]:\/users\/[^/]+\/appdata\/local\/microsoft\//.test(normalized)) return true;
-      return false;
-    },
+    // F-097：抽取 isSystemDirPath 共享谓词，消除重复逻辑
+    argsPredicate: a => isSystemDirPath(String(a.path ?? '')),
     description: '禁止: 写入系统目录（Unix: /etc, /proc, /sys, /dev, /boot, /root；Windows: C:\\Windows, C:\\Program Files, C:\\ProgramData）',
   },
   {
@@ -576,14 +564,8 @@ export const DEFAULT_DENY_RULES: PermissionRule[] = [
     layer: 'deny',
     toolPattern: 'file_edit',
     // C6 修复：file_edit 也禁止写入系统目录
-    argsPredicate: a => {
-      const p = String(a.path ?? '');
-      if (/^\/(etc|proc|sys|dev|boot|root)\//.test(p)) return true;
-      const normalized = p.replace(/\\/g, '/').toLowerCase();
-      if (/^[a-z]:\/(windows|program files|programdata|system32)/.test(normalized)) return true;
-      if (/^[a-z]:\/users\/[^/]+\/appdata\/local\/microsoft\//.test(normalized)) return true;
-      return false;
-    },
+    // F-097：抽取 isSystemDirPath 共享谓词，消除重复逻辑
+    argsPredicate: a => isSystemDirPath(String(a.path ?? '')),
     description: '禁止: 编辑系统目录中的文件',
   },
   // Phase 40 Task 1：Windows 特有危险命令
@@ -711,6 +693,13 @@ export const DEFAULT_AUTO_RULES: PermissionRule[] = [
     layer: 'auto',
     toolPattern: 'code_search',
     description: '代码搜索自动放行',
+  },
+  // F-033：test_connection 走 auto 规则放行，避免 semi 模式下 fallback 到 confirm
+  {
+    id: 'auto-test-connection',
+    layer: 'auto',
+    toolPattern: 'test_connection',
+    description: '连接测试（轻量 LLM 请求）自动放行',
   },
 ];
 

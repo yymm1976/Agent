@@ -43,6 +43,11 @@ import { VirtualFS, createVFS } from './context/virtual-fs.js';
 import type { PlanState } from './context/plan-state.js';
 
 /**
+ * F-102：消息窗口截断阈值（保留最近 N 条，保证 tool_use/tool_result 成对）
+ */
+const MESSAGE_WINDOW_THRESHOLD = 40;
+
+/**
  * Phase 55：结构化 system block（支持 Anthropic cache_control: ephemeral）
  * agent 层单一数据源：worker-executor.ts 从此处 import 使用
  * 注意：src/router/types.ts 因避免 router→agent 反向依赖，使用结构等价的 inline 类型
@@ -105,6 +110,11 @@ export class ReActAgentLoop {
   private ctxMgr = new LoopContextManager();
   private mwRunner = new MiddlewareRunner();
   private memIntegration = new MemoryIntegration();
+  /**
+   * Phase 79 Task 5：当前 run() 期间的确认回调（run 开始时设置，结束清理）
+   * 子 Agent 通过 getCurrentConfirmTool() 获取父会话的确认通道，实现委托确认
+   */
+  private currentConfirmTool: ConfirmToolCallback | null = null;
 
   constructor(toolExecutor: ToolExecutorAdapter, config?: Partial<ReActConfig>) {
     this.config = { ...DEFAULT_REACT_CONFIG, ...config };
@@ -116,6 +126,15 @@ export class ReActAgentLoop {
   /** 注入中间件管线（Phase 22：Hook 插件接入点） */
   setMiddlewarePipeline(pipeline: import('./middleware.js').AgentMiddlewarePipeline): void {
     this.mwRunner.setPipeline(pipeline);
+  }
+
+  /**
+   * Phase 79 Task 5：获取当前 run() 期间的确认回调（供子 Agent 委托确认）
+   * run() 开始时设置，结束清理；非 run 期间返回 null
+   * 子 Agent 创建时调用此方法获取父会话的确认通道，实现工具确认委托父会话
+   */
+  getCurrentConfirmTool(): ConfirmToolCallback | null {
+    return this.currentConfirmTool;
   }
 
   /** 注入 Token Profiler（Phase 30：可观测性，可选） */
@@ -260,6 +279,9 @@ export class ReActAgentLoop {
     let systemBlocks = params.systemBlocks;
     const trace = this.ctxMgr.traceCollector;
 
+    // Phase 79 Task 5：保存当前确认回调，供子 Agent 通过 getCurrentConfirmTool() 委托确认
+    this.currentConfirmTool = onConfirmTool ?? null;
+
     // C6 修复：触发 on-session-start 钩子
     await this.mwRunner.fireHookSafe('on-session-start', {});
 
@@ -403,32 +425,53 @@ export class ReActAgentLoop {
 
               if (this.config.parallelToolExecution && !hasSequential && result.toolCalls.length > 1) {
                 // ===== 并行模式 =====
-                // 阶段1：串行确认 + 中间件检查
+                // 阶段1：串行权限校验 + 确认 + 中间件检查
                 const approvedCalls: typeof result.toolCalls = [];
                 for (const toolCall of result.toolCalls) {
                   yield { type: 'tool_call_start', toolName: toolCall.name, toolCallId: toolCall.id, args: toolCall.arguments };
 
-                  // 确认：autoApprovePatterns 匹配则跳过用户确认
-                  let approved = true;
-                  let confirmPayload: unknown;
-                  if (onConfirmTool && !this.mwRunner.isAutoApproved(toolCall.name, this.config.autoApprovePatterns ?? [])) {
-                    yield { type: 'approval_required', toolName: toolCall.name, toolCallId: toolCall.id, args: toolCall.arguments, reason: '需要确认工具调用' };
-                    const confirmResult = await onConfirmTool(toolCall.name, toolCall.arguments);
-                    if (typeof confirmResult === 'boolean') { approved = confirmResult; }
-                    else { approved = confirmResult.approved; confirmPayload = confirmResult.payload; }
-                  }
-
-                  if (!approved) {
-                    const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[用户拒绝了此工具调用] ${toolCall.name}`);
+                  // Phase 79 Task 3：onActing 中间件 + 策略引擎前置（fail-closed）
+                  const actingResult = await this.mwRunner.runOnActing(toolCall.name, toolCall.arguments);
+                  if (actingResult.denied) {
+                    const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[被拦截] ${actingResult.reason ?? '未知原因'}`);
                     yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
                     messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError: true }] });
                     continue;
                   }
 
-                  // onActing 中间件 + 策略引擎（fail-closed）
-                  const actingResult = await this.mwRunner.runOnActing(toolCall.name, toolCall.arguments);
-                  if (actingResult.denied) {
-                    const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[被拦截] ${actingResult.reason ?? '未知原因'}`);
+                  // Phase 79 Task 3/5：根据权限决策确定是否需要用户确认
+                  const permDecision = actingResult.permissionDecision;
+                  const permMatchedRule = actingResult.permissionMatchedRule;
+                  let needsConfirmation: boolean;
+                  if (permDecision === 'confirm' || actingResult.requiresConfirmation) {
+                    needsConfirmation = true;
+                  } else if (permDecision === 'auto' && permMatchedRule) {
+                    needsConfirmation = false;
+                  } else if (permDecision === 'auto' && !permMatchedRule) {
+                    needsConfirmation = !this.mwRunner.isAutoApproved(toolCall.name, this.config.autoApprovePatterns ?? []);
+                  } else {
+                    needsConfirmation = onConfirmTool
+                      ? !this.mwRunner.isAutoApproved(toolCall.name, this.config.autoApprovePatterns ?? [])
+                      : false;
+                  }
+
+                  let approved = true;
+                  if (needsConfirmation) {
+                    if (!onConfirmTool) {
+                      // fail-closed: 需要确认但无确认通道 → 拒绝执行
+                      const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[fail-closed: 需要确认但无确认通道] ${toolCall.name}`);
+                      yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
+                      messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError: true }] });
+                      continue;
+                    }
+                    yield { type: 'approval_required', toolName: toolCall.name, toolCallId: toolCall.id, args: toolCall.arguments, reason: '需要确认工具调用' };
+                    const confirmResult = await onConfirmTool(toolCall.name, toolCall.arguments);
+                    if (typeof confirmResult === 'boolean') { approved = confirmResult; }
+                    else { approved = confirmResult.approved; }
+                  }
+
+                  if (!approved) {
+                    const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[用户拒绝了此工具调用] ${toolCall.name}`);
                     yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
                     messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError: true }] });
                     continue;
@@ -492,10 +535,48 @@ export class ReActAgentLoop {
                 for (const toolCall of result.toolCalls) {
                   yield { type: 'tool_call_start', toolName: toolCall.name, toolCallId: toolCall.id, args: toolCall.arguments };
 
-                  // 确认：autoApprovePatterns 匹配则跳过用户确认
+                  // Phase 79 Task 3：onActing 中间件 + 策略引擎前置（fail-closed）
+                  // PermissionEngine.check() 在此被调用，deny 拦截、confirm 驱动用户确认、auto 放行
+                  const actingResult = await this.mwRunner.runOnActing(toolCall.name, toolCall.arguments);
+                  if (actingResult.denied) {
+                    const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[被拦截] ${actingResult.reason ?? '未知原因'}`);
+                    yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
+                    messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError: true }] });
+                    continue;
+                  }
+
+                  // Phase 79 Task 3/5：根据权限决策确定是否需要用户确认
+                  // - confirm 决策 → 走 onConfirmTool 确认通道
+                  // - auto 决策且命中显式规则 → 放行
+                  // - auto 决策但来自 fallback（无匹配规则）→ Task 5: 仅 autoApprovePatterns 白名单工具放行
+                  // - 无 permissionDecision（PermissionMiddleware 未注册）→ 回退到 autoApprovePatterns
+                  const permDecision = actingResult.permissionDecision;
+                  const permMatchedRule = actingResult.permissionMatchedRule;
+                  let needsConfirmation: boolean;
+                  if (permDecision === 'confirm' || actingResult.requiresConfirmation) {
+                    needsConfirmation = true;
+                  } else if (permDecision === 'auto' && permMatchedRule) {
+                    needsConfirmation = false;
+                  } else if (permDecision === 'auto' && !permMatchedRule) {
+                    // Task 5: auto 模式 fallback 仅白名单工具自动放行，其余需确认
+                    needsConfirmation = !this.mwRunner.isAutoApproved(toolCall.name, this.config.autoApprovePatterns ?? []);
+                  } else {
+                    // 无 PermissionMiddleware → 回退到 autoApprovePatterns 逻辑
+                    needsConfirmation = onConfirmTool
+                      ? !this.mwRunner.isAutoApproved(toolCall.name, this.config.autoApprovePatterns ?? [])
+                      : false;
+                  }
+
                   let approved = true;
                   let confirmPayload: unknown;
-                  if (onConfirmTool && !this.mwRunner.isAutoApproved(toolCall.name, this.config.autoApprovePatterns ?? [])) {
+                  if (needsConfirmation) {
+                    if (!onConfirmTool) {
+                      // fail-closed: 需要确认但无确认通道 → 拒绝执行
+                      const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[fail-closed: 需要确认但无确认通道] ${toolCall.name}`);
+                      yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
+                      messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError: true }] });
+                      continue;
+                    }
                     yield { type: 'approval_required', toolName: toolCall.name, toolCallId: toolCall.id, args: toolCall.arguments, reason: '需要确认工具调用' };
                     const confirmResult = await onConfirmTool(toolCall.name, toolCall.arguments);
                     if (typeof confirmResult === 'boolean') { approved = confirmResult; }
@@ -513,15 +594,6 @@ export class ReActAgentLoop {
                     const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, JSON.stringify(confirmPayload ?? {}, null, 2));
                     yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: false };
                     messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError: false }] });
-                    continue;
-                  }
-
-                  // onActing 中间件 + 策略引擎（fail-closed）
-                  const actingResult = await this.mwRunner.runOnActing(toolCall.name, toolCall.arguments);
-                  if (actingResult.denied) {
-                    const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[被拦截] ${actingResult.reason ?? '未知原因'}`);
-                    yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
-                    messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError: true }] });
                     continue;
                   }
 
@@ -566,8 +638,8 @@ export class ReActAgentLoop {
                 }
               }
 
-              // C7 修复：messages 窗口截断（保留最近 40 条，保证 tool_use/tool_result 成对）
-              this.ctxMgr.trimMessagesWindow(messages, 40);
+              // C7 修复：messages 窗口截断（保留最近 MESSAGE_WINDOW_THRESHOLD 条，保证 tool_use/tool_result 成对）
+              this.ctxMgr.trimMessagesWindow(messages, MESSAGE_WINDOW_THRESHOLD);
 
               // Phase 53 Task 9：预算监控（fail-open）
               this.ctxMgr.checkBudget(result.usage, result.toolCalls);
@@ -655,6 +727,8 @@ export class ReActAgentLoop {
     } finally {
       // C6 修复：确保 session 结束时触发 on-session-end
       await this.mwRunner.fireHookSafe('on-session-end', {});
+      // Phase 79 Task 5：清理当前确认回调，避免 run 结束后残留
+      this.currentConfirmTool = null;
     }
   }
 
@@ -684,6 +758,7 @@ export class ReActAgentLoop {
 
     // Phase 73 Part A：在 LLM 调用边界插入 convertToLlm 过滤层
     const convertFn = this.config.convertToLlm ?? defaultConvertToLlm;
+    // FIXME: as 断言，messages 实际为 LLMMessage[]，需显式适配函数
     const llmMessages = convertFn(messages as AgentMessage[]);
 
     const options: LLMRequestOptions = {

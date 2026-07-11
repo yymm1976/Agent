@@ -312,15 +312,6 @@ export class SecurityChecker implements ISecurityChecker {
     return { allowed: true, requiresConfirmation: false };
   }
 
-  /** 检查路径是否在允许目录内（保留公共方法供测试使用） */
-  private isPathAllowed(resolved: string): boolean {
-    return this.allowedDirs.some(dir => {
-      if (resolved === dir) return true;
-      const rel = path.relative(dir, resolved);
-      return !rel.startsWith('..') && !path.isAbsolute(rel);
-    });
-  }
-
   checkCommand(command: string, _context: ToolExecutionContext): SecurityCheckResult {
     // 安全增强：先执行 7 层 Bash 安全检查（Unicode/回车注入/proc/危险命令等）
     const bashResult = checkBashSecurity(command);

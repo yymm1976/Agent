@@ -30,6 +30,10 @@ orchestrationIntegration: {}
 delegationIntegration: {}
 phase48Integration: {}
 phase49Integration: {}
+# Phase 81 新增：能力 Pack 开关 + 工具注册档位
+packs: {}
+tools:
+  profile: core
 ```
 
 ## 2. Phase 50 新增配置项
@@ -206,6 +210,122 @@ ui:
 ## 5. 配置热重载
 
 RouteDev 支持配置热重载：修改配置文件后无需重启，引擎会自动重新初始化。配置变更时：
-- ~~`ConfigReloadUI` 组件在顶部弹出通知（受 `ui.components.configReloadNotice` 开关控制）~~（已废弃：终端 UI 退役后该组件已删除，桌面端不消费此配置）
 - 受影响的模块会重新创建实例（如 `GoalAuditor`、`ContextPacker` 等）
 - 对话历史和当前执行状态会保留
+
+## 6. 能力包（Capability Packs）
+
+> **Phase 81-82 新增。** 对齐 `docs/CAPABILITY_LAYERS.md` 四层分层模型。
+> **Schema 定义：** `src/config/schema-observability.ts` → `PacksConfigSchema`
+> **默认值：** `src/config/defaults.ts` → `packs` 字段（全部默认 `false`）
+
+### 6.1 设计理念
+
+RouteDev 采用 **默认 Core + 按需 Pack** 的能力装配模型：
+
+- **Core 层**：默认开启，包含编程场景基础能力（≤10 个核心工具 + 必要子系统），不可关闭。
+- **Extended Pack（高级区）**：默认关，用户能自建但预设更好用，修 bug 不扩功能。
+- **Standard Pack（扩展区）**：默认关，几乎用到的可选能力，冷处理仅修崩溃。
+- **Freeze（实验区）**：默认关且 UI 禁用，停止接线，不推荐启用。
+
+每个 Pack 仅一个开关 `enabled: boolean`，消费方按 `config.packs.<id>.enabled` 条件装配。
+用户可在设置页「能力分层」Tab 可视化切换，或直接编辑配置文件。
+
+### 6.2 工具注册档位
+
+除 Pack 开关外，`tools.profile` 控制工具注册范围：
+
+| 档位 | 说明 | 默认 |
+|------|------|------|
+| `core` | 仅注册 ≤10 个核心工具（file-read/write/edit/search、list-directory、shell-exec、git-op、code-search、ask-user、todo-write） | ✅ |
+| `full` | 注册全部工具（兼容旧行为，仅调试用） | — |
+
+### 6.3 全部 14 个 Pack 开关
+
+#### Extended Pack（高级区，4 个）
+
+| Pack ID | 配置开关 | 说明 | 成本提示 |
+|---------|----------|------|----------|
+| `goalAdvanced` | `packs.goalAdvanced.enabled` | Goal 高级编排：/goal 执行器 + DAG 引擎 + 双循环 + 有界恢复 + 预算监控 | 系统提示 +2~4k tokens；双循环恢复额外调用 LLM |
+| `multiAgent` | `packs.multiAgent.enabled` | Multi-Agent 编排：spawn-agent + orchestrator + worker + 冲突检测 + 熔断 | 子 Agent 消耗独立 token 预算，并行上限默认 3 |
+| `adversarial` | `packs.adversarial.enabled` | 对抗审查：UnifiedReviewer + 跨模型审查 + 分级审查策略 | 每次审查额外调用 1 次 LLM |
+| `skillLifecycle` | `packs.skillLifecycle.enabled` | Skill 生命周期：SkillLifecycleManager 自动提炼与精炼技能 | 后台周期性 LLM 调用，磁盘写入 .routedev/skills/ |
+
+#### Standard Pack（扩展区，7 个）
+
+| Pack ID | 配置开关 | 说明 | 成本提示 |
+|---------|----------|------|----------|
+| `browserWeb` | `packs.browserWeb.enabled` | 浏览器/Web：web-search + web-fetch + browser + 视觉助手 | 按实际调用计费；视觉助手需图片输入 |
+| `codeMap` | `packs.codeMap.enabled` | 代码地图：code-graph-query + repo-map + CodeMapEngine + Watcher | 首次扫描耗内存 ~50MB；watch 模式持续监听 |
+| `ccrCompression` | `packs.ccrCompression.enabled` | CCR 压缩：ccr-retrieve 可逆压缩 + ComposePipeline 组合编排 | 压缩缓存占磁盘空间 |
+| `vfsPlan` | `packs.vfsPlan.enabled` | VFS/Plan 工具：虚拟文件系统 + 计划状态显式管理 | Agent 工作内存占用略增 |
+| `harness` | `packs.harness.enabled` | Harness：Trace 回放 + 评分卡 + 并行实验 | trace 文件持续累积需定期清理 |
+| `integrity` | `packs.integrity.enabled` | 完整性校验：cite / import / macros / mcpBridge / IntegrityManifest | 外部导入增加启动时间 |
+| `compose` | `packs.compose.enabled` | Compose 管道：阶段提示词注入与自动流转 | 多阶段任务 token 开销增加 |
+
+#### Freeze（实验区，3 个，UI 禁用）
+
+| Pack ID | 配置开关 | 说明 | 成本提示 |
+|---------|----------|------|----------|
+| `trustGradient` | `packs.trustGradient.enabled` | TrustGradient：渐进式信任梯度动态升级（Phase 79 已冻结） | 已冻结——动态升级无证据，启用仅作展示 |
+| `kgAdvanced` | `packs.kgAdvanced.enabled` | KG 高级算法：PageRank / 社区检测 | 已冻结——耗 CPU，tree-sitter + SQLite 已够用 |
+| `acRouter` | `packs.acRouter.enabled` | ACRouter：闭环模型路由实验性高级部分 | 已冻结——可能引入路由抖动 |
+
+### 6.4 配置示例
+
+#### YAML：最小配置（仅 Core，所有 Pack 关闭）
+
+```yaml
+tools:
+  profile: core
+packs: {}
+```
+
+#### YAML：启用 Goal 高级编排 + Multi-Agent
+
+```yaml
+tools:
+  profile: core
+packs:
+  goalAdvanced:
+    enabled: true
+  multiAgent:
+    enabled: true
+```
+
+#### YAML：全功能配置（所有非 Freeze Pack 开启）
+
+```yaml
+tools:
+  profile: core
+packs:
+  goalAdvanced:    { enabled: true }
+  multiAgent:      { enabled: true }
+  adversarial:     { enabled: true }
+  skillLifecycle:  { enabled: true }
+  browserWeb:      { enabled: true }
+  codeMap:         { enabled: true }
+  ccrCompression:  { enabled: true }
+  vfsPlan:         { enabled: true }
+  harness:         { enabled: true }
+  integrity:       { enabled: true }
+  compose:         { enabled: true }
+```
+
+#### JSON：等效配置（启用 Goal 高级编排 + Multi-Agent）
+
+```json
+{
+  "tools": { "profile": "core" },
+  "packs": {
+    "goalAdvanced": { "enabled": true },
+    "multiAgent":   { "enabled": true }
+  }
+}
+```
+
+### 6.5 迁移说明
+
+- **旧配置兼容**：`packs` 字段缺省时 Zod `preprocess` 兜底为空对象，等价于所有 Pack 关闭（仅 Core 生效）。
+- **`tools.profile: full`**：恢复 Phase 81 前的旧行为（全部工具注册），仅用于调试，生产环境不推荐。
+- **Phase 81 前**：非 Core 模块通过 `*Integration.enabled` 散落各处控制；Phase 81 后统一收敛到 `packs.<id>.enabled`，旧 `*Integration` 开关保留但不影响 Pack 装配门控。

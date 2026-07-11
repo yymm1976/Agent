@@ -65,6 +65,9 @@ import type { ProvenanceGraph } from '../memory/provenance-graph.js';
 import type { KanObstacleChecker } from '../skills/kan-obstacle-checker.js';
 import type { QuantitativeGate } from '../agent/quantitative-gate.js';
 import type { classifyOperation } from '../skills/operation-classifier.js';
+// Phase 80 Task 2：本地使用计数器类型导入
+import type { UsageCounter } from '../observability/usage-counter.js';
+// F-018：CapabilityPackRegistry 类型导入已移除（不再用于接口定义）
 
 // InitContext 中间变量类型导入
 import type { ProjectMemoryManager } from '../memory/project-memory.js';
@@ -126,6 +129,8 @@ export interface AppDependencies {
   mcpManager: MCPClientManager;
   toolExecutor: ToolExecutor;
   agentLoop: ReActAgentLoop;
+  /** Phase 79 Task 4：权限引擎实例，供 IPC tool:execute 复用权限校验 */
+  permissionEngine?: PermissionEngine;
   // 插件系统
   skillsRouter: SkillsRouter;
   filesystemDiscovery: FilesystemDiscovery;
@@ -139,6 +144,9 @@ export interface AppDependencies {
   trace: TraceCollector;
   audit: AuditLogger;
   hookRunner: HookRunner;
+  /** Phase 80 Task 2：本地使用计数器（fail-open，仅本地计数，禁止云上报） */
+  usageCounter?: UsageCounter;
+  // F-018：packRegistry 僵尸字段已移除（Pack 加载机制保留在 app-init-tools.ts 内部）
   // LLM 客户端
   checkpointClient: ILLMClient;
   profiler: TokenProfiler | null;
@@ -232,6 +240,8 @@ export interface InitContext {
   projectMemory?: ProjectMemoryManager;
   offloadSessionId?: string;
   offloadRootDir?: string;
+  /** Phase 80 Task 2：本地使用计数器（由 observability 子系统创建） */
+  usageCounter?: UsageCounter;
 
   // ===== 由 memory 子系统写入 =====
   checkpointManager?: CheckpointManager;
@@ -268,6 +278,7 @@ export interface InitContext {
   planState?: PlanState;
   agentLoop?: ReActAgentLoop;
   profiler?: TokenProfiler | null;
+  // F-018：packRegistry 僵尸字段已移除（tools 子系统内部保留 Pack 加载机制）
 
   // ===== 由 agent 子系统写入 =====
   hookRunner?: HookRunner;
@@ -288,6 +299,15 @@ export interface InitContext {
 // ============================================================
 // 门面函数
 // ============================================================
+
+/**
+ * F-056 Disposable 接口：统一资源释放协议类型
+ * 各 createXxxSubsystem 返回的 Partial<AppDependencies> 可包含 dispose 方法，
+ * 用此接口替代内联的 `as { dispose?: () => Promise<void> }` 断言。
+ */
+interface Disposable {
+  dispose?: () => Promise<void>;
+}
 
 /**
  * 创建 App 所需的全部服务依赖
@@ -363,17 +383,19 @@ export function createAppDependencies(
     // G-007：统一资源释放协议——按逆序调用各子系统 dispose（仅调用已存在的，不强制新增）
     async dispose() {
       // 逆序释放：agent → tools → memory → router → observability（与创建顺序相反）
-      await (agentDeps as { dispose?: () => Promise<void> }).dispose?.();
-      await (toolsDeps as { dispose?: () => Promise<void> }).dispose?.();
-      await (memoryDeps as { dispose?: () => Promise<void> }).dispose?.();
-      await (routerDeps as { dispose?: () => Promise<void> }).dispose?.();
-      await (observabilityDeps as { dispose?: () => Promise<void> }).dispose?.();
+      // F-056：用 Disposable 接口替代内联 as 断言
+      await (agentDeps as Disposable).dispose?.();
+      await (toolsDeps as Disposable).dispose?.();
+      await (memoryDeps as Disposable).dispose?.();
+      await (routerDeps as Disposable).dispose?.();
+      await (observabilityDeps as Disposable).dispose?.();
       // 释放传入的共享实例（tracker/clientManager/classifier/modelRouter）
-      await (tracker as { dispose?: () => Promise<void> } | undefined)?.dispose?.();
-      await (clientManager as { dispose?: () => Promise<void> }).dispose?.();
-      await (classifier as { dispose?: () => Promise<void> } | undefined)?.dispose?.();
-      await (modelRouter as { dispose?: () => Promise<void> } | undefined)?.dispose?.();
+      await (tracker as Disposable | undefined)?.dispose?.();
+      await (clientManager as Disposable).dispose?.();
+      await (classifier as Disposable | undefined)?.dispose?.();
+      await (modelRouter as Disposable | undefined)?.dispose?.();
       console.log('[AppDependencies] 已释放所有依赖资源');
     },
+    // F-048 类型安全：子系统返回 Partial<AppDependencies>，合并后用 as 断言（字段由各子系统保证存在）
   } as AppDependencies;
 }

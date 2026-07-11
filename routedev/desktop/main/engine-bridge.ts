@@ -16,6 +16,8 @@ import { ScenarioClassifier } from '../../src/router/classifier.js';
 import { ModelRouter } from '../../src/router/router.js';
 import { buildRouterConfig } from '../../src/router/config.js';
 import { createAppDependencies } from '../../src/runtime/app-init.js';
+// F-058：MCP 自动连接失败汇总日志
+import { logger } from '../../src/utils/logger.js';
 import type {
   MCPStatus,
   MCPConnectionResult,
@@ -163,13 +165,20 @@ export class RouteDevEngine {
 
     // 自动连接已启用的 MCP 服务器（与 CLI App.tsx 行为一致）
     // fire-and-forget：不阻塞引擎初始化，连接失败只记录不抛出
-    if (ctx.config.mcp.autoConnect) {
+    // F-058 修复：用 Promise.allSettled 聚合结果，失败时输出汇总日志
+    if (ctx.config.mcp.autoConnect && ctx.deps) {
+      const deps = ctx.deps;
       const enabledServers = ctx.config.mcp.servers.filter((s) => s.enabled);
-      for (const server of enabledServers) {
-        ctx.deps.mcpManager.connect(server).catch((err) => {
-          console.error(`[MCP] 自动连接失败: ${server.name}`, err);
-        });
-      }
+      Promise.allSettled(
+        enabledServers.map((server) => deps.mcpManager.connect(server)),
+      ).then((results) => {
+        const failures = results
+          .map((r, i) => (r.status === 'rejected' ? { server: enabledServers[i].name, reason: r.reason } : null))
+          .filter((r): r is { server: string; reason: unknown } => r !== null);
+        if (failures.length > 0) {
+          logger.error('MCP auto-connect failures', { failures });
+        }
+      });
     }
 
     // Phase 48 Task 4：构造 AgentProfileManager 并异步加载（不阻塞初始化）
@@ -239,7 +248,59 @@ export class RouteDevEngine {
   }
 
   async executeCommand(text: string): Promise<unknown> {
+    const cmd = text.trim();
+
+    // Phase 80 Task 2：slash 命令计数（fail-open，increment 内部 catch）
+    // 仅对 / 开头的命令计数，提取首个 token 作为命令名（如 /help、/clear）
+    if (cmd.startsWith('/')) {
+      const commandName = cmd.split(/\s+/)[0] ?? cmd;
+      this.ctx.deps?.usageCounter?.increment({ kind: 'command', name: commandName });
+    }
+
+    // Phase 80 Task 2：/usage 导出命令——导出本地使用计数摘要到 .routedev/usage/ 目录
+    if (cmd === '/usage') {
+      return this.handleUsageExport();
+    }
+
     return this.chatBridge.executeCommand(text);
+  }
+
+  /**
+   * Phase 80 Task 2：处理 /usage 命令
+   * 将本地使用计数快照导出为 JSON 文件（7 天摘要窗口），返回文件路径
+   * fail-open：usageCounter 不存在或导出失败时返回友好提示
+   */
+  private async handleUsageExport(): Promise<{ ok: boolean; message: string; filePath?: string }> {
+    const usageCounter = this.ctx.deps?.usageCounter;
+    if (!usageCounter) {
+      return { ok: false, message: '使用计数器未初始化' };
+    }
+    try {
+      const pathMod = await import('node:path');
+      const osMod = await import('node:os');
+      // 写入项目目录下的 .routedev/usage/ 子目录（与 offload 等本地数据一致）
+      const usageDir = pathMod.resolve(this.ctx.options.cwd, '.routedev', 'usage');
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filePath = pathMod.join(usageDir, `usage-${timestamp}.json`);
+      await usageCounter.flushToFile(filePath);
+
+      // 构造摘要文本（统计窗口内的计数快照）
+      const snapshot = usageCounter.snapshot();
+      const keyCount = Object.keys(snapshot).length;
+      const totalCalls = Object.values(snapshot).reduce((sum, n) => sum + n, 0);
+      const summary = `使用计数已导出（7 天摘要窗口）\n` +
+        `  统计起始: ${new Date().toISOString()}\n` +
+        `  计数维度: ${keyCount} 个\n` +
+        `  总调用数: ${totalCalls} 次\n` +
+        `  文件路径: ${filePath}\n` +
+        `  主目录: ${osMod.homedir()}`;
+      return { ok: true, message: summary, filePath };
+    } catch (err) {
+      return {
+        ok: false,
+        message: `导出使用计数失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
 
   syncConversationHistory(messages: LLMMessage[]): void {
@@ -399,21 +460,69 @@ export class RouteDevEngine {
   // TD-07：高风险工具不允许通过 IPC 直接调用（必须经 Agent Loop）
   // 这些工具具备破坏性或副作用（执行任意命令/写文件/Git 操作/派生子 Agent/浏览器自动化），
   // 必须经过 Agent Loop 的权限确认流程，防止渲染进程被劫持后绕过确认直接调用
+  // F-035 修复：加入 file_edit（文件编辑同样具备破坏性，需经 Agent Loop 确认）
   private static readonly HIGH_RISK_TOOLS = new Set([
-    'shell_exec', 'file_write', 'git_op', 'spawn_agent', 'browser',
+    'shell_exec', 'file_write', 'file_edit', 'git_op', 'spawn_agent', 'browser',
   ]);
 
   // G-017 修复：敏感环境变量前缀正则，匹配的变量不注入工具执行环境
   // 防止云凭据/数据库密码/Token 等通过 process.env 泄露到工具子进程
   private static readonly SENSITIVE_ENV_PREFIX = /^(AWS_|AZURE_|GCP_|DATABASE_|.*SECRET|.*TOKEN|.*PASSWORD|ROUTEDEV_CONFIG)/i;
 
-  async executeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+  /**
+   * F-080：executeTool 文档说明
+   *
+   * IPC 路径 intentionally 跳过 LoopDetection/Hook 中间件，因渲染进程无对话上下文；
+   * 权限校验通过 PermissionEngine 直接调用。
+   *
+   * 安全防线：
+   * 1. callContext.source === 'ipc' 校验（防止绕过 IPC 直接调）
+   * 2. HIGH_RISK_TOOLS 拒绝（破坏性工具必须经 Agent Loop）
+   * 3. PermissionEngine.check() 权限决策（deny/confirm 均 fail-closed）
+   */
+  async executeTool(
+    name: string,
+    args: Record<string, unknown>,
+    callContext?: { source: 'ipc'; requestId?: string },
+  ): Promise<unknown> {
+    // Phase 79 Task 4：无上下文时拒绝执行（防止绕过 Loop 直接调 IPC）
+    if (!callContext || callContext.source !== 'ipc') {
+      return { success: false, error: '拒绝执行：缺少有效调用上下文（必须通过 IPC 调用）' };
+    }
+
     // TD-07：高风险工具拒绝——必须通过 Agent Loop 调用
     if (RouteDevEngine.HIGH_RISK_TOOLS.has(name)) {
       return { success: false, error: '高风险工具必须通过 Agent Loop 调用' };
     }
 
     if (!this.ctx.deps) return { error: '引擎未初始化' };
+
+    // Phase 79 Task 4：复用 PermissionEngine 进行权限校验
+    // IPC 无用户确认通道，deny/confirm 决策均拒绝执行；仅 auto 放行
+    const permissionEngine = this.ctx.deps.permissionEngine;
+    if (permissionEngine) {
+      try {
+        const mode = this.ctx.config.autonomy?.defaultMode ?? 'semi';
+        const decision = permissionEngine.check(name, args, mode);
+        if (decision.decision === 'deny') {
+          // F-069 修复：记录权限拒绝审计日志
+          this.ctx.deps.audit?.log('user_deny', name, { reason: decision.reason, source: 'ipc' }, 'denied', 'ipc');
+          return { success: false, error: `权限拒绝: ${decision.reason}` };
+        }
+        if (decision.decision === 'confirm') {
+          // IPC 无确认通道，confirm 决策 fail-closed 拒绝
+          // F-069 修复：记录 confirm 拒绝审计日志
+          this.ctx.deps.audit?.log('user_deny', name, { reason: decision.reason, source: 'ipc', detail: 'confirm not supported via IPC' }, 'denied', 'ipc');
+          return { success: false, error: `权限要求确认（IPC 不支持确认通道）: ${decision.reason}` };
+        }
+        // auto → 放行
+      } catch (err) {
+        // fail-closed：权限引擎异常时拒绝
+        // F-069 修复：记录权限校验异常审计日志
+        this.ctx.deps.audit?.log('user_deny', name, { error: err instanceof Error ? err.message : String(err), source: 'ipc' }, 'failure', 'ipc');
+        return { success: false, error: `权限校验异常 (fail-closed): ${err instanceof Error ? err.message : String(err)}` };
+      }
+    }
 
     // F-N016 修复：test_connection 工具未在 ToolExecutor 注册，
     // 此处内联处理——委托给 ConfigBridge.handleTestConnection 用传入的 baseUrl/apiKey

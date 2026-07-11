@@ -111,7 +111,9 @@ export class ExecutionVerifier {
   private async runCompile(projectPath: string): Promise<boolean> {
     if (!existsSync(join(projectPath, 'tsconfig.json'))) return true;
     try {
-      const result = spawnSync('npx.cmd', ['tsc', '--noEmit'], {
+      // F-061：直接使用本地 node_modules/.bin/tsc，避免 npx.cmd 硬编码（跨平台）
+      const tscBin = join(projectPath, 'node_modules', '.bin', process.platform === 'win32' ? 'tsc.cmd' : 'tsc');
+      const result = spawnSync(tscBin, ['--noEmit'], {
         cwd: projectPath,
         timeout: this.config.timeoutMs,
         encoding: 'utf-8',
@@ -134,7 +136,9 @@ export class ExecutionVerifier {
 
   private async runTests(projectPath: string): Promise<boolean> {
     try {
-      const result = spawnSync('npx.cmd', ['vitest', 'run', '--reporter=dot'], {
+      // F-061：直接使用本地 node_modules/.bin/vitest，避免 npx.cmd 硬编码（跨平台）
+      const vitestBin = join(projectPath, 'node_modules', '.bin', process.platform === 'win32' ? 'vitest.cmd' : 'vitest');
+      const result = spawnSync(vitestBin, ['run', '--reporter=dot'], {
         cwd: projectPath,
         timeout: this.config.timeoutMs,
         encoding: 'utf-8',

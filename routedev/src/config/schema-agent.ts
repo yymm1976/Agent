@@ -384,6 +384,12 @@ export type SubAgentsConfig = z.infer<typeof SubAgentsConfigSchema>;
 /**
  * Goal 配置（Phase 43）
  * 控制 /goal 流程的需求澄清、确认、审计模式与 token 预算
+ *
+ * Phase 83: parallel scheduling frozen —— 并行调度与冲突检测已冻结
+ *   - 并行调度路径（executePlanWithMultiAgent）在 Phase 58 已删除，当前仅 single/dag/compose
+ *   - 冲突检测在 goal 路径中无调用点（ExperimentConfigSchema.conflictDetection 独立，不属于 goal）
+ *   - 冻结策略：不新增 goal.parallel.enabled 配置字段，避免误以为可启用并行调度
+ *   - 如需恢复并行调度，重新接线 PathRouter 并恢复 executePlanWithMultiAgent
  */
 export const GoalConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否要求用户确认（分解后的计划需用户确认才执行） */
@@ -408,8 +414,8 @@ export const GoalConfigSchema = z.preprocess((v) => v ?? {}, z.object({
     }
     return v;
   }, z.object({
-    /** 判定模式：auto（自动判定）/ explicit（显式指定） */
-    mode: z.enum(['auto', 'explicit']).default('auto'),
+    /** 判定模式：auto（自动判定）/ explicit（显式指定）/ single（强制单 Agent，goalAdvanced 未启用时使用） */
+    mode: z.enum(['auto', 'explicit', 'single']).default('auto'),
     /** mode=explicit 时生效，指定具体路径 */
     explicitRoute: z.enum(['single', 'dag', 'compose']).optional(),
     /** 单 Agent 路径的最大步数（1-5，默认 2） */
@@ -587,10 +593,12 @@ export type GoalIntegrationConfig = z.infer<typeof GoalIntegrationConfigSchema>;
  * 控制 orchestrator.ts 中核心模块的渐进式接入，默认全部关闭
  * - strategyEnabled：StrategySelector 按复杂度选择策略
  * - stateGraphEnabled：ExecutionStateGraph 步骤状态管理
+ * - conflictDetectionEnabled：ConflictDetector 冲突检测接入生产调度（Phase 83 Task 2 冻结，默认 false）
  */
 export const OrchestrationIntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   strategyEnabled: z.boolean().default(false),
   stateGraphEnabled: z.boolean().default(false),
+  conflictDetectionEnabled: z.boolean().default(false),
 }));
 export type OrchestrationIntegrationConfig = z.infer<typeof OrchestrationIntegrationConfigSchema>;
 
@@ -802,10 +810,20 @@ export const FileEditConfigSchema = z.preprocess((v) => v ?? {}, z.object({
 export type FileEditConfig = z.infer<typeof FileEditConfigSchema>;
 
 /**
+ * 工具注册档位（Phase 81 Task 1）
+ * - core: ≤10 个核心工具，默认值——编程场景基础能力
+ * - full: 兼容旧行为（全部工具），仅调试用
+ */
+export type ToolProfile = 'core' | 'full';
+export const ToolProfileSchema = z.enum(['core', 'full']).default('core');
+
+/**
  * 工具层配置聚合
- * 当前包含 fileEdit；后续可扩展更多工具的细粒度配置
+ * 当前包含 profile（注册档位）和 fileEdit；后续可扩展更多工具的细粒度配置
  */
 export const ToolsConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  /** 工具注册档位（默认 core，仅注册核心工具；full 恢复全部工具） */
+  profile: ToolProfileSchema,
   /** file_edit 工具配置 */
   fileEdit: FileEditConfigSchema,
 }));

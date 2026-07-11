@@ -118,7 +118,7 @@ export class CodeMapWatcher {
   private scheduleReconnect(): void {
     // 先清理旧句柄
     if (this.watcher) {
-      try { this.watcher.close(); } catch { /* 忽略关闭错误 */ }
+      try { this.watcher.close(); } catch (e) { logger.debug('watcher close failed', { error: e instanceof Error ? e.message : String(e) }); }
       this.watcher = null;
     }
 

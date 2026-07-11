@@ -19,6 +19,8 @@ import { spawn, ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { logger } from '../utils/logger.js';
 import { auditPanel } from './audit-panel.js';
+// F-040：使用 parseCommand 正确解析带引号命令的首 token
+import { parseCommand } from '../tools/command-parser.js';
 
 // ============================================================
 // 类型定义
@@ -94,6 +96,13 @@ const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MB
 const DANGEROUS_PATTERNS: RegExp[] = [
   // rm -rf / 或 rm -rf /*
   /rm\s+(-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*)\s+\/(\s|$|\*)/i,
+  // F-040：rm -rf 变体扩充 — 防止绕过
+  // rm -rf /. （/ 后是 .，递归删除根目录内容）
+  /rm\s+(-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*)\s+\/\.(\/|\s|$)/i,
+  // rm -rf /./etc （/./ 变体，绕过简单的 / 匹配）
+  /rm\s+(-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*)\s+\/\.\/./i,
+  // rm -rf -- / （-- flag 终止选项解析，后接 /）
+  /rm\s+(-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*)\s+--\s+\/(\s|$|\*)/i,
   // Windows format 命令（format C: 等）
   /^format\s+[a-z]:/i,
   // Windows del /f /s /q（强制删除递归静默）
@@ -366,8 +375,9 @@ export class CommandSandbox {
       return { allowed: false, reason: '命令为空' };
     }
 
-    // 提取首 token（命令名部分，可能含路径）
-    const firstToken = command.split(/\s+/)[0] ?? '';
+    // F-040：使用 parseCommand 正确解析带引号命令的首 token
+    // 原 command.split(/\s+/)[0] 会被引号内的空格截断（如 "C:\Program Files\node.exe"）
+    const firstToken = parseCommand(command).command || '';
     // basename（去路径前缀，便于白名单匹配）—— 同时考虑 firstToken 和整体 command
     // 之所以同时考虑整体 command：处理路径含空格的情况（如 'C:\Program Files\nodejs\node.exe'）
     const cmdNameFromFirst = path.basename(firstToken).toLowerCase();

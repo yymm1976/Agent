@@ -60,13 +60,17 @@ import { createBuiltinPlaybookPolicies } from '../policies/playbook.js';
 import { createBuiltinToolGuidePolicies } from '../policies/tool-guide.js';
 import { createBuiltinToolApprovalPolicies } from '../policies/tool-approval.js';
 import { SkillsRouter, FilesystemDiscovery } from '../plugins/filesystem-discovery.js';
+import { CapabilityPackRegistry } from '../plugins/capability-pack-registry.js';
+import { CommandRegistry, PackEventBus } from '../plugins/capability-pack.js';
+import type { PackContext } from '../plugins/capability-pack.js';
+import { PackDiscovery } from '../plugins/pack-discovery.js';
+import { UsageCounter } from '../observability/usage-counter.js';
 import { logger } from '../utils/logger.js';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
 import type { InitContext, AppDependencies } from './app-init.js';
-
-/** 工具执行超时（ms）—— ToolRegistryAdapter / CommandSandbox 共用 */
-const TOOL_EXECUTION_TIMEOUT_MS = 30_000;
+// F-075：常量提取到 utils/constants.ts
+import { TOOL_EXECUTION_TIMEOUT_MS } from '../utils/constants.js';
 
 /**
  * 创建工具子系统
@@ -79,68 +83,79 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   const { config, cwd, trace, recallInjector, ccrCache, offloadSessionId, offloadRootDir } = ctx;
 
   // ===== 工具链 =====
-  // P0-1/P0-2/P1-4/P1-5/P1-6/P1-7：注册全部内置工具
+  // Phase 81 Task 1：工具默认注册收口——按 profile 档位注册
+  // - core（默认）：仅注册 ≤10 个核心工具，覆盖编程场景基础能力
+  // - full：兼容旧行为，注册全部工具（仅调试用）
+  const toolProfile = config.tools?.profile ?? 'core';
+  const isFullProfile = toolProfile === 'full';
+
   const registry = new ToolRegistry();
   // Phase 53 Task 7：提取 fileEditTool / fileWriteTool 实例，供 ConfigGuard 注入
   const fileEditTool = new FileEditTool();
   const fileWriteTool = new FileWriteTool();
   // [I-5] 提取 shellExecTool 实例，供 CommandSandbox 注入
   const shellExecTool = new ShellExecTool();
-  // 基础工具（原有）—— fileWriteTool / shellExecTool 已提取为实例变量供后续注入
-  [FileReadTool, FileSearchTool, GitOpTool, WebSearchTool, CodeSearchTool]
+
+  // --- Core 工具（始终注册，≤10 个） ---
+  // file_read / file_search / git_op / code_search
+  // fileWriteTool / shellExecTool 已提取为实例变量供后续注入
+  [FileReadTool, FileSearchTool, GitOpTool, CodeSearchTool]
     .forEach(T => registry.register(new T()));
-  registry.register(fileWriteTool);
-  registry.register(shellExecTool);
-  // Phase 34 Task 4：Repo Map 代码检索增强
-  registry.register(new RepoMapTool());
-  // 短板 2 修复：代码地图查询工具（find_callers/find_callees/impact_analysis/search_symbols）
-  registry.register(new CodeGraphQueryTool());
-  // P1-4：文件编辑工具（str_replace，避免全量重写）
-  registry.register(fileEditTool);
-  // P0-2：目录列表工具（补全 work-modes.ts 的 list_directory 引用）
-  registry.register(new ListDirectoryTool());
-  // P1-7：网页抓取工具
-  registry.register(new WebFetchTool());
-  // [I-5] BrowserTool（P3.8）：动态 import 注册，避免静态解析失败
-  const browserToolModulePath = '../tools/builtin/browser.js';
-  import(browserToolModulePath)
-    .then(({ BrowserTool }) => {
-      registry.register(new BrowserTool());
-      logger.debug('BrowserTool registered');
-    })
-    .catch((err) => { logger.warn('BrowserTool fail-open', { error: err instanceof Error ? err.message : String(err) }); });
+  registry.register(fileWriteTool);             // file_write
+  registry.register(shellExecTool);              // shell_exec
+  registry.register(fileEditTool);               // file_edit
+  registry.register(new ListDirectoryTool());    // list_directory
   // P1-5：任务列表工具
   const todoStore = new TodoStore();
-  registry.register(new TodoWriteTool(todoStore));
-  registry.register(new AskUserTool());
-  // P0-1：笔记工具（Agent 唯一写通道，需注入 NotesManager）
-  // observability 子系统已写入 trace，此处非空
-  const sessionDir = path.join(homedir(), '.qoderwork', 'routedev', 'sessions', trace!.getSessionId() ?? `app-${Date.now()}`);
+  registry.register(new TodoWriteTool(todoStore)); // todo_write
+  registry.register(new AskUserTool());             // ask_user
+
+  // --- 非 Core 工具的依赖对象（始终创建，供 agentLoop 注入） ---
+  // P0-1：笔记工具需注入 NotesManager（observability 子系统已写入 trace，此处非空）
+  // F-031 类型安全：trace 可选，用 ?. 替代 ! 断言
+  const sessionDir = path.join(homedir(), '.qoderwork', 'routedev', 'sessions', trace?.getSessionId() ?? `app-${Date.now()}`);
   const notesManager = new NotesManager(sessionDir);
-  registry.register(new NotesTool(notesManager));
-  // Phase 71 Task E1：进程内 VFS + 4 个 VFS 工具
-  // - VirtualFS 实例由 app-init 创建，与 agentLoop 共享同一实例
-  // - 4 个工具通过构造函数注入 VFS 实例，loop 通过 setVirtualFS 注入
-  // - VFS 作为 Agent 工作内存统一抽象（todo/scratchpad/notes/中间产物）
+  // Phase 71 Task E1：进程内 VFS（与 agentLoop 共享同一实例，loop 通过 setVirtualFS 注入）
   const virtualFS = createVFS();
-  registry.register(new VfsReadTool(virtualFS));
-  registry.register(new VfsWriteTool(virtualFS));
-  registry.register(new VfsListTool(virtualFS));
-  registry.register(new VfsDeleteTool(virtualFS));
-  // Phase 71 Task E2：显式 plan 状态 + 5 个 plan 工具
-  // - PlanState 复用上方 virtualFS 实例（plan 存储在 VFS 的 /plan/current.json）
-  // - 5 个工具通过构造函数注入 PlanState 实例，loop 通过 setPlanState 注入
-  // - plan 状态对 LLM 暴露为显式可读写实体，避免散落在 system prompt
+  // Phase 71 Task E2：显式 plan 状态（复用 virtualFS，loop 通过 setPlanState 注入）
   const planState = new PlanState(virtualFS);
-  registry.register(new PlanGetTool(planState));
-  registry.register(new PlanSetTool(planState));
-  registry.register(new PlanUpdateStepTool(planState));
-  registry.register(new PlanAddStepTool(planState));
-  registry.register(new PlanRemoveStepTool(planState));
-  // Phase 55 Task 9：CCR 取回工具（让 LLM 可按需取回被压缩的原始上下文）
-  if (config.ccrCompression?.enabled) {
-    // memory 子系统在 ccrCompression.enabled 时已写入 ccrCache，此处非空
-    registry.register(new CCRRetrieveTool(ccrCache!));
+
+  // --- 非 Core 工具（仅 full profile 注册，冷处理不删除源码） ---
+  if (isFullProfile) {
+    // web_search → standard-pack
+    registry.register(new WebSearchTool());
+    // Phase 34 Task 4：Repo Map 代码检索增强 → standard-pack
+    registry.register(new RepoMapTool());
+    // 短板 2 修复：代码地图查询工具 → standard-pack
+    registry.register(new CodeGraphQueryTool());
+    // P1-7：网页抓取工具 → standard-pack
+    registry.register(new WebFetchTool());
+    // [I-5] BrowserTool（P3.8）：动态 import 注册，避免静态解析失败 → standard-pack
+    const browserToolModulePath = '../tools/builtin/browser.js';
+    import(browserToolModulePath)
+      .then(({ BrowserTool }) => {
+        registry.register(new BrowserTool());
+        logger.debug('BrowserTool registered');
+      })
+      .catch((err) => { logger.warn('BrowserTool fail-open', { error: err instanceof Error ? err.message : String(err) }); });
+    // notes → standard-pack
+    registry.register(new NotesTool(notesManager));
+    // VFS 4 工具 → standard-pack
+    registry.register(new VfsReadTool(virtualFS));
+    registry.register(new VfsWriteTool(virtualFS));
+    registry.register(new VfsListTool(virtualFS));
+    registry.register(new VfsDeleteTool(virtualFS));
+    // Plan 5 工具 → extended-pack
+    registry.register(new PlanGetTool(planState));
+    registry.register(new PlanSetTool(planState));
+    registry.register(new PlanUpdateStepTool(planState));
+    registry.register(new PlanAddStepTool(planState));
+    registry.register(new PlanRemoveStepTool(planState));
+    // Phase 55 Task 9：CCR 取回工具 → standard-pack
+    if (config.ccrCompression?.enabled) {
+      // memory 子系统在 ccrCompression.enabled 时已写入 ccrCache，此处非空
+      registry.register(new CCRRetrieveTool(ccrCache!));
+    }
   }
 
   // Phase 53 Task 7：ConfigGuard 注入（受 config.phase53Integration.configGuard.enabled 守护）
@@ -191,6 +206,10 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   const securityChecker = new SecurityChecker(cwd, config.security, config.permissionProfile);
   const toolExecutor = new ToolExecutor(registry);
   toolExecutor.setSecurityChecker(securityChecker);
+  // Phase 80 Task 2：注入使用计数器到 ToolExecutor（observability 子系统已写入 ctx.usageCounter）
+  if (ctx.usageCounter) {
+    toolExecutor.setUsageCounter(ctx.usageCounter);
+  }
   // 修复：将配置中的 webSearch API Key 注入到工具环境变量，供 web_search 工具读取
   const webSearchEnv: Record<string, string> = {};
   if (config.webSearch?.glmApiKey) webSearchEnv['GLM_WEB_SEARCH_API_KEY'] = config.webSearch.glmApiKey;
@@ -206,7 +225,10 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   const adapter = new ToolRegistryAdapter(registry, toolExecutor, {
     workingDirectory: cwd,
     allowedDirectories: [cwd],
-    environment: { ...process.env, ...webSearchEnv } as Record<string, string>,
+    // F-051 类型安全：过滤 undefined 后再断言，避免 process.env 中 undefined 值混入
+    environment: Object.fromEntries(
+      Object.entries({ ...process.env, ...webSearchEnv }).filter(([, v]) => v !== undefined),
+    ) as Record<string, string>,
     timeoutMs: TOOL_EXECUTION_TIMEOUT_MS,
   });
   // Phase 34：让工具执行通过 TraceCollector 记录 span
@@ -244,7 +266,11 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   agentLoop.setPlanState(planState);
 
   // 任务1：注入 ComposePipeline，让 Compose 模式具备阶段提示词注入和自动流转能力
-  agentLoop.setComposePipeline(workModeController.getComposePipeline());
+  // Phase 81 Task 4：packs.compose.enabled 门控（standard-pack，默认 false 退出装配）
+  //   未启用时注入 null，loop 走原始行为（无 compose 阶段流转）；enabled:true 恢复装配
+  agentLoop.setComposePipeline(
+    config.packs?.compose?.enabled === true ? workModeController.getComposePipeline() : null,
+  );
   // 任务3：注入简洁思考约束开关（来自 optimization.conciseThinking.enabled，默认 false）
   agentLoop.setConciseThinking(config.optimization?.conciseThinking?.enabled === true);
 
@@ -298,8 +324,11 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   // 4.1 TrustGradientManager 接线
   //     构造函数接受 sessionId，接线后注入 PermissionEngine（若引擎支持）
   // 注：TrustGradient 的 .then() 回调异步执行，permissionEngine 已在上方同步创建
+  // Phase 79: TrustGradient Freeze — 仅静态档位配置 + 用户显式临时授权，不做会话内动态升级
+  //   setLevel(baseLevel) 一次设定后不再动态调整；PermissionEngine.check() 已旁路 level-based 动态决策
+  // Phase 81 Task 3：packs.trustGradient.enabled 门控（freeze 层 F-01，默认 false 退出装配）
   const trustCfg = config.trust;
-  if (trustCfg) {
+  if (trustCfg && config.packs?.trustGradient?.enabled) {
     const trustModulePath = '../tools/trust-gradient.js';
     import(trustModulePath)
       .then((mod: { TrustGradientManager: new (sessionId: string, level?: string) => import('../tools/trust-gradient.js').TrustGradientManager }) => {
@@ -437,6 +466,51 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
     }
   }
 
+  // ===== Phase 82 Task 1：Pack 加载阶段 =====
+  // 创建 Pack 注册表和上下文，通过 PackDiscovery 发现所有 Pack（内置 + 用户自建），加载 enabled 的 Pack
+  // 约束：
+  //   - PackDiscovery 扫描项目级 / 全局 / 内置三处 Pack 目录（fail-open）
+  //   - Pack 加载失败不影响 Core 主流程（loadEnabled 内部 fail-open）
+  //   - 整个发现+注册+加载流程异步执行（fire-and-forget），不阻塞 App 初始化
+  const packRegistry = new CapabilityPackRegistry();
+  const commandRegistry = new CommandRegistry();
+  const packEventBus = new PackEventBus();
+  // 组装 PackContext（observability 子系统已写入 ctx.usageCounter，fallback 防御性兜底）
+  const packCtx: PackContext = {
+    tools: registry,
+    commands: commandRegistry,
+    events: packEventBus,
+    config,
+    logger,
+    usage: ctx.usageCounter ?? new UsageCounter(),
+  };
+  // 异步发现 + 注册 + 加载（不阻塞 App 初始化）
+  // PackDiscovery.discover() 读取文件系统 + 动态 import，全部 fail-open
+  (async () => {
+    // 1. 发现所有 Pack（项目级 > 全局 > 内置，按 id 去重）
+    const discovery = new PackDiscovery(process.cwd(), homedir());
+    const discovered = await discovery.discover();
+
+    // 2. 注册到 registry（fail-open：单个注册失败不阻断其他）
+    for (const { pack } of discovered) {
+      try {
+        packRegistry.register(pack);
+      } catch (err) {
+        logger.warn('[app-init-tools] Pack 注册失败，fail-open 跳过', {
+          id: pack.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // 3. 加载已启用的 Pack
+    await packRegistry.loadEnabled(packCtx);
+  })().catch((err) => {
+    logger.warn('[app-init-tools] Pack 发现/加载异常，fail-open 跳过', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+
   // 写回共享上下文，供 agent 子系统消费
   ctx.registry = registry;
   ctx.mcpManager = mcpManager;
@@ -456,14 +530,18 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   ctx.planState = planState;
   ctx.agentLoop = agentLoop;
   ctx.profiler = profiler;
+  // F-018：packRegistry 不再写入 ctx（对外暴露的僵尸字段已移除）
 
   return {
     registry,
     mcpManager,
     toolExecutor,
     agentLoop,
+    // Phase 79 Task 4：暴露 permissionEngine 供 IPC tool:execute 复用权限校验
+    permissionEngine,
     skillsRouter,
     filesystemDiscovery,
     profiler,
+    // F-018：packRegistry 不再对外暴露（僵尸字段已移除）
   };
 }

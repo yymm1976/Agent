@@ -17,7 +17,6 @@ import {
   ProviderConfigSchema,
   LLMProvidersConfigSchema,
   RouterConfigSchema,
-  ChannelsConfigSchema,
   MCPConfigSchema,
   ReasoningModeSchema,
   ClosedLoopRoutingConfigSchema,
@@ -93,6 +92,7 @@ import {
   ObservabilityConfigSchema,
   Phase68IntegrationConfigSchema,
   Phase70IntegrationConfigSchema,
+  PacksConfigSchema,
 } from './schema-observability.js';
 
 // --- Re-export 所有子 Schema 及其类型，保持外部 import 路径不变 ---
@@ -101,6 +101,20 @@ export * from './schema-security.js';
 export * from './schema-memory.js';
 export * from './schema-agent.js';
 export * from './schema-observability.js';
+
+// --- Pack 分组配置（Phase 81 Task 3+4/5） ---
+// PacksConfigSchema 和 PacksConfig 类型定义在 schema-observability.ts 中
+// 此处仅保留注释说明分组归属（详见 schema-observability.ts 的 PacksConfigSchema）
+// 分组归属：
+//   browserWeb   → standard-pack（browser/web_search/web_fetch 装配层）
+//   codeMap      → standard-pack（code-map / code_graph_query 装配层）
+//   harness      → standard-pack（trace-replayer / scorecard）
+//   integrity    → standard-pack（cite / import / macros / mcpBridge / IntegrityManifest）
+//   compose      → standard-pack（compose-pipeline）
+//   multiAgent   → extended-pack（orchestrator / spawn_agent / 多 Agent 体系）
+//   adversarial  → extended-pack（cross-model-reviewer 对抗审查）
+//   trustGradient→ freeze（TrustGradient + Implicit Feedback + ExpertisePrompt，Phase 40 freeze 组）
+//   kgAdvanced   → freeze（KG 高级算法：社区检测等）
 
 // --- 全局配置（完整 schema） ---
 // 顶层 AppConfig：所有配置的根节点
@@ -116,7 +130,6 @@ export const AppConfigSchema = z.object({
   checkpoint: z.preprocess((v) => v ?? {}, CheckpointConfigSchema),    // 增量 Checkpoint
   goalVerifier: z.preprocess((v) => v ?? {}, GoalVerifierConfigSchema), // 目标验证
   security: z.preprocess((v) => v ?? {}, SecurityConfigSchema),        // 安全策略
-  channels: z.preprocess((v) => v ?? {}, ChannelsConfigSchema),         // 渠道集成（Phase 13）
   autonomy: z.preprocess((v) => v ?? {}, AutonomyConfigSchema),        // 自主度
   sounds: z.preprocess((v) => v ?? {}, SoundsConfigSchema),            // 提示音
   updates: z.preprocess((v) => v ?? {}, UpdatesConfigSchema),          // 更新策略
@@ -232,6 +245,10 @@ export const AppConfigSchema = z.object({
   // 可观测性外部接入：OTel exporter（OTLP HTTP/JSON）
   // 默认 optional——未配置时 app-init.ts 不创建 exporter，/trace otel 显示"未启用"
   observability: ObservabilityConfigSchema,
+  // Phase 81 Task 3+4 + Task 5：能力 Pack 开关（四层分层：Core/Extended/Standard/Freeze）
+  // preprocess 兜底：未配置时解析为空对象，各 pack 默认 false，非 Core 模块退出默认装配
+  // UI 在设置页"能力分层"tab 展示；enabled:true 可恢复对应模块装配
+  packs: z.preprocess((v) => v ?? {}, PacksConfigSchema),
 });
 export type AppConfig = z.infer<typeof AppConfigSchema>;
 

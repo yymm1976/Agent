@@ -12,6 +12,8 @@ import { estimateTokens } from '../../../src/utils/token-estimate.js';
 import type { TrajectorySummary } from '../../../src/harness/trace-types.js';
 import { generateMicroSummary } from '../../../src/agent/micro-summary.js';
 import { logger } from '../../../src/utils/logger.js';
+import { SessionTree } from '../../../src/session/session-tree.js';
+import { handleTreeCommand, handleForkCommand, handleCloneCommand } from '../../../src/session/session-commands.js';
 import type { EngineContext, EngineBridges } from './engine-context.js';
 import type { PlanEditRequestPayload } from '../../shared/ipc-types.js';
 
@@ -32,6 +34,9 @@ const AUTO_MODE_CONFIRM_TOOLS = new Set([
  * 通过 ctx.bridges 访问。
  */
 export class ChatBridge {
+  /** Phase 84：会话树实例（懒初始化，首次使用 /tree /fork /clone 命令时创建） */
+  private sessionTree: SessionTree | null = null;
+
   constructor(private ctx: EngineContext) {}
 
   async sendChat(text: string): Promise<void> {
@@ -134,6 +139,15 @@ export class ChatBridge {
       let skillPromptSuffix = '';
       if (deps.skillsRouter) {
         const matchedSkills = deps.skillsRouter.route(actualUserMessage, 3);
+        // Phase 80 Task 2：Pack 加载计数（fail-open）
+        // 匹配到的 Skill 计为 load，未匹配到任何 Skill 时计为 skip
+        if (matchedSkills.length > 0) {
+          for (const skill of matchedSkills) {
+            deps.usageCounter?.increment({ kind: 'pack', name: skill.name, action: 'load' });
+          }
+        } else {
+          deps.usageCounter?.increment({ kind: 'pack', name: '*', action: 'skip' });
+        }
         if (matchedSkills.length > 0) {
           const skillBlocks = matchedSkills.map((s) =>
             `## Skill: ${s.name}\n${s.content}`,
@@ -395,6 +409,13 @@ export class ChatBridge {
         try { controller.abort(); } catch { /* 忽略 abort 异常 */ }
         this.ctx.clearAbortController(requestId);
       }
+      // F-066 修复：清理该 requestId 的 pending confirm，resolve({ approved: false }) 释放 Promise
+      // 与 clearAbortController 配对，避免 stopGeneration 后残留 pending confirm 导致线程泄漏
+      const pendingConfirm = this.ctx.getPendingConfirm(requestId);
+      if (pendingConfirm) {
+        try { pendingConfirm.resolve({ approved: false }); } catch { /* 忽略 resolve 异常 */ }
+        this.ctx.clearPendingConfirm(requestId);
+      }
     } else {
       // G-004：无 requestId 时中断全部并发请求（向后兼容）
       this.ctx.clearAllAbortControllers();
@@ -483,6 +504,8 @@ export class ChatBridge {
     // GUI 支持的快捷命令
     if (cmd === '/clear') {
       this.ctx.conversationHistory = [];
+      // Phase 84：清空对话时同步重置会话树，下次 /tree 重新从空历史懒初始化
+      this.sessionTree = null;
       return { ok: true, message: '对话历史已清空' };
     }
     if (cmd === '/status') {
@@ -502,10 +525,37 @@ export class ChatBridge {
       }
       return { ok: true, message: '对话历史较短，无需压缩' };
     }
+    // Phase 84：/tree /fork /clone 会话分支命令
+    if (cmd === '/tree' || cmd.startsWith('/tree ')) {
+      const tree = this.getOrCreateSessionTree();
+      if (!tree) {
+        return { ok: true, message: '🌳 会话树为空，发送消息开始对话。' };
+      }
+      const args = cmd.slice('/tree'.length).trim();
+      const result = handleTreeCommand(tree, args || undefined);
+      return { ok: true, message: result.text };
+    }
+    if (cmd === '/fork' || cmd.startsWith('/fork ')) {
+      const tree = this.getOrCreateSessionTree();
+      if (!tree) {
+        return { ok: true, message: '❌ 会话树为空，无法 fork。请先发送消息建立对话。' };
+      }
+      const args = cmd.slice('/fork'.length).trim();
+      const result = handleForkCommand(tree, args || undefined);
+      return { ok: true, message: result.text };
+    }
+    if (cmd === '/clone') {
+      const tree = this.getOrCreateSessionTree();
+      if (!tree) {
+        return { ok: true, message: '❌ 会话树为空，无法 clone。请先发送消息建立对话。' };
+      }
+      const result = handleCloneCommand(tree);
+      return { ok: true, message: result.text };
+    }
     if (cmd === '/help') {
       return {
         ok: true,
-        message: '可用命令: /clear /status /mcp /compact /skill /goal /replay /scorecard /doctor /help',
+        message: '可用命令: /clear /status /mcp /compact /skill /goal /replay /scorecard /doctor /usage /tree /fork /clone /help',
       };
     }
     // Phase 37：/skill 和 /skills 命令
@@ -641,6 +691,22 @@ export class ChatBridge {
   removeFollowUp(index: number): boolean {
     if (!this.ctx.deps?.agentLoop) return false;
     return this.ctx.deps.agentLoop.removeFollowUp(index);
+  }
+
+  /**
+   * Phase 84：获取或创建会话树实例（懒初始化）
+   *
+   * 首次调用时从 conversationHistory 导入为单分支树（向后兼容线性消息）。
+   * conversationHistory 为空时返回 null，命令调用方应返回友好提示。
+   * 后续 fork/clone 产生的分支结构保留在 sessionTree 中，不再从线性历史重建。
+   *
+   * @returns SessionTree 实例；无对话历史时返回 null
+   */
+  private getOrCreateSessionTree(): SessionTree | null {
+    if (this.sessionTree) return this.sessionTree;
+    if (this.ctx.conversationHistory.length === 0) return null;
+    this.sessionTree = SessionTree.fromLinear(this.ctx.conversationHistory);
+    return this.sessionTree;
   }
 
   /** 安全读取 bridges 集合（executeCommand 跨 bridge 调用入口） */

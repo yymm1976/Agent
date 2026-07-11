@@ -79,9 +79,8 @@ import { logger } from '../utils/logger.js';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import type { InitContext, AppDependencies } from './app-init.js';
-
-/** 工具执行超时（ms）——与 tools 子系统共用同一值 */
-const TOOL_EXECUTION_TIMEOUT_MS = 30_000;
+// F-075：常量提取到 utils/constants.ts
+import { TOOL_EXECUTION_TIMEOUT_MS } from '../utils/constants.js';
 
 /**
  * 创建 Agent 子系统
@@ -279,7 +278,10 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
         const childAdapter = new ToolRegistryAdapter(childRegistry, childToolExecutor, {
           workingDirectory: cwd,
           allowedDirectories: [cwd],
-          environment: { ...process.env, ...webSearchEnv! } as Record<string, string>,
+          // F-051 类型安全：过滤 undefined 后再断言，避免 process.env 中 undefined 值混入
+          environment: Object.fromEntries(
+            Object.entries({ ...process.env, ...webSearchEnv! }).filter(([, v]) => v !== undefined),
+          ) as Record<string, string>,
           timeoutMs: TOOL_EXECUTION_TIMEOUT_MS,
         });
         childAdapter.setTraceCollector(trace!);
@@ -314,12 +316,19 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
         const effectiveSystemPrompt = options?.renderedSystemPrompt ?? childSystemPrompt;
         const effectiveHistory = options?.forkedConversationHistory ?? [];
 
+        // Phase 79 Task 5：子 Agent 工具确认委托父会话
+        // 从父 Loop 获取当前 run() 期间的确认回调，传给子 Loop
+        // 子 Agent 需要确认的工具调用将通过此回调委托给父会话处理（而非 fail-closed 拒绝）
+        const parentConfirmTool = agentLoop!.getCurrentConfirmTool();
+
         for await (const event of childLoop.run({
           userMessage: normalizedParams.prompt,
           llmClient: childClient,
           routeDecision,
           conversationHistory: effectiveHistory,
           systemPrompt: effectiveSystemPrompt,
+          // Task 5：委托父会话确认通道（无父会话确认通道时为 undefined，子 Loop 内部 fail-closed）
+          onConfirmTool: parentConfirmTool ?? undefined,
         })) {
           switch (event.type) {
             case 'text_delta':
@@ -350,8 +359,10 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   };
 
   // Phase 38 Task 2 / Phase 50 Task 3：spawn 函数包装 + SpawnAgentTool 注册
+  // Phase 81 Task 4：packs.multiAgent.enabled 门控（extended-pack，默认 false 退出装配）
+  //   注：工具注册逻辑（registry.register）属于装配层，非 app-init-tools.ts 的静态注册段
   const subAgentsCfg = config.subAgents;
-  const subAgentsEnabled = subAgentsCfg?.enabled !== false;
+  const subAgentsEnabled = subAgentsCfg?.enabled !== false && config.packs?.multiAgent?.enabled === true;
   const MAX_CONCURRENT_SUB_AGENTS = subAgentsEnabled ? (subAgentsCfg?.maxParallel ?? config.agent?.maxConcurrentSubAgents ?? 3) : 0;
 
   if (subAgentsEnabled && MAX_CONCURRENT_SUB_AGENTS > 0) {
@@ -470,8 +481,9 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   }
 
   // ===== Phase 39：CodeMapContextMiddleware 接线（fail-open 动态 import） =====
+  // Phase 81 Task 4：packs.codeMap.enabled 门控（standard-pack，默认 false 退出装配）
   const codegraphCfg = config.codegraph;
-  if (codegraphCfg) {
+  if (codegraphCfg && config.packs?.codeMap?.enabled) {
     const codeMapModulePath = '../agent/middleware/code-map-context.js';
     import(codeMapModulePath)
       .then((mod: { CodeMapContextMiddleware: new (cwd: string, budgetTokens?: number) => { getHandler: () => import('../agent/middleware.js').MiddlewareHandler } }) => {
@@ -491,7 +503,9 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   }
 
   // ===== Phase 41/42：tree-sitter 代码地图引擎预热（fail-open） =====
-  import('../code-map/indexer.js')
+  // Phase 81 Task 4：packs.codeMap.enabled 门控（standard-pack，默认 false 退出装配）
+  if (config.packs?.codeMap?.enabled) {
+    import('../code-map/indexer.js')
     .then(async (mod: { loadOrBuildIndex: (rootDir: string, opts?: { maxFiles?: number }) => Promise<{ stats: unknown; db: unknown }> }) => {
       try {
         await mod.loadOrBuildIndex(cwd, { maxFiles: 5000 });
@@ -507,6 +521,7 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
         error: err instanceof Error ? err.message : String(err),
       });
     });
+  }
 
   // ===== Phase 39：ExperimentManager 配置传递 =====
   const experimentsCfg = config.experiments;
@@ -518,10 +533,16 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   }
 
   // ===== Phase 40：渐进式信任 / 质量监测 / 用户经验 接线（全部 fail-open 动态 import） =====
+  // Phase 81 Task 3：freeze 层 F-01/F-02/F-06 退出默认装配
+  //   三个模块同属 Phase 40 freeze 组，统一由 config.packs.trustGradient.enabled 门控
+  //   默认 false → 不装配；用户显式 enabled:true 可恢复全部三个模块的装配
 
   // 4.1 TrustGradientManager 接线
+  // Phase 79: TrustGradient Freeze — 仅静态档位配置 + 用户显式临时授权，不做会话内动态升级
+  //   setLevel(baseLevel) 一次设定后不再动态调整；PermissionEngine.check() 已旁路 level-based 动态决策
+  // Phase 81 Task 3：packs.trustGradient.enabled 门控（freeze 层 F-01）
   const trustCfg = config.trust;
-  if (trustCfg) {
+  if (trustCfg && config.packs?.trustGradient?.enabled) {
     const trustModulePath = '../tools/trust-gradient.js';
     import(trustModulePath)
       .then((mod: { TrustGradientManager: new (sessionId: string, level?: string) => import('../tools/trust-gradient.js').TrustGradientManager }) => {
@@ -545,9 +566,10 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
       });
   }
 
-  // 4.2 QualitySignalMiddleware 接线
+  // 4.2 QualitySignalMiddleware 接线（Implicit Feedback，freeze 层 F-02）
+  // Phase 81 Task 3：packs.trustGradient.enabled 门控 + enableImplicitFeedback 默认 false
   const qualityCfg = config.quality;
-  if (qualityCfg?.enableImplicitFeedback !== false) {
+  if (qualityCfg?.enableImplicitFeedback !== false && config.packs?.trustGradient?.enabled) {
     const qualityModulePath = '../agent/middleware/quality-signal.js';
     import(qualityModulePath)
       .then((mod: { QualitySignalMiddleware: new (opts?: unknown) => { getHandler: () => import('../agent/middleware.js').MiddlewareHandler } }) => {
@@ -570,9 +592,10 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
       });
   }
 
-  // 4.3 ExpertisePromptMiddleware 接线
+  // 4.3 ExpertisePromptMiddleware 接线（Experience Adaptation，freeze 层 F-06）
+  // Phase 81 Task 3：packs.trustGradient.enabled 门控
   const expertiseCfg = config.expertise;
-  if (expertiseCfg) {
+  if (expertiseCfg && config.packs?.trustGradient?.enabled) {
     const expertiseManagerPath = '../config/expertise-manager.js';
     const expertiseMiddlewarePath = '../agent/middleware/expertise-prompt.js';
     Promise.all([
@@ -599,8 +622,9 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   }
 
   // ===== Phase 41：CodeMapEngine 接线（fail-open 动态 import） =====
+  // Phase 81 Task 4：packs.codeMap.enabled 门控（standard-pack，默认 false 退出装配）
   const codeMapCfg = config.codeMap;
-  if (codeMapCfg && codeMapCfg.engine !== 'disabled') {
+  if (codeMapCfg && codeMapCfg.engine !== 'disabled' && config.packs?.codeMap?.enabled) {
     const codeMapModulePath = '../code-map/index.js';
     import(codeMapModulePath)
       .then(async (mod: { CodeMapEngine: new (cwd: string, opts?: unknown) => { init: () => Promise<void> } }) => {
@@ -628,7 +652,8 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   }
 
   // ===== Phase 71 Task A5：CodeMap Watcher 接线（fail-open 动态 import） =====
-  if (config.codeMap?.watchMode === true) {
+  // Phase 81 Task 4：packs.codeMap.enabled 门控（standard-pack，默认 false 退出装配）
+  if (config.codeMap?.watchMode === true && config.packs?.codeMap?.enabled) {
     const watcherModulePath = '../code-map/watcher.js';
     import(watcherModulePath)
       .then((mod: { CodeMapWatcher: new (rootDir: string, dbPath: string) => { start: () => void; close: () => void } }) => {
@@ -657,25 +682,25 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   }
 
   // ===== 多 Agent：orchestrationIntegration 开关 =====
+  // Phase 81 Task 4：packs.multiAgent.enabled 门控（extended-pack，默认 false 退出装配）
   const orchestrationIntegrationCfg = config.orchestrationIntegration;
   const orchestrationIntegration: OrchestrationIntegrationOptions | undefined = (
-    orchestrationIntegrationCfg?.strategyEnabled ||
-    orchestrationIntegrationCfg?.stateGraphEnabled
+    config.packs?.multiAgent?.enabled &&
+    (orchestrationIntegrationCfg?.strategyEnabled ||
+    orchestrationIntegrationCfg?.stateGraphEnabled)
   )
     ? {
         strategyEnabled: orchestrationIntegrationCfg?.strategyEnabled,
         stateGraphEnabled: orchestrationIntegrationCfg?.stateGraphEnabled,
+        // Phase 83 Task 2：conflict detector 冻结——默认 false，由 config 显式开启
+        conflictDetectionEnabled: orchestrationIntegrationCfg?.conflictDetectionEnabled === true,
       }
     : undefined;
-  // Phase 54 Task 2：开启时任一开关时创建 ContextPacker（workerContextPacker 仅供 WorkerExecutor 消费，
-  // 但 WorkerExecutor 实例化已注释（Grok F-014），此处保留 ContextPacker 实例化供未来恢复使用）
-  const workerContextPacker = orchestrationIntegration ? new ContextPacker() : undefined;
-  // 标记为已使用，避免 TS 未使用变量告警（workerContextPacker 暂无消费方但保留实例化逻辑）
-  void workerContextPacker;
+  // F-021 删除死代码：workerContextPacker 创建和 void 行已移除（WorkerExecutor 实例化已注释，无消费方）
 
   // Phase 53 Task 11：熔断器（fail-open 动态 import）
   const phase53BreakerCfg = config.phase53Integration?.circuitBreaker;
-  if (phase53BreakerCfg?.enabled) {
+  if (phase53BreakerCfg?.enabled && config.packs?.multiAgent?.enabled) {
     const breakerModulePath = '../agent/circuit-breaker.js';
     import(breakerModulePath)
       .then((mod: { CircuitBreaker: new (config?: { failureThreshold?: number; resetTimeout?: number; halfOpenMaxAttempts?: number }) => import('../agent/circuit-breaker.js').CircuitBreaker }) => {
@@ -706,7 +731,7 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   // Phase 53 Task 10：DAG 引擎（fail-open 动态 import）
   const dagEngineRef: { current: DagEngine | null } = { current: null };
   const phase53DagCfg = config.phase53Integration?.dagEngine;
-  if (phase53DagCfg?.enabled) {
+  if (phase53DagCfg?.enabled && config.packs?.goalAdvanced?.enabled) {
     const dagEngineModulePath = '../agent/workflow/dag-engine.js';
     import(dagEngineModulePath)
       .then((mod: { DagEngine: new (opts?: { maxParallel?: number; retryLimit?: number; humanEscalationThreshold?: number }) => DagEngine }) => {
@@ -860,9 +885,13 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   });
 
   // 5. TaskOrchestrator——统一工作流编排器
+  // F-053 类型安全：入口非空校验，避免 as 强制断言掩盖依赖缺失
+  if (!classifier || !modelRouter || !tracker) {
+    throw new Error('classifier/modelRouter/tracker 未注入，无法创建 Agent 子系统');
+  }
   const taskOrchestrator = createTaskOrchestrator(
-    classifier as ScenarioClassifier,
-    modelRouter as ModelRouter,
+    classifier,
+    modelRouter,
     config,
   );
 
@@ -878,14 +907,16 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   const sharedSystemPromptRef = { current: '' };
   const unifiedReviewer = createUnifiedReviewer({
     agentLoop: agentLoop!,
-    tracker: tracker as TokenTracker,
+    tracker: tracker,
     config,
     systemPromptRef: sharedSystemPromptRef,
     addSystemMessage: () => {},
   });
 
   // ===== Phase 43：CodeMapFallback 检测（fail-open 动态 import） =====
-  import('../code-map/fallback.js')
+  // Phase 81 Task 4：packs.codeMap.enabled 门控（standard-pack，默认 false 退出装配）
+  if (config.packs?.codeMap?.enabled) {
+    import('../code-map/fallback.js')
     .then(async (mod) => {
       const preferred = config.codeMap?.engine ?? 'tree-sitter';
       const resolved = await mod.CodeMapFallback.resolveEngine(preferred);
@@ -899,6 +930,7 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
         error: err instanceof Error ? err.message : String(err),
       });
     });
+  }
 
   // ===== Phase 44：消息节点持久化 / 分支联动 接线（fail-open 动态 import） =====
 
@@ -930,24 +962,7 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
       });
   }
 
-  // 2. BranchLinkageManager 接线：消息分支与 /goal/experiment 双向映射
-  const branchLinkagePath = '../agent/branch-linkage.js';
-  import(branchLinkagePath)
-    .then((mod: { BranchLinkageManager: new (cwd: string) => { load: () => Promise<void> } }) => {
-      const linkage = new mod.BranchLinkageManager(cwd);
-      linkage.load().catch((e: unknown) => {
-        logger.debug('BranchLinkageManager load failed', {
-          error: e instanceof Error ? e.message : String(e),
-        });
-      });
-      logger.info('BranchLinkageManager registered');
-    })
-    .catch((err: unknown) => {
-      logger.debug('BranchLinkageManager not available yet', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-
+  // 2. F-019 删除死代码：BranchLinkageManager 创建块已移除（无消费方）
   // 3. ExperimentManager 单例：在同步作用域创建，确保 /experiment 命令与 engine-bridge 复用同一实例
   const experimentManager = new ExperimentManager(cwd);
 
@@ -1008,12 +1023,15 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   }
 
   // ===== Phase 50 Task 5：Phase 48 模块接入确认（全部 fail-open 动态 import） =====
+  // Phase 81 Task 4：packs.integrity.enabled 门控（standard-pack，默认 false 退出装配）
+  //   覆盖：IntegrityManifest / Cite / Import / Macros / MCPBridge
   const phase48Cfg = config.phase48Integration;
+  const integrityPackEnabled = config.packs?.integrity?.enabled === true;
 
   // 依赖完整性校验清单实例化（受 config.security.integrityCheck 守护）
   let integrityManifest: IntegrityManifest | undefined;
   let integrityManifestLoadPromise: Promise<void> | undefined;
-  if (config.security?.integrityCheck) {
+  if (config.security?.integrityCheck && integrityPackEnabled) {
     const manifestPath = path.resolve(cwd, config.security.integrityManifestPath);
     integrityManifest = new IntegrityManifest(manifestPath);
     integrityManifestLoadPromise = integrityManifest.load().catch((err: unknown) => {
@@ -1023,7 +1041,7 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
       });
     });
   }
-  if (phase48Cfg?.citeEnabled && config.cite?.enabled) {
+  if (phase48Cfg?.citeEnabled && config.cite?.enabled && integrityPackEnabled) {
     // CiteManager + CiteResolver 接入
     Promise.all([
       import('../cite/manager.js'),
@@ -1062,7 +1080,7 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
         });
       });
   }
-  if (phase48Cfg?.importEnabled && config.import) {
+  if (phase48Cfg?.importEnabled && config.import && integrityPackEnabled) {
     // 外部生态导入接入：ClaudePluginImporter / CodexInstructionImporter / AnthropicSkillsLoader
     Promise.all([
       import('../import/claude-plugin-importer.js'),
@@ -1141,7 +1159,7 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
         });
       });
   }
-  if (phase48Cfg?.macrosEnabled && config.macros?.enabled) {
+  if (phase48Cfg?.macrosEnabled && config.macros?.enabled && integrityPackEnabled) {
     // MacroManager 接入：`!` 触发器宏系统
     import('../macros/manager.js')
       .then((mod) => {
@@ -1164,7 +1182,7 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
         });
       });
   }
-  if (phase48Cfg?.mcpBridgeEnabled) {
+  if (phase48Cfg?.mcpBridgeEnabled && integrityPackEnabled) {
     // ClaudeMCPBridge 接入：导入 Claude Code .mcp.json 配置
     import('../mcp/claude-bridge.js')
       .then((mod) => {
@@ -1192,7 +1210,7 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   const phase49Cfg = config.phase49Integration;
   // Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，供 goal-runner 通过 ref 延迟读取）
   const dualLoopOrchestratorRef: { current: DualLoopOrchestrator | null } = { current: null };
-  if (phase49Cfg?.dualLoopEnabled) {
+  if (phase49Cfg?.dualLoopEnabled && config.packs?.goalAdvanced?.enabled) {
     // 双循环编排器接入：/goal 执行时可被调用
     import('../agent/dual-loop-orchestrator.js')
       .then((mod) => {
@@ -1200,13 +1218,13 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
         // Phase 55 Task 9：立即写入 ref
         dualLoopOrchestratorRef.current = orchestrator;
         // CR-1 修复：在 orchestrator 创建后立即注入 reviewerPolicy 和 boundedRecovery
-        if (config.reviewerPolicy?.tieredReviewEnabled) {
+        if (config.reviewerPolicy?.tieredReviewEnabled && config.packs?.adversarial?.enabled) {
           orchestrator.setReviewerPolicy(config.reviewerPolicy);
           logger.info('app-init: reviewerPolicy 已注入 DualLoopOrchestrator', {
             tieredReviewEnabled: true,
           });
         }
-        if (config.phase52Integration?.boundedRecovery?.enabled) {
+        if (config.phase52Integration?.boundedRecovery?.enabled && config.packs?.goalAdvanced?.enabled) {
           orchestrator.setBoundedRecovery(config.phase52Integration.boundedRecovery);
           logger.info('app-init: boundedRecovery 已注入 DualLoopOrchestrator', {
             maxBacktrack: config.phase52Integration.boundedRecovery.maxBacktrack,
@@ -1258,7 +1276,7 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   }
 
   // Task 3：有界局部恢复——已在 Phase 49 块中通过 DualLoopOrchestrator.setBoundedRecovery 接入
-  if (config.phase52Integration?.boundedRecovery?.enabled) {
+  if (config.phase52Integration?.boundedRecovery?.enabled && config.packs?.goalAdvanced?.enabled) {
     logger.info('app-init: boundedRecovery 配置已确认，将在 Phase 49 DualLoopOrchestrator 创建时注入');
   }
 

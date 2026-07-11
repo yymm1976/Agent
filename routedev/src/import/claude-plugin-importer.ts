@@ -689,7 +689,6 @@ export class ClaudePluginImporter {
         return { ...empty, warning: 'ClaudeMCPBridge 未导出' };
       }
       const bridge = new mod.ClaudeMCPBridge();
-      // Bug 修复：原代码调用 convertFromClaudeConfig（不存在），改为 importFromClaudeConfig
       if (typeof bridge.importFromClaudeConfig !== 'function') {
         warnings.push('ClaudeMCPBridge.importFromClaudeConfig 未实现，跳过 MCP 部分导入');
         return { ...empty, warning: 'importFromClaudeConfig 未实现' };

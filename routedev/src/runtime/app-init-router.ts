@@ -44,9 +44,14 @@ export function createRouterSubsystem(ctx: InitContext): Partial<AppDependencies
   const checkpointModelId = config.checkpoint.modelId;
   const checkpointProvider = config.providers.find(p => p.models.some(m => m.id === checkpointModelId));
   const fallbackClient: ILLMClient | undefined = clientManager.listAll().values().next().value;
-  const checkpointClient: ILLMClient = (checkpointProvider ? clientManager.get(checkpointProvider.id) ?? fallbackClient : fallbackClient) as ILLMClient;
+  const checkpointClient: ILLMClient | undefined = checkpointProvider ? clientManager.get(checkpointProvider.id) ?? fallbackClient : fallbackClient;
   const primaryProviderId = config.providers[0]?.id ?? 'default';
-  const primaryClient = (clientManager.get(primaryProviderId) ?? fallbackClient) as ILLMClient;
+  const primaryClient: ILLMClient | undefined = clientManager.get(primaryProviderId) ?? fallbackClient;
+
+  // F-049 类型安全：入口非空校验，避免 as 强制断言掩盖未配置 provider 的问题
+  if (!checkpointClient || !primaryClient) {
+    throw new Error('未配置任何 LLM provider');
+  }
 
   // 写回共享上下文，供其他子系统消费
   ctx.checkpointClient = checkpointClient;
@@ -58,7 +63,7 @@ export function createRouterSubsystem(ctx: InitContext): Partial<AppDependencies
   // 包装 decomposeWithSkillAwareness / composeDAG，按配置注入路由参数，供上层 planner 调用
   let compositionalRouter: CompositionalRouterInstance | undefined;
   const compositionalRoutingCfg = config.phase52Integration?.compositionalRouting;
-  if (compositionalRoutingCfg?.enabled) {
+  if (compositionalRoutingCfg?.enabled && config.packs?.goalAdvanced?.enabled) {
     const routingConfig: CompositionalRoutingConfig = {
       maxDecompositionIterations: compositionalRoutingCfg.maxDecompositionIterations ?? DEFAULT_ROUTING_CONFIG.maxDecompositionIterations,
       semanticRetrieval: compositionalRoutingCfg.semanticRetrieval ?? DEFAULT_ROUTING_CONFIG.semanticRetrieval,
@@ -92,7 +97,7 @@ export function createRouterSubsystem(ctx: InitContext): Partial<AppDependencies
   let executionVerifier: ExecutionVerifier | undefined;
   let routingRegretTracker: RoutingRegretTracker | undefined;
 
-  if (clrCfg?.enabled) {
+  if (clrCfg?.enabled && config.packs?.acRouter?.enabled) {
     routingHistory = new RoutingHistory({
       maxRecords: clrCfg.history.maxRecords,
       persistPath: path.resolve(cwd, clrCfg.history.persistPath),
