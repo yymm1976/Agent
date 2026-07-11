@@ -86,8 +86,6 @@ import {
   QualityConfigSchema,
   ExpertiseConfigSchema,
   ActivityPanelSchema,
-  ErrorDisplaySchema,
-  ModelDisplaySchema,
   ObservabilityConfigSchema,
   Phase68IntegrationConfigSchema,
   Phase70IntegrationConfigSchema,
@@ -214,9 +212,7 @@ export const AppConfigSchema = z.object({
   delegationPolicy: z.preprocess((v) => v ?? {}, DelegationPolicySchema),
   activityPanel: z.preprocess((v) => v ?? {}, ActivityPanelSchema),
   configLayering: z.preprocess((v) => v ?? {}, ConfigLayeringSchema),
-  errorDisplay: z.preprocess((v) => v ?? {}, ErrorDisplaySchema),
   resultSchema: z.preprocess((v) => v ?? {}, ResultSchemaConfigSchema),
-  modelDisplay: z.preprocess((v) => v ?? {}, ModelDisplaySchema),
   // Phase 53：代码卫生与安全治理加固（聚合 10 个子配置）
   phase53Integration: z.preprocess((v) => v ?? {}, Phase53IntegrationConfigSchema),
   // Phase 61：ACRouter 闭环模型路由

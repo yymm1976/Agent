@@ -57,7 +57,6 @@ export function createRouterSubsystem(ctx: InitContext): Partial<AppDependencies
   ctx.checkpointClient = checkpointClient;
   ctx.primaryClient = primaryClient;
   ctx.primaryProviderId = primaryProviderId;
-  ctx.fallbackClient = fallbackClient;
 
   // ===== CR-4b：组合式路由器（config.phase52Integration.compositionalRouting.enabled 守护） =====
   // 包装 decomposeWithSkillAwareness / composeDAG，按配置注入路由参数，供上层 planner 调用

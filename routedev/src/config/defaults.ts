@@ -777,8 +777,6 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   // Phase 71：Plan diff + 遗漏点分析
   plan: {
-    diffEnabled: true,
-    omissionCheckEnabled: false,
     omissionCheckModel: 'fast',
     revisionHistoryPath: '.routedev/plan-revisions/',
   },

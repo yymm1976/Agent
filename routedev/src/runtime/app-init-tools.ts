@@ -320,38 +320,6 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
     }
   }
 
-  // ===== Phase 40：渐进式信任 / 质量监测 / 用户经验 接线 =====
-  // 4.1 TrustGradientManager 接线
-  //     构造函数接受 sessionId，接线后注入 PermissionEngine（若引擎支持）
-  // 注：TrustGradient 的 .then() 回调异步执行，permissionEngine 已在上方同步创建
-  // Phase 79: TrustGradient Freeze — 仅静态档位配置 + 用户显式临时授权，不做会话内动态升级
-  //   setLevel(baseLevel) 一次设定后不再动态调整；PermissionEngine.check() 已旁路 level-based 动态决策
-  // Phase 81 Task 3：packs.trustGradient.enabled 门控（freeze 层 F-01，默认 false 退出装配）
-  const trustCfg = config.trust;
-  if (trustCfg && config.packs?.trustGradient?.enabled) {
-    const trustModulePath = '../tools/trust-gradient.js';
-    import(trustModulePath)
-      .then((mod: { TrustGradientManager: new (sessionId: string, level?: string) => import('../tools/trust-gradient.js').TrustGradientManager }) => {
-        const sessionId = trace!.getSessionId() ?? `app-${Date.now()}`;
-        const trustManager = new mod.TrustGradientManager(sessionId, trustCfg.baseLevel);
-        trustManager.setLevel(trustCfg.baseLevel);
-        // setTrustGradientManager 已在 PermissionEngine 声明；保留 typeof 守卫兼容装配顺序
-        if (typeof permissionEngine.setTrustGradientManager === 'function') {
-          permissionEngine.setTrustGradientManager(trustManager);
-        }
-        logger.info('TrustGradientManager registered', {
-          baseLevel: trustCfg.baseLevel,
-          enableTemporaryGrants: trustCfg.enableTemporaryGrants,
-          grantTTLMinutes: trustCfg.grantTTLMinutes,
-        });
-      })
-      .catch((err: unknown) => {
-        logger.debug('TrustGradientManager not available', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-  }
-
   // ===== Phase 42：PolicyEngine 接线（策略引擎） =====
   // Intent Guard + Playbook + Tool Guide + Tool Approval
   // 模块通过静态 import 加载，接线断裂在编译期暴露；运行时仍 try-catch 防止注册逻辑异常阻塞主流程

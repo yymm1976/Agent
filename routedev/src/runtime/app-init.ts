@@ -230,7 +230,6 @@ export interface InitContext {
   checkpointClient?: ILLMClient;
   primaryClient?: ILLMClient;
   primaryProviderId?: string;
-  fallbackClient?: ILLMClient;
 
   // ===== 由 observability 子系统写入 =====
   trace?: TraceCollector;

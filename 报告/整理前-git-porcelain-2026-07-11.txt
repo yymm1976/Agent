@@ -1,0 +1,107 @@
+git.exe : warning: unable to access 'C:\Users\杨铭/.config/git/ignore': Permission denied
+所在位置 行:17 字符: 9
++ $porc = & git status --porcelain 2>&1 | Out-String
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: unable...rmission denied:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+warning: unable to access 'C:\Users\杨铭/.config/git/ignore': Permission denied
+warning: unable to access 'C:\Users\杨铭/.config/git/ignore': Permission denied
+warning: unable to access 'C:\Users\杨铭/.config/git/ignore': Permission denied
+ M routedev/AGENTS.md
+ M routedev/CHANGELOG.md
+ M routedev/CODEMAP.md
+ M routedev/desktop/main/bridges/chat-bridge.ts
+ M routedev/desktop/main/bridges/trace-bridge.ts
+ M routedev/desktop/main/engine-bridge.ts
+ M routedev/desktop/main/index.ts
+ M routedev/desktop/main/ipc-guard.ts
+ M routedev/desktop/renderer/src/components/settings/SettingsNav.tsx
+ M routedev/desktop/renderer/src/hooks/useSettingsDraft.ts
+ M routedev/desktop/renderer/src/pages/ChatPage.tsx
+ M routedev/desktop/renderer/src/pages/SettingsPage.tsx
+ M routedev/desktop/shared/config-types.ts
+ M routedev/docs/CONFIGURATION.md
+ M routedev/package.json
+ M routedev/src/agent/loop.ts
+ M routedev/src/agent/memory/graph-recall.ts
+ M routedev/src/agent/memory/graph.ts
+ M routedev/src/agent/middleware-runner.ts
+ M routedev/src/agent/multi/orchestrator.ts
+ M routedev/src/config/defaults.ts
+ M routedev/src/config/schema-agent.ts
+ M routedev/src/config/schema-observability.ts
+ M routedev/src/config/schema.ts
+ M routedev/src/router/classifier.ts
+ M routedev/src/router/router.ts
+ M routedev/src/router/types.ts
+ M routedev/src/runtime/app-init-agent.ts
+ M routedev/src/runtime/app-init-memory.ts
+ M routedev/src/runtime/app-init-observability.ts
+ M routedev/src/runtime/app-init-tools.ts
+ M routedev/src/runtime/app-init.ts
+ M routedev/src/runtime/goal-runner.ts
+ M routedev/src/tools/executor.ts
+ M routedev/src/tools/permission-engine.ts
+ M routedev/tests/agent/permission-middleware.test.ts
+ M routedev/tests/desktop/ipc-guard.test.ts
+ M routedev/tests/router/classifier-fallback.test.ts
+ M routedev/tests/router/classifier.test.ts
+ M routedev/tests/router/router-plugin-integration.test.ts
+ M routedev/tests/router/router.test.ts
+ M routedev/tests/runtime/app-init.test.ts
+ M routedev/tests/tools/registry.test.ts
+ M routedev/tests/tools/trust-gradient.test.ts
+ M sonetto-here-ref
+ D "\346\212\245\345\221\212/Phase75-\347\254\254\344\270\211\346\263\242\350\257\246\350\247\243.md"
+ D "\346\212\245\345\221\212/Phase76-\350\220\275\345\234\260\350\256\241\345\210\222.md"
+ D "\346\212\245\345\221\212/Phase77-HomeRail\350\220\275\345\234\260\350\256\241\345\210\222.md"
+ M "\346\212\245\345\221\212/RouteDev-\345\205\250\351\207\217\345\256\241\346\237\245\346\217\220\347\244\272\350\257\215.md"
+ M "\346\212\245\345\221\212/RouteDev-\345\212\237\350\203\275\345\256\214\346\225\264\345\272\246\345\256\241\346\237\245\346\217\220\347\244\272\350\257\215.md"
+ M "\346\212\245\345\221\212/RouteDev-\346\255\273\344\273\243\347\240\201\345\256\241\346\237\245\346\217\220\347\244\272\350\257\215.md"
+ M "\346\212\245\345\221\212/\344\277\256\346\224\271\350\256\260\345\275\225.md"
+?? AGENTS.md
+?? RTK.md
+?? docs/AGENT_TOOLING.md
+?? routedev/desktop/main/__tests__/chat-bridge.integration.test.ts
+?? routedev/desktop/renderer/src/components/session/SessionTreeNode.tsx
+?? routedev/desktop/renderer/src/components/session/SessionTreePanel.tsx
+?? routedev/desktop/renderer/src/components/settings/SettingsPacksTab.tsx
+?? routedev/desktop/renderer/src/types/
+?? routedev/docs/CAPABILITY_LAYERS.md
+?? routedev/docs/RELEASE_CHECKLIST_v4.9.md
+?? routedev/docs/SLIMDOWN_BOARD.md
+?? routedev/docs/packs/
+?? routedev/docs/session-tree.md
+?? routedev/scripts/verify-slimdown.ts
+?? routedev/src/observability/usage-counter.ts
+?? routedev/src/plugins/capability-pack-registry.ts
+?? routedev/src/plugins/capability-pack.ts
+?? routedev/src/plugins/pack-discovery.ts
+?? routedev/src/plugins/packs/
+?? routedev/src/runtime/goal-runner-confirm.ts
+?? routedev/src/runtime/goal-runner-core.ts
+?? routedev/src/runtime/goal-runner-recovery.ts
+?? routedev/src/runtime/goal-runner-scheduler.ts
+?? routedev/src/session/
+?? routedev/tests/integration/ipc-permission.test.ts
+?? routedev/tests/observability/usage-counter.test.ts
+?? routedev/tests/plugins/capability-pack.test.ts
+?? routedev/tests/plugins/pack-discovery.test.ts
+?? routedev/tests/session/
+?? "\346\212\245\345\221\212/Skills\344\274\230\345\214\226\345\273\272\350\256\256-2026-07-11.md"
+?? "\346\212\245\345\221\212/\346\225\264\347\220\206\345\211\215-git-status-2026-07-11.txt"
+?? "\350\223\235\345\233\276\344\270\216Phase/BLUEPRINT-CORE-CAPABILITY-PACK-v2.md"
+?? "\350\223\235\345\233\276\344\270\216Phase/BLUEPRINT-CORE-CAPABILITY-PACK-v3.md"
+?? "\350\223\235\345\233\276\344\270\216Phase/DESIGN-pi-fusion-v3.md"
+?? "\350\223\235\345\233\276\344\270\216Phase/Phase-78-\345\237\272\344\272\216\347\244\276\345\214\272\350\257\201\346\215\256\347\232\204\345\212\237\350\203\275\347\230\246\350\272\253\344\270\216\350\201\232\347\204\246\345\273\272\350\256\256.md"
+?? "\350\223\235\345\233\276\344\270\216Phase/Phase-79-\346\212\200\346\234\257\345\200\272\346\224\266\345\260\276\344\270\216\346\235\203\351\231\220\346\265\213\350\257\225\345\237\272\345\273\272.md"
+?? "\350\223\235\345\233\276\344\270\216Phase/Phase-80-\350\203\275\345\212\233\345\210\206\345\261\202\344\270\216\344\275\277\347\224\250\351\201\245\346\265\213\345\237\272\347\272\277.md"
+?? "\350\223\235\345\233\276\344\270\216Phase/Phase-81-\351\273\230\350\256\244\350\267\257\345\276\204\347\230\246\350\272\253\344\270\216\346\240\270\345\277\203\345\267\245\345\205\267\351\233\206.md"
+?? "\350\223\235\345\233\276\344\270\216Phase/Phase-82-\351\253\230\347\272\247\350\203\275\345\212\233\345\244\226\347\275\256\344\270\272\350\203\275\345\212\233\345\214\205.md"
+?? "\350\223\235\345\233\276\344\270\216Phase/Phase-83-Goal\344\270\216\345\244\232Agent\345\206\273\347\273\223\347\256\200\345\214\226.md"
+?? "\350\223\235\345\233\276\344\270\216Phase/Phase-84-\344\274\232\350\257\235\345\210\206\346\224\257Core\350\220\275\345\234\260.md"
+?? "\350\223\235\345\233\276\344\270\216Phase/Phase-85-\351\252\214\346\224\266\345\237\272\347\272\277\344\270\216\345\217\221\345\270\203\351\227\250\347\246\201.md"
+?? "\350\223\235\345\233\276\344\270\216Phase/Phase75-\347\254\254\344\270\211\346\263\242\350\257\246\350\247\243.md"
+?? "\350\223\235\345\233\276\344\270\216Phase/Phase76-\350\220\275\345\234\260\350\256\241\345\210\222.md"
+?? "\350\223\235\345\233\276\344\270\216Phase/Phase77-HomeRail\350\220\275\345\234\260\350\256\241\345\210\222.md"

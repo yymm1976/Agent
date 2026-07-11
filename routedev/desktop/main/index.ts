@@ -944,8 +944,24 @@ ipcMain.handle('fs:read', async (_event, filePath: string): Promise<{ data: stri
     }
     // 复用安全配置的敏感文件 pattern，阻止读取 .env / credentials.json 等
     const sensitive = engine?.getConfig()?.security?.sensitiveFiles ?? [];
-    const baseName = path.basename(realPath);
-    if (sensitive.some((p: string) => baseName.includes(p) || realPath.includes(p))) {
+    const normalizedRealPath = path.normalize(realPath).replace(/\\+/g, '/').toLowerCase();
+    const normalizedBaseName = path.basename(normalizedRealPath).toLowerCase();
+    if (sensitive.some((pattern: string) => {
+      const normalizedPattern = path.normalize(pattern).replace(/\\+/g, '/').toLowerCase();
+      if (normalizedPattern.startsWith('*.')) {
+        return normalizedBaseName.endsWith(normalizedPattern.slice(1));
+      }
+
+      if (!normalizedPattern.includes('/')) {
+        return normalizedBaseName === normalizedPattern;
+      }
+
+      const patternSegments = normalizedPattern.split('/').filter(Boolean);
+      const pathSegments = normalizedRealPath.split('/').filter(Boolean);
+      return patternSegments.length > 0 && pathSegments.some((_, start) =>
+        patternSegments.every((segment, offset) => pathSegments[start + offset] === segment),
+      );
+    })) {
       return { data: '', error: '文件被安全策略保护' };
     }
     const fs = await import('node:fs/promises');

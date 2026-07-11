@@ -23,39 +23,15 @@ importers:
       electron-updater:
         specifier: ^6.8.9
         version: 6.8.9
-      lucide-react:
-        specifier: ^0.577.0
-        version: 0.577.0(react@19.2.7)
       openai:
         specifier: ^6.42.0
         version: 6.42.0(ws@8.21.0)(zod@4.4.3)
-      react:
-        specifier: ^19.2.7
-        version: 19.2.7
-      react-dom:
-        specifier: ^19.2.7
-        version: 19.2.7(react@19.2.7)
-      react-markdown:
-        specifier: ^10.1.0
-        version: 10.1.0(@types/react@19.2.17)(react@19.2.7)
-      react-syntax-highlighter:
-        specifier: ^16.1.1
-        version: 16.1.1(react@19.2.7)
-      remark-gfm:
-        specifier: ^4.0.1
-        version: 4.0.1
       simple-git:
         specifier: ^3.36.0
         version: 3.36.0
       tiktoken:
         specifier: ^1.0.22
         version: 1.0.22
-      tree-sitter-wasms:
-        specifier: ^0.1.13
-        version: 0.1.13
-      web-tree-sitter:
-        specifier: ^0.22.6
-        version: 0.22.6
       winston:
         specifier: ^3.19.0
         version: 3.19.0
@@ -120,9 +96,27 @@ importers:
       lint-staged:
         specifier: ^15.2.10
         version: 15.5.2
+      lucide-react:
+        specifier: ^0.577.0
+        version: 0.577.0(react@19.2.7)
       postcss:
         specifier: ^8.5.15
         version: 8.5.15
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.2.7
+        version: 19.2.7(react@19.2.7)
+      react-markdown:
+        specifier: ^10.1.0
+        version: 10.1.0(@types/react@19.2.17)(react@19.2.7)
+      react-syntax-highlighter:
+        specifier: ^16.1.1
+        version: 16.1.1(react@19.2.7)
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
       tailwindcss:
         specifier: ^3.4.19
         version: 3.4.19(tsx@4.22.4)(yaml@2.9.0)
@@ -145,6 +139,12 @@ importers:
       puppeteer:
         specifier: ^22.0.0
         version: 22.15.0(typescript@6.0.3)
+      tree-sitter-wasms:
+        specifier: ^0.1.13
+        version: 0.1.13
+      web-tree-sitter:
+        specifier: ^0.22.6
+        version: 0.22.6
 
 packages:
 
@@ -8929,7 +8929,8 @@ snapshots:
 
   toidentifier@1.0.1: {}
 
-  tree-sitter-wasms@0.1.13: {}
+  tree-sitter-wasms@0.1.13:
+    optional: true
 
   trim-lines@3.0.1: {}
 
@@ -9120,7 +9121,8 @@ snapshots:
     dependencies:
       defaults: 1.0.4
 
-  web-tree-sitter@0.22.6: {}
+  web-tree-sitter@0.22.6:
+    optional: true
 
   whatwg-mimetype@3.0.0: {}
 

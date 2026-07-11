@@ -109,7 +109,9 @@ export class RouteDevEngine {
       // 旧 TraceCollector 的回调置空，避免旧实例继续向渲染进程推送事件
       ctx.deps.trace.onSpan(null);
       // 关闭旧 MCP 连接，防止句柄泄漏（异步执行，不阻塞初始化）
-      ctx.deps.mcpManager.disconnectAll().catch(() => { /* 忽略清理错误 */ });
+      ctx.deps.mcpManager.disconnectAll().catch((err) => {
+        logger.warn('Failed to disconnect MCP servers before engine reinitialization', { err });
+      });
     }
 
     const clientManager = new LLMClientManager();
@@ -214,7 +216,11 @@ export class RouteDevEngine {
       // 移除 trace 回调，防止旧 TraceCollector 在被 GC 前继续触发事件
       try { this.ctx.deps.trace.onSpan(null); } catch { /* 忽略清理错误 */ }
       // 关闭所有 MCP 连接（await 确保子进程退出，避免孤儿进程锁定文件）
-      try { await this.ctx.deps.mcpManager.disconnectAll(); } catch { /* 忽略清理错误 */ }
+      try {
+        await this.ctx.deps.mcpManager.disconnectAll();
+      } catch (err) {
+        logger.warn('Failed to disconnect MCP servers during engine destruction', { err });
+      }
       this.ctx.deps = null;
     }
     // Phase 48 Task 4：清理 profileManager 引用，防止 reload 后旧实例残留

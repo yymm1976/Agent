@@ -344,13 +344,6 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
     updateDraft({ phase49Integration: { ...draft.phase49Integration, ...patch } });
   };
 
-  // --- 调度器配置（Phase 37 Task 2） ---
-  const updateScheduler = (patch: Partial<NonNullable<AppConfig['scheduler']>>) => {
-    if (!draft) return;
-    const current = draft.scheduler ?? { enabled: true, maxTasks: 20, defaultTimezone: 'Asia/Shanghai' };
-    updateDraft({ scheduler: { ...current, ...patch } });
-  };
-
   // --- Phase 33 Task 3：prompts 配置 ---
   const updatePrompts = (patch: Partial<AppConfig['prompts']>) => {
     if (!draft) return;
@@ -570,7 +563,6 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
     updateUpdates,
     updatePhase48Integration,
     updatePhase49Integration,
-    updateScheduler,
     updatePrompts,
     updateProjectMemory,
     updateMemory,

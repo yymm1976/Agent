@@ -14,7 +14,7 @@ import { SettingsTabContainer } from './SettingsTabContainer.js';
 import type { TabId } from './SettingsNav.js';
 import {
   Server, Route, Shield, Folder, Zap, Users, Crosshair, BookOpen,
-  Globe, Map as MapIcon, Compress, Database, Activity, FlaskConical,
+  Globe, Map as MapIcon, Archive, Database, Activity, FlaskConical,
   ArrowRight, AlertTriangle, Lock,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -66,7 +66,7 @@ const EXTENDED_PACKS: PackDescriptor[] = [
 const STANDARD_PACKS: PackDescriptor[] = [
   { key: 'browserWeb', label: '浏览器 / Web', description: 'web-search + web-fetch + browser 工具 + 视觉助手', icon: Globe, costHint: '注册 web-search/web-fetch/browser 工具，按实际调用计费；视觉助手需图片输入' },
   { key: 'codeMap', label: '代码地图', description: 'code-graph-query + repo-map + CodeMapEngine 索引与监听', icon: MapIcon, costHint: '构建 tree-sitter 代码索引，首次扫描耗内存 ~50MB；watch 模式持续监听文件变更' },
-  { key: 'ccrCompression', label: 'CCR 压缩', description: 'ccr-retrieve 可逆压缩 + ComposePipeline 组合编排', icon: Compress, costHint: '注入 ccr-retrieve 工具与 Compose 管道，压缩缓存占磁盘空间' },
+  { key: 'ccrCompression', label: 'CCR 压缩', description: 'ccr-retrieve 可逆压缩 + ComposePipeline 组合编排', icon: Archive, costHint: '注入 ccr-retrieve 工具与 Compose 管道，压缩缓存占磁盘空间' },
   { key: 'vfsPlan', label: 'VFS / Plan 工具', description: '虚拟文件系统 + 计划状态显式管理工具', icon: Database, costHint: '注册 VFS/Plan 工具，Agent 工作内存占用略增' },
   { key: 'harness', label: 'Harness', description: 'Trace 回放 + 评分卡 + 并行实验', icon: Activity, costHint: '开放 Trace 回放与评分卡，trace 文件持续累积需定期清理' },
   { key: 'integrity', label: '完整性校验', description: 'cite / import / macros / mcpBridge / IntegrityManifest', icon: Shield, costHint: '接入引用/导入/宏/MCP 桥接五模块，外部导入增加启动时间' },

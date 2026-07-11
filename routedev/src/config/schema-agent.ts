@@ -819,10 +819,6 @@ export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;
 // 原 AppConfigSchema 中的内联 schema，抽出到此文件并命名
 // 控制计划修订前后 diff 视图、LLM 遗漏点检查与修订历史持久化
 export const PlanConfigSchema = z.preprocess((v) => v ?? {}, z.object({
-  /** 是否启用 Plan 修订 diff 视图（默认 true——纯前端展示，无 LLM 调用） */
-  diffEnabled: z.boolean().default(true),
-  /** 是否启用遗漏点检查（默认 false——依赖 LLM 调用，需用户显式开启） */
-  omissionCheckEnabled: z.boolean().default(false),
   /** 遗漏点检查使用的模型 id（默认 'fast'——廉价快速模型） */
   omissionCheckModel: z.string().default('fast'),
   /** Plan 修订历史持久化目录（相对于工作目录，默认 '.routedev/plan-revisions/'） */

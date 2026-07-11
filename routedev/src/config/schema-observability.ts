@@ -184,35 +184,6 @@ export const ActivityPanelSchema = z.preprocess((v) => v ?? {}, z.object({
 }));
 export type ActivityPanelConfig = z.infer<typeof ActivityPanelSchema>;
 
-/** 错误显示配置（Phase 51 Task 9）
- *  状态：已定义未消费 — Phase 51 Task 9 预留字段，运行时错误展示未读取此配置
- */
-export const ErrorDisplaySchema = z.preprocess((v) => v ?? {}, z.object({
-  // 旧字段
-  showDevDetails: z.boolean().default(false),
-  showStackTrace: z.boolean().default(false),
-  maxDetailsLength: z.number().int().min(100).max(10000).default(2000),
-  // 新字段(Phase 51 蓝图对齐)
-  errorDisplayMode: z.enum(['user', 'dev']).default('user'),
-  includeStackTrace: z.boolean().default(false),
-  logErrorsToFile: z.boolean().default(true),
-}));
-export type ErrorDisplayConfig = z.infer<typeof ErrorDisplaySchema>;
-
-/** 模型显示配置（Phase 51 Task 11）
- *  状态：已定义未消费 — Phase 51 Task 11 预留字段，运行时模型展示未读取此配置
- */
-export const ModelDisplaySchema = z.preprocess((v) => v ?? {}, z.object({
-  // 旧字段
-  showThinkingLevel: z.boolean().default(true),
-  showProviderPrefix: z.boolean().default(false),
-  thinkingLevelLabels: z.record(z.string(), z.string()).default({}),
-  // 新字段(Phase 51 蓝图对齐)
-  splitThinkingLabel: z.boolean().default(true),
-  thinkingLabelStyle: z.enum(['badge', 'text', 'icon']).default('badge'),
-}));
-export type ModelDisplayConfig = z.infer<typeof ModelDisplaySchema>;
-
 // --- 可观测性外部接入配置（OpenTelemetry exporter） ---
 
 /**

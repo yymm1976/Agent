@@ -116,7 +116,7 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
     updateCheckpoint, updateCheckpointTrigger, addCheckpointTrigger, removeCheckpointTrigger,
     updateGoalVerifier, updateAdversarial,
     updateExecution, updateUpdates, updatePhase48Integration, updatePhase49Integration,
-    updateScheduler, updatePrompts, updateProjectMemory, updateMemory,
+    updatePrompts, updateProjectMemory, updateMemory,
     updateMcp, updateMcpServer, removeMcpServer, submitMcpForm, openAddMcp, openEditMcp,
     updateGeneral, updateBackgroundBehavior, updateUi,
     updateTrust, updateQuality, updateExpertise,
@@ -320,8 +320,6 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
           updateSecurity={updateSecurity}
           updateAutonomy={updateAutonomy}
           updatePhase48Integration={updatePhase48Integration}
-          updatePhase49Integration={updatePhase49Integration}
-          updateScheduler={updateScheduler}
         />
       )}
 

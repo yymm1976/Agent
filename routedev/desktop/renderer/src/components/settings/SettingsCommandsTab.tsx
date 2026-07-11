@@ -1,5 +1,5 @@
 // desktop/renderer/src/components/settings/SettingsCommandsTab.tsx
-// Phase 74-G：命令与工具 Tab（命令黑白名单 + 工具黑白名单 + 自主度补充 + Phase 48/49 接入 + 调度器）
+// Phase 74-G：命令与工具 Tab（命令黑白名单 + 工具黑白名单 + 自主度补充 + Phase 48 接入）
 // 从 SettingsPage.tsx 迁移
 
 import type { AppConfig } from '../../../../shared/config-types.js';
@@ -17,23 +17,17 @@ interface SettingsCommandsTabProps {
   updateAutonomy: (patch: Partial<AppConfig['autonomy']>) => void;
   /** 更新 Phase 48 接入开关 */
   updatePhase48Integration: (patch: Partial<NonNullable<AppConfig['phase48Integration']>>) => void;
-  /** 更新 Phase 49 接入开关 */
-  updatePhase49Integration: (patch: Partial<NonNullable<AppConfig['phase49Integration']>>) => void;
-  /** 更新调度器配置 */
-  updateScheduler: (patch: Partial<NonNullable<AppConfig['scheduler']>>) => void;
 }
 
 /**
  * 命令与工具 Tab
- * 包含：命令黑白名单、工具黑白名单、自主度补充设置、Phase 48/49 模块接入、调度器配置
+ * 包含：命令黑白名单、工具黑白名单、自主度补充设置、Phase 48 模块接入
  */
 export function SettingsCommandsTab({
   draft,
   updateSecurity,
   updateAutonomy,
   updatePhase48Integration,
-  updatePhase49Integration,
-  updateScheduler,
 }: SettingsCommandsTabProps) {
   return (
     <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
@@ -182,74 +176,6 @@ export function SettingsCommandsTab({
         </CardContent>
       </Card>
 
-      {/* Phase 50 Task 6：Phase 49 模块接入确认开关 */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Phase 49 模块接入</CardTitle>
-          <CardDescription>控制 Phase 49 实验性模块的接入开关（默认关闭，需显式开启）</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* @deprecated Phase 49 Task 3.5 已删除 qualityGate.check，此配置无运行时消费方 */}
-          <div className="flex items-center justify-between opacity-60">
-            <div>
-              <Label htmlFor="p49-quality">Skill 质量门（已废弃）</Label>
-              <p className="text-xs text-rd-textMuted">已废弃：Phase 49 Task 3.5 已删除 qualityGate.check，此开关无运行时消费方，仅保留以兼容旧配置。</p>
-            </div>
-            <Switch
-              id="p49-quality"
-              checked={draft.phase49Integration?.qualityGateEnabled ?? true}
-              onCheckedChange={(checked) => updatePhase49Integration({ qualityGateEnabled: checked })}
-              disabled
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* 调度器配置（Phase 37 Task 2）—— 预留功能，当前未在生产路径接线，控件禁用避免误导 */}
-      <Card className="opacity-60">
-        <CardHeader>
-          <CardTitle>调度器（预留功能，当前不生效）</CardTitle>
-          <CardDescription>定时任务引擎的启用状态、容量上限与默认时区（当前版本未接入运行时）</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="sched-enabled">启用定时任务引擎</Label>
-              <p className="text-xs text-rd-textMuted">开启后调度器接管 cron 周期任务的调度与执行。</p>
-            </div>
-            <Switch
-              id="sched-enabled"
-              checked={draft.scheduler?.enabled ?? true}
-              onCheckedChange={(checked) => updateScheduler({ enabled: checked })}
-              disabled
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="sched-max-tasks">最大任务数</Label>
-            <Input
-              id="sched-max-tasks"
-              type="number"
-              min={1}
-              max={100}
-              value={draft.scheduler?.maxTasks ?? 20}
-              onChange={(e) => updateScheduler({ maxTasks: Number(e.target.value) })}
-              disabled
-            />
-            <p className="text-xs text-rd-textMuted">调度器同时承载的任务上限，范围 1~100，默认 20。</p>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="sched-tz">默认时区</Label>
-            <Input
-              id="sched-tz"
-              value={draft.scheduler?.defaultTimezone ?? 'Asia/Shanghai'}
-              onChange={(e) => updateScheduler({ defaultTimezone: e.target.value })}
-              placeholder="例如 Asia/Shanghai"
-              disabled
-            />
-            <p className="text-xs text-rd-textMuted">未显式指定时区的定时任务使用的回退时区，IANA 时区名称。</p>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }
