@@ -49,7 +49,6 @@ import {
   GoalVerifierConfigSchema,
   AdversarialConfigSchema,
   OptimizationConfigSchema,
-  SchedulerConfigSchema,
   MiddlewareConfigSchema,
   AgentConfigSchema,
   ExecutionConfigSchema,
@@ -140,7 +139,6 @@ export const AppConfigSchema = z.object({
   ui: z.preprocess((v) => v ?? {}, UIConfigSchema),                       // UI/UX 设置（Phase 25）
   optimization: z.preprocess((v) => v ?? {}, OptimizationConfigSchema),   // 优化配置（Phase 30）
   // Phase 37 Task 2：调度器配置（可选，未配置时使用默认值）
-  scheduler: SchedulerConfigSchema.optional(),
   agent: z.preprocess((v) => v ?? {}, AgentConfigSchema),                 // Agent 配置（Phase 38 Task 2）
   execution: z.preprocess((v) => v ?? {}, ExecutionConfigSchema),          // 执行配置（并发/熔断/检查点提示）
   middleware: z.preprocess((v) => v ?? {}, MiddlewareConfigSchema),        // 中间件配置（Phase 38 Task 1）

@@ -235,19 +235,6 @@ export type OptimizationConfig = z.infer<typeof OptimizationConfigSchema>;
 /**
  * 调度器配置
  * 控制定时任务引擎的启用状态、容量上限与默认时区
- * 注：ScheduleEngine 空转引擎已移除（死代码清理），但 UI 仍保留配置入口，
- *     后续接入真实调度器时直接复用此 schema
- * 状态：已定义未消费 — Phase 37 Task 2 预留字段，调度器引擎已移除
- */
-export const SchedulerConfigSchema = z.preprocess((v) => v ?? {}, z.object({
-  /** 是否启用定时任务引擎（默认 true） */
-  enabled: z.boolean().default(true),
-  /** 调度器同时承载的任务上限（1-100，默认 20） */
-  maxTasks: z.number().int().min(1).max(100).default(20),
-  /** 未显式指定时区的定时任务使用的回退时区（IANA 时区名称，默认 'Asia/Shanghai'） */
-  defaultTimezone: z.string().default('Asia/Shanghai'),
-}));
-export type SchedulerConfig = z.infer<typeof SchedulerConfigSchema>;
 
 // --- 中间件配置（Phase 38 Task 1） ---
 
@@ -655,7 +642,6 @@ export const Phase49IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.obj
    * Skill 质量门接入（Skill 生成时可选调用）
    * @deprecated Phase 49 Task 3.5 已删除 qualityGate.check，此配置无运行时消费方
    */
-  qualityGateEnabled: z.boolean().default(true),
 }));
 export type Phase49IntegrationConfig = z.infer<typeof Phase49IntegrationConfigSchema>;
 

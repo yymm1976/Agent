@@ -168,9 +168,9 @@ export class ConfigGuard {
    *   - 命中 warn 规则 → 累积，但 deny 优先
    *   - 未命中任何规则 → allowed=true
    */
-  private detectWeakening(
-    filePath: string,
-    newContent: string,
+ private detectWeakening(
+    _filePath: string,
+   newContent: string,
     oldContent?: string,
   ): GuardDecision {
     // 提取字段值（key → value 字符串）
@@ -357,8 +357,7 @@ export class ConfigGuard {
     // 规则 9：非 protectedPatterns 匹配的文件 → allowed=true（已在入口处理）
     // 这里所有规则均未命中 → 放行
     // ============================================================
-    void filePath;
-    return {
+   return {
       allowed: true,
       severity: 'info',
       reason: '配置变更未触发任何弱化规则',

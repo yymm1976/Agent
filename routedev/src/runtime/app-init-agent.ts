@@ -843,9 +843,8 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   }
 
   // Phase 43：Hook 增强配置接入
-  const hookEnhancementCfg = config.hookEnhancement;
-  const hookEnhancementManager = new HookEnhancementManager();
-  // 注册命令安全审查钩子：对 shell_exec / git_op 的命令参数进行危险模式检测
+ const hookEnhancementCfg = config.hookEnhancement;
+ // 注册命令安全审查钩子：对 shell_exec / git_op 的命令参数进行危险模式检测
   hookRunner.register({
     event: 'post-tool-call',
     name: 'builtin:command-safety-review',
@@ -872,10 +871,7 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
     trialDays: hookEnhancementCfg?.trialDays,
     hookGroups: hookEnhancementCfg?.hookGroups,
   });
-  // hookEnhancementManager 标记为已使用（实例化并注册钩子后保留引用，供未来扩展）
-  void hookEnhancementManager;
-
-  // ===== Phase 32 Task 1：Phase 31 模块实例化 =====
+ // ===== Phase 32 Task 1：Phase 31 模块实例化 =====
 
   // 3. CompletionGate——独立代码验证门（typecheck/lint/tests）
   const safetyCfg = config.optimization?.safety;
@@ -966,63 +962,8 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   // 3. ExperimentManager 单例：在同步作用域创建，确保 /experiment 命令与 engine-bridge 复用同一实例
   const experimentManager = new ExperimentManager(cwd);
 
-  // 4. ParallelExperimentManager 接线：多分支并行实验
-  const experimentCfg = config.experiment;
-  if (experimentCfg?.parallelEnabled !== false) {
-    const pemPath = '../agent/parallel-experiment.js';
-    const runnerPath = '../harness/experiment-runner.js';
-    Promise.all([
-      import(pemPath),
-      import(runnerPath),
-    ])
-      .then(([pemMod, runnerMod]) => {
-        // Phase 39 Task 3：注入 ExperimentRunner，让 runInExperiment 真正执行 Agent 任务
-        // depsFactory 在 worktree 路径下创建独立的 AppDependencies
-        const depsFactory = (newCwd: string) => {
-          const newDeps = ctx.createAppDependencies!(
-            config,
-            clientManager,
-            currentModel,
-            newCwd,
-            classifier,
-            modelRouter,
-            tracker,
-          );
-          const defaultModel = config.providers[0]?.models[0];
-          if (!defaultModel) {
-            throw new Error('未配置可用模型，无法创建实验 runner 依赖');
-          }
-          const routeDecision = {
-            model: defaultModel,
-            providerId: primaryProviderId,
-            fallbackUsed: false,
-            originalTier: defaultModel.tier ?? 'medium',
-            degraded: false,
-          };
-          return {
-            ...newDeps,
-            routeDecision,
-            llmClient: primaryClient,
-          };
-        };
-        const runner = runnerMod.createExperimentRunner(depsFactory);
-        experimentManager.setExperimentRunner(runner);
 
-        new pemMod.ParallelExperimentManager(experimentManager, experimentCfg);
-        logger.info('ParallelExperimentManager registered', {
-          maxParallel: experimentCfg?.maxParallel,
-          conflictDetection: experimentCfg?.conflictDetection,
-          runnerInjected: true,
-        });
-      })
-      .catch((err: unknown) => {
-        logger.debug('ParallelExperimentManager not available yet', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-  }
-
-  // ===== Phase 50 Task 5：Phase 48 模块接入确认（全部 fail-open 动态 import） =====
+ // ===== Phase 50 Task 5：Phase 48 模块接入确认（全部 fail-open 动态 import） =====
   // Phase 81 Task 4：packs.integrity.enabled 门控（standard-pack，默认 false 退出装配）
   //   覆盖：IntegrityManifest / Cite / Import / Macros / MCPBridge
   const phase48Cfg = config.phase48Integration;

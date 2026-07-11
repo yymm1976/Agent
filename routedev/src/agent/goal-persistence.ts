@@ -18,7 +18,6 @@
 //         └── <goal-id-4>.json
 
 import fs from 'node:fs/promises';
-import fsSync from 'node:fs';
 import path from 'node:path';
 import { logger } from '../utils/logger.js';
 // Phase 59：FivePartGoalSpec 类型已从 goal-prompt-builder.ts 移至 goal-types.ts
@@ -278,5 +277,3 @@ export class GoalPersistence {
   }
 }
 
-// 暴露 fsSync 供外部测试需要时使用（避免未使用告警）
-void fsSync;

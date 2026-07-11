@@ -10,7 +10,6 @@
 
 import type { BranchManager, BranchNode, MessageNode, BranchInfo } from './branch.js';
 import type { LLMMessage } from '../router/types.js';
-import { logger } from '../utils/logger.js';
 
 /** 操作结果 */
 export interface ActionResult {
@@ -531,5 +530,3 @@ export class BranchOperations {
   }
 }
 
-// 防止 logger 未使用告警（在某些构建配置下）
-void logger;

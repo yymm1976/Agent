@@ -487,7 +487,6 @@ export const DEFAULT_CONFIG: AppConfig = {
   // Phase 59：skillFlowEnabled/contextUsagePanelEnabled/evaluationFrameworkEnabled 已删除（对应模块已删，开关无效）
   phase49Integration: {
     dualLoopEnabled: false,
-    qualityGateEnabled: true,
   },
   // Phase 51：外部开源借鉴落地配置（默认全部 false，保守启用）
   reviewerPolicy: {
@@ -532,14 +531,6 @@ export const DEFAULT_CONFIG: AppConfig = {
     globalConfigDir: '',
     arrayMergeStrategy: 'replace',
   },
-  errorDisplay: {
-    showDevDetails: false,
-    showStackTrace: false,
-    maxDetailsLength: 2000,
-    errorDisplayMode: 'user',
-    includeStackTrace: false,
-    logErrorsToFile: true,
-  },
   resultSchema: {
     enabled: false,
     strictValidation: false,
@@ -547,13 +538,6 @@ export const DEFAULT_CONFIG: AppConfig = {
     resultSchemaEnabled: false,
     enforceFinishProtocol: false,
     maxSubAgentSteps: 50,
-  },
-  modelDisplay: {
-    showThinkingLevel: true,
-    showProviderPrefix: false,
-    thinkingLevelLabels: {},
-    splitThinkingLabel: true,
-    thinkingLabelStyle: 'badge',
   },
   // Phase 52：MUSE-Autoskill 集成（聚合所有 Phase 52 Task 配置，默认全部关闭）
   // Phase 59：processEvaluation/archAwareMetrics/saturationMonitor 已删除（批次1 无价值学术指标）
