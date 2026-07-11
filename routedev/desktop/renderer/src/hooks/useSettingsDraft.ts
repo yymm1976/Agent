@@ -7,7 +7,7 @@ import type {
   AppConfig, ProviderConfig, ModelConfig, RouterRule, SecurityConfig,
   MCPServerEntryConfig,
   PermissionProfile, FilesystemPermissionRule, ExecutionConfig,
-  ApprovalLevel, ToolCategory,
+  ApprovalLevel, ToolCategory, PacksConfig,
 } from '../../../shared/config-types.js';
 import {
   constructMcpServer, mcpServerToForm, EMPTY_MCP_FORM,
@@ -468,6 +468,14 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
     });
   };
 
+  // --- Phase 81 Task 5：能力 Pack 开关（四层分层） ---
+  // packs 为 optional 字段，未配置时用空对象兜底；合并 patch 后回写
+  const updatePacks = (patch: Partial<PacksConfig>) => {
+    if (!draft) return;
+    const current = draft.packs ?? ({} as PacksConfig);
+    updateDraft({ packs: { ...current, ...patch } });
+  };
+
   // --- API Key 显示/隐藏切换 ---
   const toggleApiKey = (index: number) => {
     setShowApiKeys((prev) => ({ ...prev, [index]: !prev[index] }));
@@ -576,6 +584,7 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
     updateTrust, updateQuality, updateExpertise,
     updateSubAgents,
     updateSubAgentsGateRules,
+    updatePacks,
     toggleApiKey,
     handleTestConnection,
   };

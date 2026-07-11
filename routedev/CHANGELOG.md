@@ -4,6 +4,116 @@
 
 > **路径迁移说明（Phase 60 后）：** `src/cli/` 已迁移到 `src/runtime/` 和 `desktop/renderer/src/`，历史条目中引用的 `src/cli/goal-runner.ts` / `src/cli/app-init.ts` / `src/cli/App.tsx` 等路径均已迁移到新位置，详见 `CODEMAP.md`。
 
+## [4.9.0] - 2026-07-11 — Phase 85 发布门禁（四层架构 + Pi 融合收口）
+
+> **核心目标：** Phase 85 作为 v4.9.0 发布门禁，同步文档与四层架构 + Pi 融合设计，正式化"Core 不做"清单与防回潮规则。不新增功能，聚焦发布前文档对齐。
+
+### Breaking Changes
+
+- 默认工具集从 26+ 收口至 ≤10（`tools.profile: core`）
+- 路由简化为 2-3 级
+- Multi-Agent / Goal 高级编排 / 对抗审查 默认关闭（Extended Pack）
+- 浏览器/代码地图/Trace 等默认关闭（Standard Pack）
+- Progressive Trust / Implicit Feedback / KG 高级算法冻结
+
+### New
+
+- 会话分支：`/tree` `/fork` `/clone`（Pi 风格）
+- CapabilityPack API 升级（Pi Extensions 风格：工具/命令/事件钩子）
+- 用户自建 Pack 支持（`~/.routedev/packs/` 或 `.routedev/packs/`）
+- 本地使用计数遥测（`/usage`）
+- 设置页四层分组（基础/高级/扩展/实验）
+- "Core 不做"清单正式化
+
+### Removed from default
+
+- 详见 `docs/SLIMDOWN_BOARD.md`
+
+### Changed — Phase 85 Task 3：文档同步
+
+- `AGENTS.md`：新增"Core 不做"清单（9 项）与防回潮规则（8 条），引用 `docs/CAPABILITY_LAYERS.md` 与 `docs/SLIMDOWN_BOARD.md`
+- `docs/CAPABILITY_LAYERS.md`：新增第 8 节"Phase 85 更新（发布门禁）"
+- `docs/SLIMDOWN_BOARD.md`：新增 Phase 85 发布门禁说明，维护阶段更新至 Phase 85
+
+### Migration Notes
+
+- **配置兼容**：`packs` 字段缺省时所有 Pack 默认关闭，仅 Core 生效；旧 `*Integration.enabled` 开关保留但不再控制装配门控
+- **恢复高级能力**：设置 `packs.<id>.enabled: true` 或在设置页「能力分层」Tab 开启对应开关
+- **恢复全工具集**：设置 `tools.profile: full`（仅调试用）
+
+## Phase 84（v4.5.4 续，2026-07-11）— 会话分支 Core 落地
+
+> **核心目标：** 实现会话树（Session Tree）Core 能力，支持在单一会话内创建多条分支，实现"假设探索"与"方案对比"。
+
+### Phase 84 — 会话分支 Core 落地
+- Session Tree 存储模型（树结构 + fork + clone + switchBranch + jumpToNode）
+- /tree /fork /clone 命令实现并注册到 chat-bridge 命令分发
+- ChatPage 树视图 UI 组件（占位集成，IPC 待接通）
+- 向后兼容：旧线性消息可导入为单分支树
+- Checkpoint 与会话分支联动
+
+### Added
+
+- **SessionTree 存储模型**：新增 `src/session/session-tree.ts` + `src/session/session-node.ts`；树结构管理整棵会话树，支持 fork（从指定节点分叉新分支）/ clone（深拷贝活跃分支到新树）/ switchBranch（切换活跃分支）/ jumpToNode（跳转到指定节点并切换所属分支）；SessionNode 携带 `checkpointId` 字段关联工作区快照；`fromLinear()` 静态方法支持旧线性消息导入为单分支树（向后兼容）
+- **/tree /fork /clone 命令**：新增 `src/session/session-commands.ts` 并在 `desktop/main/bridges/chat-bridge.ts` 的 executeCommand 中注册分发；`/tree` 展示会话树结构与活跃节点高亮；`/fork [nodeId]` 从指定节点分叉并自动切换（无参数时从最后一条用户消息分叉）；`/clone` 深拷贝当前活跃分支到新会话树
+- **ChatPage 树视图 UI 组件**：`desktop/renderer/src/pages/ChatPage.tsx` 集成 `SessionTreePanel` 组件作为可折叠侧边面板（GitBranch 图标切换）；当前为占位集成，treeData 传 null 显示空状态，待 IPC 通道（session:tree / session:fork / session:clone）接通后传入真实数据
+- **Checkpoint 联动**：fork 时新分支继承分叉点的 `checkpointId`；回滚到带 checkpoint 的节点时同时还原工作区文件；clone 时 `checkpointId` 一并复制，新树与原树共享磁盘快照
+
+### Changed
+
+- `docs/CAPABILITY_LAYERS.md`：新增 Session Tree 三个模块条目（C-68 / C-69 / C-70），归属 Core 层
+- `docs/SLIMDOWN_BOARD.md`：新增 Phase 84 更新说明
+- 新增 `docs/session-tree.md` 用户文档（会话分支简介 / 命令用法 / Checkpoint 配合 / 典型场景 / 与 Pi 对比）
+
+### Migration Notes
+
+- **旧会话兼容**：旧线性消息通过 `SessionTree.fromLinear()` 自动导入为单分支树，无需手动迁移
+- **无破坏性变更**：Session Tree 为新增能力，不影响现有线性对话流程
+
+## Phase 83（v4.5.4 续，2026-07-11）— Extended Pack 收口
+
+> **核心目标：** 三个 Extended Pack 接口审计与文档收口，不新增能力。
+
+### Phase 83 — Extended Pack 收口
+- goal-advanced / multi-agent / adversarial-review 三个 Extended Pack 接口审计完成
+- GoalVerifier 确认留在 Core（对话也能用）
+- 并行调度/冲突检测冻结（代码路径不可达，不删代码）
+- 三个 Pack 接口干净（不泄露 Core 内部实现）
+- 本 Phase 未为任何 Pack 增加新能力
+
+### Changed
+
+- `docs/CAPABILITY_LAYERS.md`：GoalVerifier（原 E-13）与 UnifiedReviewer（原 E-18）从 Extended Pack 迁回 Core（C-66 / C-67），对话场景即可使用，不归属任何 Pack；adversarial-review Pack 内容收窄为 E-19 / E-20（cross-model-reviewer + ReviewerPolicy）；同步更新按层分布统计与蓝图对齐校验
+- `desktop/renderer/src/components/settings/SettingsPacksTab.tsx`：高级区新增「修 bug 不扩功能」维护说明提示框，与实验区冻结说明风格一致
+- `docs/SLIMDOWN_BOARD.md`：新增 Phase 83 收口说明，Freeze 清单补登记「/goal 并行调度与冲突检测」冻结条目
+
+## Phase 82（v4.5.4 续，2026-07-11）— 高级能力外置为能力包
+
+> **核心目标：** 在 Phase 81 默认装配收口基础上，将高级能力正式外置为能力包（Capability Pack），提供 Pack API、用户自建 Pack 支持与设置页可视化分组。对齐 `docs/CAPABILITY_LAYERS.md` 四层分层模型。
+
+### Breaking Changes
+
+- **默认工具集收口为 10 个 Core 工具（Phase 81 Task 1）**：新增 `tools.profile`（`core` / `full`，默认 `core`）。`core` 档位仅注册 file-read / file-write / file-edit / file-search / list-directory / shell-exec / git-op / code-search / ask-user / todo-write 共 10 个核心工具；其余工具随对应 Pack 启用而注册。旧配置缺省 `tools.profile` 时默认 `core`，非核心工具不再默认可用。
+- **非 Core 模块退出默认装配（Phase 81 Task 3-4）**：新增 `config.packs.*` 配置组（14 个 Pack，默认全部 `false`）。Goal 高级编排 / Multi-Agent / 对抗审查 / Skill 生命周期 / 浏览器 Web / 代码地图 / CCR 压缩 / VFS-Plan / Harness / 完整性校验 / Compose 管道 / TrustGradient / KG 高级 / ACRouter 全部默认不装配。旧配置中 `*Integration.enabled` 开关保留但不再控制装配门控，统一由 `packs.<id>.enabled` 收敛。
+
+### Features
+
+- **CapabilityPack API + PackContext**：提供统一的能力包接口，每个 Pack 通过 `PackContext` 获取宿主能力（ToolRegistry / AgentLoop / Config / Logger），按 `config.packs.<id>.enabled` 条件装配。Schema 定义见 `src/config/schema-observability.ts` 的 `PacksConfigSchema`，消费方分布在 `src/runtime/app-init-tools.ts` / `app-init-agent.ts` / `goal-runner-recovery.ts` / `agent/memory/graph.ts`。
+- **用户自建 Pack 支持**：用户可通过配置文件 `packs.<id>.enabled: true` 启用内置 Pack，也可按 Pack 接口约定自建 Pack 并注册到 ToolRegistry。设置页「能力分层」Tab 提供可视化开关。
+- **设置页四层分组展示**：`desktop/renderer/src/components/settings/SettingsPacksTab.tsx` 按基础区（Core）/ 高级区（Extended Pack）/ 扩展区（Standard Pack）/ 实验区（Freeze）四层展示。Extended Pack 标「高级」标签，Standard Pack 标「扩展」标签，每个 Pack 开关下方显示成本提示（costHint）。Freeze 区开关禁用仅展示。
+
+### Changed
+
+- `docs/CAPABILITY_LAYERS.md` 新增第 7 节「Phase 81-82 更新（能力 Pack 外置落地）」，标注 6 个已迁移 Pack（goal-advanced / multi-agent / adversarial-review / browser-web / code-map / harness）及 Pack 接口引用
+- `docs/CONFIGURATION.md` 新增第 6 节「能力包（Capability Packs）」，列出全部 14 个 Pack 开关、成本提示与 YAML/JSON 配置示例；顶层结构补充 `packs` 与 `tools.profile`
+- `docs/SLIMDOWN_BOARD.md` 标注已迁移 Pack 状态，更新冷处理队列中已完成迁移的条目
+
+### Migration Notes
+
+- **旧配置兼容**：`packs` 字段缺省时 Zod `preprocess` 兜底为空对象，等价于所有 Pack 关闭（仅 Core 生效），不会报错。
+- **恢复旧行为**：设置 `tools.profile: full` 可恢复 Phase 81 前全部工具注册行为（仅调试用）。
+- **按需启用**：在配置文件中设置 `packs.<id>.enabled: true` 或在设置页「能力分层」Tab 开启对应开关即可恢复对应能力。
+
 ## Phase 61-77（v4.5.4 续，2026-07-02 ~ 2026-07-10）
 
 > Phase 60 后持续迭代，版本号未单独 bump。以下为各 Phase 一行简述（基于 git log 提取）。

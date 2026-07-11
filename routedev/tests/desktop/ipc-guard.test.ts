@@ -1,9 +1,11 @@
 // tests/desktop/ipc-guard.test.ts
 // TD-08：ipcGuard 单元测试
 // 覆盖 string / object / optional 三个校验器：正常、类型错误、超长、缺失字段等场景
+// Phase 79 Task 7：覆盖 createValidatedHandler 中间件
 
-import { describe, it, expect } from 'vitest';
-import { ipcGuard } from '../../desktop/main/ipc-guard.js';
+import { describe, it, expect, vi } from 'vitest';
+import type { IpcMainInvokeEvent } from 'electron';
+import { ipcGuard, createValidatedHandler } from '../../desktop/main/ipc-guard.js';
 
 describe('ipcGuard.string', () => {
   it('正常字符串原样返回', () => {
@@ -192,5 +194,74 @@ describe('ipcGuard.optional', () => {
       nickname: ipcGuard.optional(ipcGuard.string(3)),
     });
     expect(() => validate({ name: 'alice', nickname: 'toolong' })).toThrow('字符串长度不能超过 3');
+  });
+});
+
+// ============================================================
+// Phase 79 Task 7：createValidatedHandler 中间件测试
+// ============================================================
+
+describe('createValidatedHandler', () => {
+  // 构造一个最小的 IpcMainInvokeEvent 桩对象，仅供测试调用签名
+  const dummyEvent = {} as IpcMainInvokeEvent;
+
+  it('校验通过时 handler 正常执行', async () => {
+    const handler = vi.fn(async (args: { x: number }) => args.x * 2);
+    const wrapped = createValidatedHandler<{ x: number }, number>(
+      'test:channel',
+      () => null,
+      handler,
+    );
+    const result = await wrapped(dummyEvent, { x: 21 });
+    expect(result).toBe(42);
+    expect(handler).toHaveBeenCalledTimes(1);
+    // handler 被调用时，第一个参数是校验后的 args，第二个参数是 event
+    expect(handler).toHaveBeenCalledWith({ x: 21 }, dummyEvent);
+  });
+
+  it('校验失败时 handler 不执行', async () => {
+    const handler = vi.fn(async () => '不应被调用');
+    const wrapped = createValidatedHandler<unknown, string>(
+      'test:channel',
+      () => '参数非法',
+      handler,
+    );
+    await expect(wrapped(dummyEvent, { bad: true })).rejects.toThrow('参数校验失败');
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('错误信息包含通道名和校验失败原因', async () => {
+    const wrapped = createValidatedHandler<unknown, void>(
+      'tool:execute',
+      () => 'name 不能为空',
+      async () => undefined,
+    );
+    await expect(wrapped(dummyEvent, null)).rejects.toThrow(
+      '[IPC tool:execute] 参数校验失败: name 不能为空',
+    );
+  });
+
+  it('handler 抛错时错误正确传播', async () => {
+    const handler = async () => {
+      throw new Error('handler 内部错误');
+    };
+    const wrapped = createValidatedHandler<unknown, void>(
+      'test:channel',
+      () => null,
+      handler,
+    );
+    await expect(wrapped(dummyEvent, null)).rejects.toThrow('handler 内部错误');
+  });
+
+  it('校验器返回 null 表示通过（边界：null 返回值不等于字符串错误）', async () => {
+    const handler = vi.fn(async () => 'ok');
+    const wrapped = createValidatedHandler<unknown, string>(
+      'test:channel',
+      () => null,
+      handler,
+    );
+    const result = await wrapped(dummyEvent, undefined);
+    expect(result).toBe('ok');
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });

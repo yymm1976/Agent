@@ -26,6 +26,13 @@ export interface OrchestrationIntegrationOptions {
   strategyEnabled?: boolean;
   /** stateGraphEnabled：ExecutionStateGraph 步骤状态管理 */
   stateGraphEnabled?: boolean;
+  /**
+   * conflictDetectionEnabled：ConflictDetector 冲突检测接入生产调度
+   * Phase 83 Task 2：冻结 conflict detector——默认 false，不接入并行组冲突解析
+   * ConflictDetector 类与接口保留（conflict.ts），但 orchestrator.plan() 不调用
+   * 用户显式 enabled:true 才恢复冲突检测（向后兼容）
+   */
+  conflictDetectionEnabled?: boolean;
 }
 
 // ============================================================
@@ -298,10 +305,12 @@ export class Orchestrator {
 
       const executionOrder = this.topologicalSort(analysis);
       const parallelGroups = this.buildParallelGroups(analysis, executionOrder);
-      const resolvedGroups = this.conflictDetector.resolveConflicts(
-        parallelGroups,
-        analysis,
-      );
+      // Phase 83 Task 2：conflict detector 冻结——默认不接入生产调度
+      // 仅当 integration.conflictDetectionEnabled === true 时调用 resolveConflicts
+      // 未开启时直接使用 parallelGroups（跳过冲突解析，保留接口定义供未来恢复）
+      const resolvedGroups = this.integration.conflictDetectionEnabled === true
+        ? this.conflictDetector.resolveConflicts(parallelGroups, analysis)
+        : parallelGroups;
 
       // Phase 72: synthesizer 派生点
       // 当多个 worker 产出冲突的结果时，应在此处自动派生 synthesizer 子 Agent 做合成。

@@ -73,8 +73,11 @@ export class TraceBridge {
   }
 
   /** 回放指定会话，返回时间线事件；传入 step 时仅返回该步骤段落 */
+  // Phase 81 Task 4：packs.harness.enabled 门控（standard-pack，默认 false 退出装配）
+  //   未启用时直接返回空数组；enabled:true 恢复 TraceReplayer 装配
   async replayTrace(sessionId: string, step?: number): Promise<TimelineEvent[]> {
     if (!this.ctx.deps) return [];
+    if (!this.ctx.config.packs?.harness?.enabled) return [];
     try {
       const replayer = new TraceReplayer(this.ctx.deps.trace);
       return await replayer.replay(sessionId, step !== undefined ? { step } : undefined);
@@ -85,8 +88,10 @@ export class TraceBridge {
   }
 
   /** 生成指定会话的评分卡 */
+  // Phase 81 Task 4：packs.harness.enabled 门控（standard-pack，默认 false 退出装配）
   async generateTraceScorecard(sessionId: string): Promise<Scorecard | null> {
     if (!this.ctx.deps) return null;
+    if (!this.ctx.config.packs?.harness?.enabled) return null;
     try {
       return await generateScorecard(this.ctx.deps.trace, sessionId);
     } catch (err) {

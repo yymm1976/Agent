@@ -151,7 +151,8 @@ describe('Phase 27 Task 2: RouterPlugin 集成', () => {
       source: 'rule',
     };
     const result = await router.route(classification);
-    expect(result.model.id).toBe('gpt-4o');
+    // Phase 81 Task 2：三级路由简化，medium 收敛为 complex → o3-mini
+    expect(result.model.id).toBe('o3-mini');
   });
 
   // 测试 4：插件 route() 抛异常时，fallback 到默认路由不崩溃

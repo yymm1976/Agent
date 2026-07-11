@@ -26,6 +26,31 @@
 - `src/utils/` — 通用工具（日志 + 路径 + 重试 + Token 估算）
 - `desktop/` — Electron 桌面应用（主进程 + preload + renderer + shared 类型）
 
+## 能力四层分层索引（Phase 80 Task 1）
+
+> 完整分层清单见 [`docs/CAPABILITY_LAYERS.md`](./docs/CAPABILITY_LAYERS.md)，对齐蓝图 `蓝图与Phase/BLUEPRINT-CORE-CAPABILITY-PACK-v3.md` §2。
+> 每个生产模块有且仅有一个四层标签，无 `unknown`。
+
+| 层 | 默认 | 维护策略 | 模块数 | 代表模块 |
+|----|------|----------|--------|----------|
+| `core` | on | 主动强化、必须有测试 | 65 | file/shell/git/code-search 工具、ReActAgentLoop、PermissionEngine、ContextManager、CheckpointManager、会话分支、模型路由+Token、MCP 基础连接 |
+| `extended-pack` | off | 修 bug 不扩功能 | 30 | spawn-agent、OrchestrationIntegration、GoalRunner、DagEngine、DualLoopOrchestrator、UnifiedReviewer、cross-model-reviewer（`pack.multi-agent`/`pack.goal-advanced`/`pack.adversarial-review`） |
+| `standard-pack` | off | 冷处理：仅修崩溃 | 24 | web-search/web-fetch/browser、CodeMapEngine、code-graph-query、CiteManager、ClaudePluginImporter、MacroManager、TraceReplayer（`pack.browser-web`/`pack.code-map`/`pack.harness`/`pack.import-ecosystem`/`pack.compose`） |
+| `freeze` | off | 停止一切接线 | 12 | TrustGradientManager 动态升级、QualitySignalMiddleware、KG 高级算法、Compose 自动选择、closedLoopRouting/ACRouter |
+
+**关键归属（与蓝图 v3 一致）：**
+- Multi-Agent → `extended-pack`（`pack.multi-agent`）
+- Goal 高级编排 → `extended-pack`（`pack.goal-advanced`）
+- 对抗审查 → `extended-pack`（`pack.adversarial-review`）
+- 浏览器/Web → `standard-pack`（`pack.browser-web`）
+- 代码地图 → `standard-pack`（`pack.code-map`）
+- Progressive Trust → `freeze`
+- KG 高级算法 → `freeze`
+
+详见 [`docs/CAPABILITY_LAYERS.md`](./docs/CAPABILITY_LAYERS.md) 的四层分表（C-01~C-65 / E-01~E-30 / S-01~S-24 / F-01~F-12）与覆盖率统计。
+
+---
+
 ## 模块详解
 
 ### src/runtime/ — 核心运行时

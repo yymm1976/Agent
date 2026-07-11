@@ -18,6 +18,8 @@
 // 仅对声明字段做类型/长度校验。这样既保证关键字段被校验，又避免对复杂配置对象
 // （如 AppConfig）需要枚举全部字段的负担。消费方应只读取已校验字段以避免读到未校验数据。
 
+import type { IpcMainInvokeEvent } from 'electron';
+
 /** 单字段校验器：接收 unknown，返回校验后的值（类型由实现决定），校验失败抛 Error */
 export type FieldValidator<T> = (value: unknown) => T;
 
@@ -82,3 +84,34 @@ export const ipcGuard = {
     };
   },
 };
+
+/**
+ * 创建带参数校验的 IPC handler（Phase 79 Task 7）
+ *
+ * 统一各 handler 的参数校验逻辑，替代散落在各 ipcMain.handle 中的 typeof / length 检查。
+ * 校验函数返回 null 表示通过，返回字符串表示错误消息（此时 handler 不执行，直接抛错）。
+ *
+ * 与权限层兼容：权限校验应在 handler 内部或其包装层执行，确保在参数校验之后运行。
+ * 即 createValidatedHandler 是外层（参数校验），权限校验是内层，二者解耦。
+ *
+ * @param channel IPC 通道名（仅用于错误信息定位，不绑定具体通道）
+ * @param validator 参数校验函数（返回 null 表示通过，返回字符串表示错误消息）
+ * @param handler 实际处理函数（校验通过后调用，可通过 ...rest 接收 event 等额外参数）
+ * @returns 可直接传给 ipcMain.handle 的包装函数
+ */
+export function createValidatedHandler<TArgs, TResult>(
+  channel: string,
+  validator: (args: unknown) => string | null,
+  handler: (args: TArgs, ...rest: unknown[]) => Promise<TResult>,
+): (event: IpcMainInvokeEvent, args: unknown) => Promise<TResult> {
+  return async (event, args) => {
+    // 参数校验：返回错误消息时直接抛错，handler 不执行
+    const validationError = validator(args);
+    if (validationError !== null) {
+      // 错误信息包含通道名和校验失败原因，便于定位
+      throw new Error(`[IPC ${channel}] 参数校验失败: ${validationError}`);
+    }
+    // 校验通过后调用 handler（权限校验由 handler 内部负责，在参数校验之后执行）
+    return handler(args as TArgs, event);
+  };
+}

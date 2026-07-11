@@ -1,4 +1,4 @@
-# 敏感文件（证书/密钥 dump）
+# Sensitive dumps
 p12-dump*.txt
 p12-mid.txt
 p12-v.txt
@@ -7,34 +7,37 @@ install-utf8.log
 pnpm-err.log
 pnpm-out.log
 
-# 日志
+# Logs
 *.log
 
-# 依赖
+# Dependencies
 node_modules/
 
-# 构建产物
+# Build outputs
 dist/
 
-# 环境变量
+# Env
 .env
 .env.local
 
-# 系统文件
+# OS / editor
 .DS_Store
 Thumbs.db
-
-# 编辑器
 .vscode/
 .idea/
 
-# vitest 覆盖率
+# Coverage
 coverage/
 
-# RouteDev 运行时数据
+# RouteDev runtime data (local)
 .routedev/
 
-# Electron 构建产物
+# Local IDE / agent tool state (not product)
+.trae/
+.pilotdeck/
+.workbuddy/
+
+# Electron build outputs
 routedev/out/
 routedev/build/
 routedev/release/
@@ -42,18 +45,19 @@ routedev/release-v*/
 routedev/release2/
 routedev/release3/
 
-# npm lock file（项目使用 pnpm）
+# npm lock (project uses pnpm)
 routedev/package-lock.json
 
-# CodeGraph 索引
+# CodeGraph index
 routedev/.codegraph/
 
-# 测试输出文件
+# Test / temp outputs
 routedev/tests_output*.txt
 routedev/tests_output*_err.txt
-
-# 临时文件
 routedev/tmp_*.mjs
+test_results*.json
+test-write.md
+filepath
 
-# 工具目录
-.workbuddy/
+# Optional: keep archive tracked for history; uncomment to ignore:
+# archive/

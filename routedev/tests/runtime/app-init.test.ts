@@ -444,23 +444,21 @@ describe('createAppDependencies', () => {
       const clientManager = createMockClientManager();
       const deps: AppDependencies = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
 
-      // 验证所有 AppDependencies 字段都存在且不为 undefined
+      // 验证所有 AppDependencies 必需字段都存在且不为 undefined
+      // 注意：仅检查 AppDependencies 接口中实际存在的必需字段
+      // Phase 57/59/79：securityChecker/adapter/workModeController/guardedAdapter/middlewarePipeline/
+      //   pluginRegistry/checkpointWriter/projectMemory/primaryClient/taskOrchestrator/readTracker/
+      //   resultSanitizer 等字段已从 AppDependencies 接口移除（僵尸字段清理），仅保留在 InitContext 中传递
       const requiredKeys: (keyof AppDependencies)[] = [
-        'registry', 'mcpManager', 'securityChecker', 'toolExecutor', 'adapter',
-        'workModeController', 'guardedAdapter', 'agentLoop',
-        'middlewarePipeline', 'pluginRegistry', 'skillsRouter', 'filesystemDiscovery',
+        'registry', 'mcpManager', 'toolExecutor', 'agentLoop',
         'permissionEngine',
-        // Phase 59：orchestrator/workerExecutor 字段已从 AppDependencies 移除（僵尸字段）
-        'checkpointManager', 'checkpointWriter', 'contextManager',
-        // Phase 57：visionAssistant 改为可选（config.vision.enabled=false 时为 undefined），不再断言
-        // Phase 59：branchManager/initAnalyzer/goalParser/goalVerifier/requirementsGatherer/complexityAnalyzer 已删除（僵尸字段）
-        'prompts', 'blackboard', 'trace', 'audit', 'projectMemory',
+        'skillsRouter', 'filesystemDiscovery',
+        'checkpointManager', 'contextManager',
+        'prompts', 'blackboard', 'trace', 'audit',
         'hookRunner',
-        'primaryClient', 'checkpointClient', 'profiler',
-        'taskOrchestrator',
-        'unifiedReviewer', 'completionGate',
-        'readTracker', 'resultSanitizer', 'sharedSystemPromptRef',
-        // E9-B：新增 experimentManager 单例字段
+        'checkpointClient', 'profiler',
+        'unifiedReviewer', 'completionGate', 'sharedSystemPromptRef',
+        'pathRouter', 'dualLoopOrchestratorRef', 'dagEngineRef',
         'experimentManager',
       ];
 

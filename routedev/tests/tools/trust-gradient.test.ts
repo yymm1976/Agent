@@ -421,15 +421,16 @@ describe('PermissionEngine + TrustGradientManager 联动', () => {
     expect(result.decision).toBe('confirm');
   });
 
-  it('plan 模式拦截应返回 deny', () => {
+  it('Phase 79: plan 模式拦截被旁路，走规则决策（不再 deny）', () => {
     const engine = createDefaultEngine();
     const manager = new TrustGradientManager('integration-test');
     manager.setLevel('plan');
     engine.setTrustGradientManager(manager);
 
-    // plan 模式拦截写操作 → deny
+    // Phase 79 Freeze: checkOperation 的 plan 模式 deny 被旁路
+    // file_write 无 deny/confirm/auto 规则命中 → fallback → manual → confirm
     const result = engine.check('file_write', { path: 'src/test.txt' }, 'manual');
-    expect(result.decision).toBe('deny');
+    expect(result.decision).toBe('confirm');
   });
 
   it('Windows 危险命令应被 deny 规则拦截', () => {

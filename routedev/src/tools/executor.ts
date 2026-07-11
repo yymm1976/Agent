@@ -15,10 +15,14 @@ import type {
   ToolExecutionContext,
 } from './types.js';
 import { logger } from '../utils/logger.js';
+// Phase 80 Task 2：本地使用计数器类型导入
+import type { UsageCounter } from '../observability/usage-counter.js';
 
 export class ToolExecutor implements IToolExecutor {
   private registry: IToolRegistry;
   private securityChecker?: ISecurityChecker;
+  /** Phase 80 Task 2：本地使用计数器（可选，fail-open） */
+  private usageCounter?: UsageCounter;
 
   constructor(registry: IToolRegistry) {
     this.registry = registry;
@@ -26,6 +30,11 @@ export class ToolExecutor implements IToolExecutor {
 
   setSecurityChecker(checker: ISecurityChecker): void {
     this.securityChecker = checker;
+  }
+
+  /** Phase 80 Task 2：注入使用计数器（由 app-init-tools 装配时调用） */
+  setUsageCounter(counter: UsageCounter): void {
+    this.usageCounter = counter;
   }
 
   async execute(
@@ -183,12 +192,18 @@ export class ToolExecutor implements IToolExecutor {
         durationMs: duration,
       });
 
+      // Phase 80 Task 2：工具执行成功/失败均计数（fail-open，increment 内部 catch）
+      this.usageCounter?.increment({ kind: 'tool', name: toolName });
+
       return { ...result, durationMs: duration };
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMsg = error instanceof Error ? error.message : String(error);
 
       logger.error('Tool execution error', { toolName, error: errorMsg });
+
+      // Phase 80 Task 2：工具执行异常也计数（fail-open）
+      this.usageCounter?.increment({ kind: 'tool', name: toolName });
 
       return {
         success: false,

@@ -43,6 +43,7 @@ import { SettingsPhase52IntegrationTab } from '../components/settings/SettingsPh
 import { SettingsPhase53IntegrationTab } from '../components/settings/SettingsPhase53IntegrationTab.js';
 import { SettingsResultSchemaTab } from '../components/settings/SettingsResultSchemaTab.js';
 import { SettingsConfigLayeringTab } from '../components/settings/SettingsConfigLayeringTab.js';
+import { SettingsPacksTab } from '../components/settings/SettingsPacksTab.js';
 import { SettingsArchivedTab } from '../components/settings/SettingsArchivedTab.js';
 import { SettingsSubAgentsTab } from '../components/settings/SettingsSubAgentsTab.js';
 import { SettingsSecurityTab } from '../components/settings/SettingsSecurityTab.js';
@@ -120,6 +121,7 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
     updateGeneral, updateBackgroundBehavior, updateUi,
     updateTrust, updateQuality, updateExpertise,
     updateSubAgents, updateSubAgentsGateRules,
+    updatePacks,
     toggleApiKey, handleTestConnection,
   } = useSettingsDraft({ config, onClearSaveResult: () => setSaveResult(null) });
 
@@ -506,6 +508,15 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
       {/* ===== 配置分层（Phase 51 Task 8，I-1） ===== */}
       {activeTab === 'configLayering' && (
         <SettingsConfigLayeringTab draft={draft} updateDraft={updateDraft} />
+      )}
+
+      {/* ===== 能力分层（Phase 81 Task 5）：Core / Extended / Standard / Freeze ===== */}
+      {activeTab === 'packs' && (
+        <SettingsPacksTab
+          draft={draft}
+          updatePacks={updatePacks}
+          onNavigate={setActiveTab}
+        />
       )}
 
       {/* ===== Hooks（Phase 39） ===== */}

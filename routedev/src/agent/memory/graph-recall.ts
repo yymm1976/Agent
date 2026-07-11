@@ -175,7 +175,10 @@ export function applyRecallMethods(target: typeof KnowledgeGraph): void {
     const preciseResults = this.runPath(preciseSeeds, PRECISE_BFS_DEPTH, maxResults);
 
     // ===== 泛化路径 =====
-    const communities = this.detectCommunities();
+    // Phase 81 Task 3：KG 高级算法（社区检测）未装配时退化为空社区，精确路径召回仍可用
+    const communities = typeof this.detectCommunities === 'function'
+      ? this.detectCommunities()
+      : new Map<string, string[]>();
     // 找到与 query 关键词匹配最多的社区
     let bestCommunityId: string | null = null;
     let bestMatchCount = 0;

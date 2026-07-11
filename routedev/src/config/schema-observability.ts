@@ -144,8 +144,8 @@ export type GeneralConfig = z.infer<typeof GeneralConfigSchema>;
  * 控制隐式反馈检测、信号保留与知识图谱自动改进
  */
 export const QualityConfigSchema = z.preprocess((v) => v ?? {}, z.object({
-  /** 是否启用隐式反馈检测 */
-  enableImplicitFeedback: z.boolean().default(true),
+  /** 是否启用隐式反馈检测（Phase 81 Task 3：默认 false，freeze 层 F-02） */
+  enableImplicitFeedback: z.boolean().default(false),
   /** 负面信号降级阈值（0-1，达到此值触发降级） */
   negativeSignalThreshold: z.number().min(0).max(1).default(0.4),
   /** 信号保留天数 */
@@ -299,3 +299,49 @@ export const Phase70IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.obj
   })),
 }));
 export type Phase70IntegrationConfig = z.infer<typeof Phase70IntegrationConfigSchema>;
+
+// --- Phase 81 Task 5：能力 Pack 开关配置 ---
+// 对齐 docs/CAPABILITY_LAYERS.md 四层分层：Core / Extended Pack / Standard Pack / Freeze
+// - Extended Pack / Standard Pack：默认 off，用户可在设置页开启
+// - Freeze：默认 off 且 UI 禁用（仅展示，不推荐启用）
+// 每个 pack 均为 { enabled: boolean }，消费方按 config.packs.xxx.enabled 条件装配
+
+/** 单个 Pack 开关（统一形态：仅一个 enabled 布尔） */
+const PackToggleSchema = z.preprocess((v) => v ?? {}, z.object({
+  enabled: z.boolean().default(false),
+}));
+
+export const PacksConfigSchema = z.preprocess((v) => v ?? {}, z.object({
+  // --- Extended Pack（高级区，默认关，修 bug 不扩功能） ---
+  /** Goal 高级编排（/goal 执行器 + DAG + 双循环 + 有界恢复 + 预算监控） */
+  goalAdvanced: PackToggleSchema.default({ enabled: false }),
+  /** Multi-Agent 编排（spawn-agent + orchestrator + worker + 冲突检测 + 熔断） */
+  multiAgent: PackToggleSchema.default({ enabled: false }),
+  /** 对抗审查（UnifiedReviewer + cross-model-reviewer + 分级策略） */
+  adversarial: PackToggleSchema.default({ enabled: false }),
+  /** Skill 生命周期（SkillLifecycleManager 自动提炼/精炼） */
+  skillLifecycle: PackToggleSchema.default({ enabled: false }),
+  // --- Standard Pack（扩展区，默认关，冷处理仅修崩溃） ---
+  /** 浏览器/Web（web-search + web-fetch + browser + vision） */
+  browserWeb: PackToggleSchema.default({ enabled: false }),
+  /** 代码地图（code-graph-query + repo-map + CodeMapEngine + Watcher） */
+  codeMap: PackToggleSchema.default({ enabled: false }),
+  /** CCR 可逆压缩（ccr-retrieve + ComposePipeline） */
+  ccrCompression: PackToggleSchema.default({ enabled: false }),
+  /** VFS/Plan 工具（虚拟文件系统 + 计划状态显式管理） */
+  vfsPlan: PackToggleSchema.default({ enabled: false }),
+  /** Harness（Trace 回放 + 评分卡 + 并行实验） */
+  harness: PackToggleSchema.default({ enabled: false }),
+  /** 完整性校验（cite / import / macros / mcpBridge / IntegrityManifest） */
+  integrity: PackToggleSchema.default({ enabled: false }),
+  /** Compose 管道（compose-pipeline 阶段提示词注入和自动流转） */
+  compose: PackToggleSchema.default({ enabled: false }),
+  // --- Freeze（实验区，默认关，UI 禁用仅展示） ---
+  /** TrustGradient（渐进式信任动态升级已冻结，不推荐） */
+  trustGradient: PackToggleSchema.default({ enabled: false }),
+  /** KG 高级算法（PageRank / 社区检测，已冻结，不推荐） */
+  kgAdvanced: PackToggleSchema.default({ enabled: false }),
+  /** ACRouter（闭环模型路由实验性高级部分，已冻结，不推荐） */
+  acRouter: PackToggleSchema.default({ enabled: false }),
+}));
+export type PacksConfig = z.infer<typeof PacksConfigSchema>;

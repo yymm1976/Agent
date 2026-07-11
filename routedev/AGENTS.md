@@ -2,6 +2,29 @@
 
 > 任何 Agent 接手本项目前必读。详细代码索引见 `CODEMAP.md`，完整陷阱速查见 `.routedev/skills/pitfalls-guide/SKILL.md`。
 
+## Agent 工具约定（codebase MCP + rtk）
+
+> 工作区路径（含 efs/、rchive/）见仓库根 [../docs/PATHS.md](../docs/PATHS.md)。
+
+> 仓库根目录有完整约定：[`../AGENTS.md`](../AGENTS.md)、[`../docs/AGENT_TOOLING.md`](../docs/AGENT_TOOLING.md)。下一任模型必须遵守。
+
+**默认组合：`codebase MCP 定位` → `精读片段` → `rtk 验证`。**
+
+| 场景 | 用 | 不要 |
+|------|----|------|
+| 找符号 / 调用链 / 影响面 | codegraph 或 codebase-memory-mcp | 全库盲 grep |
+| git / test / typecheck / build 输出 | `rtk ...` / `rtk err ...` | 把完整 vitest/tsc 日志塞进上下文 |
+| 字符串 / 配置键 / MCP 不足 | `rtk grep` 或受限读文件 | 用 grep 代替架构理解 |
+| 需要完整原始日志 | `rtk proxy <cmd>` | 默默丢关键输出 |
+
+高频：
+
+```bash
+rtk git status
+rtk git diff
+rtk err pnpm test
+rtk err pnpm typecheck
+```
 ## 技术栈
 - **语言：** TypeScript 6.x（strict 模式，ESM）
 - **运行时：** Node.js 20+
@@ -86,3 +109,30 @@
 
 - **#135** ~~routedev exec 必须设总超时（默认 5 分钟），headless 下 always-ask 自动 deny~~ — **已废弃（CLI 退役，exec-runner.ts 已删除）**
 - **#139** ~~自定义命令的模板变量替换必须一次性（不递归，$1 中的 {{...}} 不展开）~~ — **已废弃（CLI 退役，custom-commands.ts 已删除）**
+
+## Core 不做清单
+
+> Phase 85（v4.9.0）正式化。审查发现"功能缺失"时，先查此清单，再决定是否实现。配套权威分层表见 `docs/CAPABILITY_LAYERS.md`，去留台账见 `docs/SLIMDOWN_BOARD.md`。
+
+以下能力不属于 Core，需通过 Pack 或配置启用：
+
+1. Multi-Agent 编排 → `pack.multi-agent`
+2. Goal 高级编排 → `pack.goal-advanced`
+3. 对抗审查 → `pack.adversarial-review`
+4. 浏览器/Web → `pack.browser-web`
+5. 代码地图 → `pack.code-map`
+6. Trace 回放 → `pack.harness`
+7. TrustGradient 动态升级 → Freeze
+8. Implicit Feedback → Freeze
+9. /goal 并行调度 → Freeze
+
+### 防回潮规则
+
+1. 新功能默认 `enabled: false` 或进入 Pack
+2. 想进 Core 必须提供：用户场景、费用影响、测试、为何不能 Pack
+3. 审查发现"功能缺失"时先查"Core 不做"清单
+4. Extended Pack 修 bug 不扩功能
+5. Standard Pack 仅修崩溃
+6. Freeze 模块停止一切接线
+7. Pack API 统一：官方与自建使用相同接口
+8. 用户自建 Pack 受 PermissionEngine 管控

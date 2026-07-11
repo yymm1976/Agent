@@ -9,11 +9,13 @@
 //   后续 74-D 可改为细粒度 selector + 按需传入 props，进一步减少 ChatPage 重渲染范围
 
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { UploadCloud, FolderOpen, History } from 'lucide-react';
+import { UploadCloud, FolderOpen, History, GitBranch } from 'lucide-react';
 import type { ChatMessage, PendingConfirm } from '../hooks/useRouteDev.js';
 import type { AppConfig, AutonomyMode } from '../../../shared/config-types.js';
 import type { TokenProfileSnapshot } from '../../../../src/agent/token-profiler.js';
 import type { ConfigSaveResult, FollowUpItem, FollowUpMode, SessionStatus } from '../../../shared/ipc-types.js';
+// Phase 84：会话树面板 + IPC 类型（消费 session-tree-types.ts，消除死代码）
+import type { SessionTreeGetResult } from '../types/session-tree-types.js';
 import { NeuralNetworkBackground } from '../components/NeuralNetworkBackground.js';
 import { ArtifactPanel } from '../components/ArtifactPanel.js';
 import { StepEditor } from '../components/StepEditor.js';
@@ -32,6 +34,8 @@ import { ScorecardView } from '../components/trace/ScorecardView.js';
 // Phase 77 借鉴点 7：冷启动恢复提示条
 import { RecoveryPrompt } from '../components/goal/RecoveryPrompt.js';
 import { SessionStatusCard } from '../components/session/SessionStatusCard.js';
+// Phase 84：会话树视图面板（占位集成，IPC 接通后传入真实 tree 数据）
+import { SessionTreePanel } from '../components/session/SessionTreePanel.js';
 
 interface ChatPageProps {
   messages: ChatMessage[];
@@ -64,6 +68,9 @@ export function ChatPage({
   const [followUpExpanded, setFollowUpExpanded] = useState(false);
   const [followUpMode, setFollowUpModeState] = useState<FollowUpMode>('one-at-a-time');
   const [showCheckpointPanel, setShowCheckpointPanel] = useState(false);
+  // Phase 84：会话树面板显示/隐藏 + 树数据（IPC 接通前传 null 显示空状态）
+  const [showTreePanel, setShowTreePanel] = useState(false);
+  const [treeData, setTreeData] = useState<SessionTreeGetResult>(null);
   // Phase 77：运行回放 / 评分卡弹窗
   const [replayOpen, setReplayOpen] = useState(false);
   const [scorecardOpen, setScorecardOpen] = useState(false);
@@ -266,13 +273,23 @@ export function ChatPage({
             <Badge variant="primary" className="shrink-0">Tokens: {tokenUsage.toLocaleString()}</Badge>
           )}
         </div>
-        <button type="button" onClick={() => setShowCheckpointPanel(!showCheckpointPanel)}
-          title={showCheckpointPanel ? '隐藏检查点面板' : '显示检查点面板'}
-          className={['flex h-8 w-8 items-center justify-center rounded-md transition',
-            showCheckpointPanel ? 'bg-rd-primary/10 text-rd-primary' : 'text-rd-textSubtle hover:bg-rd-surfaceHover hover:text-rd-text',
-          ].join(' ')}>
-          <History size={16} />
-        </button>
+        <div className="flex items-center gap-1">
+          {/* Phase 84：会话树面板切换按钮 */}
+          <button type="button" onClick={() => setShowTreePanel(!showTreePanel)}
+            title={showTreePanel ? '隐藏会话树面板' : '显示会话树面板'}
+            className={['flex h-8 w-8 items-center justify-center rounded-md transition',
+              showTreePanel ? 'bg-rd-primary/10 text-rd-primary' : 'text-rd-textSubtle hover:bg-rd-surfaceHover hover:text-rd-text',
+            ].join(' ')}>
+            <GitBranch size={16} />
+          </button>
+          <button type="button" onClick={() => setShowCheckpointPanel(!showCheckpointPanel)}
+            title={showCheckpointPanel ? '隐藏检查点面板' : '显示检查点面板'}
+            className={['flex h-8 w-8 items-center justify-center rounded-md transition',
+              showCheckpointPanel ? 'bg-rd-primary/10 text-rd-primary' : 'text-rd-textSubtle hover:bg-rd-surfaceHover hover:text-rd-text',
+            ].join(' ')}>
+            <History size={16} />
+          </button>
+        </div>
       </div>
 
       {/* Phase 77 借鉴点 7：冷启动恢复提示条（无可恢复 goal 时不渲染） */}
@@ -307,6 +324,22 @@ export function ChatPage({
         </div>
 
         <ScrollToBottom visible={showScrollBottom} onClick={jumpToBottom} rightOffset={showCheckpointPanel} />
+
+        {/* Phase 84：会话树面板（占位集成，IPC 接通后 treeData 由 session:get-tree 填充） */}
+        {showTreePanel && (
+          <SessionTreePanel
+            tree={treeData}
+            className="w-64 shrink-0 border-l border-rd-border"
+            onNodeClick={(nodeId) => {
+              // IPC 接通后调用 window.routedev.session.switchBranch
+              void nodeId;
+            }}
+            onFork={(nodeId) => {
+              // IPC 接通后调用 window.routedev.session.fork
+              void nodeId;
+            }}
+          />
+        )}
 
         {showCheckpointPanel && (
           <ArtifactPanel

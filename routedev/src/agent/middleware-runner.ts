@@ -20,6 +20,12 @@ export interface ReasoningResult {
 export interface ActingResult {
   denied: boolean;
   reason?: string;
+  /** Phase 79 Task 3：PermissionEngine 的权限决策（'deny' | 'confirm' | 'auto'），未注册中间件时为 undefined */
+  permissionDecision?: string;
+  /** Phase 79 Task 3：是否需要用户确认（PermissionMiddleware 设置，对应 confirm 决策） */
+  requiresConfirmation?: boolean;
+  /** Phase 79 Task 3：命中的权限规则 ID（fallback 决策时为 undefined，用于区分白名单放行 vs 规则放行） */
+  permissionMatchedRule?: string;
 }
 
 /**
@@ -249,7 +255,14 @@ export class MiddlewareRunner {
     if (mwCtx.metadata.permissionDenied) {
       return { denied: true, reason: String(mwCtx.metadata.permissionDenied) };
     }
-    return { denied: false };
+    // Phase 79 Task 3：透传 PermissionMiddleware 写入的权限决策字段
+    // 供 loop.ts 据此驱动确认流程（confirm → onConfirmTool，auto → 放行）
+    return {
+      denied: false,
+      permissionDecision: mwCtx.metadata.permissionDecision as string | undefined,
+      requiresConfirmation: mwCtx.metadata.requiresConfirmation as boolean | undefined,
+      permissionMatchedRule: mwCtx.metadata.permissionMatchedRule as string | undefined,
+    };
   }
 
   /**

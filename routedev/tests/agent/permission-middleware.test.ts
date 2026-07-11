@@ -240,24 +240,30 @@ describe('PermissionMiddleware 集成测试', () => {
     });
   });
 
-  describe('TrustGradient 接线（TD-06）', () => {
-    it('TrustGradient requiresConfirmation=true 时强制 confirm（即使 auto 规则命中）', async () => {
+  describe('TrustGradient 接线（Phase 79 Freeze）', () => {
+    // Phase 79: TrustGradient Freeze — 旁路 level-based 动态决策，仅保留用户显式临时授权
+    //   - checkOperation 的 requiresConfirmation 不再强制升级为 confirm
+    //   - checkOperation 的 plan 拦截不再返回 deny
+    //   - checkOperation 的 level-based auto 放行不再生效
+    //   - 仅 hasTemporaryGrant（用户显式授权）能让操作 auto 放行
+
+    it('Phase 79: TrustGradient requiresConfirmation=true 不再强制 confirm（走规则决策）', async () => {
       // 构造一个 file_read 命中 auto 规则但 trust 要求确认的场景
       const engine = createDefaultEngine();
 
-      // 注入一个 mock TrustGradientManager，要求确认
+      // 注入一个 mock TrustGradientManager，checkOperation 要求确认（模拟 level=default）
       const mockTrustManager = {
         checkOperation: () => ({
           allowed: true,
           requiresConfirmation: true,
           reason: 'trust level default requires confirmation',
         }),
-        // 以下方法是为满足 TrustGradientManager 类型签名（实际测试不调用）
+        // hasTemporaryGrant 返回 false：无用户显式授权
+        hasTemporaryGrant: () => false,
         getLevel: () => 'default',
         setLevel: () => {},
         clearSessionGrants: () => {},
         grantTemporary: () => {},
-        hasTemporaryGrant: () => false,
         classifyRisk: () => 'read',
         cleanupExpiredGrants: () => {},
         getTemporaryGrantsCount: () => 0,
@@ -268,36 +274,51 @@ describe('PermissionMiddleware 集成测试', () => {
       };
       engine.setTrustGradientManager(mockTrustManager as never);
 
-      // file_read 在默认规则集中命中 auto-file-read，但 trust 要求确认
-      // TD-06：应被强制升级为 confirm
+      // file_read 在默认规则集中命中 auto-file-read
+      // Phase 79 Freeze：trust requiresConfirmation 被旁路，应走 auto 规则放行（不再强制 confirm）
       const ctx = await runPermissionMiddleware(
         engine,
         'file_read',
         { path: '/tmp/foo.txt' },
-        'auto', // 即使 auto 模式
+        'auto',
       );
 
       expect(ctx.metadata.permissionDenied).toBeFalsy();
-      expect(ctx.metadata.permissionDecision).toBe('confirm');
-      expect(ctx.metadata.requiresConfirmation).toBe(true);
-      // 应命中 auto-file-read 规则（但被 trust 强制升级为 confirm）
+      // Phase 79: 不再被 trust 强制升级为 confirm，走 auto 规则
+      expect(ctx.metadata.permissionDecision).toBe('auto');
+      expect(ctx.metadata.requiresConfirmation).toBeFalsy();
       expect(ctx.metadata.permissionMatchedRule).toBe('auto-file-read');
-      expect(ctx.metadata.permissionReason as string).toContain('TrustGradient');
     });
 
-    it('TrustGradient allowed=true 无需确认时放行', async () => {
+    it('Phase 79: 用户显式临时授权（hasTemporaryGrant=true）时放行', async () => {
       const engine = createDefaultEngine();
 
-      // 注入一个 mock TrustGradientManager，临时放行
+      // 注入一个 mock TrustGradientManager
+      // - checkOperation 要求确认（模拟 level=default，模拟"连续成功不自动提权"）
+      // - hasTemporaryGrant 返回 true（模拟用户显式授权）
       const mockTrustManager = {
         checkOperation: () => ({
           allowed: true,
-          requiresConfirmation: false,
-          reason: 'acceptEdits 模式放行 write 操作',
+          requiresConfirmation: true,
+          reason: 'default 模式需要确认',
         }),
+        hasTemporaryGrant: () => true,
+        getLevel: () => 'default',
+        setLevel: () => {},
+        clearSessionGrants: () => {},
+        grantTemporary: () => {},
+        classifyRisk: () => 'write',
+        cleanupExpiredGrants: () => {},
+        getTemporaryGrantsCount: () => 1,
+        getPreferences: () => [],
+        savePreferences: () => {},
+        loadPreferences: () => 0,
+        toAutonomyMode: () => 'manual' as const,
       };
       engine.setTrustGradientManager(mockTrustManager as never);
 
+      // file_write 无 confirm/auto 规则命中 → fallback
+      // Phase 79: hasTemporaryGrant=true → trustAutoAllowed → auto（用户显式授权放行）
       const ctx = await runPermissionMiddleware(
         engine,
         'file_write',
@@ -305,35 +326,102 @@ describe('PermissionMiddleware 集成测试', () => {
         'semi',
       );
 
-      // trust 临时放行 → auto
       expect(ctx.metadata.permissionDenied).toBeFalsy();
       expect(ctx.metadata.requiresConfirmation).toBeFalsy();
       expect(ctx.metadata.permissionDecision).toBe('auto');
+      expect(ctx.metadata.permissionReason as string).toContain('临时授权');
     });
 
-    it('TrustGradient 拦截（plan 模式）时返回 deny', async () => {
+    it('Phase 79: plan 模式拦截不再 deny（走规则决策）', async () => {
       const engine = createDefaultEngine();
 
-      // 注入一个 mock TrustGradientManager，拦截操作（plan 模式）
+      // 注入一个 mock TrustGradientManager，checkOperation 返回拦截（模拟 plan 模式）
       const mockTrustManager = {
         checkOperation: () => ({
           allowed: false,
           requiresConfirmation: false,
           reason: 'Plan 模式拦截写操作',
         }),
+        hasTemporaryGrant: () => false,
+        getLevel: () => 'plan',
+        setLevel: () => {},
+        clearSessionGrants: () => {},
+        grantTemporary: () => {},
+        classifyRisk: () => 'write',
+        cleanupExpiredGrants: () => {},
+        getTemporaryGrantsCount: () => 0,
+        getPreferences: () => [],
+        savePreferences: () => {},
+        loadPreferences: () => 0,
+        toAutonomyMode: () => 'manual' as const,
       };
       engine.setTrustGradientManager(mockTrustManager as never);
 
+      // file_write 无 deny 规则命中（非系统目录），无 confirm/auto 规则命中 → fallback
+      // Phase 79 Freeze：plan 模式的 deny 被旁路，走 semi 模式 fallback → confirm（不再 deny）
       const ctx = await runPermissionMiddleware(
         engine,
         'file_write',
         { path: '/tmp/foo.txt', content: 'x' },
-        'auto', // 即使 auto 模式
+        'semi',
       );
 
-      expect(ctx.metadata.permissionDenied).toBeTruthy();
-      expect(ctx.metadata.permissionDecision).toBe('deny');
-      expect(ctx.metadata.permissionDenied as string).toContain('Plan 模式');
+      // Phase 79: 不再被 plan 模式 deny
+      expect(ctx.metadata.permissionDenied).toBeFalsy();
+      expect(ctx.metadata.permissionDecision).toBe('confirm');
+      expect(ctx.metadata.requiresConfirmation).toBe(true);
+    });
+
+    it('Phase 79: 连续成功执行不得改变权限决策（无自动提权）', async () => {
+      // 验证核心约束：即使模拟"连续成功执行"，trust 的 level-based 决策不影响 check() 结果
+      // 场景：file_write 在 default 模式下，模拟多次成功后 level 仍为 default，决策不变
+      const engine = createDefaultEngine();
+
+      // 第一次：default 模式，无临时授权
+      const mockTrustManager = {
+        checkOperation: () => ({
+          allowed: true,
+          requiresConfirmation: true,
+          reason: 'default 模式需要确认',
+        }),
+        hasTemporaryGrant: () => false,
+        getLevel: () => 'default',
+        setLevel: () => {},
+        clearSessionGrants: () => {},
+        grantTemporary: () => {},
+        classifyRisk: () => 'write',
+        cleanupExpiredGrants: () => {},
+        getTemporaryGrantsCount: () => 0,
+        getPreferences: () => [],
+        savePreferences: () => {},
+        loadPreferences: () => 0,
+        toAutonomyMode: () => 'manual' as const,
+      };
+      engine.setTrustGradientManager(mockTrustManager as never);
+
+      const ctx1 = await runPermissionMiddleware(
+        engine,
+        'file_write',
+        { path: '/tmp/foo.txt', content: 'x' },
+        'semi',
+      );
+
+      // Phase 79: checkOperation requiresConfirmation 被旁路，走 semi fallback → confirm
+      expect(ctx1.metadata.permissionDecision).toBe('confirm');
+      expect(ctx1.metadata.requiresConfirmation).toBe(true);
+
+      // 模拟"连续成功执行后"：level 仍为 default（无自动提权），决策应不变
+      // mockTrustManager.getLevel() 仍返回 'default'，checkOperation 仍返回 requiresConfirmation=true
+      const ctx2 = await runPermissionMiddleware(
+        engine,
+        'file_write',
+        { path: '/tmp/foo.txt', content: 'y' },
+        'semi',
+      );
+
+      // 决策与第一次完全一致——连续成功执行不改变权限决策
+      expect(ctx2.metadata.permissionDecision).toBe(ctx1.metadata.permissionDecision);
+      expect(ctx2.metadata.requiresConfirmation).toBe(ctx1.metadata.requiresConfirmation);
     });
   });
 

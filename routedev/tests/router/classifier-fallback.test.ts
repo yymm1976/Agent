@@ -26,6 +26,9 @@ describe('ScenarioClassifier Phase 29 fallback 策略', () => {
     const classifier = new ScenarioClassifier({
       llmClient: new FailingLLMClient(),
       classifierModel: 'gpt-4',
+      // Phase 81 Task 2：显式启用 LLM 分类器，使 FailingLLMClient 被调用并失败
+      // 默认 false（旁路），此处需 true 才能测试 LLM 失败 fallback 策略
+      llmClassifierEnabled: true,
     });
 
     // 使用长查询（>20 字符）避免触发长度启发式
@@ -42,6 +45,9 @@ describe('ScenarioClassifier Phase 29 fallback 策略', () => {
     const classifier = new ScenarioClassifier({
       llmClient: new FailingLLMClient(),
       classifierModel: 'gpt-4',
+      // Phase 81 Task 2：显式启用 LLM 分类器，使 FailingLLMClient 被调用并失败
+      // 默认 false（旁路），此处需 true 才能测试 LLM 失败 fallback 策略
+      llmClassifierEnabled: true,
     });
 
     const result = await classifier.classify({

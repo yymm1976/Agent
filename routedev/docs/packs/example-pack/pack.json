@@ -1,0 +1,6 @@
+{
+  "id": "pack.example",
+  "layer": "extended",
+  "description": "示例 Pack：演示自定义工具、命令、事件钩子的注册",
+  "costHint": "启用后注入 1 个工具 + 1 个命令 + 1 个钩子，约增加 300 token"
+}

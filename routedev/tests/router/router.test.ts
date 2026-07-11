@@ -27,6 +27,10 @@ describe('ModelRouter', () => {
     budget,
     classifierModel: 'gpt-4o-mini',
     userPreference: 'balanced',
+    // Phase 81 Task 2：启用三级路由简化（medium/reasoning → complex）
+    simpleRoutingEnabled: true,
+    // Phase 81 Task 2：置信度阈值微调层旁路（默认 false）
+    confidenceThresholdEnabled: false,
   };
 
   beforeEach(() => {
@@ -50,7 +54,8 @@ describe('ModelRouter', () => {
     expect(result.degraded).toBe(false);
   });
 
-  it('should route medium tier to gpt-4o', async () => {
+  it('Phase 81: medium tier 收敛为 complex，路由到强模型 o3-mini', async () => {
+    // 三级路由简化：medium → complex → o3-mini（强模型）
     const classification: ClassificationResult = {
       tier: 'medium',
       confidence: 0.8,
@@ -58,7 +63,7 @@ describe('ModelRouter', () => {
       source: 'rule',
     };
     const result = await router.route(classification);
-    expect(result.model.id).toBe('gpt-4o');
+    expect(result.model.id).toBe('o3-mini');
     expect(result.degraded).toBe(false);
   });
 
@@ -74,7 +79,8 @@ describe('ModelRouter', () => {
     expect(result.degraded).toBe(false);
   });
 
-  it('should route reasoning tier to o3', async () => {
+  it('Phase 81: reasoning tier 收敛为 complex，路由到强模型 o3-mini', async () => {
+    // 三级路由简化：reasoning → complex → o3-mini（强模型）
     const classification: ClassificationResult = {
       tier: 'reasoning',
       confidence: 0.8,
@@ -82,7 +88,7 @@ describe('ModelRouter', () => {
       source: 'rule',
     };
     const result = await router.route(classification);
-    expect(result.model.id).toBe('o3');
+    expect(result.model.id).toBe('o3-mini');
     expect(result.degraded).toBe(false);
   });
 
@@ -105,8 +111,26 @@ describe('ModelRouter', () => {
     expect(result.degradationReason).toBeDefined();
   });
 
-  it('should support manual override', async () => {
-    // 先重置 tracker 以确保预算检查通过
+  it('Phase 81: override 用户指定模型优先于 tier 路由（最高优先级）', async () => {
+    // 用 config 中存在的模型 'o3' 作为 override
+    // simple 分类本应路由到 gpt-4o-mini，但 override 优先级最高，路由到 o3
+    tracker.reset();
+    router.setManualOverride('o3');
+    const classification: ClassificationResult = {
+      tier: 'simple',
+      confidence: 0.9,
+      reasoning: 'Simple',
+      source: 'rule',
+    };
+    const result = await router.route(classification);
+    // override 生效：路由到 o3 而非 simple tier 的 gpt-4o-mini
+    expect(result.model.id).toBe('o3');
+    expect(result.degraded).toBe(false);
+    expect(router.getManualOverride()).toBe('o3');
+  });
+
+  it('Phase 81: override 不在 models 列表中时不生效，回退 tier 路由', async () => {
+    // override 模型不在 config 规则中，override 失败，走正常 tier 路由
     tracker.reset();
     router.setManualOverride('claude-3-sonnet');
     const classification: ClassificationResult = {
@@ -116,9 +140,43 @@ describe('ModelRouter', () => {
       source: 'rule',
     };
     const result = await router.route(classification);
-    // 手动覆盖的模型不在 models 列表中，会降级
-    // 测试手动覆盖逻辑被触发
+    // override 模型不存在，回退到 simple tier 路由 → gpt-4o-mini
+    expect(result.model.id).toBe('gpt-4o-mini');
     expect(router.getManualOverride()).toBe('claude-3-sonnet');
+  });
+
+  it('Phase 81: clampTier 旁路（confidenceThresholdEnabled=false 不改变 tier）', async () => {
+    // 置信度阈值微调层默认旁路，clampTier 恒等映射
+    // simple 分类应直接路由到 simple tier 模型，不被 clampTier 调整
+    tracker.reset();
+    const classification: ClassificationResult = {
+      tier: 'simple',
+      confidence: 0.5, // 低置信度，但 clampTier 旁路不调整
+      reasoning: 'Simple',
+      source: 'rule',
+    };
+    const result = await router.route(classification);
+    expect(result.model.id).toBe('gpt-4o-mini');
+    expect(result.originalTier).toBe('simple');
+  });
+
+  it('Phase 81: simpleRoutingEnabled=false 时回退四级 tier（medium → gpt-4o）', async () => {
+    // 关闭三级路由简化，medium 保持 medium，路由到 gpt-4o
+    tracker.reset();
+    const fourTierConfig: RouterConfig = {
+      ...config,
+      simpleRoutingEnabled: false,
+    };
+    const fourTierRouter = new ModelRouter(fourTierConfig, tracker);
+    const classification: ClassificationResult = {
+      tier: 'medium',
+      confidence: 0.8,
+      reasoning: 'Keyword: git',
+      source: 'rule',
+    };
+    const result = await fourTierRouter.route(classification);
+    // 简化关闭：medium → gpt-4o（四级路由）
+    expect(result.model.id).toBe('gpt-4o');
   });
 
   it('should clear manual override', async () => {

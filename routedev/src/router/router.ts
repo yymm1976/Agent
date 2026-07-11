@@ -186,8 +186,29 @@ export class ModelRouter {
    * Phase 42：根据推理模式限制 tier 选择范围
    * 死代码清理：reasoningMode 配置未接入后端（buildRouterConfig 不读，构造函数不接收），
    * 故原 fast/accurate 分支为死代码。保留方法本身（route() 仍调用），简化为直接返回原 tier。
+   *
+   * Phase 81 Task 2：置信度阈值微调层默认旁路（confidenceThresholdEnabled 默认 false）
+   * 保留原始逻辑骨架，通过开关守卫；旁路时恒等映射，启用时保留扩展点
    */
   private clampTier(tier: ScenarioTier): ScenarioTier {
+    // Phase 81 Task 2：confidenceThresholdEnabled 默认 false，旁路置信度阈值微调层
+    if (this.config.confidenceThresholdEnabled !== true) {
+      return tier;
+    }
+    // 启用时：原置信度阈值微调逻辑（当前为恒等，保留扩展点）
+    return tier;
+  }
+
+  /**
+   * Phase 81 Task 2：tier 收敛（三级路由简化）
+   * simpleRoutingEnabled（默认 true）开启时，medium/reasoning → complex
+   * 关闭时保持原 tier 不变（回退四级路由）
+   */
+  private collapseTier(tier: ScenarioTier): ScenarioTier {
+    // 默认启用简化；显式 false 时回退原始四级 tier
+    if (this.config.simpleRoutingEnabled === false) return tier;
+    // 三级路由简化：medium/reasoning 收敛为 complex，simple 保持
+    if (tier === 'medium' || tier === 'reasoning') return 'complex';
     return tier;
   }
 
@@ -397,23 +418,8 @@ export class ModelRouter {
       throw new Error('No available models for deterministic routing');
     }
 
-    // Phase 42：根据推理模式调整 tier
-    // 死代码清理：reasoningMode 未接入后端，clampTier 为恒等映射，保留 clampedClassification 以最小化改动
-    // TD-13：deterministic 分支已 return，此处 classification.tier 已收窄为 ScenarioTier，
-    //        clampedClassification 类型为 NonDeterministicClassification，下游无需 as 断言
-    const clampedClassification: NonDeterministicClassification = {
-      ...classification,
-      tier: this.clampTier(classification.tier),
-    };
-
-    // Phase 27 Task 2：先询问 RouterPlugin
-    const pluginResult = await this.tryPluginRoute(clampedClassification);
-    if (pluginResult) {
-      // Phase 32 Task 2：插件路由结果也启用缓存
-      return { ...pluginResult, enableCache: true };
-    }
-
-    // 检查手动覆盖
+    // Phase 81 Task 2：override 用户指定模型优先级最高，提前到 clampTier/plugin 之前
+    // 确保用户在 config 中指定的模型不被路由器（tier 路由 / 插件路由 / 预算降级）覆盖
     if (this.manualOverride) {
       const model = this.models.get(this.manualOverride);
       if (model) {
@@ -421,11 +427,29 @@ export class ModelRouter {
           model: this.toModelConfig(model),
           providerId: model.providerId,
           fallbackUsed: false,
-          originalTier: clampedClassification.tier,
+          originalTier: classification.tier,
           degraded: false,
           enableCache: true,
         };
       }
+    }
+
+    // Phase 42：根据推理模式调整 tier
+    // Phase 81 Task 2：置信度阈值微调层默认旁路（confidenceThresholdEnabled 默认 false）
+    // 保留 clampTier 源码，通过开关守卫；旁路时恒等映射
+    // 同时接入 collapseTier：三级路由简化（medium/reasoning → complex）
+    // TD-13：deterministic 分支已 return，此处 classification.tier 已收窄为 ScenarioTier，
+    //        clampedClassification 类型为 NonDeterministicClassification，下游无需 as 断言
+    const clampedClassification: NonDeterministicClassification = {
+      ...classification,
+      tier: this.collapseTier(this.clampTier(classification.tier)),
+    };
+
+    // Phase 27 Task 2：先询问 RouterPlugin
+    const pluginResult = await this.tryPluginRoute(clampedClassification);
+    if (pluginResult) {
+      // Phase 32 Task 2：插件路由结果也启用缓存
+      return { ...pluginResult, enableCache: true };
     }
 
     // 检查预算

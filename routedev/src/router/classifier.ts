@@ -40,22 +40,51 @@ interface RuleMatch {
 export interface ClassifierConfig {
   llmClient?: ILLMClient;
   classifierModel: string;
+  /**
+   * Phase 81 Task 2：三级路由简化开关（默认 true）
+   * 启用后分类 tier 收敛为 simple/complex 二分（medium/reasoning → complex）
+   * 关闭时回退到原始四级 tier 分类
+   */
+  simpleRoutingEnabled?: boolean;
+  /**
+   * Phase 81 Task 2：LLM 兜底分类器开关（默认 false，旁路）
+   * 启用后调用 LLM 分类；旁路时跳过 LLM，直接走关键词匹配
+   * 保留 classifyWithLLM 源码，通过此开关守卫，默认不调用
+   */
+  llmClassifierEnabled?: boolean;
 }
 
 /**
  * 混合场景分类器
- * 策略（Phase 40 Task 2 更新）：
+ * 策略（Phase 81 Task 2 更新：三级路由简化）：
  * 1. 命令匹配（最高优先级）：/goal, /save, /status 等
- * 2. 确定性规则匹配（Phase 40 Task 2 新增）：命中后返回 tier='deterministic'，跳过 LLM
- * 3. LLM 分类（主要分类方式）：调用路由模型判断任务复杂度
- * 4. 关键词匹配（fallback）：LLM 不可用或失败时使用
+ * 2. 确定性规则匹配（Phase 40 Task 2）：命中后返回 tier='deterministic'，跳过 LLM
+ * 3. LLM 分类（Phase 81 Task 2：默认旁路，llmClassifierEnabled 控制启用）
+ * 4. 关键词匹配（默认主分类方式）：LLM 旁路或失败时使用
  * 5. 兜底：返回 complex（保守策略）
+ *
+ * Phase 81 Task 2：simpleRoutingEnabled（默认 true）开启时，
+ * medium/reasoning tier 收敛为 complex，仅保留 simple/complex 二分 + deterministic + override 三级路由
  */
 export class ScenarioClassifier {
   private config: ClassifierConfig;
 
   constructor(config: ClassifierConfig) {
     this.config = config;
+  }
+
+  /**
+   * Phase 81 Task 2：tier 收敛（三级路由简化）
+   * simpleRoutingEnabled（默认 true）开启时，medium/reasoning → complex
+   * 关闭时保持原 tier 不变（回退四级路由）
+   * 参数兼容 'deterministic'（LLM 结果类型联合），但 deterministic 路径不参与收敛
+   */
+  private collapseTier(tier: ScenarioTier | 'deterministic'): ScenarioTier | 'deterministic' {
+    // 默认启用简化；显式 false 时回退原始四级 tier
+    if (this.config.simpleRoutingEnabled === false) return tier;
+    // 三级路由简化：medium/reasoning 收敛为 complex，simple/deterministic 保持
+    if (tier === 'medium' || tier === 'reasoning') return 'complex';
+    return tier;
   }
 
   /**
@@ -73,8 +102,9 @@ export class ScenarioClassifier {
     // 1. 命令匹配
     const commandMatch = this.matchCommand(query);
     if (commandMatch) {
+      // Phase 81 Task 2：命令匹配结果经 tier 收敛（medium/reasoning → complex）
       return {
-        tier: commandMatch.tier,
+        tier: this.collapseTier(commandMatch.tier),
         confidence: commandMatch.confidence,
         reasoning: commandMatch.reason,
         source: 'rule',
@@ -85,6 +115,7 @@ export class ScenarioClassifier {
     // 命中后直接返回 tier='deterministic'，跳过 LLM 分类
     // TD-13：ClassificationResult.tier 已扩展为 ScenarioTier | 'deterministic'，
     //        source 已扩展为 'rule' | 'llm' | 'deterministic'，无需类型断言
+    // Phase 81 Task 2：deterministic 路径不参与 tier 收敛（命令派发，不调用 LLM）
     const deterministicRule = matchDeterministicRule(query);
     if (deterministicRule) {
       return {
@@ -96,12 +127,16 @@ export class ScenarioClassifier {
       };
     }
 
-    // 3. LLM 分类（主要分类方式）
+    // 3. LLM 分类（Phase 81 Task 2：默认旁路，llmClassifierEnabled 控制启用）
     // I7 修复：LLM 分类优先于关键词匹配，避免复杂查询被关键词误分类
     // 已移除长度启发式：用字符数量判断复杂度不可靠（"你是谁"只有3字符但需要完整回答）
-    if (this.config.llmClient) {
+    // Phase 81 Task 2：llmClassifierEnabled 默认 false，旁路 LLM 兜底分类器
+    //                  保留 classifyWithLLM 源码，启用时走 LLM 分类，失败仍 fallback 到关键词
+    if (this.config.llmClassifierEnabled && this.config.llmClient) {
       try {
-        return await this.classifyWithLLM(query, input.context);
+        const llmResult = await this.classifyWithLLM(query, input.context);
+        // Phase 81 Task 2：LLM 分类结果经 tier 收敛
+        return { ...llmResult, tier: this.collapseTier(llmResult.tier) };
       } catch (err) {
         logger.error('LLM classification failed, falling back to keyword matching', {
           error: err instanceof Error ? err.message : String(err),
@@ -110,7 +145,7 @@ export class ScenarioClassifier {
         const keywordMatch = this.matchKeywords(query);
         if (keywordMatch) {
           return {
-            tier: keywordMatch.tier,
+            tier: this.collapseTier(keywordMatch.tier),
             confidence: keywordMatch.confidence,
             reasoning: keywordMatch.reason,
             source: 'rule',
@@ -118,11 +153,12 @@ export class ScenarioClassifier {
         }
       }
     } else {
-      // 4. LLM 不可用时直接用关键词匹配作为 fallback
+      // 4. LLM 旁路或不可用时直接用关键词匹配作为主分类方式
+      // Phase 81 Task 2：默认走此分支（llmClassifierEnabled 默认 false）
       const keywordMatch = this.matchKeywords(query);
       if (keywordMatch) {
         return {
-          tier: keywordMatch.tier,
+          tier: this.collapseTier(keywordMatch.tier),
           confidence: keywordMatch.confidence,
           reasoning: keywordMatch.reason,
           source: 'rule',
@@ -130,11 +166,12 @@ export class ScenarioClassifier {
       }
     }
 
-    // 5. 兜底：LLM 不可用且关键词未匹配时返回 complex（保守策略：不确定时用强模型兜底）
+    // 5. 兜底：LLM 旁路且关键词未匹配时返回 complex（保守策略：不确定时用强模型兜底）
+    // Phase 81 Task 2：complex 已是收敛后目标，无需再次 collapseTier
     return {
       tier: 'complex',
       confidence: 0.3,
-      reasoning: 'Fallback tier (LLM classifier unavailable, conservative strategy)',
+      reasoning: 'Fallback tier (LLM classifier bypassed, conservative strategy)',
       source: 'rule',
     };
   }

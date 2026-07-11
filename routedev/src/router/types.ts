@@ -343,4 +343,16 @@ export interface RouterConfig {
   classifierModel: string;
   userPreference: 'saving' | 'balanced' | 'premium';
   fallbackChain?: string[];
+  /**
+   * Phase 81 Task 2：三级路由简化开关（默认 true）
+   * 启用后 medium/reasoning tier 收敛为 complex，仅保留 simple/complex 二分路由
+   * 关闭时回退到原始四级 tier 路由
+   */
+  simpleRoutingEnabled?: boolean;
+  /**
+   * Phase 81 Task 2：置信度阈值微调层开关（默认 false，旁路）
+   * 启用后 clampTier 生效；旁路时 clampTier 直接返回原 tier（恒等映射）
+   * 保留 clampTier 源码，通过此开关守卫，默认不执行
+   */
+  confidenceThresholdEnabled?: boolean;
 }
