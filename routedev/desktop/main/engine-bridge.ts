@@ -38,6 +38,8 @@ import { AgentProfileManager } from '../../src/agents/profiles/manager.js';
 // G-022a：HookConfigRegistry/checkBashSecurity/getHookTemplates/HookConfig 等已移至 bridges/hook-bridge.ts
 // Phase 77 借鉴点 4：Voice Memo 式会话状态卡聚合器
 import { aggregateSessionStatus } from '../../src/agent/session-status-aggregator.js';
+// V2-001：统一环境变量脱敏，替代局部 SENSITIVE_ENV_PREFIX 正则
+import { sanitizeProcessEnv } from '../../src/security/env-filter.js';
 
 // delegate bridge 与共享上下文
 import {
@@ -473,9 +475,8 @@ export class RouteDevEngine {
     'shell_exec', 'file_write', 'file_edit', 'git_op', 'spawn_agent', 'browser',
   ]);
 
-  // G-017 修复：敏感环境变量前缀正则，匹配的变量不注入工具执行环境
+  // G-017 修复：敏感环境变量过滤已迁移至 src/security/env-filter.ts（V2-001 统一）
   // 防止云凭据/数据库密码/Token 等通过 process.env 泄露到工具子进程
-  private static readonly SENSITIVE_ENV_PREFIX = /^(AWS_|AZURE_|GCP_|DATABASE_|.*SECRET|.*TOKEN|.*PASSWORD|ROUTEDEV_CONFIG)/i;
 
   /**
    * F-080：executeTool 文档说明
@@ -540,14 +541,9 @@ export class RouteDevEngine {
     }
 
     try {
-      // G-017 修复：过滤 process.env 中的 undefined 值及敏感前缀变量
+      // V2-001：统一调用 sanitizeProcessEnv 过滤敏感环境变量（替代原局部正则）
       // 防止云凭据/数据库密码/Token 等通过环境变量泄露到工具子进程
-      const env: Record<string, string> = {};
-      for (const [k, v] of Object.entries(process.env)) {
-        if (v !== undefined && !RouteDevEngine.SENSITIVE_ENV_PREFIX.test(k)) {
-          env[k] = v;
-        }
-      }
+      const env = sanitizeProcessEnv(process.env);
       const result = await this.ctx.deps.toolExecutor.execute(name, args, {
         workingDirectory: this.ctx.options.cwd,
         allowedDirectories: [this.ctx.options.cwd],

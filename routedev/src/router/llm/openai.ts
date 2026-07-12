@@ -76,9 +76,14 @@ export class OpenAIClient extends BaseLLMClient {
       // Phase 55 修复：透传 options.timeoutMs 到 SDK RequestOptions
       // 修复前：SDK 仅用构造时的 defaultTimeoutMs（30s），requestOptions.timeoutMs 不生效
       // 修复后：requestOptions.timeoutMs 优先于构造时 defaultTimeoutMs
-      const requestOptions = options.timeoutMs
-        ? { timeout: options.timeoutMs }
-        : undefined;
+      // V2-021 修复：透传 options.signal 到 SDK RequestOptions，支持取消请求
+      const requestOptions: { timeout?: number; signal?: AbortSignal } | undefined =
+        options.timeoutMs || options.signal
+          ? {
+              ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
+              ...(options.signal ? { signal: options.signal } : {}),
+            }
+          : undefined;
       // P0-10：用 withRetry 包装实际 API 调用，启用 querySource-aware 差异化重试
       const response = await this.withRetry(() =>
         this.client!.chat.completions.create(params, requestOptions) as Promise<ChatCompletion>,
@@ -116,9 +121,14 @@ export class OpenAIClient extends BaseLLMClient {
     try {
       const params = this.buildRequestParams(options, true);
       // Phase 55 修复：透传 options.timeoutMs 到 SDK RequestOptions（与 complete 一致）
-      const requestOptions = options.timeoutMs
-        ? { timeout: options.timeoutMs }
-        : undefined;
+      // V2-021 修复：透传 options.signal 到 SDK RequestOptions，支持流式取消
+      const requestOptions: { timeout?: number; signal?: AbortSignal } | undefined =
+        options.timeoutMs || options.signal
+          ? {
+              ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
+              ...(options.signal ? { signal: options.signal } : {}),
+            }
+          : undefined;
       const stream = await this.client.chat.completions.create(params, requestOptions) as AsyncIterable<ChatCompletionChunk>;
 
       let currentToolId = '';

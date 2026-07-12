@@ -71,6 +71,8 @@ import * as path from 'node:path';
 import type { InitContext, AppDependencies } from './app-init.js';
 // F-075：常量提取到 utils/constants.ts
 import { TOOL_EXECUTION_TIMEOUT_MS } from '../utils/constants.js';
+// V2-002：统一环境变量白名单过滤，防止 process.env 敏感信息透传到工具子进程
+import { filterProcessEnvByWhitelist } from '../security/env-filter.js';
 
 /**
  * 创建工具子系统
@@ -229,10 +231,11 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   const adapter = new ToolRegistryAdapter(registry, toolExecutor, {
     workingDirectory: cwd,
     allowedDirectories: [cwd],
-    // F-051 类型安全：过滤 undefined 后再断言，避免 process.env 中 undefined 值混入
-    environment: Object.fromEntries(
-      Object.entries({ ...process.env, ...webSearchEnv }).filter(([, v]) => v !== undefined),
-    ) as Record<string, string>,
+    // V2-002：先用白名单过滤 process.env，再合并 webSearchEnv（已过白名单的 web search 相关 env）
+    environment: {
+      ...filterProcessEnvByWhitelist(process.env),
+      ...webSearchEnv,
+    },
     timeoutMs: TOOL_EXECUTION_TIMEOUT_MS,
   });
   // Phase 34：让工具执行通过 TraceCollector 记录 span

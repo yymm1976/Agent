@@ -353,9 +353,22 @@ export class ChatBridge {
     toolName: string,
     args: Record<string, unknown>,
   ): Promise<boolean | { approved: boolean; payload?: unknown }> {
+    // V2-T02 修复：添加 60s 超时机制，防止用户不响应时 Promise 永不 resolve
+    const timeoutMs = 60_000;
     return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        // 超时视为拒绝，清理 pendingConfirm 防止后续 resolveToolConfirm 误触已 resolve 的 Promise
+        this.ctx.clearPendingConfirm(requestId);
+        logger.warn('requestUserConfirmation 超时', { requestId, toolName, timeoutMs });
+        resolve(false);
+      }, timeoutMs);
+      // 包装 resolve：实际确认到达时先清除 timer 再 resolve，避免超时与确认竞争
+      const wrappedResolve = (value: boolean | { approved: boolean; payload?: unknown }) => {
+        clearTimeout(timer);
+        resolve(value);
+      };
       // G-004：按 requestId 存入 Map，避免并发覆盖
-      this.ctx.setPendingConfirm(requestId, { resolve, toolName });
+      this.ctx.setPendingConfirm(requestId, { resolve: wrappedResolve, toolName });
       // G-004：回调携带 requestId，前端在 confirm-tool 回传中带上以实现精准 resolve
       this.ctx.options.onToolConfirmRequest(requestId, toolName, args);
     });

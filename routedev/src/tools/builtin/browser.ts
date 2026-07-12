@@ -10,6 +10,8 @@
 // 分类：web
 
 import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '../types.js';
+// V3-019 修复：复用 web-fetch.ts 同款 SSRF DNS 级防护（避免重复造轮子）
+import { checkSSRF } from '../security-enhanced.js';
 
 const USER_AGENT = 'RouteDev/1.0';
 
@@ -18,6 +20,9 @@ const DEFAULT_TIMEOUT_MS = 30000;
 
 /** 响应体最大 1MB */
 const MAX_BODY_BYTES = 1024 * 1024;
+
+// V3-023 修复：截图 buffer 大小上限（10MB），防止超大截图导致内存/IPC 过载
+const MAX_SCREENSHOT_SIZE = 10 * 1024 * 1024;
 
 // ============================================================
 // Puppeteer 最小类型接口（F-026：替代 any，仅覆盖项目实际使用的 API）
@@ -201,6 +206,18 @@ export class BrowserTool implements ITool {
     start: number,
   ): Promise<ToolResult> {
     try {
+      // V3-019 修复：fetch 前执行 SSRF 校验（DNS 解析后检查 IP，防止访问内网/元数据端点）
+      const ssrfResult = await checkSSRF(url);
+      if (!ssrfResult.allowed) {
+        return {
+          success: false,
+          output: '',
+          error: `SSRF 防护拦截: ${ssrfResult.reason}`,
+          durationMs: Date.now() - start,
+          metadata: { url, ssrfBlocked: true },
+        };
+      }
+
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -289,6 +306,18 @@ export class BrowserTool implements ITool {
     waitFor: number,
     start: number,
   ): Promise<ToolResult> {
+    // V3-019 修复：screenshot 前同样执行 SSRF 校验（puppeteer 会访问目标 URL）
+    const ssrfResult = await checkSSRF(url);
+    if (!ssrfResult.allowed) {
+      return {
+        success: false,
+        output: '',
+        error: `SSRF 防护拦截: ${ssrfResult.reason}`,
+        durationMs: Date.now() - start,
+        metadata: { url, ssrfBlocked: true },
+      };
+    }
+
     // 动态探测 puppeteer 是否可用（不强制依赖）
     let puppeteer: PuppeteerModule | null = null;
     try {
@@ -324,6 +353,14 @@ export class BrowserTool implements ITool {
       }
 
       const screenshotBuffer: Buffer = await page.screenshot({ fullPage: true });
+
+      // V3-023 修复：校验截图 buffer 大小，防止超大截图导致内存/IPC 过载
+      if (screenshotBuffer.length > MAX_SCREENSHOT_SIZE) {
+        throw new Error(
+          `截图过大: ${screenshotBuffer.length} 字节 (上限 ${MAX_SCREENSHOT_SIZE} 字节)`,
+        );
+      }
+
       const base64 = screenshotBuffer.toString('base64');
 
       return {
@@ -374,6 +411,18 @@ export class BrowserTool implements ITool {
     // 先 fetch 页面 HTML
     let rawHtml: string;
     try {
+      // V3-019 修复：extract 前同样执行 SSRF 校验（fetch 会访问目标 URL）
+      const ssrfResult = await checkSSRF(url);
+      if (!ssrfResult.allowed) {
+        return {
+          success: false,
+          output: '',
+          error: `SSRF 防护拦截: ${ssrfResult.reason}`,
+          durationMs: Date.now() - start,
+          metadata: { url, ssrfBlocked: true },
+        };
+      }
+
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
 

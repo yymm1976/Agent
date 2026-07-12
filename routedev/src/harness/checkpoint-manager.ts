@@ -22,6 +22,7 @@ import type {
   GoalPlan,
 } from './types.js';
 import { logger } from '../utils/logger.js';
+import { safeWriteJSON } from '../utils/safe-write.js';
 
 /** Git commit 消息前缀（用于区分自动检查点和用户提交） */
 const CHECKPOINT_PREFIX = '[routedev-checkpoint]';
@@ -281,6 +282,10 @@ export class CheckpointManager {
    *  注意：这是一个破坏性操作（git reset --hard）
    *  调用方必须在执行前获得用户确认
    *  Phase 29 Task 4：添加工作区前置检查，防止丢失未提交的更改
+   *
+   *  V2-T01：回滚前备份当前 metadata 文件，失败时从备份恢复
+   *  V2-T18：splice（内存变更）→ saveMetadata（落盘）顺序已确认正确；
+   *          失败时用备份恢复内存中的 checkpoints 数组
    */
   async rollback(checkpointId: string): Promise<boolean> {
     if (!this.isRepo) return false;
@@ -324,11 +329,31 @@ export class CheckpointManager {
       return false;
     }
 
+    // V2-T01：备份当前 metadata 文件，失败时用于恢复
+    // 备份内存中的 checkpoints 数组，用于 splice 后 saveMetadata 失败时回滚
+    const backupPath = this.metadataPath + '.backup';
+    let metadataBackedUp = false;
+    try {
+      const raw = await fs.readFile(this.metadataPath, 'utf-8');
+      await safeWriteJSON(backupPath, JSON.parse(raw), { spaces: 2 });
+      metadataBackedUp = true;
+      logger.debug('Checkpoint metadata backed up before rollback', { backupPath });
+    } catch (e) {
+      // metadata 文件不存在（首次回滚）或读取失败——继续回滚但不具备恢复能力
+      logger.warn('Failed to backup metadata before rollback, continuing without backup', {
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+
+    // 备份内存中的 checkpoints 快照（用于 splice 后失败时恢复）
+    const checkpointsSnapshot = [...this.checkpoints];
+
     try {
       // git reset --hard 到检查点的 commit
       await this.git.reset(['--hard', checkpoint.gitCommitHash]);
 
-      // 清理该检查点之后创建的所有检查点
+      // V2-T18：先 splice 内存数组，再 saveMetadata 落盘
+      // splice 返回被删除的元素，同时改变原数组
       const idx = this.checkpoints.indexOf(checkpoint);
       const removed = this.checkpoints.splice(idx + 1);
 
@@ -344,6 +369,23 @@ export class CheckpointManager {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       logger.error('Failed to rollback', { error: msg });
+
+      // V2-T01：回滚失败时恢复内存状态
+      this.checkpoints = checkpointsSnapshot;
+
+      // 尝试从备份恢复 metadata 文件
+      if (metadataBackedUp) {
+        try {
+          const raw = await fs.readFile(backupPath, 'utf-8');
+          await safeWriteJSON(this.metadataPath, JSON.parse(raw), { spaces: 2 });
+          logger.info('Checkpoint metadata restored from backup after rollback failure');
+        } catch (restoreErr) {
+          logger.error('Failed to restore metadata from backup', {
+            error: restoreErr instanceof Error ? restoreErr.message : String(restoreErr),
+          });
+        }
+      }
+
       return false;
     }
   }
@@ -372,15 +414,14 @@ export class CheckpointManager {
 
   // ===== GoalPlan 持久化 =====
 
-  /** 保存当前目标计划 */
+  /** 保存当前目标计划
+   *
+   *  V2-T11：使用原子写入（tmp + rename），防止写入过程中崩溃导致文件损坏
+   */
   async saveGoalPlan(plan: GoalPlan): Promise<void> {
     try {
       await fs.mkdir(path.dirname(this.goalPlanPath), { recursive: true });
-      await fs.writeFile(
-        this.goalPlanPath,
-        JSON.stringify(plan, null, 2),
-        'utf-8',
-      );
+      await safeWriteJSON(this.goalPlanPath, plan, { spaces: 2 });
       logger.debug('GoalPlan saved', { path: this.goalPlanPath });
     } catch (error) {
       logger.warn('Failed to save goal plan', {
@@ -464,14 +505,13 @@ export class CheckpointManager {
     }
   }
 
+  /**
+   * V2-T05：使用原子写入（tmp + rename），防止写入过程中崩溃导致 metadata 文件损坏
+   */
   private async saveMetadata(): Promise<void> {
     try {
       await fs.mkdir(path.dirname(this.metadataPath), { recursive: true });
-      await fs.writeFile(
-        this.metadataPath,
-        JSON.stringify(this.checkpoints, null, 2),
-        'utf-8',
-      );
+      await safeWriteJSON(this.metadataPath, this.checkpoints, { spaces: 2 });
     } catch (error) {
       logger.warn('Failed to save checkpoint metadata', {
         error: error instanceof Error ? error.message : String(error),

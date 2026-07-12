@@ -66,7 +66,7 @@ pnpm typecheck         # 类型检查（tsc --noEmit）
 
 ## 版本
 
-v4.5.4
+v4.9.0
 
 ## 许可证
 

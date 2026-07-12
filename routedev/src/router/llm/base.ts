@@ -89,14 +89,27 @@ export abstract class BaseLLMClient implements ILLMClient {
   /**
    * 带超时的 fetch 包装
    * 注：Node.js 20+ 的 fetch 原生支持 AbortSignal.timeout，但为兼容性手动实现
+   *
+   * V2-021 修复：新增 externalSignal 参数，合并用户取消信号与内部超时信号，
+   * 任一触发都应中止 fetch。区分超时与用户取消的错误信息。
    */
   protected async fetchWithTimeout(
     url: string,
     init: RequestInit,
     timeoutMs: number,
+    externalSignal?: AbortSignal,
   ): Promise<Response> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    // V2-021 修复：合并外部 signal（用户取消）与内部超时 signal
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        controller.abort();
+      } else {
+        externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
+      }
+    }
 
     try {
       const response = await fetch(url, {
@@ -106,6 +119,15 @@ export abstract class BaseLLMClient implements ILLMClient {
       return response;
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
+        // V2-021：区分用户取消和超时
+        if (externalSignal?.aborted) {
+          throw new LLMError(
+            'LLM request aborted by user',
+            undefined,
+            undefined,
+            err,
+          );
+        }
         throw new LLMError(
           `LLM request timeout after ${timeoutMs}ms`,
           undefined,

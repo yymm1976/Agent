@@ -11,6 +11,9 @@ import { resolveSecurePath } from '../security-enhanced.js';
 // Phase 53 Task 7：配置保护守卫（阻止弱化安全/治理配置）
 import { ConfigGuard } from './config-guard.js';
 
+// V3-022 修复：写入内容大小上限（10MB），防止超大文件写入导致资源耗尽
+const MAX_WRITE_SIZE = 10 * 1024 * 1024;
+
 export class FileWriteTool implements ITool {
   // Phase 53 Task 7：配置保护守卫（可选，未注入时跳过检查）
   private configGuard?: ConfigGuard;
@@ -66,6 +69,16 @@ export class FileWriteTool implements ITool {
     const filePath = path.resolve(context.workingDirectory, args.path as string);
     const content = args.content as string;
     const append = (args.append as boolean) ?? false;
+
+    // V3-022 修复：写入内容大小校验（在路径校验前快速失败）
+    if (typeof content === 'string' && Buffer.byteLength(content, 'utf-8') > MAX_WRITE_SIZE) {
+      return {
+        success: false,
+        output: '',
+        error: `写入内容过大 (max ${MAX_WRITE_SIZE} bytes)`,
+        durationMs: 0,
+      };
+    }
 
     // C1 修复：内部路径边界校验（防御性深度防御）
     const boundaryError = checkPathBoundary(filePath, context);

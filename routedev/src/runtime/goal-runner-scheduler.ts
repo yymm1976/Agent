@@ -446,6 +446,11 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
     let stepContent = '';
     // Phase 61 接线：记录步骤执行起始时间，供 ExecutionVerifier 计算 latency 信号
     const stepStartMs = Date.now();
+    // V2-022 修复：覆盖 abortControllerRef.current 前先 abort 旧的 controller，
+    // 确保正在运行的 task 收到取消信号（用户停止生成 / 新步骤覆盖旧步骤时预期行为）
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
     const stepAbort = new AbortController();
     abortControllerRef.current = stepAbort;
     for await (const event of agentLoop.run({

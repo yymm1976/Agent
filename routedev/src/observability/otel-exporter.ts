@@ -66,6 +66,19 @@ const DEFAULT_SERVICE_NAME = 'routedev';
 const DEFAULT_EXPORT_INTERVAL_MS = 5000;
 
 /**
+ * V3-027 修复：span 缓冲区大小上限
+ * 防止 OTLP endpoint 不可达时 span 无限累积导致内存泄漏
+ * 达到上限时丢弃最早的 span（FIFO）
+ */
+const MAX_SPAN_BUFFER_SIZE = 1000;
+
+/**
+ * V3-030 修复：fetch 请求超时时间（毫秒）
+ * 防止 flush() 因网络问题长时间挂起，阻塞定时器或 shutdown
+ */
+const FETCH_TIMEOUT_MS = 10_000;
+
+/**
  * OpenTelemetry exporter
  *
  * 用法：
@@ -106,6 +119,14 @@ export class OtelExporter {
   /** 记录一次 span，累积到内存缓冲区 */
   recordSpan(span: OtelSpan): void {
     if (!this.enabled || this.shutdownCalled) return;
+    // V3-027 修复：缓冲区达到上限时丢弃最早的 span（FIFO），防止内存泄漏
+    if (this.buffer.length >= MAX_SPAN_BUFFER_SIZE) {
+      this.buffer.shift();
+      logger.warn('OTel span buffer overflow, dropping oldest span', {
+        bufferSize: this.buffer.length,
+        maxSize: MAX_SPAN_BUFFER_SIZE,
+      });
+    }
     this.buffer.push(span);
   }
 
@@ -115,11 +136,16 @@ export class OtelExporter {
     const spans = this.buffer.splice(0);
     const payload = this.buildOtlpPayload(spans);
 
+    // V3-030 修复：为 fetch 添加超时控制，防止网络问题导致 flush 长时间挂起
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
     try {
       const res = await fetch(this.endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...this.headers },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
       if (!res.ok) {
         const bodyText = await res.text().catch(() => '');
@@ -135,13 +161,20 @@ export class OtelExporter {
       });
     } catch (err) {
       this.totalErrorCount++;
-      this.lastError = err instanceof Error ? err.message : String(err);
+      // V3-030：区分超时和其他错误
+      const isTimeout = err instanceof Error && err.name === 'AbortError';
+      this.lastError = isTimeout
+        ? `OTLP flush timeout after ${FETCH_TIMEOUT_MS}ms`
+        : (err instanceof Error ? err.message : String(err));
       // fail-open：只 log 不抛
       logger.warn('OtelExporter: flush failed (fail-open, spans discarded)', {
         error: this.lastError,
         spanCount: spans.length,
         endpoint: this.endpoint,
+        isTimeout,
       });
+    } finally {
+      clearTimeout(timer);
     }
   }
 

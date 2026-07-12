@@ -4,6 +4,19 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { RouteDevAPI, MainToRendererEvent } from '../shared/ipc-types.js';
 
+// V2-012 / V3-014 修复：main → renderer 推送 channel 白名单
+// 仅允许这些 channel 通过 on/off 注册监听器，防止渲染层监听任意 channel
+// （收集自 desktop/main/index.ts 中所有 webContents.send 调用）
+const ALLOWED_PUSH_CHANNELS = new Set<string>([
+  'chat:stream',
+  'chat:tool-confirm-request',
+  'token:profile',
+  'trace:event',
+  'goal:event',
+  'config:reloaded',
+  'plan:edit-request',
+]);
+
 // 维护 callback -> listener 的映射，使 off 可以正确解绑
 type ListenerMap = Map<
   string,
@@ -123,6 +136,11 @@ const api: RouteDevAPI = {
     getStatus: () => ipcRenderer.invoke('session:get-status'),
   },
   on: (channel, callback) => {
+    // V2-012 / V3-014：校验 channel 是否在白名单内
+    if (!ALLOWED_PUSH_CHANNELS.has(channel)) {
+      console.warn(`[preload] Blocked unknown channel: ${channel}`);
+      return;
+    }
     const channelMap = getChannelMap(channel);
     if (channelMap.has(callback)) return;
     const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
@@ -145,6 +163,11 @@ const api: RouteDevAPI = {
     duplicate: (id: string, newName: string) => ipcRenderer.invoke('profile:duplicate', id, newName),
   },
   off: (channel, callback) => {
+    // V2-012 / V3-014：校验 channel 是否在白名单内（与 on 保持一致）
+    if (!ALLOWED_PUSH_CHANNELS.has(channel)) {
+      console.warn(`[preload] Blocked unknown channel: ${channel}`);
+      return;
+    }
     const channelMap = listenerMap.get(channel);
     if (!channelMap) return;
     const listener = channelMap.get(callback);

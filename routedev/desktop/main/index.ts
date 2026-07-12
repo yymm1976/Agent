@@ -6,6 +6,7 @@ import type { Tray } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
+import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type {
   ChatSendPayload,
@@ -93,7 +94,8 @@ const CONFIRMATION_TTL_MS = 60_000; // 60 秒有效期
  * @returns 一次性确认令牌
  */
 function createConfirmation(operation: string, targetId: string): string {
-  const token = `${operation}-${targetId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  // V2-T03 修复：使用 crypto.randomBytes 生成不可预测的令牌，替代可预测的 Math.random
+  const token = randomBytes(16).toString('hex'); // 32 字符 hex
   pendingConfirmations.set(token, { targetId, operation, expiresAt: Date.now() + CONFIRMATION_TTL_MS });
   // 清理过期令牌
   for (const [k, v] of pendingConfirmations) {
@@ -115,12 +117,31 @@ function consumeConfirmation(token: string, operation: string, targetId: string)
   return true;
 }
 
-// electron-vite dev 模式下 app.isPackaged 可能返回 true，用多重判断
+// F5-1：破坏性操作的 ID 字符集白名单正则（防止路径穿越/注入）
+const ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+
+// V3-004：破坏性操作审计日志——记录所有破坏性操作尝试（即使 audit 模块不可用也有 fallback）
+function auditDestructiveOperation(action: string, target: unknown): void {
+  try {
+    const targetStr = typeof target === 'string' ? target : '<unknown>';
+    logger.warn('[AUDIT] destructive_operation', {
+      action,
+      target: targetStr,
+      timestamp: Date.now(),
+      cwd: engine?.getCwd?.() ?? process.cwd(),
+    });
+  } catch {
+    // 审计日志失败不影响主流程
+  }
+}
+
 // 陷阱 #194：`pnpm start:gui`（electron .）时 app.isPackaged=false 会被误判为 dev 模式，
 // 但实际没有 dev server 在 5173 端口运行，导致渲染进程加载 http://localhost:5173 失败白屏。
 // 修复：只有显式设置 ELECTRON_RENDERER_URL 环境变量（electron-vite dev 会设置）才走 dev 模式，
 // 否则一律加载构建产物（app.isPackaged=false 时也走生产路径）
-const isDev = !!process.env.ELECTRON_RENDERER_URL;
+// V3-009 修复：结合 app.isPackaged 双重校验——打包后 app.isPackaged=true 确保 ELECTRON_RENDERER_URL
+// 即使被意外设置也不会进入 dev 模式（defense-in-depth）
+const isDev = !app.isPackaged && !!process.env.ELECTRON_RENDERER_URL;
 
 // 移除默认菜单栏（含 Help 等框架自带按钮），避免顶部突兀边框
 Menu.setApplicationMenu(null);
@@ -596,8 +617,14 @@ ipcMain.handle('goal:resume', async (_event, rawGoalId: unknown): Promise<{ succ
 
 // 放弃（归档）指定 goal
 ipcMain.handle('goal:discard', async (_event, goalId: string): Promise<{ success: boolean; error?: string }> => {
+  // V3-004：破坏性操作审计日志
+  auditDestructiveOperation('goal:discard', goalId);
   if (!goalId || typeof goalId !== 'string' || goalId.length > 256) {
     return { success: false, error: '无效的 goalId' };
+  }
+  // F5-1：ID 字符集正则校验，防止路径穿越/注入
+  if (!ID_PATTERN.test(goalId)) {
+    return { success: false, error: 'goalId 含非法字符' };
   }
   try {
     return (await engine?.discardGoal?.(goalId)) ?? { success: false, error: '引擎未初始化' };
@@ -618,11 +645,14 @@ ipcMain.on('chat:stop', (_event, payload?: { requestId?: string }) => {
 
 // 聊天：同步当前对话历史，避免切换/分支后后台仍沿用旧对话上下文
 ipcMain.on('chat:sync-history', (_event, messages: import('../../src/router/types.js').LLMMessage[]) => {
+  // F5-2 修复：messages 数组长度上限校验（10000 条）
   if (!Array.isArray(messages) || messages.length > 10000) {
     console.error('[chat:sync-history] 无效 messages');
     return;
   }
   // F-037 修复：逐条校验消息 role/content，禁止 renderer 发送 role: 'system'
+  // F5-2 修复：单条消息 content 长度上限校验（100KB），防止超大消息耗尽内存
+  const MAX_MESSAGE_CONTENT_LENGTH = 100_000;
   const validRoles = ['user', 'assistant', 'tool'];
   for (const msg of messages) {
     if (!msg || typeof msg !== 'object') {
@@ -635,6 +665,10 @@ ipcMain.on('chat:sync-history', (_event, messages: import('../../src/router/type
     }
     if (typeof msg.content !== 'string') {
       console.error('[chat:sync-history] content 非字符串');
+      return;
+    }
+    if (msg.content.length > MAX_MESSAGE_CONTENT_LENGTH) {
+      console.error(`[chat:sync-history] content 过长 (max ${MAX_MESSAGE_CONTENT_LENGTH})`);
       return;
     }
   }
@@ -728,6 +762,49 @@ function detectConfigWeakening(
     }
   }
 
+  // V3-008：security.sandbox 从低权限级提升到 full-access（弱化沙箱隔离）
+  const sandboxRank: Record<string, number> = { 'read-only': 0, 'workspace-write': 1, 'full-access': 2 };
+  const oldSandboxRank = sandboxRank[oldSec.sandbox] ?? 0;
+  const newSandboxRank = sandboxRank[newSec.sandbox] ?? 0;
+  if (newSandboxRank > oldSandboxRank) {
+    weakening.push({ field: 'security.sandbox', oldValue: oldSec.sandbox, newValue: newSec.sandbox, reason: '沙箱权限被提升（弱化隔离）' });
+  }
+
+  // V3-008：security.commandBlacklist 被清空或缩减（弱化危险命令防护）
+  if (oldSec.commandBlacklist.length > 0 && newSec.commandBlacklist.length < oldSec.commandBlacklist.length) {
+    weakening.push({ field: 'security.commandBlacklist', oldValue: oldSec.commandBlacklist, newValue: newSec.commandBlacklist, reason: '危险命令黑名单被缩减' });
+  }
+
+  // V3-008：security.sensitiveFiles 被清空或缩减（弱化敏感文件保护）
+  if (oldSec.sensitiveFiles.length > 0 && newSec.sensitiveFiles.length < oldSec.sensitiveFiles.length) {
+    weakening.push({ field: 'security.sensitiveFiles', oldValue: oldSec.sensitiveFiles, newValue: newSec.sensitiveFiles, reason: '敏感文件保护列表被缩减' });
+  }
+
+  // V3-008：security.toolBlacklist 被清空或缩减（弱化工具黑名单防护）
+  if (oldSec.toolBlacklist.length > 0 && newSec.toolBlacklist.length < oldSec.toolBlacklist.length) {
+    weakening.push({ field: 'security.toolBlacklist', oldValue: oldSec.toolBlacklist, newValue: newSec.toolBlacklist, reason: '工具黑名单被缩减' });
+  }
+
+  // V3-008：防御性检查——以下字段当前不在 SecurityConfigSchema 中（Zod 会 strip 未知键），
+  // 但如果未来 schema 扩展或通过其他途径注入，也应检测其弱化。
+  // 使用 Record<string, unknown> 访问避免 TypeScript 报错。
+  const oldSecExtra = oldSec as unknown as Record<string, unknown>;
+  const newSecExtra = newSec as unknown as Record<string, unknown>;
+  // 设为 true 表示弱化（shellExecEnabled / allowDangerousCommands / bypassPermission / nodeIntegration）
+  const trueMeansWeak = ['shellExecEnabled', 'allowDangerousCommands', 'bypassPermission', 'nodeIntegration'];
+  for (const field of trueMeansWeak) {
+    if (oldSecExtra[field] !== true && newSecExtra[field] === true) {
+      weakening.push({ field: `security.${field}`, oldValue: oldSecExtra[field], newValue: newSecExtra[field], reason: `${field} 被启用（弱化安全）` });
+    }
+  }
+  // 设为 false 表示弱化（contextIsolation / webSecurity）
+  const falseMeansWeak = ['contextIsolation', 'webSecurity'];
+  for (const field of falseMeansWeak) {
+    if (oldSecExtra[field] !== false && newSecExtra[field] === false) {
+      weakening.push({ field: `security.${field}`, oldValue: oldSecExtra[field], newValue: newSecExtra[field], reason: `${field} 被禁用（弱化安全）` });
+    }
+  }
+
   // 2. permissionProfile 弱化：deny 规则被移除
   //    permissionProfile 是对象（{ name, filesystem, network }），检测 deny 规则减少
   const oldFsDeny = oldConfig.permissionProfile.filesystem.filter(r => r.access === 'deny');
@@ -748,6 +825,36 @@ function detectConfigWeakening(
   // 3. configGuard 被禁用（phase53Integration.configGuard.enabled）
   if (oldConfig.phase53Integration.configGuard.enabled === true && newConfig.phase53Integration.configGuard.enabled !== true) {
     weakening.push({ field: 'phase53Integration.configGuard.enabled', oldValue: true, newValue: newConfig.phase53Integration.configGuard.enabled, reason: 'ConfigGuard 被禁用' });
+  }
+
+  // V3-008：phase53Integration 其他安全子模块被禁用（policyEngine / auditChain / mcpSecurityScan / skillSecurityGate / circuitBreaker）
+  if (oldConfig.phase53Integration.policyEngine.enabled === true && newConfig.phase53Integration.policyEngine.enabled !== true) {
+    weakening.push({ field: 'phase53Integration.policyEngine.enabled', oldValue: true, newValue: newConfig.phase53Integration.policyEngine.enabled, reason: '策略引擎被禁用' });
+  }
+  if (oldConfig.phase53Integration.auditChain.enabled === true && newConfig.phase53Integration.auditChain.enabled !== true) {
+    weakening.push({ field: 'phase53Integration.auditChain.enabled', oldValue: true, newValue: newConfig.phase53Integration.auditChain.enabled, reason: '哈希链审计被禁用' });
+  }
+  if (oldConfig.phase53Integration.mcpSecurityScan.enabled === true && newConfig.phase53Integration.mcpSecurityScan.enabled !== true) {
+    weakening.push({ field: 'phase53Integration.mcpSecurityScan.enabled', oldValue: true, newValue: newConfig.phase53Integration.mcpSecurityScan.enabled, reason: 'MCP 安全扫描被禁用' });
+  }
+  if (oldConfig.phase53Integration.skillSecurityGate.enabled === true && newConfig.phase53Integration.skillSecurityGate.enabled !== true) {
+    weakening.push({ field: 'phase53Integration.skillSecurityGate.enabled', oldValue: true, newValue: newConfig.phase53Integration.skillSecurityGate.enabled, reason: '技能安全门控被禁用' });
+  }
+  if (oldConfig.phase53Integration.circuitBreaker.enabled === true && newConfig.phase53Integration.circuitBreaker.enabled !== true) {
+    weakening.push({ field: 'phase53Integration.circuitBreaker.enabled', oldValue: true, newValue: newConfig.phase53Integration.circuitBreaker.enabled, reason: '熔断器被禁用' });
+  }
+
+  // V3-008：policies 策略引擎被禁用或 intentGuard 被禁用
+  if (oldConfig.policies.enabled === true && newConfig.policies.enabled !== true) {
+    weakening.push({ field: 'policies.enabled', oldValue: true, newValue: newConfig.policies.enabled, reason: '策略引擎（Intent Guard）被禁用' });
+  }
+  if (oldConfig.policies.intentGuard === true && newConfig.policies.intentGuard !== true) {
+    weakening.push({ field: 'policies.intentGuard', oldValue: true, newValue: newConfig.policies.intentGuard, reason: '意图护栏被禁用' });
+  }
+
+  // V3-008：updates.autoUpdate 从 false → true（自动下载安装更新可能引入未审核代码）
+  if (oldConfig.updates.autoUpdate !== true && newConfig.updates.autoUpdate === true) {
+    weakening.push({ field: 'updates.autoUpdate', oldValue: oldConfig.updates.autoUpdate, newValue: newConfig.updates.autoUpdate, reason: '自动更新被启用（可能引入未审核代码）' });
   }
 
   // 4. mcp.servers 增加新服务器（可能引入未受信任的工具源）
@@ -875,6 +982,13 @@ ipcMain.handle('config:reload', createValidatedHandler<undefined, import('../../
   },
 ));
 
+// V3-007：command:execute 允许的命令白名单（大小写不敏感）
+// 仅对非 slash 命令（不以 / 开头）的 shell 命令做白名单校验
+const ALLOWED_SHELL_COMMANDS = new Set([
+  'git', 'npm', 'pnpm', 'node', 'npx', 'tsc', 'vitest',
+  'mkdir', 'rmdir', 'copy', 'del', 'dir', 'echo', 'type',
+]);
+
 // 命令执行（用于 GUI 中的快捷命令，如 /clear、/status 等）
 // Phase 79 Task 7：用 createValidatedHandler 包装，统一参数校验
 ipcMain.handle('command:execute', createValidatedHandler<CommandExecutePayload, unknown>(
@@ -883,6 +997,15 @@ ipcMain.handle('command:execute', createValidatedHandler<CommandExecutePayload, 
     if (!args || typeof args !== 'object') return '参数必须是对象';
     const p = args as CommandExecutePayload;
     if (typeof p.text !== 'string' || p.text.length === 0 || p.text.length > 10000) return '无效的参数';
+    // V3-007：命令白名单校验——slash 命令（以 / 开头）走 executeCommand 内部分发，
+    // 非 slash 命令视为 shell 命令，需在 ALLOWED_SHELL_COMMANDS 白名单内（大小写不敏感）
+    const trimmed = p.text.trim();
+    if (!trimmed.startsWith('/')) {
+      const cmdName = (trimmed.split(/\s+/)[0] ?? '').toLowerCase();
+      if (!ALLOWED_SHELL_COMMANDS.has(cmdName)) {
+        return `Command not allowed: ${cmdName}`;
+      }
+    }
     return null;
   },
   async (args) => {
@@ -1265,8 +1388,18 @@ ipcMain.handle('experiment:adopt', async (_event, payload: { experimentId: strin
   const { experimentId, confirmationToken } = typeof payload === 'string'
     ? { experimentId: payload, confirmationToken: undefined }
     : payload;
+  // V3-004：破坏性操作审计日志
+  auditDestructiveOperation('experiment:adopt', experimentId);
   if (typeof experimentId !== 'string' || experimentId.length === 0 || experimentId.length > 256) {
     return { success: false, error: '无效的参数' };
+  }
+  // F5-1：ID 字符集正则校验，防止路径穿越/注入
+  if (!ID_PATTERN.test(experimentId)) {
+    return { success: false, error: 'experimentId 含非法字符' };
+  }
+  // F5-1：confirmationToken 长度上限校验
+  if (confirmationToken !== undefined && (typeof confirmationToken !== 'string' || confirmationToken.length > 256)) {
+    return { success: false, error: '无效的 confirmationToken' };
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
   // G-F002：破坏性操作需确认令牌
@@ -1282,8 +1415,18 @@ ipcMain.handle('experiment:discard', async (_event, payload: { experimentId: str
   const { experimentId, confirmationToken } = typeof payload === 'string'
     ? { experimentId: payload, confirmationToken: undefined }
     : payload;
+  // V3-004：破坏性操作审计日志
+  auditDestructiveOperation('experiment:discard', experimentId);
   if (typeof experimentId !== 'string' || experimentId.length === 0 || experimentId.length > 256) {
     return { success: false, error: '无效的参数' };
+  }
+  // F5-1：ID 字符集正则校验，防止路径穿越/注入
+  if (!ID_PATTERN.test(experimentId)) {
+    return { success: false, error: 'experimentId 含非法字符' };
+  }
+  // F5-1：confirmationToken 长度上限校验
+  if (confirmationToken !== undefined && (typeof confirmationToken !== 'string' || confirmationToken.length > 256)) {
+    return { success: false, error: '无效的 confirmationToken' };
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
   // G-F002：破坏性操作需确认令牌
@@ -1394,8 +1537,18 @@ ipcMain.handle('checkpoint:rollback', async (_event, payload: { checkpointId: st
   const { checkpointId, confirmationToken } = typeof payload === 'string'
     ? { checkpointId: payload, confirmationToken: undefined }
     : payload;
+  // V3-004：破坏性操作审计日志
+  auditDestructiveOperation('checkpoint:rollback', checkpointId);
   if (typeof checkpointId !== 'string' || checkpointId.length === 0 || checkpointId.length > 256) {
     return { success: false, error: '无效的参数' };
+  }
+  // F5-1：ID 字符集正则校验，防止路径穿越/注入
+  if (!ID_PATTERN.test(checkpointId)) {
+    return { success: false, error: 'checkpointId 含非法字符' };
+  }
+  // F5-1：confirmationToken 长度上限校验
+  if (confirmationToken !== undefined && (typeof confirmationToken !== 'string' || confirmationToken.length > 256)) {
+    return { success: false, error: '无效的 confirmationToken' };
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
   // G-F002：破坏性操作需确认令牌

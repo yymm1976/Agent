@@ -15,6 +15,7 @@ import { logger } from '../utils/logger.js';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { safeWriteJSONSync } from '../utils/safe-write.js';
 
 /**
  * 7 级信任梯度（借鉴 Claude Code）
@@ -386,24 +387,20 @@ export class TrustGradientManager {
   /**
    * 持久化偏好到 .routedev/trust-preferences.json
    *
-   * 原子写入：write-to-temp + rename，避免并发损坏
+   * V2-018：使用统一的原子写入工具（tmp + rename + 残留清理 + rename 失败回滚），
+   * 替换原有的内联 tmp+rename 实现。原实现缺少 rename 失败时的临时文件清理。
    *
    * @param dirPath 项目根目录路径
    */
   savePreferences(dirPath: string): void {
     const prefDir = path.join(dirPath, '.routedev');
     const prefPath = path.join(prefDir, 'trust-preferences.json');
-    const tmpPath = prefPath + '.tmp';
 
     // 确保目录存在
     fs.mkdirSync(prefDir, { recursive: true });
 
     const prefs = this.getPreferences();
-    const data = JSON.stringify(prefs, null, 2);
-
-    // 原子写入：先写临时文件，再 rename（rename 在同一文件系统上是原子的）
-    fs.writeFileSync(tmpPath, data, 'utf-8');
-    fs.renameSync(tmpPath, prefPath);
+    safeWriteJSONSync(prefPath, prefs, { spaces: 2 });
 
     logger.info('Trust preferences saved', { count: prefs.length, path: prefPath });
   }

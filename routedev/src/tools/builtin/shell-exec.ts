@@ -14,6 +14,25 @@ import type { CommandSandbox } from '../../security/sandbox.js';
 const MAX_STDOUT = 100 * 1024;
 const MAX_STDERR = 50 * 1024;
 
+// V3-021 修复：timeoutMs 上限（10 分钟），防止 LLM 传入超大值导致进程长时间挂起
+const MAX_TIMEOUT_MS = 600_000;
+
+/**
+ * V3-020 修复：Windows PowerShell 参数转义
+ * PowerShell 单引号字符串中，唯一的转义规则是把单引号替换为两个单引号。
+ * 用单引号包裹后，参数内的特殊字符（$ ; | & 等）将不再被 PowerShell 解释。
+ *
+ * 注意：当前 shell_exec 的 command 是用户/LLM 提供的完整 shell 命令字符串，
+ * 不能对整个 command 转义（否则会破坏合法的管道/重定向）。
+ * 此函数供未来扩展使用：若工具演进为接受分离的命令 + 参数，应对每个参数调用此函数。
+ * 当前的注入防护主要依赖：
+ *   1. sandbox 前置校验（白/黑名单 + 危险模式检测）
+ *   2. spawn（而非 exec）传递参数，避免额外的 shell 解释层
+ */
+function escapePowerShellArg(arg: string): string {
+  return "'" + arg.replace(/'/g, "''") + "'";
+}
+
 /**
  * 环境变量白名单：仅允许这些变量被子进程覆盖
  * 防止恶意工具调用通过 context.environment 注入或覆盖敏感环境变量
@@ -99,7 +118,9 @@ export class ShellExecTool implements ITool {
     const cwd = args.workingDirectory
       ? path.resolve(context.workingDirectory, args.workingDirectory as string)
       : context.workingDirectory;
-    const timeoutMs = (args.timeoutMs as number) ?? context.timeoutMs ?? 30000;
+    // V3-021 修复：timeoutMs 上限保护，防止 LLM 传入超大值导致进程长时间挂起
+    const rawTimeout = (args.timeoutMs as number) ?? context.timeoutMs ?? 30000;
+    const timeoutMs = Math.min(rawTimeout, MAX_TIMEOUT_MS);
 
     // C3 修复：校验 cwd 在允许目录内，防止通过绝对路径 workingDirectory 逃逸到任意目录
     const allowedDirs = context.allowedDirectories ?? [context.workingDirectory];

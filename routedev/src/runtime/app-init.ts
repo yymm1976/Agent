@@ -96,6 +96,17 @@ import { createRouterSubsystem } from './app-init-router.js';
 import { createMemorySubsystem } from './app-init-memory.js';
 import { createToolSubsystem } from './app-init-tools.js';
 import { createAgentSubsystem } from './app-init-agent.js';
+// F3-1 修复：全局未捕获异常处理器所需 logger
+import { logger } from '../utils/logger.js';
+
+/**
+ * F3-1 修复：模块级 flag，确保全局异常处理器只注册一次
+ *
+ * Node.js 的 process.on('unhandledRejection' / 'uncaughtException') 重复注册会
+ * 叠加多个监听器，导致同一条错误被记录多次。createAppDependencies 可能被递归
+ * 调用（worktree 场景），用模块级 flag 保证只注册一次。
+ */
+let globalHandlersRegistered = false;
 
 // ============================================================
 // 对外接口定义
@@ -329,6 +340,22 @@ export function createAppDependencies(
   modelRouter?: ModelRouter,
   tracker?: TokenTracker,
 ): AppDependencies {
+  // F3-1 修复：注册全局未捕获异常处理器（只注册一次）
+  // 不退出进程，仅记录日志；致命错误由 graceful-shutdown 处理
+  if (!globalHandlersRegistered) {
+    process.on('unhandledRejection', (reason) => {
+      logger.error('Unhandled promise rejection', { reason: String(reason) });
+    });
+    process.on('uncaughtException', (err) => {
+      logger.error('Uncaught exception', {
+        error: err.message,
+        stack: err.stack,
+        name: err.name,
+      });
+    });
+    globalHandlersRegistered = true;
+  }
+
   // 创建共享装配上下文
   const ctx: InitContext = {
     config,

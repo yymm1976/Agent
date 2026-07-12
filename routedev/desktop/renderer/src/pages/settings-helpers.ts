@@ -9,6 +9,10 @@ import type {
   RouterRule,
   MCPServerEntryConfig,
 } from '../../../shared/config-types.js';
+// V2-006 修复：ESM 环境下 require() 失效，改用 ESM import 读取 package.json
+// 路径：desktop/renderer/src/pages/ → ../../../../ = routedev/（package.json 所在）
+// resolveJsonModule 已在 desktop/tsconfig.desktop.json 中启用
+import pkg from '../../../../package.json';
 
 // ===== 通用解析 =====
 
@@ -179,17 +183,12 @@ export function mcpServerToForm(server: MCPServerEntryConfig): McpFormState {
 /**
  * 从 package.json 读取应用版本号
  * 避免在 SettingsPage 中硬编码版本号
+ *
+ * V2-006 修复：原 require() 在 ESM 环境下失效，改用顶层 ESM import。
+ * Vite 构建时会将 package.json 内联；测试环境下 import 由 vitest 处理。
  */
 export function getAppVersion(): string {
-  try {
-    // Vite 构建时会将 package.json 内联，运行时可直接读取
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pkg = require('../../../../package.json');
-    return pkg.version ?? '0.0.0';
-  } catch {
-    // 降级：如果 require 失败（如测试环境），返回占位值
-    return '0.0.0';
-  }
+  return pkg.version ?? '0.0.0';
 }
 
 // ===== 配置常量（Phase 74-G：从 SettingsPage.tsx 迁移，供 hook 与组件共用） =====

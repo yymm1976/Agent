@@ -79,6 +79,18 @@ export const SUBAGENT_TOOL_WHITELIST: Record<SubagentType, Set<string>> = {
   'review-plan': new Set(['file_read', 'code_search', 'list_directory']),
 };
 
+// ============================================================
+// 安全加固常量（V3-026 / spawn-agent 安全加固）
+// ============================================================
+/** model 字段白名单正则：仅允许字母、数字、点、下划线、短横线，长度 1-64 */
+const ALLOWED_MODEL_PATTERN = /^[a-zA-Z0-9._-]{1,64}$/;
+/** task description / prompt 长度上限（防止超大 prompt 导致 token 耗尽） */
+const MAX_TASK_LENGTH = 10_000;
+/** allowedTools 数组长度上限 */
+const MAX_TOOLS = 50;
+/** 工具名格式：小写字母开头，仅含小写字母/数字/下划线 */
+const TOOL_NAME_PATTERN = /^[a-z_][a-z0-9_]*$/;
+
 /**
  * 根据子 Agent 类型解析对应的 AgentProfile
  * Phase 48 Task 4
@@ -877,6 +889,16 @@ export class SpawnAgentTool implements ITool {
     if (hasLegacy && (args.taskDescription as string).length < 10) {
       errors.push('taskDescription 至少需要 10 个字符，确保任务描述足够清晰');
     }
+    // 安全加固：task description / prompt / legacy taskDescription 长度上限
+    if (hasDescription && (args.description as string).length > MAX_TASK_LENGTH) {
+      errors.push(`description 过长 (上限 ${MAX_TASK_LENGTH} 字符)`);
+    }
+    if (hasPrompt && (args.prompt as string).length > MAX_TASK_LENGTH) {
+      errors.push(`prompt 过长 (上限 ${MAX_TASK_LENGTH} 字符)`);
+    }
+    if (hasLegacy && (args.taskDescription as string).length > MAX_TASK_LENGTH) {
+      errors.push(`taskDescription 过长 (上限 ${MAX_TASK_LENGTH} 字符)`);
+    }
     if (args.maxIterations !== undefined) {
       if (typeof args.maxIterations !== 'number') {
         errors.push('maxIterations 必须是数字');
@@ -895,6 +917,24 @@ export class SpawnAgentTool implements ITool {
       errors.push('缺少必需参数: model（必须显式指定 model id 或 "inherit"）');
     } else if (typeof args.model !== 'string') {
       errors.push('model 必须是字符串（model id 或 "inherit"）');
+    } else if (!ALLOWED_MODEL_PATTERN.test(args.model)) {
+      // 安全加固：model 字段白名单校验，防止注入非法字符
+      errors.push('model 格式非法（仅允许字母、数字、点、下划线、短横线，长度 1-64）');
+    }
+    // 安全加固：allowedTools 数组校验（若调用方提供，校验格式与数量）
+    if (args.allowedTools !== undefined) {
+      if (!Array.isArray(args.allowedTools)) {
+        errors.push('allowedTools 必须是字符串数组');
+      } else if (args.allowedTools.length > MAX_TOOLS) {
+        errors.push(`allowedTools 数量过多 (上限 ${MAX_TOOLS} 个)`);
+      } else {
+        for (const tool of args.allowedTools) {
+          if (typeof tool !== 'string' || !TOOL_NAME_PATTERN.test(tool)) {
+            errors.push(`allowedTools 中存在非法工具名: ${String(tool)}`);
+            break;
+          }
+        }
+      }
     }
     return { valid: errors.length === 0, errors };
   }

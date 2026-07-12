@@ -23,10 +23,11 @@ import type { ToolRegistry } from '../tools/registry.js';
 import type { AgentMiddlewarePipeline } from '../agent/middleware.js';
 import { logger } from '../utils/logger.js';
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getAppDataDir, ensureDir } from '../utils/paths.js';
+import { safeWriteJSONSync } from '../utils/safe-write.js';
 
 // ============================================================
 // 注册表配置
@@ -686,6 +687,8 @@ export class PluginRegistry {
    * Phase 27 Task 4：将当前各插件的 enable/disable 状态写入磁盘
    * 使用同步写入确保 enable()/disable() 返回前状态已落盘
    * 写入失败仅记录警告，不影响运行时状态
+   *
+   * V2-T06：使用原子写入（tmp + rename），防止写入过程中崩溃导致状态文件损坏
    */
   private persistState(): void {
     const statePath = this.getStateFilePath();
@@ -703,7 +706,7 @@ export class PluginRegistry {
     try {
       // 确保目录存在
       ensureDir(getAppDataDir());
-      writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8');
+      safeWriteJSONSync(statePath, state, { spaces: 2 });
       logger.debug('Plugin state persisted', {
         statePath,
         pluginCount: Object.keys(state.plugins).length,

@@ -48,6 +48,12 @@ import type { PlanState } from './context/plan-state.js';
 const MESSAGE_WINDOW_THRESHOLD = 40;
 
 /**
+ * V3-018 修复：followUpLoop 全局迭代次数上限
+ * 防止 follow-up 队列持续注入导致外层循环无限执行
+ */
+const MAX_FOLLOWUP_ITERATIONS = 100;
+
+/**
  * Phase 55：结构化 system block（支持 Anthropic cache_control: ephemeral）
  * agent 层单一数据源：worker-executor.ts 从此处 import 使用
  * 注意：src/router/types.ts 因避免 router→agent 反向依赖，使用结构等价的 inline 类型
@@ -310,7 +316,24 @@ export class ReActAgentLoop {
       let finalContent = '';
 
       // Phase 73 Part C：双层循环——外层 follow-up 驱动，内层 ReAct 循环
+      // V3-018 修复：添加全局迭代次数上限，防止 follow-up 队列持续注入导致无限循环
+      let followupIteration = 0;
       followUpLoop: while (true) {
+        followupIteration++;
+        if (followupIteration > MAX_FOLLOWUP_ITERATIONS) {
+          logger.warn('FollowUp loop reached max iterations, breaking', {
+            iteration: followupIteration,
+          });
+          const overflowError: ReActEvent = {
+            type: 'error',
+            error: `FollowUp 循环达到最大迭代次数 (${MAX_FOLLOWUP_ITERATIONS})，终止执行`,
+            usage: totalUsage,
+          };
+          yield overflowError; trace?.recordEvent(overflowError);
+          const overflowDone: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
+          yield overflowDone; trace?.recordEvent(overflowDone);
+          break followUpLoop;
+        }
         while (iteration < this.config.maxIterations) {
           // 检查取消信号
           if (signal?.aborted) {
@@ -765,6 +788,8 @@ export class ReActAgentLoop {
       stream: true,
       // Phase 32 Task 2：透传 enableCache
       enableCache,
+      // V2-021 修复：透传 AbortSignal 到 LLM 客户端，支持流式取消
+      signal,
     };
 
     // Phase 38 Task 1：onModelCall 中间件——LLM API 调用前（fail-open）

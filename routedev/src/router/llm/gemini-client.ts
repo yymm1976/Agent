@@ -81,6 +81,7 @@ export class GeminiClient extends BaseLLMClient {
     try {
       const url = `${this.baseUrl}/models/${encodeURIComponent(options.model)}:generateContent`;
       const body = this.buildRequestBody(options);
+      // V2-021 修复：透传 options.signal 到 fetchWithTimeout，支持取消请求
       const response = await this.fetchWithTimeout(
         url,
         {
@@ -92,6 +93,7 @@ export class GeminiClient extends BaseLLMClient {
           body: JSON.stringify(body),
         },
         this.getTimeout(options),
+        options.signal,
       );
 
       const data = await this.parseJsonResponse<GeminiResponse>(response, options.model);
@@ -126,6 +128,7 @@ export class GeminiClient extends BaseLLMClient {
     try {
       const url = `${this.baseUrl}/models/${encodeURIComponent(options.model)}:streamGenerateContent?alt=sse`;
       const body = this.buildRequestBody(options);
+      // V2-021 修复：透传 options.signal 到 fetchWithTimeout，支持流式取消
       const response = await this.fetchWithTimeout(
         url,
         {
@@ -138,6 +141,7 @@ export class GeminiClient extends BaseLLMClient {
           body: JSON.stringify(body),
         },
         this.getTimeout(options),
+        options.signal,
       );
 
       if (!response.ok) {

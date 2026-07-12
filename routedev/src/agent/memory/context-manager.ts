@@ -35,6 +35,7 @@ import { estimateTokens } from '../../utils/token-estimate.js';
 import { join } from 'node:path';
 import { writeFile, readFile, mkdir } from 'node:fs/promises';
 import { getAppDataDir, ensureDir } from '../../utils/paths.js';
+import { safeWriteJSON } from '../../utils/safe-write.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 // Phase 53 Task 8：前缀感知缓存（type-only import，避免运行时循环依赖）
@@ -648,16 +649,20 @@ export class ContextManager {
     this.currentCheckpoint = null;
   }
 
-  /** 持久化 checkpoint 到磁盘 */
+  /**
+   * 持久化 checkpoint 到磁盘
+   *
+   * V2-T12：使用原子写入（tmp + rename），防止写入过程中崩溃导致 checkpoint 文件损坏
+   */
   async saveCheckpoint(): Promise<void> {
     if (!this.currentCheckpoint) return;
     try {
       const dir = join(getAppDataDir(), 'memory');
       ensureDir(dir);
-      await writeFile(
+      await safeWriteJSON(
         join(dir, 'current-checkpoint.json'),
-        JSON.stringify(this.currentCheckpoint, null, 2),
-        'utf-8',
+        this.currentCheckpoint,
+        { spaces: 2 },
       );
     } catch (error) {
       logger.warn('Failed to save checkpoint', { error: String(error) });

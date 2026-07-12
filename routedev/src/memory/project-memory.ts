@@ -19,6 +19,7 @@ import type {
 import type { ProjectDocConfig } from '../config/schema.js';
 import { logger } from '../utils/logger.js';
 import { ensureDir } from '../utils/paths.js';
+import { safeWriteText } from '../utils/safe-write.js';
 
 const DECISION_PATTERN = /## (.+?)\n\n([\s\S]*?)\n---\n/g;
 const MAX_DECISIONS_CACHE = 1000;
@@ -288,14 +289,17 @@ export class ProjectMemoryManager {
     return this.readFileIfExists('rules.md');
   }
 
-  /** 写入项目规则（/init 使用） */
+  /** 写入项目规则（/init 使用）
+   *
+   *  V2-017：使用原子写入（tmp + rename），防止写入过程中崩溃导致 rules.md 损坏
+   */
   async writeRules(content: string): Promise<void> {
     if (!this.config.enabled) {
       logger.warn('ProjectMemory: writeRules called while disabled');
       return;
     }
     await this.ensureRoutedevDir();
-    await fs.writeFile(path.join(this.getRoutedevDir(), 'rules.md'), content, 'utf-8');
+    await safeWriteText(path.join(this.getRoutedevDir(), 'rules.md'), content);
     logger.info('ProjectMemory: rules written', { size: content.length });
   }
 
@@ -304,7 +308,11 @@ export class ProjectMemoryManager {
     return this.readFileIfExists('MEMORY.md');
   }
 
-  /** 追加到 MEMORY.md */
+  /** 追加到 MEMORY.md
+   *
+   *  V2-017：使用原子写入（tmp + rename）写入合并后的完整内容，
+   *  防止写入过程中崩溃导致 MEMORY.md 损坏（read-modify-write 整体原子化）
+   */
   async appendMemory(entry: string): Promise<void> {
     if (!this.config.enabled) return;
 
@@ -331,7 +339,7 @@ export class ProjectMemoryManager {
 
     const timestamp = new Date().toISOString();
     const updated = existing + `\n## ${timestamp}\n\n${entry}\n`;
-    await fs.writeFile(filePath, updated, 'utf-8');
+    await safeWriteText(filePath, updated);
   }
 
   /** 清空 MEMORY.md */
@@ -398,11 +406,14 @@ export class ProjectMemoryManager {
     return this.readFileIfExists('context.md');
   }
 
-  /** 写入项目上下文 */
+  /** 写入项目上下文
+   *
+   *  V2-017：使用原子写入（tmp + rename），防止写入过程中崩溃导致 context.md 损坏
+   */
   async writeContext(content: string): Promise<void> {
     if (!this.config.enabled) return;
     await this.ensureRoutedevDir();
-    await fs.writeFile(path.join(this.getRoutedevDir(), 'context.md'), content, 'utf-8');
+    await safeWriteText(path.join(this.getRoutedevDir(), 'context.md'), content);
   }
 
   /** 提取上下文摘要（用于 Prompt 注入） */

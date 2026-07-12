@@ -204,6 +204,12 @@ export interface LLMRequestOptions {
   timeoutMs?: number;
   /** P2-10：是否启用 Prompt 缓存（Anthropic 使用 cache_control，OpenAI 使用 prompt_cache_key） */
   enableCache?: boolean;
+  /**
+   * V2-021 修复：可选的 AbortSignal，传递给底层 HTTP 请求，支持流式取消
+   * OpenAI/Anthropic 客户端透传到 SDK 的 requestOptions.signal；
+   * Gemini 客户端在 SSE 读取循环中检查 signal.aborted 并 break
+   */
+  signal?: AbortSignal;
   /** P2-11：结构化输出格式（OpenAI 使用 response_format json_schema） */
   responseFormat?: {
     type: 'json_schema';

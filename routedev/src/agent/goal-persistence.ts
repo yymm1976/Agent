@@ -20,6 +20,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { logger } from '../utils/logger.js';
+import { safeWriteJSON } from '../utils/safe-write.js';
 // Phase 59：FivePartGoalSpec 类型已从 goal-prompt-builder.ts 移至 goal-types.ts
 import type { FivePartGoalSpec } from './goal-types.js';
 import type { ArchivedPlanVersion, PlanAttestation } from './goal-types.js';
@@ -84,12 +85,15 @@ export class GoalPersistence {
 
   /**
    * 保存目标到 .routedev/goals/<id>.json
+   *
+   * V2-T05 / V2-016：使用原子写入（tmp + rename），防止写入过程中崩溃导致文件损坏。
+   * V2-T04：调用方在 step 状态变更后应调用本方法以触发持久化——
+   *   原子写入确保每次调用都生成完整可读的 goal 文件，避免半写状态。
    */
   async save(goal: PersistedGoal): Promise<void> {
     await fs.mkdir(this.goalsDir, { recursive: true });
     const filePath = this.goalFilePath(goal.id);
-    const data = JSON.stringify(goal, null, 2);
-    await fs.writeFile(filePath, data, 'utf-8');
+    await safeWriteJSON(filePath, goal, { spaces: 2, fsync: false });
     logger.debug('GoalPersistence.save', { id: goal.id, path: filePath });
   }
 

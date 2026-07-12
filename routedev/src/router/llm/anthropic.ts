@@ -78,9 +78,14 @@ export class AnthropicClient extends BaseLLMClient {
     try {
       const params = await this.buildRequestParams(options, false);
       // Phase 55 修复：透传 options.timeoutMs 到 SDK RequestOptions（与 openai.ts 一致）
-      const requestOptions = options.timeoutMs
-        ? { timeout: options.timeoutMs }
-        : undefined;
+      // V2-021 修复：透传 options.signal 到 SDK RequestOptions，支持取消请求
+      const requestOptions: { timeout?: number; signal?: AbortSignal } | undefined =
+        options.timeoutMs || options.signal
+          ? {
+              ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
+              ...(options.signal ? { signal: options.signal } : {}),
+            }
+          : undefined;
       const response = await this.client.messages.create(params, requestOptions) as Message;
 
       const usage = this.extractUsage(response);
@@ -113,7 +118,15 @@ export class AnthropicClient extends BaseLLMClient {
 
     try {
       const params = await this.buildRequestParams(options, true);
-      const stream = this.client.messages.stream(params);
+      // V2-021 修复：透传 options.signal / timeoutMs 到 SDK stream() 的 RequestOptions，支持流式取消
+      const requestOptions: { timeout?: number; signal?: AbortSignal } | undefined =
+        options.timeoutMs || options.signal
+          ? {
+              ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
+              ...(options.signal ? { signal: options.signal } : {}),
+            }
+          : undefined;
+      const stream = this.client.messages.stream(params, requestOptions);
 
       let currentToolId = '';
       let currentToolName = '';
