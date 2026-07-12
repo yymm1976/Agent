@@ -2,7 +2,7 @@
 // 右侧任务监控面板：从消息流中实时提取待办项、产物、上下文
 // 数据来源：当前对话的 ChatMessage[]
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, memo } from 'react';
 import {
   PanelRightClose, CheckSquare, FileOutput, Database, Check, Loader2,
   ChevronLeft, ChevronRight,
@@ -266,7 +266,7 @@ function computeContextTokens(messages: ChatMessage[]): ContextTokenBreakdown {
 
 type TabKey = 'tasks' | 'context' | 'artifacts';
 
-export function TaskMonitorPanel({ messages, onCollapse, maxTokens = 128000 }: TaskMonitorPanelProps) {
+export const TaskMonitorPanel = memo(function TaskMonitorPanel({ messages, onCollapse, maxTokens = 128000 }: TaskMonitorPanelProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('tasks');
 
   // 从消息流中提取各类数据
@@ -444,7 +444,7 @@ export function TaskMonitorPanel({ messages, onCollapse, maxTokens = 128000 }: T
       </div>
     </div>
   );
-}
+});
 
 // 上下文 Tab：水平堆叠柱状图 + 图例
 function ContextTab({ breakdown, maxTokens }: {

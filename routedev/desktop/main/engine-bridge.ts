@@ -29,6 +29,8 @@ import type {
   ProfileSavePayload,
   ProfileOpResult,
   ResumableGoalIpcInfo,
+  ExperimentInfo,
+  HookInfo,
 } from '../shared/ipc-types.js';
 // Phase 77：运行回放与评分卡——借鉴 HomeRail 的 hr replay / hr scorecard
 // G-022a：TraceReplayer/generateScorecard/Checkpoint/TraceSession 等已移至 bridges/trace-bridge.ts
@@ -212,9 +214,9 @@ export class RouteDevEngine {
     // 清理 deps 资源（MCP 连接、trace 回调等），避免句柄泄漏
     if (this.ctx.deps) {
       // G-007：先调用 AppDependencies.dispose() 释放各子系统资源（按逆序调用 dispose）
-      try { await this.ctx.deps.dispose(); } catch { /* 忽略清理错误 */ }
+      try { await this.ctx.deps.dispose(); } catch (err) { logger.warn('[Engine] dispose cleanup error', { err }); }
       // 移除 trace 回调，防止旧 TraceCollector 在被 GC 前继续触发事件
-      try { this.ctx.deps.trace.onSpan(null); } catch { /* 忽略清理错误 */ }
+      try { this.ctx.deps.trace.onSpan(null); } catch (err) { logger.warn('[Engine] trace.onSpan cleanup error', { err }); }
       // 关闭所有 MCP 连接（await 确保子进程退出，避免孤儿进程锁定文件）
       try {
         await this.ctx.deps.mcpManager.disconnectAll();
@@ -418,7 +420,7 @@ export class RouteDevEngine {
   // Experiment 领域委托（ExperimentBridge）
   // ============================================================
 
-  listExperiments(): unknown[] {
+  listExperiments(): ExperimentInfo[] {
     return this.experimentBridge.listExperiments();
   }
 
@@ -652,7 +654,7 @@ export class RouteDevEngine {
   // ============================================================
 
   /** 列出所有 Hook 配置 */
-  async listHooks(): Promise<unknown[]> {
+  async listHooks(): Promise<HookInfo[]> {
     return this.hookBridge.listHooks();
   }
 

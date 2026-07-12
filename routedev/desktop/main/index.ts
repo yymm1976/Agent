@@ -37,7 +37,7 @@ import { ipcGuard, createValidatedHandler } from './ipc-guard.js';
 import { logger } from '../../src/utils/logger.js';
 // F-027/F-029：Zod schema 用于 config:save / hook:create 的完整 payload 校验
 import { z } from 'zod';
-import { AppConfigSchema } from '../../src/config/schema.js';
+import { AppConfigSchema, type AppConfig } from '../../src/config/schema.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -78,6 +78,41 @@ function safeError(err: unknown): string {
   if (/EPERM|EACCES|ENOENT/.test(msg)) return '文件权限或路径错误';
   if (/ENOSPC|EROFS/.test(msg)) return '磁盘空间不足或只读文件系统';
   return '操作失败，请查看日志';
+}
+
+// G-F002：破坏性 IPC 操作确认令牌机制
+// 破坏性 Git/Worktree 操作（checkpoint:rollback / experiment:adopt / experiment:discard）
+// 需先通过 confirmation:create 获取令牌，调用时携带令牌经 consumeConfirmation 验证消费
+const pendingConfirmations = new Map<string, { targetId: string; operation: string; expiresAt: number }>();
+const CONFIRMATION_TTL_MS = 60_000; // 60 秒有效期
+
+/**
+ * G-F002：生成确认令牌
+ * @param operation 操作名（如 'checkpoint:rollback'）
+ * @param targetId 目标 ID（如 checkpointId / experimentId）
+ * @returns 一次性确认令牌
+ */
+function createConfirmation(operation: string, targetId: string): string {
+  const token = `${operation}-${targetId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  pendingConfirmations.set(token, { targetId, operation, expiresAt: Date.now() + CONFIRMATION_TTL_MS });
+  // 清理过期令牌
+  for (const [k, v] of pendingConfirmations) {
+    if (v.expiresAt < Date.now()) pendingConfirmations.delete(k);
+  }
+  return token;
+}
+
+/**
+ * G-F002：验证并消费确认令牌（一次性，用后即删）
+ * @returns true 表示令牌有效且匹配 operation/targetId 且未过期
+ */
+function consumeConfirmation(token: string, operation: string, targetId: string): boolean {
+  const entry = pendingConfirmations.get(token);
+  if (!entry) return false;
+  pendingConfirmations.delete(token);
+  if (entry.operation !== operation || entry.targetId !== targetId) return false;
+  if (entry.expiresAt < Date.now()) return false;
+  return true;
 }
 
 // electron-vite dev 模式下 app.isPackaged 可能返回 true，用多重判断
@@ -473,6 +508,30 @@ ipcMain.handle('plan:get-revisions', async (_event, goalId: string) => {
   }
 });
 
+/** G-F033：遗漏点检查结果类型（用于 type guard 校验 engine 返回结构） */
+interface OmissionCheckResult {
+  omissions: Array<{ category: string; description: string; severity?: string; suggestedStep?: string }>;
+  summary?: string;
+}
+
+/**
+ * G-F033：轻量 type guard，校验 engine.checkOmissions 返回结构
+ * 防止 bridge 与前端依赖 as 强制转换导致运行时异常
+ */
+function isOmissionCheckResult(value: unknown): value is OmissionCheckResult {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  if (!Array.isArray(v.omissions)) return false;
+  for (const o of v.omissions) {
+    if (!o || typeof o !== 'object') return false;
+    const om = o as Record<string, unknown>;
+    if (typeof om.category !== 'string' || typeof om.description !== 'string') return false;
+    if (om.severity !== undefined && typeof om.severity !== 'string') return false;
+  }
+  if (v.summary !== undefined && typeof v.summary !== 'string') return false;
+  return true;
+}
+
 ipcMain.handle('plan:check-omissions', async (_event, goalId: string) => {
   // F-N026 修复：补 goalId 正则校验（参照 plan:get-revisions），防止路径穿越
   if (typeof goalId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(goalId)) {
@@ -482,7 +541,14 @@ ipcMain.handle('plan:check-omissions', async (_event, goalId: string) => {
   // 实际 LLM 调用由 OmissionChecker 在主进程完成
   try {
     const result = await engine?.checkOmissions?.(goalId);
-    return { ok: true, result: result ?? { omissions: [], summary: '检查未执行' } };
+    if (result === undefined) {
+      return { ok: true, result: { omissions: [], summary: '检查未执行' } };
+    }
+    // G-F033：type guard 校验返回结构，拒绝畸形数据透传到前端
+    if (!isOmissionCheckResult(result)) {
+      return { ok: false, error: '检查结果结构无效' };
+    }
+    return { ok: true, result };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -635,6 +701,72 @@ ipcMain.handle('config:get', async (): Promise<import('../../src/config/schema.j
   return maskSensitiveConfig(config);
 });
 
+/**
+ * G-F001：检测新配置是否弱化了安全相关字段
+ * 比较 oldConfig 与 newConfig，返回弱化项列表（空数组表示无弱化）
+ *
+ * 检测范围：
+ *   1. security.* 布尔保护字段从 true → false（ssrfProtection / strictBashMode / httpsOnly 等）
+ *   2. permissionProfile 中 deny 规则被移除（filesystem / network）
+ *   3. phase53Integration.configGuard.enabled 从 true → false
+ *   4. mcp.servers 新增服务器（可能引入未受信任的工具源）
+ *   5. hooks.configPath 变更（可能指向恶意脚本）
+ */
+function detectConfigWeakening(
+  oldConfig: AppConfig,
+  newConfig: AppConfig,
+): Array<{ field: string; oldValue: unknown; newValue: unknown; reason: string }> {
+  const weakening: Array<{ field: string; oldValue: unknown; newValue: unknown; reason: string }> = [];
+
+  // 1. security.* 布尔保护字段从 true → false
+  const oldSec = oldConfig.security;
+  const newSec = newConfig.security;
+  const secKeys = ['ssrfProtection', 'strictBashMode', 'httpsOnly', 'integrityCheck', 'devModeAuth'] as const;
+  for (const key of secKeys) {
+    if (oldSec[key] === true && newSec[key] !== true) {
+      weakening.push({ field: `security.${key}`, oldValue: oldSec[key], newValue: newSec[key], reason: '安全保护被禁用' });
+    }
+  }
+
+  // 2. permissionProfile 弱化：deny 规则被移除
+  //    permissionProfile 是对象（{ name, filesystem, network }），检测 deny 规则减少
+  const oldFsDeny = oldConfig.permissionProfile.filesystem.filter(r => r.access === 'deny');
+  const newFsRules = newConfig.permissionProfile.filesystem;
+  for (const rule of oldFsDeny) {
+    if (!newFsRules.some(r => r.pattern === rule.pattern && r.access === 'deny')) {
+      weakening.push({ field: `permissionProfile.filesystem[${rule.pattern}]`, oldValue: 'deny', newValue: undefined, reason: '文件系统 deny 规则被移除' });
+    }
+  }
+  const oldNetDeny = oldConfig.permissionProfile.network.deny;
+  const newNetDeny = newConfig.permissionProfile.network.deny;
+  for (const domain of oldNetDeny) {
+    if (!newNetDeny.includes(domain)) {
+      weakening.push({ field: `permissionProfile.network.deny[${domain}]`, oldValue: domain, newValue: undefined, reason: '网络 deny 域名被移除' });
+    }
+  }
+
+  // 3. configGuard 被禁用（phase53Integration.configGuard.enabled）
+  if (oldConfig.phase53Integration.configGuard.enabled === true && newConfig.phase53Integration.configGuard.enabled !== true) {
+    weakening.push({ field: 'phase53Integration.configGuard.enabled', oldValue: true, newValue: newConfig.phase53Integration.configGuard.enabled, reason: 'ConfigGuard 被禁用' });
+  }
+
+  // 4. mcp.servers 增加新服务器（可能引入未受信任的工具源）
+  //    mcp.servers 是数组，按 id 检测新增
+  const oldServerIds = new Set(oldConfig.mcp.servers.map(s => s.id));
+  for (const s of newConfig.mcp.servers) {
+    if (!oldServerIds.has(s.id)) {
+      weakening.push({ field: `mcp.servers.${s.id}`, oldValue: undefined, newValue: s, reason: '新增 MCP 服务器' });
+    }
+  }
+
+  // 5. hooks.configPath 变更（可能指向恶意脚本）
+  if (oldConfig.hooks.configPath && oldConfig.hooks.configPath !== newConfig.hooks.configPath) {
+    weakening.push({ field: 'hooks.configPath', oldValue: oldConfig.hooks.configPath, newValue: newConfig.hooks.configPath, reason: 'hooks 配置路径变更' });
+  }
+
+  return weakening;
+}
+
 // 配置：保存
 // F-027 修复：用完整 Zod Schema parse 替代 ipcGuard.object({}) + as 强制转换，
 // 确保 config:save 入参符合 AppConfig 结构（含 security.sandbox / permissionProfile 等安全字段）
@@ -644,6 +776,13 @@ ipcMain.handle('config:save', async (_event, rawConfig: unknown): Promise<Config
     config = AppConfigSchema.parse(rawConfig);
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : '无效的参数' };
+  }
+  // G-F001：安全配置弱化检测——比较新旧配置，拒绝弱化安全字段的保存
+  const oldConfig = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+  const weakening = detectConfigWeakening(oldConfig, config);
+  if (weakening.length > 0) {
+    logger.warn('[Config] 检测到安全配置弱化', { weakening });
+    return { success: false, error: '安全配置弱化被拒绝', weakening };
   }
   try {
     // G-001 修复：保存前检测掩码 apiKey，用磁盘真实值回填，防止掩码覆盖真实密钥
@@ -1117,24 +1256,40 @@ ipcMain.on('window:close', () => {
 // 列出所有实验分支
 ipcMain.handle('experiment:list', async (): Promise<ExperimentInfo[]> => {
   if (!engine) return [];
-  return engine.listExperiments() as ExperimentInfo[];
+  return engine.listExperiments();
 });
 
 // 采纳实验分支
-ipcMain.handle('experiment:adopt', async (_event, experimentId: string): Promise<{ success: boolean; error?: string }> => {
+ipcMain.handle('experiment:adopt', async (_event, payload: { experimentId: string; confirmationToken?: string } | string): Promise<{ success: boolean; error?: string; requiresConfirmation?: boolean }> => {
+  // G-F002：兼容旧调用（string）与新调用（对象含 confirmationToken）
+  const { experimentId, confirmationToken } = typeof payload === 'string'
+    ? { experimentId: payload, confirmationToken: undefined }
+    : payload;
   if (typeof experimentId !== 'string' || experimentId.length === 0 || experimentId.length > 256) {
     return { success: false, error: '无效的参数' };
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
+  // G-F002：破坏性操作需确认令牌
+  if (!confirmationToken || !consumeConfirmation(confirmationToken, 'experiment:adopt', experimentId)) {
+    return { success: false, error: '需要确认令牌', requiresConfirmation: true };
+  }
   return engine.adoptExperiment(experimentId);
 });
 
 // 丢弃实验分支
-ipcMain.handle('experiment:discard', async (_event, experimentId: string): Promise<{ success: boolean; error?: string }> => {
+ipcMain.handle('experiment:discard', async (_event, payload: { experimentId: string; confirmationToken?: string } | string): Promise<{ success: boolean; error?: string; requiresConfirmation?: boolean }> => {
+  // G-F002：兼容旧调用（string）与新调用（对象含 confirmationToken）
+  const { experimentId, confirmationToken } = typeof payload === 'string'
+    ? { experimentId: payload, confirmationToken: undefined }
+    : payload;
   if (typeof experimentId !== 'string' || experimentId.length === 0 || experimentId.length > 256) {
     return { success: false, error: '无效的参数' };
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
+  // G-F002：破坏性操作需确认令牌
+  if (!confirmationToken || !consumeConfirmation(confirmationToken, 'experiment:discard', experimentId)) {
+    return { success: false, error: '需要确认令牌', requiresConfirmation: true };
+  }
   return engine.discardExperiment(experimentId);
 });
 
@@ -1152,7 +1307,7 @@ ipcMain.handle('experiment:get-diff', async (_event, experimentId: string): Prom
 // 列出所有 Hook（模板 + 自定义）
 ipcMain.handle('hook:list', async (): Promise<HookInfo[]> => {
   if (!engine) return [];
-  return engine.listHooks() as Promise<HookInfo[]>;
+  return engine.listHooks();
 });
 
 // 启用/禁用 Hook
@@ -1207,6 +1362,17 @@ ipcMain.handle('hook:delete', async (_event, hookId: string): Promise<{ success:
   return engine.deleteHook(hookId);
 });
 
+// G-F002：确认令牌创建 IPC——UI 在执行破坏性操作前先调用此接口获取令牌
+ipcMain.handle('confirmation:create', (_event, operation: string, targetId: string): string => {
+  if (typeof operation !== 'string' || operation.length === 0 || operation.length > 64) {
+    throw new Error('无效的 operation');
+  }
+  if (typeof targetId !== 'string' || targetId.length === 0 || targetId.length > 256) {
+    throw new Error('无效的 targetId');
+  }
+  return createConfirmation(operation, targetId);
+});
+
 // ============================================================
 // Phase 47 Task 6：Checkpoint 时间轴 IPC handler
 // 直接调用 engine 桥接方法（fail-open：engine 未初始化时返回默认值）
@@ -1223,11 +1389,19 @@ ipcMain.handle('checkpoint:list', async (_event, projectId?: string) => {
 });
 
 // 回滚到指定检查点（破坏性操作，UI 层需在调用前弹出确认对话框）
-ipcMain.handle('checkpoint:rollback', async (_event, checkpointId: string): Promise<{ success: boolean; error?: string }> => {
+ipcMain.handle('checkpoint:rollback', async (_event, payload: { checkpointId: string; confirmationToken?: string } | string): Promise<{ success: boolean; error?: string; requiresConfirmation?: boolean }> => {
+  // G-F002：兼容旧调用（string）与新调用（对象含 confirmationToken）
+  const { checkpointId, confirmationToken } = typeof payload === 'string'
+    ? { checkpointId: payload, confirmationToken: undefined }
+    : payload;
   if (typeof checkpointId !== 'string' || checkpointId.length === 0 || checkpointId.length > 256) {
     return { success: false, error: '无效的参数' };
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
+  // G-F002：破坏性操作需确认令牌
+  if (!confirmationToken || !consumeConfirmation(confirmationToken, 'checkpoint:rollback', checkpointId)) {
+    return { success: false, error: '需要确认令牌', requiresConfirmation: true };
+  }
   return engine.rollbackCheckpoint(checkpointId);
 });
 
@@ -1325,6 +1499,43 @@ ipcMain.handle('trace:scorecard', async (_event, sessionId: string) => {
   return engine.generateTraceScorecard(sessionId);
 });
 
+/**
+ * G-F003：子 Agent 角色能力上限——每个角色允许的工具集合
+ * 超出白名单的工具名在 profile:save 时被拒绝
+ */
+const SUBAGENT_TOOL_WHITELIST: Record<string, Set<string>> = {
+  'researcher': new Set(['file_read', 'grep', 'glob', 'web_search', 'web_fetch']),
+  'executor': new Set(['file_read', 'file_write', 'file_edit', 'shell_exec', 'grep', 'glob']),
+  'reviewer': new Set(['file_read', 'grep', 'glob']),
+  'planner': new Set(['file_read', 'grep', 'glob']),
+  'verifier': new Set(['file_read', 'grep', 'glob']),
+  'synthesizer': new Set(['file_read', 'grep', 'glob']),
+  'review-planner': new Set(['file_read', 'grep', 'glob']),
+  'custom': new Set(['file_read', 'file_write', 'file_edit', 'shell_exec', 'grep', 'glob', 'web_search', 'web_fetch', 'git_op']),
+  'default': new Set(['file_read', 'grep', 'glob']),
+};
+
+/**
+ * G-F003：校验 Profile 的 allowedTools 是否在角色能力上限内
+ * @param role Agent 角色（researcher / executor / reviewer / ...）
+ * @param allowedTools 待校验的工具名列表
+ * @returns 错误列表，空数组表示通过
+ */
+function validateProfileTools(role: string, allowedTools: string[]): string[] {
+  const errors: string[] = [];
+  const whitelist = SUBAGENT_TOOL_WHITELIST[role] ?? SUBAGENT_TOOL_WHITELIST['default'];
+  for (const tool of allowedTools) {
+    if (typeof tool !== 'string' || tool.length === 0) {
+      errors.push(`无效工具名: ${tool}`);
+      continue;
+    }
+    if (!whitelist.has(tool)) {
+      errors.push(`工具 "${tool}" 不在角色 "${role}" 的能力上限内`);
+    }
+  }
+  return errors;
+}
+
 // ============================================================
 // AgentProfile 管理 IPC handler（Grok F-010 修复）
 // 数据流：renderer → IPC profile:* → engine-bridge.listProfiles/saveProfile/deleteProfile/duplicateProfile
@@ -1375,6 +1586,11 @@ ipcMain.handle('profile:save', async (_event, rawPayload: unknown) => {
   // F-002 修复：id 字符集校验（与 profiles/types.ts validateProfile 一致）
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(payload.id)) {
     return { success: false, error: 'id 格式非法：仅允许字母数字开头，含字母数字下划线连字符，1-64 字符' };
+  }
+  // G-F003：角色能力上限校验——allowedTools 必须在角色白名单内
+  const toolErrors = validateProfileTools(payload.role, payload.allowedTools);
+  if (toolErrors.length > 0) {
+    return { success: false, error: toolErrors.join('; '), errors: toolErrors };
   }
   return engine.saveProfile(payload);
 });

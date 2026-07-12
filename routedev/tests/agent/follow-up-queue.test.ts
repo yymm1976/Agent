@@ -3,16 +3,15 @@
 //
 // 覆盖验收标准：
 //   1. followUp() 把消息排入 follow-up 队列
-//   2. drainFollowUpQueue 'all' 模式返回全部并清空队列
-//   3. drainFollowUpQueue 'one-at-a-time' 模式仅返回第一条，剩余保留
-//   4. clearAllQueues 清空 follow-up 队列
-//   5. follow-up 消息通过 defaultConvertToLlm 转换为 user 消息（前缀 [后续任务]）
-//   6. getFollowUpQueue / removeFollowUp / getQueueStatus 辅助 API 行为正确
+//   2. setFollowUpMode 模式切换不影响已入队消息的顺序
+//   3. clearAllQueues 清空 follow-up 队列
+//   4. follow-up 消息通过 defaultConvertToLlm 转换为 user 消息（前缀 [后续任务]）
+//   5. getFollowUpQueue / removeFollowUp / getQueueStatus 辅助 API 行为正确
 
 import { describe, it, expect } from 'vitest';
 import { ReActAgentLoop } from '../../src/agent/loop.js';
 import { defaultConvertToLlm } from '../../src/agent/message-types.js';
-import type { AgentMessage, FollowUpMessage } from '../../src/agent/message-types.js';
+import type { AgentMessage } from '../../src/agent/message-types.js';
 import type { ToolExecutorAdapter } from '../../src/agent/loop-config.js';
 
 // ============================================================
@@ -31,16 +30,8 @@ class NoOpToolExecutor implements ToolExecutorAdapter {
   }
 }
 
-// ============================================================
-// 辅助：通过类型断言访问 private 方法 drainFollowUpQueue
-// 测试需要直接验证出队语义，避免为单个私有方法构造完整的 LLM mock
-// ============================================================
-type LoopWithDrain = ReActAgentLoop & {
-  drainFollowUpQueue: () => FollowUpMessage[];
-};
-
-function createLoop(): LoopWithDrain {
-  return new ReActAgentLoop(new NoOpToolExecutor()) as LoopWithDrain;
+function createLoop(): ReActAgentLoop {
+  return new ReActAgentLoop(new NoOpToolExecutor());
 }
 
 // ============================================================
@@ -78,52 +69,7 @@ describe('Phase 73 Part C：follow-up 队列', () => {
     });
   });
 
-  describe('drainFollowUpQueue 出队语义', () => {
-    it('空队列返回空数组', () => {
-      const loop = createLoop();
-      expect(loop.drainFollowUpQueue()).toEqual([]);
-    });
-
-    it("'all' 模式：一次性返回全部并清空队列", () => {
-      const loop = createLoop();
-      loop.setFollowUpMode('all');
-      loop.followUp('任务一');
-      loop.followUp('任务二');
-      loop.followUp('任务三');
-
-      const drained = loop.drainFollowUpQueue();
-      expect(drained).toHaveLength(3);
-      expect(drained.map((m) => m.content)).toEqual(['任务一', '任务二', '任务三']);
-      // 队列应已清空
-      expect(loop.getFollowUpQueue()).toHaveLength(0);
-    });
-
-    it("'one-at-a-time' 模式：仅返回最早入队的一条，剩余保留", () => {
-      const loop = createLoop();
-      // 默认即为 'one-at-a-time'，显式设置一次以验证 setter
-      loop.setFollowUpMode('one-at-a-time');
-      loop.followUp('任务一');
-      loop.followUp('任务二');
-      loop.followUp('任务三');
-
-      const first = loop.drainFollowUpQueue();
-      expect(first).toHaveLength(1);
-      expect(first[0].content).toBe('任务一');
-      // 剩余两条仍在队列中
-      expect(loop.getFollowUpQueue()).toHaveLength(2);
-      expect(loop.getFollowUpQueue().map((m) => m.content)).toEqual(['任务二', '任务三']);
-    });
-
-    it("'one-at-a-time' 模式：连续调用逐条出队直到空", () => {
-      const loop = createLoop();
-      loop.followUp('A');
-      loop.followUp('B');
-
-      expect(loop.drainFollowUpQueue()[0].content).toBe('A');
-      expect(loop.drainFollowUpQueue()[0].content).toBe('B');
-      expect(loop.drainFollowUpQueue()).toEqual([]);
-    });
-
+  describe('setFollowUpMode 模式切换', () => {
     it('模式切换不影响已入队消息的顺序', () => {
       const loop = createLoop();
       loop.followUp('A');
@@ -152,11 +98,11 @@ describe('Phase 73 Part C：follow-up 队列', () => {
       expect(statusAfter.followUp).toBe(0);
     });
 
-    it('清空后 follow-up 队列出队返回空', () => {
+    it('清空后 follow-up 队列为空', () => {
       const loop = createLoop();
       loop.followUp('A');
       loop.clearAllQueues();
-      expect(loop.drainFollowUpQueue()).toEqual([]);
+      expect(loop.getFollowUpQueue()).toEqual([]);
     });
   });
 

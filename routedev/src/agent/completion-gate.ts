@@ -41,6 +41,8 @@ export interface GateCheck {
   output: string;
   /** 耗时（毫秒） */
   duration: number;
+  /** 警告信息（如超时跳过时的提示） */
+  warnings?: string[];
 }
 
 /**
@@ -161,6 +163,7 @@ export class CompletionGate {
           skipped: true,
           output: 'typecheck 运行超时，已跳过',
           duration,
+          warnings: ['typecheck 运行超时，结果未验证'],
         };
       }
       const ok = result.status === 0;
@@ -201,6 +204,7 @@ export class CompletionGate {
           skipped: true,
           output: 'lint 运行超时，已跳过',
           duration,
+          warnings: ['lint 运行超时，结果未验证'],
         };
       }
       const ok = result.status === 0;
@@ -253,6 +257,7 @@ export class CompletionGate {
           skipped: true,
           output: '测试运行超时，已跳过',
           duration,
+          warnings: ['测试运行超时，结果未验证'],
         };
       }
 

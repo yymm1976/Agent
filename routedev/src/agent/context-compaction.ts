@@ -14,7 +14,7 @@
 
 import type { LLMMessage, ContentPart, ToolResultContent } from '../router/types.js';
 import { decideCompactionAction, DEFAULT_COMPACTION_THRESHOLDS, type CompactionThresholds } from '../router/cache-optimizer.js';
-import { createCompactionBoundary, type CompactionBoundary } from '../tools/trust-gradient.js';
+import * as crypto from 'node:crypto';
 import { logger } from '../utils/logger.js';
 import type { CCRCache, CCRMarker } from './ccr-cache.js';
 import { KSentenceCompressor } from './ksentence-compressor.js';
@@ -26,6 +26,51 @@ import type { ActionChainDetector, ActionChain } from './memory/action-chain-det
 import type { AutoCompactGuardian, CompactAction, TokenState } from './memory/auto-compact-guardian.js';
 import type { CompactPromptEngine } from './memory/compact-prompt-engine.js';
 import type { SessionMemoryStore, SessionMemory } from './memory/session-memory-store.js';
+
+/**
+ * 压缩边界标记
+ *
+ * 借鉴 Claude Code 的 headUuid / anchorUuid / tailUuid 三元组
+ * 用 UUID 标记压缩发生的位置，在读取时补丁消息链，不破坏磁盘上的原始记录
+ *
+ * 这让"压缩"变成可逆操作（至少在审计层面）
+ * 支持事后查看"压缩前原始对话是什么样"
+ */
+export interface CompactionBoundary {
+  /** 压缩前第一条消息的 UUID */
+  headUuid: string;
+  /** 压缩锚点（保留的第一条消息）的 UUID */
+  anchorUuid: string;
+  /** 压缩前最后一条消息的 UUID */
+  tailUuid: string;
+  /** 压缩时间戳 */
+  compactedAt: number;
+  /** 压缩阶段（1-5） */
+  stage: number;
+  /** 压缩前消息数 */
+  originalCount: number;
+  /** 压缩后消息数 */
+  compactedCount: number;
+}
+
+/**
+ * 生成压缩边界标记
+ */
+export function createCompactionBoundary(
+  messages: LLMMessage[],
+  compactedMessages: LLMMessage[],
+  stage: number,
+): CompactionBoundary {
+  return {
+    headUuid: crypto.randomUUID(),
+    anchorUuid: crypto.randomUUID(),
+    tailUuid: crypto.randomUUID(),
+    compactedAt: Date.now(),
+    stage,
+    originalCount: messages.length,
+    compactedCount: compactedMessages.length,
+  };
+}
 
 /** 压缩结果 */
 export interface CompactionResult {

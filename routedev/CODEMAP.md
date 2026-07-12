@@ -33,7 +33,7 @@
 
 | 层 | 默认 | 维护策略 | 模块数 | 代表模块 |
 |----|------|----------|--------|----------|
-| `core` | on | 主动强化、必须有测试 | 65 | file/shell/git/code-search 工具、ReActAgentLoop、PermissionEngine、ContextManager、CheckpointManager、会话分支、模型路由+Token、MCP 基础连接 |
+| `core` | on | 主动强化、必须有测试 | 70 | file/shell/git/code-search 工具、ReActAgentLoop、PermissionEngine、ContextManager、CheckpointManager、会话分支、模型路由+Token、MCP 基础连接 |
 | `extended-pack` | off | 修 bug 不扩功能 | 30 | spawn-agent、OrchestrationIntegration、GoalRunner、DagEngine、DualLoopOrchestrator、UnifiedReviewer、cross-model-reviewer（`pack.multi-agent`/`pack.goal-advanced`/`pack.adversarial-review`） |
 | `standard-pack` | off | 冷处理：仅修崩溃 | 24 | web-search/web-fetch/browser、CodeMapEngine、code-graph-query、CiteManager、ClaudePluginImporter、MacroManager、TraceReplayer（`pack.browser-web`/`pack.code-map`/`pack.harness`/`pack.import-ecosystem`/`pack.compose`） |
 | `freeze` | off | 停止一切接线 | 12 | TrustGradientManager 动态升级、QualitySignalMiddleware、KG 高级算法、Compose 自动选择、closedLoopRouting/ACRouter |
@@ -47,7 +47,7 @@
 - Progressive Trust → `freeze`
 - KG 高级算法 → `freeze`
 
-详见 [`docs/CAPABILITY_LAYERS.md`](./docs/CAPABILITY_LAYERS.md) 的四层分表（C-01~C-65 / E-01~E-30 / S-01~S-24 / F-01~F-12）与覆盖率统计。
+详见 [`docs/CAPABILITY_LAYERS.md`](./docs/CAPABILITY_LAYERS.md) 的四层分表（C-01~C-70 / E-01~E-31 / S-01~S-24 / F-01~F-12）与覆盖率统计。
 
 ---
 

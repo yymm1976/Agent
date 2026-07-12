@@ -7,10 +7,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
   TrustGradientManager,
-  createCompactionBoundary,
   type TrustLevel,
   type RiskLevel,
 } from '../../src/tools/trust-gradient.js';
+import { createCompactionBoundary } from '../../src/agent/context-compaction.js';
 import { createDefaultEngine } from '../../src/tools/permission-engine.js';
 import type { LLMMessage } from '../../src/router/types.js';
 

@@ -411,6 +411,25 @@ export class TraceCollector {
   }
 
   /**
+   * G-F022 修复：释放资源——清除 flush 定时器并刷新待写入队列
+   * 进程退出或引擎销毁前调用，避免定时器泄漏与异步写入丢失
+   */
+  async dispose(): Promise<void> {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    try {
+      await this.flush();
+    } catch (err) {
+      // 静默处理，避免 dispose 抛错
+      logger.debug('TraceCollector dispose: flush failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
    * Phase 34：计算当前会话的 trajectory 级汇总指标
    * @param options.taskId 任务标识（默认使用 sessionId）
    * @param options.success 是否成功完成

@@ -140,23 +140,27 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
       .catch((err) => { logger.warn('BrowserTool fail-open', { error: err instanceof Error ? err.message : String(err) }); });
     // notes → standard-pack
     registry.register(new NotesTool(notesManager));
-    // VFS 4 工具 → standard-pack
-    registry.register(new VfsReadTool(virtualFS));
-    registry.register(new VfsWriteTool(virtualFS));
-    registry.register(new VfsListTool(virtualFS));
-    registry.register(new VfsDeleteTool(virtualFS));
-    // Plan 5 工具 → extended-pack
-    registry.register(new PlanGetTool(planState));
-    registry.register(new PlanSetTool(planState));
-    registry.register(new PlanUpdateStepTool(planState));
-    registry.register(new PlanAddStepTool(planState));
-    registry.register(new PlanRemoveStepTool(planState));
     // Phase 55 Task 9：CCR 取回工具 → standard-pack
-    if (config.ccrCompression?.enabled) {
+    // G-F016 修复：受 config.packs.ccrCompression.enabled 门控
+    if (config.ccrCompression?.enabled && config.packs?.ccrCompression?.enabled) {
       // memory 子系统在 ccrCompression.enabled 时已写入 ccrCache，此处非空
       registry.register(new CCRRetrieveTool(ccrCache!));
     }
   }
+
+  // --- VFS / Plan 工具（Core，默认可用，无需 Pack 门控） ---
+  // G-F017 修复：对齐 CAPABILITY_LAYERS.md 为 Core，从 isFullProfile 块移出
+  // VFS 4 工具 → Core
+  registry.register(new VfsReadTool(virtualFS));
+  registry.register(new VfsWriteTool(virtualFS));
+  registry.register(new VfsListTool(virtualFS));
+  registry.register(new VfsDeleteTool(virtualFS));
+  // Plan 5 工具 → Core
+  registry.register(new PlanGetTool(planState));
+  registry.register(new PlanSetTool(planState));
+  registry.register(new PlanUpdateStepTool(planState));
+  registry.register(new PlanAddStepTool(planState));
+  registry.register(new PlanRemoveStepTool(planState));
 
   // Phase 53 Task 7：ConfigGuard 注入（受 config.phase53Integration.configGuard.enabled 守护）
   // 启用后 file_edit / file_write 在执行前会检查是否弱化安全/治理配置

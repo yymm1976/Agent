@@ -12,6 +12,9 @@ import type { HookTemplate } from '../../../src/hooks/templates.js';
 import { checkBashSecurity } from '../../../src/tools/security-enhanced.js';
 // F-001 修复：复用共享路径越界校验
 import { resolveHookConfigPath } from '../../../src/hooks/security.js';
+// G-F019b：fail-open 失败日志
+import { logger } from '../../../src/utils/logger.js';
+import type { HookInfo } from '../../shared/ipc-types.js';
 import type { EngineContext } from './engine-context.js';
 
 /**
@@ -36,14 +39,15 @@ export class HookBridge {
   }
 
   /** 列出所有 Hook 配置 */
-  async listHooks(): Promise<unknown[]> {
+  async listHooks(): Promise<HookInfo[]> {
     try {
       const configPath = this.resolveHookConfigPath();
       if (!configPath) return [];
       const registry = new HookConfigRegistry(configPath);
       await registry.load();
-      return registry.list();
-    } catch {
+      return registry.list() as unknown as HookInfo[];
+    } catch (err) {
+      logger.warn('[HookBridge] listHooks failed', { err });
       return [];
     }
   }

@@ -6,13 +6,13 @@
 // Phase 74-C：从 ChatPage.tsx 抽离，保持渲染结果完全一致
 // C-V1：虚拟滚动兼容——onVisible 回调 + 固定可测量高度结构，为 @tanstack/virtual 预留
 
-import { useMemo, useRef, useEffect } from 'react';
+import { useMemo, useRef, useEffect, memo } from 'react';
 import type { ChatMessage } from '../../store/useRouteDevStore.js';
 import type { OutputStyle, ToolCallItem } from '../ToolCallCard.js';
 import { ExecutionProcess, parseReasoningSteps } from './ExecutionProcess.js';
 import { MessageBubble } from './MessageBubble.js';
 
-export function TaskBlock({
+export const TaskBlock = memo(function TaskBlock({
   taskMessages,
   outputStyle,
   isProcessing,
@@ -148,4 +148,18 @@ export function TaskBlock({
       )}
     </div>
   );
-}
+}, (prevProps, nextProps) => {
+  // 自定义比较：浅比较关键字段，避免引用类型 props 导致不必要重渲染
+  return (
+    prevProps.isProcessing === nextProps.isProcessing &&
+    prevProps.outputStyle === nextProps.outputStyle &&
+    prevProps.taskMessages === nextProps.taskMessages &&
+    prevProps.taskMessages.length === nextProps.taskMessages.length &&
+    prevProps.onCopy === nextProps.onCopy &&
+    prevProps.onDelete === nextProps.onDelete &&
+    prevProps.onRetry === nextProps.onRetry &&
+    prevProps.onFork === nextProps.onFork &&
+    prevProps.messageRef === nextProps.messageRef &&
+    prevProps.onVisible === nextProps.onVisible
+  );
+});

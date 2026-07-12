@@ -36,6 +36,8 @@ export interface AuditResult {
   missing?: string[];
   /** 严重度（reviewer 用） */
   severity?: 'info' | 'warning' | 'error';
+  /** 警告信息（如检查未运行） */
+  warnings?: string[];
 }
 
 /** 审计配置 */
@@ -68,11 +70,11 @@ export interface AuditParams {
   /** 目标规范（用 doneWhen） */
   spec: { doneWhen: string[] };
   /** typecheck 结果 */
-  typecheckPassed?: boolean;
+  typecheckPassed?: boolean | 'not_run';
   /** lint 结果 */
-  lintPassed?: boolean;
+  lintPassed?: boolean | 'not_run';
   /** tests 结果 */
-  testsPassed?: boolean;
+  testsPassed?: boolean | 'not_run';
   /** VerifierLLM 结果 */
   verifierResult?: {
     passed: boolean;
@@ -204,34 +206,53 @@ export class GoalAuditor {
   // 内部：各层执行
   // ============================================================
 
-  /** CompletionGate：聚合 typecheck/lint/tests */
+  /** CompletionGate：聚合 typecheck/lint/tests（三态：pass/fail/not_run） */
   private runCompletionGate(params: AuditParams): AuditResult {
     const evidence: string[] = [];
     const missing: string[] = [];
+    const warnings: string[] = [];
     const cfg = this.config.completionGate;
 
+    // 三态聚合：undefined / 'not_run' → not_run；boolean → pass/fail
+    const aggregate = (v: boolean | 'not_run' | undefined): 'pass' | 'fail' | 'not_run' => {
+      if (v === 'not_run' || v === undefined) return 'not_run';
+      return v ? 'pass' : 'fail';
+    };
+
     if (cfg.runTypecheck) {
-      if (params.typecheckPassed) {
+      const status = aggregate(params.typecheckPassed);
+      if (status === 'pass') {
         evidence.push('typecheck: PASS');
-      } else {
+      } else if (status === 'fail') {
         evidence.push('typecheck: FAIL');
         missing.push('类型检查未通过');
+      } else {
+        evidence.push('typecheck: NOT_RUN');
+        warnings.push('typecheck 未运行');
       }
     }
     if (cfg.runLint) {
-      if (params.lintPassed) {
+      const status = aggregate(params.lintPassed);
+      if (status === 'pass') {
         evidence.push('lint: PASS');
-      } else {
+      } else if (status === 'fail') {
         evidence.push('lint: FAIL');
         missing.push('lint 检查未通过');
+      } else {
+        evidence.push('lint: NOT_RUN');
+        warnings.push('lint 未运行');
       }
     }
     if (cfg.runTests) {
-      if (params.testsPassed) {
+      const status = aggregate(params.testsPassed);
+      if (status === 'pass') {
         evidence.push('tests: PASS');
-      } else {
+      } else if (status === 'fail') {
         evidence.push('tests: FAIL');
         missing.push('测试未通过');
+      } else {
+        evidence.push('tests: NOT_RUN');
+        warnings.push('tests 未运行');
       }
     }
 
@@ -242,7 +263,8 @@ export class GoalAuditor {
       passed,
       evidence,
       missing: missing.length > 0 ? missing : undefined,
-      severity: passed ? 'info' : 'error',
+      warnings: warnings.length > 0 ? warnings : undefined,
+      severity: passed ? (warnings.length > 0 ? 'warning' : 'info') : 'error',
     };
   }
 

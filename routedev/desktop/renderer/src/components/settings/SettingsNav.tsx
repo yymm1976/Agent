@@ -55,10 +55,10 @@ export function SettingsNav({ activeTab, setActiveTab, advancedExpanded, setAdva
     { id: 'mcp', label: '插件与 MCP (Pack)', icon: Plug },
     // CLI 退役遗留，桌面端不消费 — 隐藏 Tab（sounds 配置运行时无消费方）
     // { id: 'sounds', label: '提示音', icon: Bell },
-    { id: 'expertise', label: '引导', icon: GraduationCap },
+    { id: 'expertise', label: '引导 (Freeze)', icon: GraduationCap },
     { id: 'persona', label: '角色设定', icon: Sparkles },
     { id: 'voice', label: '语音', icon: Radio },
-    { id: 'goal', label: '目标流程', icon: Target },
+    { id: 'goal', label: '目标流程 (Pack)', icon: Target },
     { id: 'conversation', label: '对话', icon: FileText },
     { id: 'skills', label: '技能', icon: BookOpen },
     { id: 'hooks', label: '钩子', icon: Webhook },

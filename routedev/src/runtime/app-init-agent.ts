@@ -26,7 +26,6 @@ import type { ClassificationResult, RoutingResult, ScenarioTier } from '../route
 import type { ScenarioClassifier } from '../router/classifier.js';
 import type { ModelRouter } from '../router/router.js';
 import type { TokenTracker } from '../router/tracker.js';
-import type { OrchestrationIntegrationOptions } from '../agent/multi/orchestrator.js';
 import type { DualLoopOrchestrator } from '../agent/dual-loop-orchestrator.js';
 import type { DagEngine } from '../agent/workflow/dag-engine.js';
 import type {
@@ -141,7 +140,7 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
 
   // Phase 52 Task 1：SkillLifecycleManager 提前创建（需在 delegationDeps 装配前就绪）
   let skillLifecycleManager: SkillLifecycleManager | undefined;
-  if (config.phase52Integration?.skillLifecycle?.enabled) {
+  if (config.phase52Integration?.skillLifecycle?.enabled && config.packs?.skillLifecycle?.enabled) {
     skillLifecycleManager = new SkillLifecycleManager(config.phase52Integration.skillLifecycle);
     logger.info('app-init: SkillLifecycleManager 已启用');
 
@@ -681,21 +680,7 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
       });
   }
 
-  // ===== 多 Agent：orchestrationIntegration 开关 =====
-  // Phase 81 Task 4：packs.multiAgent.enabled 门控（extended-pack，默认 false 退出装配）
-  const orchestrationIntegrationCfg = config.orchestrationIntegration;
-  const orchestrationIntegration: OrchestrationIntegrationOptions | undefined = (
-    config.packs?.multiAgent?.enabled &&
-    (orchestrationIntegrationCfg?.strategyEnabled ||
-    orchestrationIntegrationCfg?.stateGraphEnabled)
-  )
-    ? {
-        strategyEnabled: orchestrationIntegrationCfg?.strategyEnabled,
-        stateGraphEnabled: orchestrationIntegrationCfg?.stateGraphEnabled,
-        // Phase 83 Task 2：conflict detector 冻结——默认 false，由 config 显式开启
-        conflictDetectionEnabled: orchestrationIntegrationCfg?.conflictDetectionEnabled === true,
-      }
-    : undefined;
+  // G-F013 删除死代码：orchestrationIntegration 变量声明已移除（声明后从未被消费）
   // F-021 删除死代码：workerContextPacker 创建和 void 行已移除（WorkerExecutor 实例化已注释，无消费方）
 
   // Phase 53 Task 11：熔断器（fail-open 动态 import）
@@ -874,26 +859,32 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
  // ===== Phase 32 Task 1：Phase 31 模块实例化 =====
 
   // 3. CompletionGate——独立代码验证门（typecheck/lint/tests）
+  // G-F038 修复：受 config.packs.goalAdvanced.enabled 门控
   const safetyCfg = config.optimization?.safety;
-  const completionGate = createCompletionGate({
-    gateTimeout: safetyCfg?.gateTimeout ?? 180000,
-    gateRetry: safetyCfg?.gateRetry ?? 1,
-  });
+  const completionGate = config.packs?.goalAdvanced?.enabled
+    ? createCompletionGate({
+        gateTimeout: safetyCfg?.gateTimeout ?? 180000,
+        gateRetry: safetyCfg?.gateRetry ?? 1,
+      })
+    : undefined;
 
   // 5. TaskOrchestrator——统一工作流编排器
   // F-053 类型安全：入口非空校验，避免 as 强制断言掩盖依赖缺失
   if (!classifier || !modelRouter || !tracker) {
     throw new Error('classifier/modelRouter/tracker 未注入，无法创建 Agent 子系统');
   }
-  const taskOrchestrator = createTaskOrchestrator(
-    classifier,
-    modelRouter,
-    config,
-  );
+  // G-F035 修复：受 config.packs.goalAdvanced.enabled 门控
+  const taskOrchestrator = config.packs?.goalAdvanced?.enabled
+    ? createTaskOrchestrator(
+        classifier,
+        modelRouter,
+        config,
+      )
+    : undefined;
 
-  // C5 修复：接线 Steering Queue 消费者
+  // C5 修复：接线 Steering Queue 消费者（taskOrchestrator 可能为 undefined，需空值守卫）
   agentLoop!.setSteeringConsumer(() => {
-    if (!taskOrchestrator.hasSteering()) return null;
+    if (!taskOrchestrator || !taskOrchestrator.hasSteering()) return null;
     const drained = taskOrchestrator.drainSteering();
     if (drained.length === 0) return null;
     return drained.map((m) => ({ content: m.content, mode: m.mode }));
@@ -1195,8 +1186,9 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   // Task 1：Skill 生命周期管理——已提前至 delegationDeps 装配前创建
 
   // Phase 53 Task 6：SkillSecurityGate 注入（fail-open 动态 import）
+  // G-F018 修复：受 config.packs.skillLifecycle.enabled 门控
   const phase53SkillGateCfg = config.phase53Integration?.skillSecurityGate;
-  if (phase53SkillGateCfg?.enabled) {
+  if (phase53SkillGateCfg?.enabled && config.packs?.skillLifecycle?.enabled) {
     import('../skills/security-gate.js')
       .then((mod) => {
         const gate = new mod.SkillSecurityGate({

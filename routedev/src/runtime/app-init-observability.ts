@@ -7,7 +7,7 @@
 //   2. 创建 PromptTemplateManager / Blackboard
 //   3. OTel exporter 动态 import（fail-open）
 //   4. AuditChain 哈希链审计（fail-open）
-//   5. loadProjectDoc 异步加载项目文档
+//   5. G-F027：ProjectMemoryManager / loadProjectDoc 已移除（无消费方，待后续重新接入）
 //   6. Phase 53 Doctor 启动健康检查（fail-open）
 //   7. P0-11 Analytics 队列挂载 sink
 //
@@ -18,7 +18,6 @@ import { TraceCollector } from '../harness/trace-collector.js';
 import { AuditLogger } from '../harness/audit-logger.js';
 import { PromptTemplateManager } from '../prompts/manager.js';
 import { Blackboard } from '../agent/multi/blackboard.js';
-import { ProjectMemoryManager, loadProjectDoc } from '../memory/project-memory.js';
 import { registerOffloadCleaner } from '../agent/context/offload-cleaner.js';
 import { registerShutdownHook } from './graceful-shutdown.js';
 import {
@@ -38,7 +37,7 @@ import type { InitContext, AppDependencies } from './app-init.js';
  * 创建可观测性子系统
  * 包含：TraceCollector、AuditLogger、OTel、AuditChain、Analytics、Doctor
  *
- * @param ctx 共享装配上下文（读取 config/cwd/clientManager，写入 trace/audit/prompts/blackboard/projectMemory/offload*）
+ * @param ctx 共享装配上下文（读取 config/cwd/clientManager，写入 trace/audit/prompts/blackboard/offload*）
  * @returns 可观测性子系统依赖片段
  */
 export function createObservabilitySubsystem(ctx: InitContext): Partial<AppDependencies> {
@@ -73,8 +72,6 @@ export function createObservabilitySubsystem(ctx: InitContext): Partial<AppDepen
   const blackboard = new Blackboard();
   const trace = new TraceCollector({ storageDir: undefined });
   const audit = new AuditLogger(trace.getSessionId() ?? 'app');
-  // TD: ProjectMemoryManager set 后无 get 消费方，数据流断裂，待接入或清理
-  const projectMemory = new ProjectMemoryManager(cwd, config.projectMemory);
 
   // Phase 80 Task 2：创建本地使用计数器（仅本地，禁止云上报，fail-open）
   // 供工具执行 / slash 命令 / Pack 加载等关键路径调用 increment 累加计数
@@ -107,27 +104,12 @@ export function createObservabilitySubsystem(ctx: InitContext): Partial<AppDepen
     }
   }
 
-  // Phase 48 Task 2：接线 loadProjectDoc，激活多文件名 fallback（AGENTS.md / CLAUDE.md）
-  // 异步加载，不阻塞主流程；加载后注入 projectMemory 供 system prompt 使用
-  loadProjectDoc(cwd, config.projectDoc).then((doc) => {
-    if (doc) {
-      logger.info('ProjectDoc loaded', { length: doc.length });
-      // TD: ProjectMemoryManager set 后无 get 消费方，数据流断裂，待接入或清理
-      projectMemory.setProjectDoc(doc);
-    } else {
-      logger.debug('ProjectDoc: no project document found');
-    }
-  }).catch((err) => {
-    logger.warn('ProjectDoc load failed', { error: err instanceof Error ? err.message : String(err) });
-  });
-
+  // G-F027 修复：ProjectMemoryManager 实例化与 loadProjectDoc 已移除（无消费方，数据流断裂）
   // 写回共享上下文，供其他子系统消费
   ctx.trace = trace;
   ctx.audit = audit;
   ctx.prompts = prompts;
   ctx.blackboard = blackboard;
-  // TD: ProjectMemoryManager set 后无 get 消费方，数据流断裂，待接入或清理
-  ctx.projectMemory = projectMemory;
   ctx.offloadSessionId = offloadSessionId;
   ctx.offloadRootDir = offloadRootDir;
   // Phase 80 Task 2：写入 ctx 供 tools 子系统注入 ToolExecutor
@@ -197,11 +179,33 @@ export function createObservabilitySubsystem(ctx: InitContext): Partial<AppDepen
     });
   }
 
+  // G-F022 修复：注册 trace flush shutdown hook，确保退出前写入待刷新记录
+  // 优先级 9：在 analytics flush（优先级 10）之前完成 trace 持久化
+  registerShutdownHook(9, 'trace-flush', async () => {
+    try {
+      await trace.flush();
+    } catch (err) {
+      logger.debug('trace flush on shutdown failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
   return {
     prompts,
     blackboard,
     trace,
     audit,
     usageCounter,
+    // G-F022 修复：提供 dispose 方法，供 AppDependencies.dispose 调用刷新 trace
+    dispose: async () => {
+      try {
+        await trace.flush();
+      } catch (err) {
+        logger.debug('observability dispose: trace flush failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
   };
 }

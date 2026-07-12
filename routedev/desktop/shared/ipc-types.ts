@@ -66,6 +66,8 @@ export interface ConfigSaveResult {
   /** Grok F-011：config:save 仅更新内存 config 不重建 deps（LLM 客户端/分类器）。
    * 为 true 时提示前端需调用 config:reload 才能让 provider/model 等变更生效。 */
   needsReload?: boolean;
+  /** G-F001：安全配置弱化检测详情（success=false 且涉及安全字段弱化时存在） */
+  weakening?: Array<{ field: string; oldValue: unknown; newValue: unknown; reason: string }>;
 }
 
 export interface MCPStatus {
@@ -177,6 +179,8 @@ export interface ProfileSavePayload extends AgentProfileDetail {}
 export interface ProfileOpResult {
   success: boolean;
   error?: string;
+  /** G-F003：角色能力上限校验失败时的错误列表 */
+  errors?: string[];
   /** duplicate 时返回新 Profile 的 id */
   id?: string;
 }

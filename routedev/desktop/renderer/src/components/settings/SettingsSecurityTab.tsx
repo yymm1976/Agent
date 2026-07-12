@@ -2,7 +2,7 @@
 // Phase 74-G：安全设置 Tab（目录边界/权限规则/网络搜索/对抗性验证/渐进式信任/沙箱级）
 // 从 SettingsPage.tsx 迁移
 
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Snowflake } from 'lucide-react';
 import type {
   AppConfig, SecurityConfig, SandboxLevel, ApprovalLevel, ToolCategory,
   FilesystemPermissionRule,
@@ -418,6 +418,11 @@ export function SettingsSecurityTab({
           <CardDescription>7 级信任梯度 + 临时授权 + 偏好持久化（借鉴 Claude Code）</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* G-F037: Freeze 警告徽章 */}
+          <div className="flex items-center gap-2 rounded-md border border-rd-warning/30 bg-rd-warning/10 px-3 py-2 text-xs text-rd-warning">
+            <Snowflake size={14} />
+            <span>此模块已冻结，配置可能不会生效</span>
+          </div>
           <div className="space-y-2">
             <Label htmlFor="trust-base-level">基础信任级别</Label>
             <Select

@@ -113,7 +113,10 @@ export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies
   // A3：激活 ContextCompactor——消除双引擎不统一，让上下文压缩在生产路径生效
   // L5 summarize 回调使用 checkpointClient（已配置的辅助模型），失败时由 B12 的 try/catch 降级
   // Phase 55 Task 9：CCR 可逆压缩——compact 前缓存原始消息，LLM 可通过 ccr_retrieve 工具取回
-  const ccrCache = new CCRCache(config.ccrCompression?.maxCacheSize ?? 50);
+  // G-F016 修复：受 config.packs.ccrCompression.enabled 门控
+  const ccrCache = (config.ccrCompression?.enabled && config.packs?.ccrCompression?.enabled)
+    ? new CCRCache(config.ccrCompression?.maxCacheSize ?? 50)
+    : undefined;
 
   // Phase 70：提前创建上下文压缩模块实例（供 ContextCompactor 和 AppDependencies 共享）
   const p70Cfg = config.phase70Integration;
@@ -202,7 +205,7 @@ export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies
         }
       : undefined,
     contextWindow: currentModelConfig?.contextWindow ?? 128000,
-    ccrCache: config.ccrCompression?.enabled ? ccrCache : undefined,
+    ccrCache: (config.ccrCompression?.enabled && config.packs?.ccrCompression?.enabled) ? ccrCache : undefined,
     // Phase 70：上下文压缩技术深度优化
     toolOutputBudgetManager: p70ToolOutputBudgetManager,
     messageGrouper: p70MessageGrouper,

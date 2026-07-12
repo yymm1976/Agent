@@ -89,6 +89,8 @@ export function InputArea({
   const [showSkillBar, setShowSkillBar] = useState(true);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // G-F025: resize 监听器的 AbortController 引用，组件卸载时自动清理
+  const resizeAbortRef = useRef<AbortController | null>(null);
 
   // 切换对话时自动聚焦输入框，避免焦点丢失导致无法点击输入框
   // 无论 isProcessing 状态如何都聚焦：排队队列模式允许用户在引擎工作时输入下一条消息
@@ -99,6 +101,13 @@ export function InputArea({
     }, 50);
     return () => clearTimeout(timer);
   }, [focusKey]);
+
+  // G-F025: 组件卸载时清理残留的 resize 监听器，防止内存泄漏
+  useEffect(() => {
+    return () => {
+      resizeAbortRef.current?.abort();
+    };
+  }, []);
 
   // 切换对话时重置可能残留的 local state，避免旧对话的状态泄漏到新对话
   useEffect(() => {
@@ -170,13 +179,17 @@ export function InputArea({
     await onAutonomyChange(mode);
   };
 
-  // 拖动调整输入区高度
+  // 拖动调整输入区高度（G-F025: 使用 AbortController 管理监听器生命周期）
   const handleResizeStart = (e: React.MouseEvent) => {
     e.preventDefault();
     setIsResizing(true);
     const startY = e.clientY;
     const startHeight = inputHeight;
     let nextHeight = startHeight;
+    // 中止上一次未完成的拖拽（防御性）
+    resizeAbortRef.current?.abort();
+    const controller = new AbortController();
+    resizeAbortRef.current = controller;
     const onMove = (moveE: MouseEvent) => {
       const delta = startY - moveE.clientY;
       nextHeight = Math.max(140, Math.min(640, startHeight + delta));
@@ -185,11 +198,11 @@ export function InputArea({
     const onUp = () => {
       setIsResizing(false);
       localStorage.setItem('routedev-input-height-v2', String(nextHeight));
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+      controller.abort();
+      resizeAbortRef.current = null;
     };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    document.addEventListener('mousemove', onMove, { signal: controller.signal });
+    document.addEventListener('mouseup', onUp, { signal: controller.signal });
   };
 
   const selectCommand = (cmd: string) => {

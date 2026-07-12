@@ -239,6 +239,8 @@ interface BashSecurityResult {
   reason: string;
   /** 命中哪一层检查 */
   layer?: string;
+  /** G-F043: 标记需要用户确认（如命令注入检测），不阻断但需用户确认 */
+  requiresConfirmation?: boolean;
 }
 
 /**
@@ -334,6 +336,7 @@ export function checkBashSecurity(command: string): BashSecurityResult {
   // 这里检测明显的注入模式，command-parser 负责精确解析
   // 注意：不拦截合法的管道和重定向，仅检测可疑模式
   // 安全修复：复杂度超限时跳过 Layer 5-6（高成本正则），仅记录 warn
+  // G-F043: 检测到注入模式时返回 requiresConfirmation，不阻断但需用户确认
   if (!tooComplex) {
     const injectionPatterns = [
       { pattern: /\$\([^)]*\)/, reason: '命令替换 $() 可能是注入' },
@@ -341,8 +344,13 @@ export function checkBashSecurity(command: string): BashSecurityResult {
     ];
     for (const { pattern, reason } of injectionPatterns) {
       if (pattern.test(command)) {
-        // 仅 warn 不 block，因为合法场景也可能使用 $()
         logger.warn('Bash security: potential injection', { reason, command: command.slice(0, 100) });
+        return {
+          allowed: true,
+          reason: '检测到命令替换模式，需要确认',
+          layer: 'injection',
+          requiresConfirmation: true,
+        };
       }
     }
 

@@ -3,7 +3,7 @@
 // 从 SettingsPage.tsx 迁移，保留原逻辑与 UI
 
 import { useState } from 'react';
-import { Server, Sparkles, ShoppingBag } from 'lucide-react';
+import { Server, Sparkles, ShoppingBag, Snowflake } from 'lucide-react';
 import type { AppConfig } from '../../../../shared/config-types.js';
 import { getAppVersion } from '../../pages/settings-helpers.js';
 import { Button } from '../ui/button.js';
@@ -39,6 +39,11 @@ export function SettingsExpertiseTab({ draft, updateExpertise }: SettingsExperti
 
   return (
     <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+      {/* G-F036: Freeze 警告徽章 */}
+      <div className="flex items-center gap-2 rounded-md border border-rd-warning/30 bg-rd-warning/10 px-3 py-2 text-xs text-rd-warning">
+        <Snowflake size={14} />
+        <span>此模块已冻结，配置可能不会生效</span>
+      </div>
       <Card>
         <CardHeader>
           <CardTitle>经验等级</CardTitle>

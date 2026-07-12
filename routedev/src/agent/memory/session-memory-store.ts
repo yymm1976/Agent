@@ -38,7 +38,8 @@ export class SessionMemoryStore {
         .then(() => {
           this.initialLoadDone = true;
         })
-        .catch(() => {
+        .catch((err) => {
+          logger.warn('[SessionMemoryStore] constructor load failed', { err });
           this.initialLoadDone = true;
         });
     } else {

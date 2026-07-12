@@ -52,7 +52,7 @@ export function createRecoveryFunctions(ctx: GoalRunnerCtx) {
 
   // Phase 54 Task 4：缓存最近一次 runCompletionGate 的 typecheck/lint/tests 结果
   // 供 verifyPlan 中 GoalAuditor.audit 的 completion_gate 层使用（修复原接入缺陷：未传客观验证结果）
-  let lastGateChecks: { typecheck: boolean; lint: boolean; tests: boolean } | null = null;
+  let lastGateChecks: { typecheck: boolean | 'not_run'; lint: boolean | 'not_run'; tests: boolean | 'not_run' } | null = null;
 
   /**
    * 验证目标完成度（LLM 验证）
@@ -204,11 +204,11 @@ export function createRecoveryFunctions(ctx: GoalRunnerCtx) {
         lastGateChecks = {
           typecheck: gateResult.checks.find(c => c.name.toLowerCase().includes('typecheck'))?.ok
             ?? gateResult.checks.find(c => c.name.toLowerCase().includes('type'))?.ok
-            ?? true,
+            ?? 'not_run' as const,
           lint: gateResult.checks.find(c => c.name.toLowerCase().includes('lint'))?.ok
-            ?? true,
+            ?? 'not_run' as const,
           tests: gateResult.checks.find(c => c.name.toLowerCase().includes('test'))?.ok
-            ?? true,
+            ?? 'not_run' as const,
         };
 
         const failedChecks = gateResult.checks.filter(c => !c.ok && !c.skipped);

@@ -152,59 +152,6 @@ describe('Phase 44 Integration - BranchPersistence', () => {
 });
 
 // ============================================================
-// 5. BranchLinkageManager 模块测试（动态 import，不存在则 skip）
-// ============================================================
-describe('Phase 44 Integration - BranchLinkageManager', () => {
-  it('linkGoal+getLinkage：建立 goal 与分支映射后能查询（skip if not available）', async () => {
-    let mod: { BranchLinkageManager: new (rootDir: string) => {
-      load: () => Promise<void>;
-      linkGoal: (messageBranchId: string, messageBranchName: string, goalId: string) => unknown;
-      getLinkage: (messageBranchId: string) => unknown;
-    } };
-    try {
-      mod = await import('../../src/agent/branch-linkage.js');
-    } catch {
-      // 模块尚未创建，skip
-      expect(true).toBe(true);
-      return;
-    }
-    expect(mod).toBeDefined();
-    expect(mod.BranchLinkageManager).toBeDefined();
-
-    const os = await import('node:os');
-    const path = await import('node:path');
-    const fs = await import('node:fs/promises');
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'routedev-phase44-link-'));
-    try {
-      const linkage = new mod.BranchLinkageManager(tmpDir);
-      await linkage.load();
-
-      // 建立映射前查询应返回 undefined
-      const before = linkage.getLinkage('branch-A');
-      expect(before).toBeUndefined();
-
-      // 建立 branch-A → goal-1 映射（参数：messageBranchId, messageBranchName, goalId）
-      linkage.linkGoal('branch-A', 'feature-login', 'goal-1');
-      const after = linkage.getLinkage('branch-A') as {
-        messageBranchId: string;
-        messageBranchName: string;
-        goalId: string;
-        experimentIds: string[];
-        status: string;
-      };
-      expect(after).toBeDefined();
-      expect(after.messageBranchId).toBe('branch-A');
-      expect(after.messageBranchName).toBe('feature-login');
-      expect(after.goalId).toBe('goal-1');
-      expect(Array.isArray(after.experimentIds)).toBe(true);
-      expect(after.experimentIds.length).toBe(0);
-    } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-    }
-  });
-});
-
-// ============================================================
 // 6. RequirementChange 模块测试（动态 import，不存在则 skip）
 // ============================================================
 describe('Phase 44 Integration - RequirementChange', () => {

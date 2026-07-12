@@ -253,14 +253,6 @@ export class ReActAgentLoop {
   }
 
   /**
-   * Phase 73 Part C：取出 follow-up 队列消息（供外层循环注入）
-   * 根据 followUpMode 决定出队策略：'all' 返回全部并清空；'one-at-a-time' 返回第一条
-   */
-  private drainFollowUpQueue(): import('./message-types.js').FollowUpMessage[] {
-    return this.ctxMgr.drainFollowUpQueue();
-  }
-
-  /**
    * 运行 ReAct 循环
    * yield 出 ReActEvent 事件流
    */

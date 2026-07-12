@@ -60,7 +60,7 @@
 | C-35 | MemoryRecallInjector | core | on | app-init-memory | src/agent/memory/recall-injector.ts | KnowledgeGraph | 强化+测试；基础召回 |
 | C-36 | BranchManager | core | on | app-init-memory | src/agent/branch.ts | — | 强化+测试；会话分支（蓝图 §3） |
 | C-37 | BranchPersistence | core | on | app-init-agent | src/agent/branch-persistence.ts | conversation | 强化+测试；JSONL 持久化 |
-| C-38 | BranchLinkageManager | core | on | app-init-agent | src/agent/branch-linkage.ts | — | 强化+测试；分支映射 |
+| C-38 | ~~BranchLinkageManager~~（已删除） | core | — | — | src/agent/branch-linkage.ts（已删除） | — | 已归档：模块已删除，保留编号占位 |
 | C-39 | TraceCollector | core | on | app-init-observability | src/harness/trace-collector.ts | — | 强化+测试；基础可观测性 |
 | C-40 | AuditLogger | core | on | app-init-observability | src/harness/audit-logger.ts | trace | 强化+测试；不可删 |
 | C-41 | PromptTemplateManager | core | on | app-init-observability | src/prompts/manager.ts | — | 强化+测试；三级优先级 |
@@ -202,7 +202,7 @@
 | desktop/main/engine-bridge.ts + bridges（slash 命令 + 领域委托） | 11 | 11 | 100% |
 | src/config/schema.ts（顶层配置开关组） | ~30 | 30 | 100% |
 
-**总体覆盖率：** 122/122 ≈ **100%**（≥80% 验收标准达成）
+**总体覆盖率：** 136/136 ≈ **100%**（≥80% 验收标准达成）（截至 v4.5.4）
 
 ### 5.2 按层分布
 

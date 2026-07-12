@@ -104,7 +104,7 @@ export class GoalVerifier {
     const response = await llmClient.complete(requestOptions);
     // Phase 30：回调主验证的 token 用量
     if (options.onUsage) {
-      try { options.onUsage(response.usage, 'main'); } catch { /* 回调失败不影响主流程 */ }
+      try { options.onUsage(response.usage, 'main'); } catch (err) { logger.debug('[GoalVerifier] onUsage error', { err }); }
     }
     const result = this.parseResult(response.content, confidenceThreshold);
 
@@ -120,7 +120,7 @@ export class GoalVerifier {
           undefined,
           // Phase 30：回调对抗性验证的 token 用量
           options.onUsage
-            ? (usage) => { try { options.onUsage!(usage, 'adversarial'); } catch { /* 非阻塞 */ } }
+            ? (usage) => { try { options.onUsage!(usage, 'adversarial'); } catch (err) { logger.debug('[GoalVerifier] onUsage error', { err }); } }
             : undefined,
         );
         if (challenges.length > 0) {
@@ -185,7 +185,7 @@ export class GoalVerifier {
 
     // Phase 30：回调对抗性验证的 token 用量
     if (onUsage) {
-      try { onUsage(response.usage); } catch { /* 回调失败不影响主流程 */ }
+      try { onUsage(response.usage); } catch (err) { logger.debug('[GoalVerifier] onUsage error', { err }); }
     }
 
     try {

@@ -8,7 +8,7 @@
 // UI 库：复用项目内 shadcn/ui 风格组件（Card / Badge / Alert / Separator）+ lucide-react 图标
 // 不使用 antd（项目未安装 antd）
 
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import {
   CheckCircle2,
   MinusCircle,
@@ -194,7 +194,7 @@ export interface SessionStatusCardProps {
  *
  * idle 状态：不渲染（ChatPage 在 status.status === 'idle' 时不挂载本卡）
  */
-export function SessionStatusCard({ status }: SessionStatusCardProps) {
+export const SessionStatusCard = memo(function SessionStatusCard({ status }: SessionStatusCardProps) {
   const [showDetails, setShowDetails] = useState(true);
   const hasDetails =
     status.knownFacts.length > 0 ||
@@ -269,4 +269,4 @@ export function SessionStatusCard({ status }: SessionStatusCardProps) {
       </div>
     </Card>
   );
-}
+});

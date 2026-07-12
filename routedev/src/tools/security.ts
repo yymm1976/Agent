@@ -323,13 +323,24 @@ export class SecurityChecker implements ISecurityChecker {
         requiresConfirmation: false,
       };
     }
+    // G-F043: enhanced Layer 5 检测到命令注入时，要求用户确认
+    if (bashResult.requiresConfirmation) {
+      const reason = bashResult.reason || '检测到命令替换模式，需要确认';
+      auditPanel.log({ source: 'path-guard', level: 'info', action: 'warned', target: command, reason });
+      return {
+        allowed: true,
+        requiresConfirmation: true,
+        reason,
+      };
+    }
 
-    // I2 修复：Bash 注入检测阻断
-    // checkBashSecurity 的 Layer 5 仅 warn 不 block，这里根据 strictBashMode 决定是否阻断
+    // I2 修复 + G-F043：Bash 注入检测默认启用
+    // - strictBashMode=true: 阻断执行
+    // - 默认模式: 标记 requiresConfirmation 让用户确认，不阻断
     const strictBashMode = this.securityConfig.strictBashMode ?? false;
-    if (strictBashMode) {
-      const injectionDetected = this.detectBashInjection(command);
-      if (injectionDetected) {
+    const injectionDetected = this.detectBashInjection(command);
+    if (injectionDetected) {
+      if (strictBashMode) {
         const reason = '检测到 Bash 命令注入模式（strictBashMode 已启用，已阻断）';
         auditPanel.log({ source: 'path-guard', level: 'warn', action: 'blocked', target: command, reason });
         return {
@@ -338,6 +349,13 @@ export class SecurityChecker implements ISecurityChecker {
           requiresConfirmation: false,
         };
       }
+      const reason = '检测到命令替换模式，需要确认';
+      auditPanel.log({ source: 'path-guard', level: 'info', action: 'warned', target: command, reason });
+      return {
+        allowed: true,
+        requiresConfirmation: true,
+        reason,
+      };
     }
 
     // Phase 29 Task 3：使用 tokenize 解析替代子串匹配（修复 S2/S3）

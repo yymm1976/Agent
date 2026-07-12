@@ -3,6 +3,8 @@
 // 原 RouteDevEngine.listExperiments / adoptExperiment / discardExperiment / getExperimentDiff 委托至此。
 
 import { ExperimentManager } from '../../../src/harness/experiment-manager.js';
+import { logger } from '../../../src/utils/logger.js';
+import type { ExperimentInfo } from '../../shared/ipc-types.js';
 import type { EngineContext } from './engine-context.js';
 
 /**
@@ -16,11 +18,12 @@ export class ExperimentBridge {
   constructor(private ctx: EngineContext) {}
 
   /** 列出所有实验分支 */
-  listExperiments(): unknown[] {
+  listExperiments(): ExperimentInfo[] {
     try {
       const manager = this.ctx.deps?.experimentManager ?? new ExperimentManager(this.ctx.options.cwd);
-      return manager.listExperiments();
-    } catch {
+      return manager.listExperiments() as unknown as ExperimentInfo[];
+    } catch (err) {
+      logger.warn('[ExperimentBridge] listExperiments failed', { err });
       return [];
     }
   }
