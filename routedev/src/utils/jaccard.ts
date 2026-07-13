@@ -32,11 +32,4 @@ export function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
   return union === 0 ? 0 : intersection / union;
 }
 
-/**
- * 快捷方法：直接比较两段文本的 Jaccard 相似度
- */
-export function textJaccardSimilarity(a: string, b: string): number {
-  const setA = tokenizeForJaccard(a);
-  const setB = tokenizeForJaccard(b);
-  return jaccardSimilarity(setA, setB);
-}
+

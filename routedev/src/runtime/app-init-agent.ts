@@ -1,5 +1,5 @@
 // src/runtime/app-init-agent.ts
-// Agent 子系统装配：Spawn Agent、Plugin、Hook、Goal、Experiment、Phase 48/49/52/53/77
+// Agent 子系统装配：Spawn Agent、Plugin、Hook、Goal、Experiment
 // 从 app-init.ts 拆分（TD-02），保持功能完全等价
 //
 // 职责：
@@ -12,12 +12,6 @@
 //   7. TaskOrchestrator + UnifiedReviewer + CompletionGate + Steering Queue
 //   8. BranchPersistence + BranchLinkageManager
 //   9. ExperimentManager + ParallelExperimentManager
-//  10. Phase 48 模块（IntegrityManifest / Cite / Import / Macros / MCPBridge）
-//  11. Phase 49 DualLoopOrchestrator + reviewerPolicy / boundedRecovery 注入
-//  12. Phase 52 SkillSecurityGate + boundedRecovery 配置确认
-//  13. Phase 53 CircuitBreaker
-//  14. Phase 70 模块激活日志
-//  15. Phase 77 goal 恢复 + shutdown hooks
 //
 // 依赖：tools 子系统（registry/agentLoop/toolExecutor/...）、memory 子系统（contextManager/recallInjector/...）、
 //       observability 子系统（trace/audit）、router 子系统（primaryClient/clientManager/classifier/modelRouter/tracker）
@@ -85,7 +79,7 @@ import { filterProcessEnvByWhitelist } from '../security/env-filter.js';
 
 /**
  * 创建 Agent 子系统
- * 包含：Spawn Agent、Plugin、Hook、Goal、Experiment、Phase 48/49/52/53/77 全部接线
+ * 包含：Spawn Agent、Plugin、Hook、Goal、Experiment 全部接线
  *
  * @param ctx 共享装配上下文（读取 tools/memory/observability/router 子系统的产出，写入 hookRunner/unifiedReviewer/...）
  * @returns Agent 子系统依赖片段
@@ -115,7 +109,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   } = ctx;
 
   // ===== P1-6：子 Agent 生成工具（需注入 spawnAgent 函数，依赖 agentLoop 和 primaryClient） =====
-  // Phase 38 Task 2：防递归增强 + 并行上限
   // Phase 50 Task 3：声明外层作用域变量，delegationIntegration 开启时由 wrapSpawnAgentWithDelegation 块填充
   let delegationLifecycle: SubAgentLifecycle | null = null;
   let delegationScoreCardCollector: SubAgentScoreCardCollector | null = null;
@@ -170,7 +163,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   /**
    * 创建子 Agent 的 spawn 函数
    * Phase 38 Task 2：使用 childRegistry 隔离工具集，不再修改共享 registry
-   * Phase 48 Task 4：接入 AgentProfileManager
    */
   const createSpawnAgentFn = (): SpawnAgentFunction => {
     // Phase 48 Task 4：闭包级 AgentProfileManager 实例，所有 spawn 调用共享
@@ -206,7 +198,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
         if (!defaultModel) {
           return { success: false, result: '', error: '未配置可用模型' };
         }
-        // Phase 75-A3：model 选择优先级
         const explicitModelId = normalizedParams.model && normalizedParams.model !== 'inherit'
           ? normalizedParams.model
           : undefined;
@@ -318,7 +309,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
         const effectiveSystemPrompt = options?.renderedSystemPrompt ?? childSystemPrompt;
         const effectiveHistory = options?.forkedConversationHistory ?? [];
 
-        // Phase 79 Task 5：子 Agent 工具确认委托父会话
         // 从父 Loop 获取当前 run() 期间的确认回调，传给子 Loop
         // 子 Agent 需要确认的工具调用将通过此回调委托给父会话处理（而非 fail-closed 拒绝）
         const parentConfirmTool = agentLoop!.getCurrentConfirmTool();
@@ -360,7 +350,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
     };
   };
 
-  // Phase 38 Task 2 / Phase 50 Task 3：spawn 函数包装 + SpawnAgentTool 注册
   // Phase 81 Task 4：packs.multiAgent.enabled 门控（extended-pack，默认 false 退出装配）
   //   注：工具注册逻辑（registry.register）属于装配层，非 app-init-tools.ts 的静态注册段
   const subAgentsCfg = config.subAgents;
@@ -445,7 +434,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   // 将插件系统的中间件管线注入 Agent Loop
   agentLoop!.setMiddlewarePipeline(pluginSystem.middlewarePipeline);
 
-  // Phase 38 Task 1：注册 LoopDetectionMiddleware 到 onReasoning 阶段
   const loopDetectionCfg = config.middleware?.loopDetection;
   if (loopDetectionCfg?.enabled !== false) {
     const loopDetection = new LoopDetectionMiddleware({
@@ -459,7 +447,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
     });
   }
 
-  // Phase 71 Task B2：注册 MentionResolverMiddleware 到 onUserMessage 阶段
   const mentionResolver = new MentionResolverMiddleware(cwd);
   pluginSystem.middlewarePipeline.register('onUserMessage', mentionResolver.getHandler());
   logger.info('MentionResolverMiddleware registered', { cwd });
@@ -525,7 +512,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
     });
   }
 
-  // ===== Phase 39：ExperimentManager 配置传递 =====
   const experimentsCfg = config.experiments;
   if (experimentsCfg) {
     logger.info('Experiments config loaded', {
@@ -744,7 +730,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
     });
   }
 
-  // ===== Phase 35 Task 2：HookRunner 创建 + 注册内置钩子 =====
   const hookRunner = new HookRunner();
   hookRunner.setTraceCollector(trace!);
   registerBuiltinHooks(hookRunner, audit!, cwd, currentModel);
@@ -830,7 +815,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
       });
   }
 
-  // Phase 43：Hook 增强配置接入
  const hookEnhancementCfg = config.hookEnhancement;
  // 注册命令安全审查钩子：对 shell_exec / git_op 的命令参数进行危险模式检测
   hookRunner.register({
@@ -859,7 +843,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
     trialDays: hookEnhancementCfg?.trialDays,
     hookGroups: hookEnhancementCfg?.hookGroups,
   });
- // ===== Phase 32 Task 1：Phase 31 模块实例化 =====
 
   // 3. CompletionGate——独立代码验证门（typecheck/lint/tests）
   // G-F038 修复：受 config.packs.goalAdvanced.enabled 门控
@@ -1141,7 +1124,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
       });
   }
 
-  // ===== Phase 50 Task 6：Phase 49 模块接入确认 =====
   const phase49Cfg = config.phase49Integration;
   // Phase 55 Task 9：DualLoopOrchestrator ref（异步创建，供 goal-runner 通过 ref 延迟读取）
   const dualLoopOrchestratorRef: { current: DualLoopOrchestrator | null } = { current: null };
@@ -1150,7 +1132,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
     import('../agent/dual-loop-orchestrator.js')
       .then((mod) => {
         const orchestrator = new mod.DualLoopOrchestrator();
-        // Phase 55 Task 9：立即写入 ref
         dualLoopOrchestratorRef.current = orchestrator;
         // CR-1 修复：在 orchestrator 创建后立即注入 reviewerPolicy 和 boundedRecovery
         if (config.reviewerPolicy?.tieredReviewEnabled && config.packs?.adversarial?.enabled) {
@@ -1173,7 +1154,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
         });
         innerAgentLoop.setTraceCollector(trace!);
         orchestrator.setInnerAgent(innerAgentLoop);
-        // Phase 55 Task 7：强类型调用 setDualLoopOrchestrator
         agentLoop!.setDualLoopOrchestrator(orchestrator);
         logger.info('Phase 49 DualLoopOrchestrator integrated', { enabled: true, innerAgent: true });
       })
@@ -1218,7 +1198,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
 
   // Phase 51 Task 1/7：Reviewer 分级策略——已在 Phase 49 块中通过 DualLoopOrchestrator.setReviewerPolicy 接入
 
-  // ===== Phase 70：日志观测哪些子模块已激活 =====
   const p70Cfg = ctx.p70Cfg;
   if (p70Cfg && (
     ctx.p70ToolOutputBudgetManager || ctx.p70MessageGrouper || ctx.p70ActionChainDetector ||
@@ -1252,7 +1231,6 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
       });
   }
 
-  // ===== Phase 77：注册 shutdown hook 保存 goal 状态 =====
   // 优先级 80：高于 codemap-watcher(50)/analytics-flush(10)，低于 session-memory(100)
   if (goalPersistence) {
     registerShutdownHook(80, 'goal-state-persist', async () => {

@@ -1,6 +1,6 @@
 // src/runtime/goal-runner-scheduler.ts
 // 目标运行器·步骤调度模块：执行循环、路径路由、单步执行
-// 从原 goal-runner.ts 拆分（Phase 79 Task 2），行为不变仅文件拆分
+// 从原 goal-runner.ts 拆分，行为不变仅文件拆分
 //
 // 职责：
 //   - executeGoalPlan：主执行入口——持久化、路径路由、升降级、验证、迭代闭环、收尾
@@ -17,7 +17,6 @@ import type { RoutingRecord } from '../router/routing-history.js';
 import type { DagNode, DagWorkflow } from '../agent/workflow/dag-engine.js';
 // Phase 55 Task 11：CompositionalRouter 底层类型（AtomicSubTask 用于 decomposeFn 签名）
 import type { AtomicSubTask } from '../skills/compositional-router.js';
-// Phase 53 P5：步骤级钩子运行器（pre-step/post-step/on-complete）
 import type { HookContext, StepResult } from '../agent/hooks.js';
 // Phase 54 Task 5：自主度行为映射（auto/semi/manual → 具体行为开关）
 import { AUTONOMY_BEHAVIOR, type AutonomyMode } from '../config/schema.js';
@@ -116,7 +115,7 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
     // Phase 54 修复：Electron 端（onGoalEvent 存在）原设为 Number.MAX_SAFE_INTEGER（无穷大），
     // 导致 40 分钟超长执行无任何约束。改为合理上限 1M token（约 30 万字上下文，足够长任务但有兜底）
     const goalCfg = config.goal;
-    const ELECTRON_TASK_BUDGET = 1_000_000;  // Phase 54：Electron 端合理上限，避免无穷大
+    const ELECTRON_TASK_BUDGET = 1_000_000;  // Electron 端合理上限，避免无穷大
     const taskBudget = onGoalEvent
       ? (goalCfg?.tokenBudget ?? ELECTRON_TASK_BUDGET)
       : (goalCfg?.tokenBudget ?? config.router.budget.perRequestLimit ?? 100000);
@@ -354,7 +353,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
    * @returns 步骤执行内容（assistant 回复全文）
    */
   async function executeSingleStep(step: GoalStep): Promise<string> {
-    // ===== Phase 53 P5：pre-step 钩子 =====
     if (hookRunner) {
       try {
         const preCtx: HookContext = {
@@ -378,7 +376,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
     const softStopRatio = goalCfg?.softStopRatio ?? 0.9;
     const classifyResult = await classifier.classify({ query: step.description });
 
-    // ===== Phase 65：检索相关记忆用于上下文增强 =====
     let relevantMemories: string | null = null;
     if (hybridRetriever) {
       try {
@@ -394,7 +391,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       }
     }
 
-    // ===== Phase 68：操作分类 =====
     let operationClassification: import('../skills/operation-classifier.js').OperationClassification | null = null;
     if (classifyOperation) {
       try {
@@ -407,7 +403,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       }
     }
 
-    // ===== Phase 68：Kan 障碍检查 =====
     if (kanObstacleChecker) {
       try {
         const obstacleResult = kanObstacleChecker.check([]);
@@ -510,7 +505,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       // Phase 30：token_profile 事件由 profiler 内部记录，无需额外处理
     }
 
-    // ===== Phase 61：记录路由历史 =====
     if (routingHistory) {
       const record: RoutingRecord = {
         taskSignature: step.description.slice(0, MAX_CONTEXT_ITEMS),
@@ -572,7 +566,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       throw new PlanAbortError('用户中断');
     }
 
-    // ===== Phase 53 P5：post-step 钩子 =====
     // 支持 abort（中止整个 plan）和 modifiedResult（替换步骤输出）
     // retry 不支持（需重写主体为独立函数，留作未来扩展）；fail-open 不阻塞主流程
     if (hookRunner) {
@@ -601,7 +594,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       }
     }
 
-    // ===== Phase 65：存储步骤结果到记忆系统 =====
     if (memoryStore?.isEnabled()) {
       try {
         await memoryStore.write({
@@ -620,7 +612,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       }
     }
 
-    // ===== Phase 65：定期维护记忆索引 =====
     if (localMaintenance) {
       try {
         const maintStatus = localMaintenance.shouldMaintain();
@@ -638,7 +629,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       }
     }
 
-    // ===== Phase 68：记录决策制品到溯源图 =====
     if (provenanceGraph) {
       try {
         const { randomUUID } = await import('node:crypto');
@@ -661,7 +651,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       }
     }
 
-    // ===== Phase 68：定量门评估 =====
     if (quantitativeGate) {
       try {
         const gateEval = quantitativeGate.evaluate({
@@ -686,7 +675,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
   }
 
   /**
-   * Phase 55 Task 6：单 Agent 串行执行路径
    * 从 executeGoalPlan 提取的 for 循环逻辑：逐步骤运行 Agent Loop + 检查点 + 上下文压缩
    * 闭包变量（gid/emit/gateManager/tracker 等）直接复用，softStopRatio 在 executeSingleStep 内读取
    * Phase 55：单步执行逻辑已提取为 executeSingleStep，本函数负责步骤生命周期管理（status/gate/emit/checkpoint）
@@ -717,7 +705,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       step.status = 'in_progress';
       step.startedAt = Date.now();
       addSystemMessage(`▶ 步骤 ${step.id}/${plan.steps.length}: ${step.description}`);
-      // Phase 54：step_update running
       emit({ type: 'step_update', goalId: gid, stepId: step.id, status: 'running' });
 
       try {
@@ -733,7 +720,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
           conversationHistoryRef.current = conversationHistoryRef.current.slice(-20);
         }
 
-        // Phase 21 Task 2：更新对应 gate 状态为 passed
         gateManager.updateGate(`step-${step.id}`, 'passed', step.result);
 
         // 步骤间 checkpoint + 压缩
@@ -764,7 +750,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
           }
         }
         addSystemMessage(`✅ 步骤 ${step.id} 完成`);
-        // Phase 54：step_update completed
         emit({
           type: 'step_update',
           goalId: gid,
@@ -776,11 +761,9 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
         step.status = 'failed';
         step.completedAt = Date.now();
         step.error = error instanceof Error ? error.message : String(error);
-        // Phase 21 Task 2：更新对应 gate 状态为 failed
         gateManager.updateGate(`step-${step.id}`, 'failed', step.error);
         addSystemMessage(`❌ 步骤 ${step.id} 失败: ${step.error}`);
         addSystemMessage(renderGoalProgressText(plan));
-        // Phase 54：step_update failed
         emit({
           type: 'step_update',
           goalId: gid,
@@ -799,7 +782,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
   }
 
   /**
-   * Phase 55 Task 6：DAG 引擎执行路径
    * DagEngine 未注入时降级到单 Agent 串行。
    * Phase 55：已适配真实 DagEngine API——execute(workflow, executor)。
    *   - GoalPlan → DagWorkflow 转换：step.id(number) → node.id(`step-${id}`)，
@@ -814,7 +796,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       return executePlanWithSingleAgent(plan);
     }
     try {
-      // Phase 55：GoalPlan → DagWorkflow 转换
       // step.id(number) → node.id(`step-${id}`)；dependencies(number[]) → dependsOn(`step-${depId}`[])
       // action 用 step.description（无模板变量，resolvedAction 与 description 等价）
       const workflow: DagWorkflow = {
@@ -896,7 +877,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
   }
 
   /**
-   * Phase 55 Task 11：CompositionalRouter 执行路径
    * 跨领域任务（uniqueDomains > dagMaxDomains）走此路径：
    *   1. 用 LLM 把 plan 拆成原子子任务（SAD 迭代技能感知分解）
    *   2. 检索 Skill 并组合为 DAG（当前 Skill 检索未启用，按纯依赖 DAG 执行）

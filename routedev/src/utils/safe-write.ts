@@ -127,18 +127,4 @@ export async function safeWriteText(
   atomicWrite(filePath, buf, options);
 }
 
-/**
- * 同步原子写入文本文件（非 JSON）
- *
- * @param filePath 目标文件路径
- * @param content 文本内容
- * @param options 写入选项
- */
-export function safeWriteTextSync(
-  filePath: string,
-  content: string,
-  options: SafeWriteOptions = {},
-): void {
-  const buf = Buffer.from(content, 'utf8');
-  atomicWrite(filePath, buf, options);
-}
+
