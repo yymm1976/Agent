@@ -1,13 +1,13 @@
 # RouteDev 技术债跟踪表
 
 > **用途：** 集中记录所有已知技术债，避免后续审查重复发现已排期项。
-> **审查员指引：** 报告 findings 前请先对照本表 §1，已排期至 Phase-79+ 的 24 项不再重复报告。仅报告本表未覆盖的新问题。
+> **审查员指引：** 报告 findings 前请先对照本表 §1，已排期至 Phase-79+ 的 20 项不再重复报告。仅报告本表未覆盖的新问题。
 > **维护规则：** 每轮审查后更新；修复完成的项移至 §3 历史区；新发现的项追加到 §1。
-> **最后更新：** 2026-07-20（TD-25/26/27 架构决策已实施）
+> **最后更新：** 2026-07-29（TD-03/04/05/17 核实已实施，移入历史区）
 
 ---
 
-## 1. 活跃技术债清单（24 项，排期 Phase-79+）
+## 1. 活跃技术债清单（20 项，排期 Phase-79+）
 
 按优先级排序。ID 格式：`TD-<序号>`（本表内部 ID） + 历史报告 ID（如 G-011 / F-004）。
 
@@ -15,31 +15,27 @@
 |---|-------|---------|--------|------|------|-----------|----------|
 | 1 | TD-01 | G-011 / F-N019 | High | 测试基建 | 桌面聊天链路缺入口级集成测试 | Phase-79 Task 1 | gpt5.6terra / grok-4.5 / Qwen3.7max |
 | 2 | TD-02 | F-004 | Medium | 文件拆分 | goal-runner.ts 44 imports 未拆分 | Phase-79 Task 2 | Qwen3.7max |
-| 3 | TD-03 | F-N001 | High | 权限系统 | PermissionEngine 未接入 onActing 中间件 | Phase-79 Task 3 | Qwen3.7max + grok-4.5 |
-| 4 | TD-04 | F-N002 / F-N009 | High | 权限系统 | IPC tool:execute 缺权限校验 | Phase-79 Task 4 | Qwen3.7max + grok-4.5 |
-| 5 | TD-05 | F-N006 / F-N007 | Medium | 确认机制 | auto 模式 + 子 Agent 工具确认机制未实现 | Phase-79 Task 5 | Qwen3.7max + grok-4.5 |
-| 6 | TD-06 | F-N017 / F-N018 | Medium | 信任系统 | TrustGradient 未接线 + 无集成测试 | Phase-79 Task 6（P2-8 持久化层已接通，动态升级仍待接线） | Qwen3.7max + grok-4.5 |
-| 7 | TD-07 | F-N026 长期 | Low | IPC 治理 | IPC handler 统一校验中间件（本轮已补薄弱项，统一中间件化待后续） | Phase-79 Task 7 | Qwen3.7max + grok-4.5 |
-| 8 | TD-08 | F-6.01 / F1-1 | Medium | 文件拆分 | createAgentSubsystem 1233 行拆分（15 项独立职责） | Phase-80+ | GLM-5.2 / DeepSeekV4Flash |
-| 9 | TD-09 | F-6.02 | Medium | 文件拆分 | walkAndExtract 740 行拆分 | Phase-80+ | GLM-5.2 |
-| 10 | TD-10 | F-6.03 | Medium | 文件拆分 | wrapSpawnAgentWithDelegation 345 行拆分 | Phase-79+ | GLM-5.2 |
-| 11 | TD-11 | F-6.05 | Medium | 文件拆分 | SettingsPage 组件 462 行拆分 | Phase-79+ | GLM-5.2 |
-| 12 | TD-12 | F-1.01 | Low | 跨层引用 | GoalExecutionCard value import 跨层 | 排期 | GLM-5.2 |
-| 13 | TD-13 | F-10.01-04 | Low | 死配置清理 | CLI 退役死配置清理 | 排期 | GLM-5.2 |
-| 14 | TD-14 | V2-019 | High | 韧性/升级 | 无 schema migration 机制（28+ 文件） | Phase-80+ | Qwen3.7max |
-| 15 | TD-15 | F2-1/F2-2/F2-4/F2-5 | High | 类型安全 | Zod schema 运行时校验（AppDependencies / useRouteDevStore / database.ts / JSON.parse 安全敏感路径） | Phase-80+ | DeepSeekV4Flash |
-| 16 | TD-16 | F-701 | Critical | 测试覆盖 | goal-runner 子模块零测试 | Phase-79+ | Qwen3.7max |
-| 17 | TD-17 | F4-1 | Medium | 性能/架构 | 默认 Core 工具 19 个 vs 注释承诺 ≤10 | Phase-79+ | DeepSeekV4Flash |
-| 18 | TD-18 | F1-2 | Medium | 架构耦合 | app-init-tools.ts 跨层创建 agentLoop | Phase-80+ | DeepSeekV4Flash |
-| 19 | TD-19 | F1-3/F1-4 | Medium | 架构耦合 | ESM 循环依赖 + Pack 门控散布 30 处 | Phase-80+ | DeepSeekV4Flash |
-| 20 | TD-20 | F3-3 | Medium | 错误处理 | 136 处 console 未用结构化 logger | Phase-80+ | DeepSeekV4Flash |
-| 21 | TD-21 | F2-3 | Medium | 类型安全/测试 | 测试双重断言跳过类型检查（as unknown as） | Phase-79+ | DeepSeekV4Flash |
-| 22 | TD-22 | F6-3 | Low | 代码质量 | error instanceof Error 模式统一（204 处 69 文件） | 排期 | DeepSeekV4Flash |
-| 23 | TD-23 | F1-5 | Low | 可维护性 | Phase N 时间戳注释噪音清理 | 排期 | DeepSeekV4Flash |
-| 24 | TD-24 | V2-005 | Low | 安全/日志 | defaults.ts API Key 日志脱敏（maskApiKey 已就绪） | 排期 | Qwen3.7max |
-| 25 | TD-25 | F-09 | Medium | 架构决策 | ACRouter 解冻：packs.acRouter.enabled→true，功能由 closedLoopRouting.enabled 控制 | **已修复 2026-07-20** | 2026-07-19 架构审查 |
-| 26 | TD-26 | F-10 | Medium | 架构决策 | KG vs HybridRetriever：保留 KG，移除 HybridRetriever 接线 | **已修复 2026-07-20** | 2026-07-19 架构审查 |
-| 27 | TD-27 | F-01/02/06 | Low | 架构决策 | TrustGradient pack 拆分：F-01 临时授权提升为 Core，F-02/F-06 保留 pack 门控 | **已修复 2026-07-20** | 2026-07-19 架构审查 |
+| 3 | TD-06 | F-N017 / F-N018 | Medium | 信任系统 | TrustGradient 未接线 + 无集成测试 | Phase-79 Task 6（P2-8 持久化层已接通，动态升级仍待接线） | Qwen3.7max + grok-4.5 |
+| 4 | TD-07 | F-N026 长期 | Low | IPC 治理 | IPC handler 统一校验中间件（Phase 79 Task 7 已建 createValidatedHandler，3/30+ handler 已包装） | 部分修复 | Qwen3.7max + grok-4.5 |
+| 5 | TD-08 | F-6.01 / F1-1 | Medium | 文件拆分 | createAgentSubsystem 1233 行拆分（15 项独立职责） | Phase-80+ | GLM-5.2 / DeepSeekV4Flash |
+| 6 | TD-09 | F-6.02 | Medium | 文件拆分 | walkAndExtract 740 行拆分 | Phase-80+ | GLM-5.2 |
+| 7 | TD-10 | F-6.03 | Medium | 文件拆分 | wrapSpawnAgentWithDelegation 345 行拆分 | Phase-79+ | GLM-5.2 |
+| 8 | TD-11 | F-6.05 | Medium | 文件拆分 | SettingsPage 组件 462 行拆分 | Phase-79+ | GLM-5.2 |
+| 9 | TD-12 | F-1.01 | Low | 跨层引用 | GoalExecutionCard value import 跨层 | 排期 | GLM-5.2 |
+| 10 | TD-13 | F-10.01-04 | Low | 死配置清理 | CLI 退役死配置清理（ChannelsConfigSchema 已删；UIComponents/Sounds/ReasoningMode 仍存留，需迁移脚本） | 排期 | GLM-5.2 |
+| 11 | TD-14 | V2-019 | High | 韧性/升级 | 无 schema migration 机制（28+ 文件） | Phase-80+ | Qwen3.7max |
+| 12 | TD-15 | F2-1/F2-2/F2-4/F2-5 | High | 类型安全 | Zod schema 运行时校验（AppDependencies / useRouteDevStore / database.ts / JSON.parse 安全敏感路径） | Phase-80+ | DeepSeekV4Flash |
+| 13 | TD-16 | F-701 | Critical | 测试覆盖 | goal-runner 子模块零测试 | Phase-79+ | Qwen3.7max |
+| 14 | TD-18 | F1-2 | Medium | 架构耦合 | app-init-tools.ts 跨层创建 agentLoop | Phase-80+ | DeepSeekV4Flash |
+| 15 | TD-19 | F1-3/F1-4 | Medium | 架构耦合 | ESM 循环依赖 + Pack 门控散布 30 处 | Phase-80+ | DeepSeekV4Flash |
+| 16 | TD-20 | F3-3 | Medium | 错误处理 | 136 处 console 未用结构化 logger | Phase-80+ | DeepSeekV4Flash |
+| 17 | TD-21 | F2-3 | Medium | 类型安全/测试 | 测试双重断言跳过类型检查（as unknown as） | Phase-79+ | DeepSeekV4Flash |
+| 18 | TD-22 | F6-3 | Low | 代码质量 | error instanceof Error 模式统一（204 处 69 文件） | 排期 | DeepSeekV4Flash |
+| 19 | TD-23 | F1-5 | Low | 可维护性 | Phase N 时间戳注释噪音清理 | 排期 | DeepSeekV4Flash |
+| 20 | TD-24 | V2-005 | Low | 安全/日志 | defaults.ts API Key 日志脱敏（maskApiKey 已就绪） | 排期 | Qwen3.7max |
+| 21 | TD-25 | F-09 | Medium | 架构决策 | ACRouter 解冻：packs.acRouter.enabled→true，功能由 closedLoopRouting.enabled 控制 | **已修复 2026-07-20** | 2026-07-19 架构审查 |
+| 22 | TD-26 | F-10 | Medium | 架构决策 | KG vs HybridRetriever：保留 KG，移除 HybridRetriever 接线 | **已修复 2026-07-20** | 2026-07-19 架构审查 |
+| 23 | TD-27 | F-01/02/06 | Low | 架构决策 | TrustGradient pack 拆分：F-01 临时授权提升为 Core，F-02/F-06 保留 pack 门控 | **已修复 2026-07-20** | 2026-07-19 架构审查 |
 
 ---
 
@@ -57,24 +53,6 @@
 - **风险**：改动成本高，审查 token 消耗大，子 Agent 难以整体理解。
 - **排期**：Phase-79 Task 2。参照 `app-init.ts` 拆分模式（app-init-agent / app-init-memory / app-init-observability / app-init-router / app-init-tools）。
 
-### TD-03: PermissionEngine onActing 中间件（F-N001）
-
-- **问题**：`src/tools/permission-engine.ts` 已实现工具级权限校验，但未接入 `ReActAgentLoop` 的 `onActing` 中间件钩子。工具执行仍依赖 `executor.ts` 内的 `securityChecker` 单点校验。
-- **风险**：PermissionEngine 规则配置（用户在设置页配置的 allow/deny/confirm 规则）实际不生效，设置页 UI 是"装饰性"的。
-- **排期**：Phase-79 Task 3。在 Loop 的 onActing 钩子插入 PermissionEngine.check() 调用，fail-closed 默认策略。
-
-### TD-04: IPC tool:execute 权限校验（F-N002 / F-N009）
-
-- **问题**：`desktop/main/index.ts` 的 `tool:execute` IPC handler 直接调用 executor，未经过 PermissionEngine 校验。Renderer 进程可通过 IPC 绕过工具级权限规则。
-- **风险**：若 Renderer 进程被 XSS 攻击，攻击者可调用任意工具（包括 shell-exec / file-write）。
-- **排期**：Phase-79 Task 4。在 tool:execute handler 增加权限校验层，复用 PermissionEngine。
-
-### TD-05: auto 模式 + 子 Agent 确认机制（F-N006 / F-N007）
-
-- **问题**：配置中存在 `autoApprovePatterns`（F-N008 已从默认值移除 web_search/web_fetch/todo_write），但 auto 模式逻辑未在 Loop 中接线。子 Agent（spawn-agent）的工具调用无确认机制，子 Agent 可执行任意工具。
-- **风险**：auto 模式开关是装饰性的；子 Agent 是权限逃逸点。
-- **排期**：Phase-79 Task 5。实现 auto 模式 + 子 Agent 工具确认的委托回父 Agent 机制。
-
 ### TD-06: TrustGradient 接线 + 集成测试（F-N017 / F-N018）
 
 - **问题**：`src/tools/trust-gradient.ts` 已实现信任梯度计算，但未接入运行时。无行为级集成测试验证信任升级 / 降级逻辑。
@@ -87,6 +65,7 @@
 - **问题**：`desktop/main/index.ts` 有 30+ IPC handler，校验逻辑分散。2026-07-11 已补 10+ handler 的薄弱校验（plan:check-omissions / trace:replay / chat:generate-title 等），但仍是逐个 handler 手写校验，未抽取统一中间件。
 - **风险**：新增 handler 时容易遗漏校验；校验逻辑不一致。
 - **排期**：Phase-79 Task 7。抽取 `createValidatedHandler<T>(schema, handler)` 统一中间件，所有 handler 强制走中间件包装。
+- **状态更新（2026-07-29，部分修复）**：`desktop/main/ipc-guard.ts:102` 已实现 `createValidatedHandler`，目前仅包装 3 个 handler（config:reload / command:execute / tool:execute）。其余 27+ handler 仍待迁移。
 
 ### TD-08: createAgentSubsystem 1240 行拆分
 - **来源**：GLM-5.2 审查 F-6.01
@@ -121,8 +100,9 @@
 ### TD-13: CLI 退役死配置清理
 - **来源**：GLM-5.2 审查 F-10.01-04
 - **位置**：src/config/schema-observability.ts, schema-router.ts, defaults.ts
-- **状态**：排期
-- **方案**：删除 UIComponentsSchema/SoundsConfigSchema/ChannelsConfigSchema/ReasoningModeSchema，配合配置迁移脚本处理已有用户配置
+- **状态**：排期（部分清理：ChannelsConfigSchema 已删；Phase 96 M-1 已删 browserWeb/vfsPlan 死开关）
+- **问题**：UIComponentsSchema/SoundsConfigSchema 全库零消费（`config.ui.components.*` / `config.sounds.*` 在 src/ 与 desktop/ 均无读取点）；ReasoningModeSchema 仅 UI 设置页消费，后端 `router.ts:187` 已注明"未接入后端"
+- **方案**：删除 UIComponentsSchema/SoundsConfigSchema/ReasoningModeSchema，配合配置迁移脚本处理已有用户配置（避免用户旧 config.json parse 失败）
 
 ### TD-14: schema migration 机制（V2-019）
 
@@ -154,14 +134,6 @@
 - **问题**：goal-runner 拆分后的 4 个子模块无独立单元测试，仅通过端到端 `/goal` 命令间接覆盖
 - **风险**：DAG 编排、步骤确认、恢复逻辑的边界条件无回归保障
 - **方案**：为每个子模块编写单元测试，覆盖正常流程 + 异常恢复 + 超时降级
-
-### TD-17: 默认 Core 工具 19 个 vs ≤10（F4-1）
-
-- **来源**：DeepSeekV4Flash 审查 F4-1
-- **位置**：`src/runtime/app-init-tools.ts:99`
-- **状态**：排期 Phase-79+
-- **问题**：注释写"Core 工具（始终注册，≤10 个）"，但实际注册 19 个（基础 10 + VFS 4 + Plan 5）。发布门禁不满足。
-- **方案**：将 VFS 和 Plan 工具移入对应 Pack（`packs.vfsPlan.enabled`），Core 仅保留 10 个基础工具；或更新注释为 ≤20
 
 ### TD-18: app-init-tools 跨层创建 agentLoop（F1-2）
 
@@ -250,6 +222,17 @@
 
 ## 3. 已修复技术债历史（按时间倒序）
 
+### 2026-07-29 Phase 79 权限/确认链路核实（TD-03/04/05/17）
+
+经源码核实，Phase 79 Task 3/4/5 与 Core 工具数治理已实施，从活跃清单移除。
+
+| TD ID | 类别 | 简述 | 修复方式 |
+|-------|------|------|----------|
+| TD-03 | 权限系统 | PermissionEngine 接入 onActing 中间件 | `src/agent/loop.ts:697` 串行模式 + `:569` 并行模式均调用 `mwRunner.runOnActing()`，PermissionEngine.check() 经 PermissionMiddleware 注入；deny 拦截 / confirm 驱动用户确认 / auto 放行 |
+| TD-04 | 权限系统 | IPC tool:execute 权限校验 | `desktop/main/index.ts:1079-1110` 引入 `IPC_TOOL_WHITELIST`（test_connection/list_directory/file_read），非白名单工具直接拒绝；executeTool 透传 `{ source: 'ipc' }` callContext，无 callContext 时 fail-closed |
+| TD-05 | 确认机制 | auto 模式 + autoApprovePatterns 接线 | `src/agent/loop.ts:717-729` auto 模式下 all tools 直接放行（危险操作由 DEFAULT_DENY_RULES 硬拦截）；semi 模式按 PermissionEngine 决策或 autoApprovePatterns 白名单判断 needsConfirmation |
+| TD-17 | 性能/架构 | Core 工具数与注释一致性 | `src/runtime/app-init-tools.ts:101-113` 注释"≤10 个"仅指基础 Core 块（10 个：file_read/file_search/git_op/code_search/file_write/shell_exec/file_edit/list_directory/todo_write/ask_user）；VFS 4 + Plan 5 已独立分块（:153-165）并标注"Core，默认可用，无需 Pack 门控" |
+
 ### 2026-07-20 Freeze 层架构决策实施（TD-25/26/27）
 
 | TD ID | 类别 | 简述 | 修复方式 |
@@ -321,7 +304,7 @@ commit `1f2bf85`（68 文件，+2391/-3605）。详见 `报告/修改记录.md`�
 可在审查 prompt 中加入以下声明：
 
 ```
-已知技术债见 docs/TECH_DEBT_TRACKER.md。§1 列出的 24 项已排期 Phase-79+，不要重复报告。
+已知技术债见 docs/TECH_DEBT_TRACKER.md。§1 列出的 20 项已排期 Phase-79+，不要重复报告。
 仅报告本表未覆盖的新问题。已修复项（§3）如发现回归请标注。
 ```
 
