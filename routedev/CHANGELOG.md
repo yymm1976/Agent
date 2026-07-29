@@ -4,6 +4,42 @@
 
 > **路径迁移说明（Phase 60 后）：** `src/cli/` 已迁移到 `src/runtime/` 和 `desktop/renderer/src/`，历史条目中引用的 `src/cli/goal-runner.ts` / `src/cli/app-init.ts` / `src/cli/App.tsx` 等路径均已迁移到新位置，详见 `CODEMAP.md`。
 
+### Phase 96 — PI Agent 对齐 P2 批量修复
+
+对齐 PI Agent 基础功能差距的 P2 级修复（P2-3 ~ P2-10），全部通过 typecheck + test + dist:electron 验证。
+
+#### New
+- **P2-3 Skills 统一加载**：FilesystemDiscovery 新增 `addSkillsRoot()` 多目录批量入口，`discoverSkills()` 支持多根扫描
+- **P2-4 .gitignore 过滤**：Skills 模块新增 `loadGitignorePatterns()` / `isIgnored()`，扫描时按 .gitignore 规则过滤
+- **P2-5 内置 SKILL.md**：新增 4 个内置 Skill（code-review / debug-investigation / test-driven-development / refactor-extraction）
+- **P2-6 Prompt 位置参数**：PromptContext 新增 `positionalArgs` / `skillName` 字段；`applyVariables()` 支持 Claude Code 风格 `$1-$9` / `$@` / `$ARGUMENTS` / `$0` 占位符（先替换位置参数，再替换 `{{var}}` 命名参数）
+- **P2-7 Hooks observe/on/emit 三段式模型**：HookRunner 新增 `on(event, listener, priority)`（同步监听，可 cancel 短路，返回 unsubscribe）、`observe(event, observer)`（纯观察者，fire-and-forget，并行触发）、`emit(event, data, agentId?, sessionId?)`（三段式入口：先按 priority 执行 on 监听器，再并行触发 observe 观察者）
+- **P2-8 ProjectTrustStore per-cwd 持久化**：新建 `src/tools/project-trust-store.ts`，信任级别持久化到 `.routedev/trust.json`；支持 `findInherited(cwd)` 父目录继承（向上递归查找）；原子写入（临时文件+rename+fallback）；TrustGradientManager 新增 `attachPersistence(store, cwd)` / `loadInheritedFromStore()`，`setLevel` 自动 fire-and-forget 持久化。临时授权保持 resume 不恢复设计
+- **P2-10 file_read 图片支持**：IMAGE_MIME_MAP 检测 + base64 编码，通过 `ToolResult.images` 注入 LLM 上下文（loop.ts 转为 ContentPart.image）
+
+#### Changed
+- **P2-9 TrustGradient 死代码清理**：移除未引用的 `TRUST_LEVEL_ORDER` / `RISK_SEVERITY` 常量，删除无外部调用的 `savePreferences` / `loadPreferences` / `getPreferences` 方法及 `TrustPreference` 接口
+- **ToolResult / StructuredToolResult** 新增 `images` 字段；`ToolRegistryAdapter.executeToolStructured` / `loop-config.ts` 对应更新返回类型
+- **FilesystemDiscovery** 重构 `discoverSkills()` 为多根扫描 + ignore 模式过滤
+- **PromptContext** 索引签名调整为 `string | string[] | undefined`，`applyVariables` 对数组值用 `join(' ')` 转换
+
+#### 修复的过时文档
+- `CODEMAP.md`：补登 project-trust-store.ts、trust-gradient.ts、hooks.ts P2-7 三段式、prompts P2-6 位置参数、file-read P2-10 图片支持
+- `docs/TECH_DEBT_TRACKER.md`：TD-06 标注 P2-8 部分修复（持久化层接通，动态升级仍旁路）
+
+### Phase 87 — Gemini 工具调用 + clientType 装配修复
+- 修复 Gemini 工具调用完全未实现的问题（硬编码 `toolCalls: []` → 完整 function calling 支持）
+- 修复 engine-bridge.ts 未传 clientType 导致 DeepSeek/Qwen/Ollama 子类未接入主路径
+- Gemini 现在支持非流式和流式工具调用（functionCall/functionResponse）
+- 新增 8 个 Gemini 工具调用测试
+
+### Phase 86 — OpenAI Responses API 兼容
+- 新增 `openai-responses` 协议，支持 OpenAI Responses API（/v1/responses）
+- 新增 OpenAIResponsesClient 客户端实现
+- 支持非流式和流式调用
+- 支持工具调用（function_call）
+- 与现有 Chat Completions API 并行可用，用户可在 Provider 设置中选择
+
 ## [4.9.0] - 2026-07-11 — Phase 85 发布门禁（四层架构 + Pi 融合收口）
 
 > **核心目标：** Phase 85 作为 v4.9.0 发布门禁，同步文档与四层架构 + Pi 融合设计，正式化"Core 不做"清单与防回潮规则。不新增功能，聚焦发布前文档对齐。

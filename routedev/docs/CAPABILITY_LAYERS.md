@@ -93,6 +93,7 @@
 | C-68 | SessionTree | core | on | chat-bridge | src/session/session-tree.ts | SessionNode, crypto | 强化+测试；会话树存储模型（fork/clone/switchBranch/jumpToNode/fromLinear）；ChatBridge 懒初始化（Phase 84） |
 | C-69 | SessionNode | core | on | chat-bridge | src/session/session-node.ts | — | 强化+测试；会话树节点定义（含 checkpointId 关联）（Phase 84） |
 | C-70 | session-commands(/tree /fork /clone) | core | on | chat-bridge | src/session/session-commands.ts | SessionTree | 强化+测试；会话分支 slash 命令，已注册到 chat-bridge executeCommand（Phase 84） |
+| C-71 | OpenAIResponsesClient | core | on | engine-bridge | src/router/llm/openai-responses.ts | openai SDK, BaseLLMClient | 强化+测试；OpenAI Responses API 客户端（/v1/responses），与 Chat Completions 并行（Phase 86） |
 
 ---
 
@@ -171,22 +172,28 @@
 
 ## 4. Freeze 层（停止接线，不承诺）
 
-> 价值未证明 + 有更好替代。蓝图 §2.4。停止一切接线；保留类型与存储接口。
+> 价值未证明 + 有更好替代。蓝图 §2.4。默认退出装配；保留类型与存储接口。
+> **注意：** 部分模块保留 pack 门控的装配入口（动态 import），开启对应 pack 后可恢复装配。"停止接线"指默认不装配、不承诺功能可用性，而非物理断开代码路径。
+>
+> **TD-25/26/27 架构决策（2026-07-20）：**
+> - F-01 临时授权（hasTemporaryGrant）提升为 Core，不再受 pack 门控（TD-27）
+> - F-09 ACRouter 从 freeze 解冻为 standard-pack，`packs.acRouter.enabled` 默认 true（TD-25）
+> - F-10 memorySystem 退役，接线已移除，保留 Core KG（TD-26）
 
 | ID | 名称 | 层 | 默认 | 入口 | 源码 | 依赖 | 冷处理策略 |
 |----|------|----|----|------|------|------|-----------|
-| F-01 | TrustGradientManager(动态升级) | freeze | off | app-init-tools/agent | src/tools/trust-gradient.ts | config.trust | 停止接线 / 保留类型与静态档位 / 不承诺；Phase 79 已冻结动态升级 |
-| F-02 | QualitySignalMiddleware(Implicit Feedback) | freeze | off | app-init-agent | src/agent/middleware/quality-signal.ts | config.quality | 停止接线 / 保留类型 / 不承诺；无证据 |
-| F-03 | KG 高级算法(PageRank/社区检测) | freeze | off | graph.ts | src/agent/memory/graph-community.ts, graph.ts(高级部分) | KnowledgeGraph | 停止接线 / 保留存储接口 / 不承诺；tree-sitter+SQLite 已够 |
-| F-04 | /goal 并行调度与冲突检测 | freeze | off | app-init-agent | src/agent/multi/orchestrator.ts(并行部分) | orchestrationIntegration | 冻结代码路径 / 保留类型 / 不承诺；无真实使用 |
-| F-05 | Compose 自动选择 | freeze | off | app-init-tools | src/agent/work-modes.ts(自动路由部分) | WorkModeController | 移除自动路由 / 保留显式触发 / 不承诺 |
-| F-06 | ExpertisePromptMiddleware(隐式适配) | freeze | off | app-init-agent | src/agent/middleware/expertise-prompt.ts | config.expertise | 停止接线 / 保留类型 / 不承诺；隐式经验推断无证据 |
-| F-07 | ProvenanceGraph + KanObstacleChecker | freeze | off | app-init-memory | src/memory/provenance-graph.ts, src/skills/kan-obstacle-checker.ts | phase68Integration | 停止接线 / 保留类型 / 不承诺；KG 高级衍生 |
-| F-08 | QuantitativeGate | freeze | off | app-init-memory | src/agent/quantitative-gate.ts | phase68Integration | 停止接线 / 保留类型 / 不承诺 |
-| F-09 | closedLoopRouting / ACRouter | freeze | off | app-init-router | src/router/orchestrator.ts, routing-memory.ts, regret-tracker.ts | config.closedLoopRouting | 停止接线 / 保留类型 / 不承诺；实验性高级路由 |
-| F-10 | memorySystem(Phase 65 重构) | freeze | off | app-init-memory | src/memory/memory-store.ts, hybrid-retriever.ts, local-maintenance.ts | config.memorySystem | 停止接线 / 保留类型 / 不承诺；实验性重构 |
-| F-11 | config: trust/quality/expertise | freeze | off | schema.ts | src/config/schema-security.ts, schema-observability.ts | — | 停止接线 / 保留配置开关(不产品化) / 不承诺 |
-| F-12 | config: phase68Integration/closedLoopRouting/memorySystem | freeze | off | schema.ts | src/config/schema-observability.ts, schema-router.ts, schema-memory.ts | — | 停止接线 / 保留配置开关 / 不承诺 |
+| F-01 | TrustGradientManager(动态升级) | **core**(临时授权) | **on** | app-init-agent | src/tools/trust-gradient.ts | config.trust | **TD-27 提升为 Core：** 临时授权（hasTemporaryGrant）无条件装配；动态升级仍旁路（Phase 79）；F-02/F-06 仍由 packs.trustGradient 门控 |
+| F-02 | QualitySignalMiddleware(Implicit Feedback) | freeze | off | app-init-agent | src/agent/middleware/quality-signal.ts | config.quality, packs.trustGradient | pack 门控装配（app-init-agent.ts:576 动态 import，需 `packs.trustGradient.enabled=true`）/ 不承诺；隐式反馈价值未证明 |
+| F-03 | KG 高级算法(PageRank/社区检测) | freeze | off | graph.ts | src/agent/memory/graph-community.ts, graph-recall.ts | KnowledgeGraph | prototype 注入保留；社区检测在 graph-recall.ts:179 有 typeof 守卫调用（退化为精确路径召回）/ 不承诺；tree-sitter+SQLite 已够 |
+| F-04 | /goal 并行调度与冲突检测 | freeze | off | app-init-agent | src/agent/multi/orchestrator.ts(并行部分) | orchestrationIntegration, packs.goalAdvanced | 双重门控（packs.goalAdvanced + conflictDetectionEnabled）/ 保留类型 / 不承诺；无真实使用 |
+| F-05 | Compose 自动选择(ComposePipeline) | freeze | off | app-init-tools | src/agent/compose-pipeline.ts | packs.compose | WorkModeController 本身是 Core（无条件装配）；仅 ComposePipeline 被 `packs.compose.enabled` 门控（app-init-tools.ts:286）/ 不承诺 |
+| F-06 | ExpertisePromptMiddleware(隐式适配) | freeze | off | app-init-agent | src/agent/middleware/expertise-prompt.ts | config.expertise, packs.trustGradient | pack 门控装配（app-init-agent.ts:602 动态 import，需 `packs.trustGradient.enabled=true`）/ 不承诺；隐式经验推断价值未证明 |
+| F-07 | ProvenanceGraph + KanObstacleChecker | freeze | off | app-init-memory | src/memory/provenance-graph.ts, src/skills/kan-obstacle-checker.ts | phase68Integration | config 门控（phase68Integration 各项默认 false）/ goal-runner 有 fail-open 调用点 / 不承诺；KG 高级衍生 |
+| F-08 | QuantitativeGate | freeze | off | app-init-memory | src/agent/quantitative-gate.ts | phase68Integration | config 门控（phase68Integration.quantitativeGate.enabled 默认 false）/ fitScore 无可靠来源（?? 0.5 硬编码）/ 不承诺 |
+| F-09 | closedLoopRouting / ACRouter | **standard-pack** | **on**(装配) | app-init-router | src/router/orchestrator.ts, routing-memory.ts, regret-tracker.ts | config.closedLoopRouting | **TD-25 解冻：** `packs.acRouter.enabled` 默认 true，组件默认装配；功能由 `closedLoopRouting.enabled`（默认 false）控制；goal-runner fail-open 调用点就绪；用户启用后即 /goal 路径生效 |
+| F-10 | memorySystem(Phase 65 重构) | **retired** | — | — | src/memory/memory-store.ts, hybrid-retriever.ts, local-maintenance.ts | — | **TD-26 退役：** 接线已移除（app-init-memory/goal-runner-scheduler/AppDependencies）；源文件冻结归档；Core KG recallV2 混合策略覆盖相同用例 |
+| F-11 | config: trust/quality/expertise | freeze | off | schema.ts | src/config/schema-security.ts, schema-observability.ts | — | 保留配置开关(不产品化) / 随 F-02/F-06 整体决策 / 不承诺（F-01 已提升为 Core） |
+| F-12 | config: phase68Integration/closedLoopRouting/memorySystem | freeze | off | schema.ts | src/config/schema-observability.ts, schema-router.ts, schema-memory.ts | — | 保留配置开关 / closedLoopRouting 随 TD-25 解冻 / memorySystem 随 TD-26 退役 / 不承诺 |
 
 ---
 

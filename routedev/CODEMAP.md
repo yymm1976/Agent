@@ -1,6 +1,6 @@
 # RouteDev — 代码库索引（CODEMAP）
 > 搜索代码前先读本文件定位目标模块，再进入具体文件。
-> 最后更新：2026-07-11（行数漂移修复：schema.ts 1967→239、loop.ts 1957→715、trace-collector.ts 380→855、defaults.ts 808→805、graph.ts 1160→1159；原 2026-07-08 失真修复：删除 src/evaluation/ 条目、补齐已删除文件标注、修正文件名漂移）
+> 最后更新：2026-07-25（Phase 96 P2-6/7/8：prompts 位置参数、hooks on/observe/emit 三段式、ProjectTrustStore per-cwd 持久化；原 2026-07-11 行数漂移修复）
 
 ## 目录总览
 - `src/runtime/` — 核心运行时（装配工厂 + 目标执行器 + 通知 + 插件初始化 + shutdown）
@@ -106,7 +106,7 @@
 - `unified-reviewer.ts` — UnifiedReviewer：两层审查（GoalVerifier + 代码审查）（Phase 31）
 - `completion-gate.ts` — CompletionGate：独立代码验证门（typecheck/lint/tests）（Phase 31）
 - `failure-report.ts` — 结构化失败报告，规则生成建议不调用 LLM（Phase 31）（已删除：v3.7.0 死代码清理）
-- `hooks.ts` — HookRunner：扩展钩子（pre/post-tool-call + on-session-start/end）（Phase 31 扩展）
+- `hooks.ts` — HookRunner：扩展钩子（pre/post-tool-call + on-session-start/end）（Phase 31 扩展）；P0-15 新增 27 种 HookEventType + legacyToNewEvent 桥接；P2-7 新增 on/observe/emit 三段式模型（on 同步监听可 cancel 短路、observe 纯观察者 fire-and-forget、emit 统一入口）
 - `step-executor.ts` — AgentLoopStepExecutor：DurableExecutor 的真实步骤执行器，调用 agentLoop.run()（Phase 35）（已删除：Phase 59 死代码清理）
 - `requirements-clarifier.ts` — RequirementsClarifier：LLM 模糊度分析 + 追问生成 + 规则降级（Phase 37 Task 1）（已删除：Phase 59 死代码清理）
 **依赖：** router/、tools/、harness/、utils/、config/
@@ -166,8 +166,8 @@
 ### src/prompts/ — Prompt 模板系统
 **职责：** 统一管理所有 Prompt 模板（三级优先级：项目>用户>内置）
 **关键文件：**
-- `manager.ts` — Prompt 模板管理器（817 行）
-- `types.ts` — Prompt 模板系统类型定义（75 行）
+- `manager.ts` — Prompt 模板管理器（817 行）；P2-6 新增位置参数支持（$1-$9/$@/$ARGUMENTS/$0），applyVariables 先替换位置参数再替换 {{var}} 命名参数
+- `types.ts` — Prompt 模板系统类型定义（83 行）；P2-6 PromptContext 新增 positionalArgs/skillName 字段
 **依赖：** utils/、config/
 
 ### src/router/ — 模型路由层
@@ -195,7 +195,7 @@
 - `security.ts` — 安全检查器：文件路径（path.relative 防前缀绕过）、命令黑名单（tokenize 首 token 匹配）、网络域名检查（136 行）
 - `command-parser.ts` — **Phase 29 新增**：shell 命令 tokenize 解析器，输出 `ParsedCommand { command, args, hasPipe, hasSubstitution, hasRedirect, raw }`，供 SecurityChecker 与 PermissionEngine 共用（55 行）
 - `types.ts` — Tool 层核心类型：工具接口、注册、执行结果、安全模型（153 行）
-- `builtin/file-read.ts` — 读取文件内容（权限：auto）（90 行）
+- `builtin/file-read.ts` — 读取文件内容（权限：auto）（90 行）；P2-10 新增图片支持（IMAGE_MIME_MAP + base64 编码，通过 ToolResult.images 注入 LLM）
 - `builtin/file-write.ts` — 写入或创建文件（权限：confirm）（78 行）
 - `builtin/file-search.ts` — 搜索文件内容或按名称查找（权限：auto）；Phase 29 后复用 search-utils 公共函数（137 行）
 - `builtin/shell-exec.ts` — 执行 Shell 命令（权限：confirm）+ RetryPolicy + CircuitBreaker + ALLOWED_ENV_KEYS 环境变量白名单（159 行）
@@ -209,6 +209,8 @@
 - `mcp/types.ts` — MCP 客户端类型定义（45 行）
 - `read-tracker.ts` — **Phase 31 新增**：ReadTracker 先读后写强制，新建文件例外（fs.access 检查存在性）
 - `result-sanitizer.ts` — **Phase 31 新增**：ToolResultSanitizer 工具返回内容净化（注入检测+智能截断）
+- `trust-gradient.ts` — 7 级信任梯度管理器（plan/default/acceptEdits/acceptAll/auto/bypassPermissions/trusted）+ 临时授权（TTL + 前缀匹配 + SHA-256 hash）+ 五级风险分类（read/write/execute/network/push）；P2-8 新增 attachPersistence/loadInheritedFromStore 接入 ProjectTrustStore
+- `project-trust-store.ts` — **P2-8 新增**：per-cwd 信任级别持久化仓库，存储到 .routedev/trust.json，支持父目录继承（findInherited 向上递归查找），原子写入（临时文件+rename+fallback）
 **依赖：** router/、utils/、harness/
 
 ### src/utils/ — 通用工具

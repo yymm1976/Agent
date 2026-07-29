@@ -3,7 +3,7 @@
 > **用途：** 集中记录所有已知技术债，避免后续审查重复发现已排期项。
 > **审查员指引：** 报告 findings 前请先对照本表 §1，已排期至 Phase-79+ 的 24 项不再重复报告。仅报告本表未覆盖的新问题。
 > **维护规则：** 每轮审查后更新；修复完成的项移至 §3 历史区；新发现的项追加到 §1。
-> **最后更新：** 2026-07-12（第三轮 Qwen3.7max + DeepSeekV4Flash 审查后更新）
+> **最后更新：** 2026-07-20（TD-25/26/27 架构决策已实施）
 
 ---
 
@@ -18,7 +18,7 @@
 | 3 | TD-03 | F-N001 | High | 权限系统 | PermissionEngine 未接入 onActing 中间件 | Phase-79 Task 3 | Qwen3.7max + grok-4.5 |
 | 4 | TD-04 | F-N002 / F-N009 | High | 权限系统 | IPC tool:execute 缺权限校验 | Phase-79 Task 4 | Qwen3.7max + grok-4.5 |
 | 5 | TD-05 | F-N006 / F-N007 | Medium | 确认机制 | auto 模式 + 子 Agent 工具确认机制未实现 | Phase-79 Task 5 | Qwen3.7max + grok-4.5 |
-| 6 | TD-06 | F-N017 / F-N018 | Medium | 信任系统 | TrustGradient 未接线 + 无集成测试 | Phase-79 Task 6 | Qwen3.7max + grok-4.5 |
+| 6 | TD-06 | F-N017 / F-N018 | Medium | 信任系统 | TrustGradient 未接线 + 无集成测试 | Phase-79 Task 6（P2-8 持久化层已接通，动态升级仍待接线） | Qwen3.7max + grok-4.5 |
 | 7 | TD-07 | F-N026 长期 | Low | IPC 治理 | IPC handler 统一校验中间件（本轮已补薄弱项，统一中间件化待后续） | Phase-79 Task 7 | Qwen3.7max + grok-4.5 |
 | 8 | TD-08 | F-6.01 / F1-1 | Medium | 文件拆分 | createAgentSubsystem 1233 行拆分（15 项独立职责） | Phase-80+ | GLM-5.2 / DeepSeekV4Flash |
 | 9 | TD-09 | F-6.02 | Medium | 文件拆分 | walkAndExtract 740 行拆分 | Phase-80+ | GLM-5.2 |
@@ -37,6 +37,9 @@
 | 22 | TD-22 | F6-3 | Low | 代码质量 | error instanceof Error 模式统一（204 处 69 文件） | 排期 | DeepSeekV4Flash |
 | 23 | TD-23 | F1-5 | Low | 可维护性 | Phase N 时间戳注释噪音清理 | 排期 | DeepSeekV4Flash |
 | 24 | TD-24 | V2-005 | Low | 安全/日志 | defaults.ts API Key 日志脱敏（maskApiKey 已就绪） | 排期 | Qwen3.7max |
+| 25 | TD-25 | F-09 | Medium | 架构决策 | ACRouter 解冻：packs.acRouter.enabled→true，功能由 closedLoopRouting.enabled 控制 | **已修复 2026-07-20** | 2026-07-19 架构审查 |
+| 26 | TD-26 | F-10 | Medium | 架构决策 | KG vs HybridRetriever：保留 KG，移除 HybridRetriever 接线 | **已修复 2026-07-20** | 2026-07-19 架构审查 |
+| 27 | TD-27 | F-01/02/06 | Low | 架构决策 | TrustGradient pack 拆分：F-01 临时授权提升为 Core，F-02/F-06 保留 pack 门控 | **已修复 2026-07-20** | 2026-07-19 架构审查 |
 
 ---
 
@@ -77,6 +80,7 @@
 - **问题**：`src/tools/trust-gradient.ts` 已实现信任梯度计算，但未接入运行时。无行为级集成测试验证信任升级 / 降级逻辑。
 - **风险**：信任梯度系统是"装配但未连接"的孤立模块（Phase 53 §1.2 已识别此类问题的模式）。
 - **排期**：Phase-79 Task 6。接线到 PermissionEngine（作为 trustAutoAllowed 的判断依据）+ 编写行为级集成测试。
+- **状态更新（2026-07-25，P2-8 部分修复）**：持久化层已接通——新建 `src/tools/project-trust-store.ts`，TrustGradientManager 通过 `attachPersistence(store, cwd)` 注入后 `setLevel` 自动持久化到 `.routedev/trust.json`，`loadInheritedFromStore()` 启动时加载继承级别（支持父目录递归查找）。**核心问题仍存在**：`checkOperation()` 仍未接入工具执行路径，动态升级对实际工具调用无影响；行为级集成测试仍缺失。
 
 ### TD-07: IPC handler 统一校验中间件（F-N026 长期）
 
@@ -220,9 +224,39 @@
 - **方案**：使用第三轮新建的 `src/security/env-filter.ts` 中的 `maskApiKey()` 包装 logger 调用
 - **备注**：第三轮 audit-report-fixer 核验发现 defaults.ts 当前无 logger.debug 调用（任务为 no-op），但未来添加日志时需注意脱敏；maskApiKey 工具已就绪
 
+### TD-25: ACRouter 解冻条件与路径（F-09）— ✅ 已修复 2026-07-20
+
+- **来源**：2026-07-19 架构审查（Freeze 层深度审查）
+- **位置**：`src/router/orchestrator.ts`、`src/router/routing-memory.ts`、`src/router/regret-tracker.ts`；装配点 `app-init-router.ts:99`
+- **状态**：✅ 已修复（2026-07-20）
+- **修复方式**：`packs.acRouter.enabled` 默认值从 `false` 改为 `true`（defaults.ts），ACRouter 从 freeze 提升为 standard-pack。组件默认装配但功能休眠——有效门控仅为 `closedLoopRouting.enabled`（默认 false）。用户在配置中启用 `closedLoopRouting.enabled: true` 后，/goal 路径自动使用 RoutingOrchestrator 做加权投票路由决策。架构全程 fail-open，orchestrator 失败自动回退基础路由。
+- **遗留**：冷启动渐进策略和 HashEmbedder 精度验证留待用户实际启用后观察。
+
+### TD-26: KG vs HybridRetriever 二选一（F-10）— ✅ 已修复 2026-07-20
+
+- **来源**：2026-07-19 架构审查（Freeze 层深度审查）
+- **位置**：Core 路径 `src/agent/memory/recall-injector.ts` + `graph-core.ts`；原 Freeze 路径 `src/memory/memory-store.ts` + `hybrid-retriever.ts` + `local-maintenance.ts`
+- **状态**：✅ 已修复（2026-07-20，选方案 A）
+- **修复方式**：移除 HybridRetriever/MemoryStore/LocalMaintenance 全部接线——app-init-memory.ts 创建块、AppDependencies/GoalRunnerDeps 接口字段、goal-runner-scheduler.ts 三处使用块、defaults.ts memorySystem 配置。源文件保留于 src/memory/ 冻结归档（不删除，避免破坏直接引用它们的测试）。Schema 保留向后兼容。Core KG recallV2 混合策略覆盖相同用例。
+
+### TD-27: TrustGradient pack 拆分（F-01/F-02/F-06）— ✅ 已修复 2026-07-20
+
+- **来源**：2026-07-19 架构审查（Freeze 层深度审查 + 核实修正）
+- **位置**：F-01 `src/tools/trust-gradient.ts`；F-02 `src/agent/middleware/quality-signal.ts`；F-06 `src/agent/middleware/expertise-prompt.ts`
+- **状态**：✅ 已修复（2026-07-20，选方案 A）
+- **修复方式**：app-init-agent.ts 中 F-01 TrustGradientManager 的装配条件从 `trustCfg && config.packs?.trustGradient?.enabled` 改为 `trustCfg`（移除 pack 门控），临时授权作为 Core 无条件装配。F-02/F-06 的 `packs.trustGradient.enabled` 门控保持不变。
+
 ---
 
 ## 3. 已修复技术债历史（按时间倒序）
+
+### 2026-07-20 Freeze 层架构决策实施（TD-25/26/27）
+
+| TD ID | 类别 | 简述 | 修复方式 |
+|-------|------|------|----------|
+| TD-25 | 架构决策 | ACRouter 解冻 | packs.acRouter.enabled→true，功能由 closedLoopRouting.enabled 控制 |
+| TD-26 | 架构决策 | KG vs HybridRetriever | 保留 KG，移除 HybridRetriever 全部接线（6 文件） |
+| TD-27 | 架构决策 | TrustGradient pack 拆分 | F-01 临时授权提升为 Core（移除 pack 门控），F-02/F-06 保留 |
 
 ### 2026-07-12 第三轮审查修复（48 项，部分为技术债前提修复）
 

@@ -116,15 +116,16 @@ rtk err pnpm typecheck
 
 以下能力不属于 Core，需通过 Pack 或配置启用：
 
-1. Multi-Agent 编排 → `pack.multi-agent`
-2. Goal 高级编排 → `pack.goal-advanced`
-3. 对抗审查 → `pack.adversarial-review`
-4. 浏览器/Web → `pack.browser-web`
-5. 代码地图 → `pack.code-map`
-6. Trace 回放 → `pack.harness`
-7. TrustGradient 动态升级 → Freeze
-8. Implicit Feedback → Freeze
-9. /goal 并行调度 → Freeze
+1. Goal 高级编排 → `pack.goal-advanced`
+2. 对抗审查 → `pack.adversarial-review`
+3. 浏览器/Web → `pack.browser-web`
+4. 代码地图 → `pack.code-map`
+5. Trace 回放 → `pack.harness`
+6. TrustGradient 动态升级 → Freeze
+7. Implicit Feedback → Freeze
+8. /goal 并行调度 → Freeze
+
+> **注**：Multi-Agent 编排（`pack.multi-agent`）原在此清单中，因 ReviewChain（planner/coder/reviewer 子 Agent 调度）依赖 spawn_agent，`packs.multiAgent.enabled` 已在 `defaults.ts` 默认 `true`。sendChat 路径通过 `taskShape` 检测驱动 prompt 级分发提示（非代码强制），实际已归 Core。
 
 ### 防回潮规则
 
@@ -136,3 +137,35 @@ rtk err pnpm typecheck
 6. Freeze 模块停止一切接线
 7. Pack API 统一：官方与自建使用相同接口
 8. 用户自建 Pack 受 PermissionEngine 管控
+
+## Phase 94：AgentProfile 版本历史 UI
+
+> Profile 版本时间轴 + 字段 Diff + 一键回滚。仅自定义（非 builtin）Profile 展示。
+
+### 关键路径
+
+| 层级 | 路径 | 职责 |
+|------|------|------|
+| UI | `desktop/renderer/src/components/settings/ProfileVersionPanel.tsx` | 版本时间轴、Diff、回滚确认对话框 |
+| 挂载 | `desktop/renderer/src/components/settings/SettingsSubAgentsTab.tsx` | 非 builtin Profile 编辑区底部嵌入；`onRollbackSuccess` 后 `profile.get` 刷新编辑区 |
+| IPC 类型 | `desktop/shared/ipc-types.ts` | `listVersions` / `getVersion` / `rollback` / `diffVersions` / `diffCurrentWith` |
+| Preload | `desktop/preload/index.ts` | 映射到 `profile:list-versions` 等 channel |
+| Main | `desktop/main/bridges/profile-bridge.ts` | 调 `AgentProfileManager` / `VersionManager` |
+| 域类型 | `src/agents/profiles/version-types.ts` | `VersionMeta` / `VersionRecord` / `FieldDiff` / `VersionSource` |
+| UI 测试 | `desktop/renderer/src/components/settings/__tests__/ProfileVersionPanel.test.tsx` | 空态 / Diff / 回滚 / refreshKey（`pnpm test:desktop`） |
+
+### 行为约定
+
+1. **仅自定义 Profile**：`SettingsSubAgentsTab` 用 `!profile.isBuiltin` 条件渲染 `ProfileVersionPanel`。
+2. **回滚语义**：覆盖当前 Profile 内容，并**追加**一条 `source=rollback` 的新版本记录（不改写历史）。
+3. **Diff 方向**：`diffCurrentWith` 展示「历史 vs 当前」字段差（`before`=历史，`after`=当前）。
+4. **fail-open**：`listVersions` / `diff*` 在 manager 未就绪时返回 `[]`；真正错误走 throw → UI 错误态 + 重试。
+5. **刷新信号**：父组件通过 `refreshKey` 强制重载；回滚成功必须调 `onRollbackSuccess` 让编辑区与磁盘一致。
+
+### 验证
+
+```bash
+# 在 routedev/ 目录
+pnpm test:desktop -- desktop/renderer/src/components/settings/__tests__/ProfileVersionPanel.test.tsx
+pnpm typecheck:desktop
+```
