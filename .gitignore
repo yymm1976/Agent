@@ -59,5 +59,8 @@ test_results*.json
 test-write.md
 filepath
 
+# External reference repos (read-only, like refs/sonetto-here-ref/)
+refs/pi-agent/
+
 # Optional: keep archive tracked for history; uncomment to ignore:
 # archive/
