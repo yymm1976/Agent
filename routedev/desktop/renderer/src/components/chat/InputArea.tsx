@@ -95,8 +95,12 @@ export function InputArea({
   // 切换对话时自动聚焦输入框，避免焦点丢失导致无法点击输入框
   // 无论 isProcessing 状态如何都聚焦：排队队列模式允许用户在引擎工作时输入下一条消息
   // 延迟一帧执行，确保 DOM 已完成渲染
+  // 修复顽固 bug：删除对话后所有输入框失焦（持续 50+ Phase）
+  // 根因：原生 confirm() 在 frame:false 窗口上破坏 webContents 焦点
+  // 兜底：先通过 IPC 显式恢复 webContents 焦点，再聚焦 textarea
   useEffect(() => {
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
+      await window.routedev.window.restoreFocus();
       textareaRef.current?.focus();
     }, 50);
     return () => clearTimeout(timer);
@@ -151,6 +155,8 @@ export function InputArea({
     input.startsWith('/') &&
     !input.includes(' ') &&
     filteredCommands.length > 0;
+  const visibleSkills = enabledSkills.slice(0, 3);
+  const visibleMcpTools = mcpTools.slice(0, 3);
   // Phase 54 修复：showCommands 为 true 时，计算 textarea 位置，用 Portal 渲染菜单到 body
   useLayoutEffect(() => {
     if (showCommands && textareaRef.current) {
@@ -241,39 +247,42 @@ export function InputArea({
         >
           {/* Phase 37：Skill/MCP 状态栏——显示已启用的 Skill 和已连接的 MCP 工具 */}
           {showSkillBar && (enabledSkills.length > 0 || mcpTools.length > 0) && (
-            <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-rd-border/50 px-4 py-2">
+            <div className="flex shrink-0 items-center gap-1.5 overflow-hidden border-b border-rd-border/50 px-4 py-2">
               {enabledSkills.length > 0 && (
                 <>
-                  <span className="flex items-center gap-1 text-xs font-medium text-rd-textSubtle">
+                  <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-rd-textSubtle">
                     <BookOpen size={12} /> Skill:
                   </span>
-                  {enabledSkills.map((s) => (
+                  {visibleSkills.map((s) => (
                     <span
                       key={s.name}
-                      className="rounded-md bg-rd-primary/10 px-2 py-0.5 text-xs text-rd-primary"
+                      className="max-w-32 shrink-0 truncate rounded-md bg-rd-primary/10 px-2 py-0.5 text-xs text-rd-primary"
                       title={s.description}
                     >
                       {s.name}
                     </span>
                   ))}
+                  {enabledSkills.length > visibleSkills.length && (
+                    <span className="shrink-0 text-xs text-rd-textSubtle">+{enabledSkills.length - visibleSkills.length}</span>
+                  )}
                 </>
               )}
               {mcpTools.length > 0 && (
                 <>
-                  <span className="flex items-center gap-1 text-xs font-medium text-rd-textSubtle ml-2">
+                  <span className="ml-2 flex shrink-0 items-center gap-1 text-xs font-medium text-rd-textSubtle">
                     <Plug size={12} /> MCP:
                   </span>
-                  {mcpTools.slice(0, 6).map((t) => (
+                  {visibleMcpTools.map((t) => (
                     <span
                       key={t.name}
-                      className="rounded-md bg-rd-surfaceHover px-2 py-0.5 text-xs text-rd-textSubtle"
+                      className="max-w-32 shrink-0 truncate rounded-md bg-rd-surfaceHover px-2 py-0.5 text-xs text-rd-textSubtle"
                       title={t.description}
                     >
                       {t.name.replace('mcp__', '').replace('__', '.')}
                     </span>
                   ))}
-                  {mcpTools.length > 6 && (
-                    <span className="text-xs text-rd-textSubtle">+{mcpTools.length - 6}</span>
+                  {mcpTools.length > visibleMcpTools.length && (
+                    <span className="shrink-0 text-xs text-rd-textSubtle">+{mcpTools.length - visibleMcpTools.length}</span>
                   )}
                 </>
               )}
@@ -373,7 +382,7 @@ export function InputArea({
                 }
               }
             }}
-            placeholder={isProcessing ? '输入下一条消息（Enter 加入排队队列）... Shift+Enter 换行' : '输入问题或拖拽图片开始... Shift+Enter 换行，输入 / 查看命令'}
+            placeholder={isProcessing ? '输入下一条消息（Enter 加入排队队列）... Shift+Enter 换行' : '输入问题开始... Shift+Enter 换行，输入 / 查看命令'}
             rows={6}
             className="h-full min-h-0 resize-none border-0 bg-transparent px-4 py-4 text-base leading-7 shadow-none focus-visible:ring-0"
           />

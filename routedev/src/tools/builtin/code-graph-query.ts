@@ -23,6 +23,10 @@ const VALID_ACTIONS = new Set([
   'search_symbols',
 ]);
 
+/** 默认/硬上限：防止调用图结果无限膨胀 */
+const DEFAULT_MAX_RESULTS = 100;
+const HARD_MAX_RESULTS = 200;
+
 /**
  * 代码地图查询工具
  * 让 Agent 可以主动查询 code-map DB 的调用关系、影响半径、符号搜索
@@ -193,11 +197,21 @@ export class CodeGraphQueryTool implements ITool {
     }
   }
 
+  /** 解析并钳制 maxResults */
+  private resolveMaxResults(args: Record<string, unknown>): number {
+    const raw = typeof args.maxResults === 'number' ? args.maxResults : DEFAULT_MAX_RESULTS;
+    if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_MAX_RESULTS;
+    return Math.min(Math.floor(raw), HARD_MAX_RESULTS);
+  }
+
   /** find_callers：查找谁调用了指定符号 */
   private doFindCallers(db: DB, args: Record<string, unknown>, start: number): ToolResult {
     const symbol = args.symbol as string;
     const fileHint = args.fileHint as string | undefined;
+    const maxResults = this.resolveMaxResults(args);
     const callers = findCallers(db, symbol, fileHint);
+    const shown = callers.slice(0, maxResults);
+    const truncated = callers.length > shown.length;
 
     if (callers.length === 0) {
       return {
@@ -209,17 +223,20 @@ export class CodeGraphQueryTool implements ITool {
     }
 
     const lines: string[] = [
-      `find_callers: 找到 ${callers.length} 个调用者调用 \`${symbol}\`：`,
+      `find_callers: 找到 ${callers.length} 个调用者调用 \`${symbol}\`${truncated ? `（显示前 ${shown.length} 个）` : ''}：`,
       '',
     ];
-    for (const c of callers) {
+    for (const c of shown) {
       lines.push(`  ${c.filePath}:${c.startLine + 1}  ${formatNode(c)}`);
+    }
+    if (truncated) {
+      lines.push('', `[...结果已截断：共 ${callers.length} 个，仅显示前 ${shown.length} 个]`);
     }
     return {
       success: true,
       output: lines.join('\n'),
       durationMs: Date.now() - start,
-      metadata: { action: 'find_callers', count: callers.length },
+      metadata: { action: 'find_callers', count: callers.length, shown: shown.length, truncated },
     };
   }
 
@@ -227,7 +244,10 @@ export class CodeGraphQueryTool implements ITool {
   private doFindCallees(db: DB, args: Record<string, unknown>, start: number): ToolResult {
     const symbol = args.symbol as string;
     const fileHint = args.fileHint as string | undefined;
+    const maxResults = this.resolveMaxResults(args);
     const callees = findCallees(db, symbol, fileHint);
+    const shown = callees.slice(0, maxResults);
+    const truncated = callees.length > shown.length;
 
     if (callees.length === 0) {
       return {
@@ -239,17 +259,20 @@ export class CodeGraphQueryTool implements ITool {
     }
 
     const lines: string[] = [
-      `find_callees: \`${symbol}\` 调用了 ${callees.length} 个符号：`,
+      `find_callees: \`${symbol}\` 调用了 ${callees.length} 个符号${truncated ? `（显示前 ${shown.length} 个）` : ''}：`,
       '',
     ];
-    for (const c of callees) {
+    for (const c of shown) {
       lines.push(`  ${c.filePath}:${c.startLine + 1}  ${formatNode(c)}`);
+    }
+    if (truncated) {
+      lines.push('', `[...结果已截断：共 ${callees.length} 个，仅显示前 ${shown.length} 个]`);
     }
     return {
       success: true,
       output: lines.join('\n'),
       durationMs: Date.now() - start,
-      metadata: { action: 'find_callees', count: callees.length },
+      metadata: { action: 'find_callees', count: callees.length, shown: shown.length, truncated },
     };
   }
 
@@ -258,6 +281,7 @@ export class CodeGraphQueryTool implements ITool {
     const symbol = args.symbol as string | undefined;
     const filePath = args.filePath as string | undefined;
     const maxDepth = (args.maxDepth as number) ?? 3;
+    const maxResults = this.resolveMaxResults(args);
     const target = symbol || filePath;
 
     if (!target) {
@@ -280,18 +304,31 @@ export class CodeGraphQueryTool implements ITool {
       };
     }
 
+    const shownFiles = result.impactedFiles.slice(0, maxResults);
+    const shownNodes = result.impactedNodes.slice(0, maxResults);
+    const truncated =
+      result.impactedFiles.length > shownFiles.length ||
+      result.impactedNodes.length > shownNodes.length;
+
     const lines: string[] = [
       `impact_analysis: \`${target}\` 影响半径分析（maxDepth=${maxDepth}）`,
-      `受影响节点: ${result.totalCount} 个，涉及文件: ${result.impactedFiles.length} 个`,
+      `受影响节点: ${result.totalCount} 个，涉及文件: ${result.impactedFiles.length} 个` +
+        (truncated ? `（各显示前 ${maxResults} 个）` : ''),
       '',
       '受影响文件:',
     ];
-    for (const f of result.impactedFiles) {
+    for (const f of shownFiles) {
       lines.push(`  ${f}`);
     }
     lines.push('', '受影响节点:');
-    for (const n of result.impactedNodes) {
+    for (const n of shownNodes) {
       lines.push(`  ${n.filePath}:${n.startLine + 1}  ${formatNode(n)}`);
+    }
+    if (truncated) {
+      lines.push(
+        '',
+        `[...结果已截断：文件 ${result.impactedFiles.length} / 节点 ${result.impactedNodes.length}，上限 ${maxResults}]`,
+      );
     }
     return {
       success: true,
@@ -301,6 +338,9 @@ export class CodeGraphQueryTool implements ITool {
         action: 'impact_analysis',
         totalCount: result.totalCount,
         fileCount: result.impactedFiles.length,
+        shownNodes: shownNodes.length,
+        shownFiles: shownFiles.length,
+        truncated,
         maxDepth,
       },
     };
@@ -314,7 +354,9 @@ export class CodeGraphQueryTool implements ITool {
     start: number,
   ): Promise<ToolResult> {
     const query = args.query as string;
-    const maxResults = (args.maxResults as number) ?? 20;
+    const maxResults = this.resolveMaxResults(
+      typeof args.maxResults === 'number' ? args : { ...args, maxResults: 20 },
+    );
 
     const ctx = await explore(db, query, rootDir, {
       maxResults,

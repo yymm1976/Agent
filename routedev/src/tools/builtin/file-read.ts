@@ -15,9 +15,36 @@ import { buildTool, type ITool, type ToolDefinition, type ToolResult, type ToolE
 import { checkPathBoundary } from './search-utils.js';
 // F-034：引入 resolveSecurePath 解析 symlink 真实路径（与 file-write.ts 一致）
 import { resolveSecurePath } from '../security-enhanced.js';
+// Phase 96 P1-3：BOM 检测，metadata 中暴露 hadBom 供 file_edit 乐观锁基线参考
+import { readWithBomInfo } from './bom-utils.js';
 
 /** 最大读取字节数（1MB），超过则拒绝读取 */
 const MAX_READ_BYTES = 1024 * 1024;
+
+/**
+ * Phase 96 P2-10：图片文件扩展名 → MIME 类型映射
+ * 仅按扩展名识别，不做魔数校验（信任文件后缀，与多数 LLM 客户端行为一致）
+ */
+const IMAGE_MIME_MAP: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+};
+
+/** 根据文件扩展名获取图片 MIME 类型，非图片返回 undefined */
+function getImageMimeType(filePath: string): string | undefined {
+  const ext = path.extname(filePath).toLowerCase();
+  return IMAGE_MIME_MAP[ext];
+}
+
+/**
+ * Phase 96 P2-10：图片最大尺寸（5MB）
+ * 图片放宽到 5MB（高于文本的 1MB），因为 base64 编码后体积会膨胀 ~33%
+ */
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 /**
  * P0-1：使用 buildTool 工厂创建 file_read 工具
@@ -100,6 +127,36 @@ export const fileReadTool = buildTool({
     try {
       // P1-9：读取前检查文件大小，防止大文件撑爆上下文
       const stats = await fs.stat(realPath);
+
+      // Phase 96 P2-10：图片文件走 base64 分支，跳过 BOM/行号处理
+      const imageMime = getImageMimeType(realPath);
+      if (imageMime) {
+        if (stats.size > MAX_IMAGE_BYTES) {
+          return {
+            success: false,
+            output: '',
+            error: `图片过大: ${stats.size} 字节（上限 ${MAX_IMAGE_BYTES} 字节）`,
+            durationMs: 0,
+            metadata: { fileSize: stats.size, maxBytes: MAX_IMAGE_BYTES, isImage: true },
+          };
+        }
+        const buffer = await fs.readFile(realPath);
+        const base64 = buffer.toString('base64');
+        return {
+          success: true,
+          output: `[图片: ${path.basename(realPath)} ${stats.size} 字节 ${imageMime}]`,
+          durationMs: 0,
+          metadata: {
+            isImage: true,
+            mediaType: imageMime,
+            sizeBytes: stats.size,
+            mtimeMs: stats.mtimeMs,
+          },
+          // P2-10：上游 LLM 客户端读取 images 字段并转换为 ContentPart.image
+          images: [{ mediaType: imageMime, data: base64 }],
+        };
+      }
+
       if (stats.size > MAX_READ_BYTES) {
         return {
           success: false,
@@ -110,7 +167,10 @@ export const fileReadTool = buildTool({
         };
       }
 
-      const content = await fs.readFile(realPath, 'utf-8');
+      // Phase 96 P1-3：使用 readWithBomInfo 显式检测 BOM，并在 metadata 中暴露 hadBom
+      // 之前用 fs.readFile(realPath, 'utf-8') 会自动剥离 BOM 但调用方无感知，导致
+      // file_edit 写回时 BOM 静默丢失。现在 file_edit 可通过 metadata.hadBom 决定是否回写 BOM
+      const { content, hadBom } = await readWithBomInfo(realPath);
 
       // 如果有行号范围，截取指定行
       if (startLine > 1 || endLine) {
@@ -125,6 +185,7 @@ export const fileReadTool = buildTool({
 
         // Phase 72 Task C2：附加 mtimeMs / sizeBytes 作为乐观锁基线
         // file_edit 可在入参中传 expectedMtimeMs / expectedSizeBytes 进行乐观锁校验
+        // Phase 96 P1-3：附加 hadBom 供 file_edit 写回时保留原 BOM 状态
         return {
           success: true,
           output: numbered,
@@ -134,6 +195,7 @@ export const fileReadTool = buildTool({
             shownLines: sliced.length,
             mtimeMs: stats.mtimeMs,
             sizeBytes: stats.size,
+            hadBom,
           },
         };
       }
@@ -144,6 +206,7 @@ export const fileReadTool = buildTool({
       ).join('\n');
 
       // Phase 72 Task C2：附加 mtimeMs / sizeBytes 作为乐观锁基线
+      // Phase 96 P1-3：附加 hadBom 供 file_edit 写回时保留原 BOM 状态
       return {
         success: true,
         output: numbered,
@@ -152,6 +215,7 @@ export const fileReadTool = buildTool({
           totalLines: lines.length,
           mtimeMs: stats.mtimeMs,
           sizeBytes: stats.size,
+          hadBom,
         },
       };
     } catch (error) {

@@ -7,6 +7,7 @@ import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';
 import { Select, SelectItem } from '../ui/select.js';
 import { Input } from '../ui/input.js';
+import { Alert, AlertTitle, AlertDescription } from '../ui/alert.js';
 import { SettingsTabContainer } from './SettingsTabContainer.js';
 
 interface SettingsPersonaTabProps {
@@ -29,22 +30,29 @@ export function SettingsPersonaTab({ draft, updateDraft }: SettingsPersonaTabPro
   };
 
   return (
-    <SettingsTabContainer>
+    <SettingsTabContainer className="space-y-6">
+      {/* 占位 UI：PersonaEngine 尚未实现，所有控件已禁用 */}
+      <Alert variant="destructive">
+        <AlertTitle>此功能暂未实现</AlertTitle>
+        <AlertDescription>此功能暂未实现，配置不会生效</AlertDescription>
+      </Alert>
+
       <Card>
         <CardHeader>
-          <CardTitle>人格引擎</CardTitle>
+          <CardTitle>人格化</CardTitle>
           <CardDescription>控制助手的人格化表达风格与强度</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <Label htmlFor="persona-enabled">启用人格引擎</Label>
-              <p className="text-xs text-rd-textMuted">开启后助手回复会带有人格化语气与表达风格。</p>
+              <Label htmlFor="persona-enabled">启用人格化</Label>
+              <p className="text-xs text-rd-textMuted">暂未实现</p>
             </div>
             <Switch
               id="persona-enabled"
               checked={persona.enabled}
               onCheckedChange={(checked) => updatePersona({ enabled: checked })}
+              disabled
             />
           </div>
 
@@ -54,22 +62,24 @@ export function SettingsPersonaTab({ draft, updateDraft }: SettingsPersonaTabPro
               id="persona-intensity"
               value={persona.intensity}
               onChange={(e) => updatePersona({ intensity: e.target.value as typeof persona.intensity })}
+              disabled
             >
               {INTENSITY_OPTIONS.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
               ))}
             </Select>
-            <p className="text-xs text-rd-textMuted">强度越高，人格化表达越明显；设为关闭则仅保留基础风格。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现</p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="persona-current-id">当前人格 ID</Label>
+            <Label htmlFor="persona-current-id">当前人格标识</Label>
             <Input
               id="persona-current-id"
               value={persona.currentId}
               onChange={(e) => updatePersona({ currentId: e.target.value })}
+              disabled
             />
-            <p className="text-xs text-rd-textMuted">使用的人格配置标识，默认 collaborator。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现</p>
           </div>
         </CardContent>
       </Card>

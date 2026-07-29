@@ -108,7 +108,14 @@ function setupBridge(options: SetupOptions = {}) {
       triggerCheckpoint: vi.fn(),
       saveCheckpoint: vi.fn(),
       shouldCompress: () => false,
+      shouldCompressEnhanced: () => ({ should: false, action: 'none', tokenState: null }),
       compress: vi.fn(),
+      compressEnhanced: vi.fn(async (messages: unknown[]) => ({
+        compressed: messages,
+        result: { tokensBefore: 0, tokensAfter: 0, messagesCompressed: 0, offloadedOutputs: 0, timestamp: Date.now() },
+      })),
+      // Phase 70：模型切换时同步更新 AutoCompactGuardian 的 contextWindow
+      updateAutoCompactContextWindow: vi.fn(),
     },
     prompts: { render: async () => '' },
     trace: {
@@ -782,5 +789,171 @@ describe('ChatBridge 集成测试 (Phase 79 Task 1)', () => {
       const msg = (result as { message: string }).message;
       expect(msg).toContain('/unknown_cmd');
     });
+  });
+
+  // ============================================================
+  // Phase 91-2：完成状态验证分支
+  // 验证 chat-bridge.ts 的 VERIFY_REQUEST_PATTERN + modifiedFiles 联合判定逻辑：
+  //   1. 无 file_write/file_edit 事件 → 不触发 gate.verify → completed_unverified
+  //   2. 有修改 + 用户消息含验证关键字 + gate 通过 → completed_verified
+  //   3. 有修改 + 用户消息含验证关键字 + gate 失败 → verification_failed
+  //   4. 边界：gate.verify 抛异常 → 回退为 passed=true + warning → completed_with_warnings
+  // ============================================================
+  describe('Phase 91-2：完成状态验证分支', () => {
+    /** 从 onStream 调用中提取 done 事件的 completionStatus */
+    function extractDoneStatus(onStream: ReturnType<typeof vi.fn>): unknown {
+      const donePayload = onStream.mock.calls
+        .map(([p]) => p as { type?: string; completionStatus?: unknown })
+        .find((p) => p.type === 'done');
+      return donePayload?.completionStatus;
+    }
+
+    /** 生成 file_write 工具调用事件的辅助 */
+    function* fileWriteEvents(filePath = '/test/foo.ts') {
+      yield {
+        type: 'tool_call_start',
+        toolName: 'file_write',
+        toolCallId: 'tw-1',
+        args: { path: filePath },
+      };
+      yield {
+        type: 'tool_call_result',
+        toolName: 'file_write',
+        toolCallId: 'tw-1',
+        result: 'ok',
+        isError: false,
+      };
+      yield { type: 'done', content: '', usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } };
+    }
+
+    it('无文件修改时不触发 gate.verify，状态为 completed_unverified', async () => {
+      // 普通对话：仅 text_delta + done，无 file_write 事件
+      const { bridge, onStream } = setupBridge({
+        agentLoopRun: async function* () {
+          yield { type: 'text_delta', text: '回复' };
+          yield { type: 'done', content: '', usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } };
+        },
+      });
+
+      await bridge.sendChat('请帮我测试一下这个功能');
+
+      expect(extractDoneStatus(onStream)).toBe('completed_unverified');
+    });
+
+    it('有文件修改 + 验证关键字 + gate 通过 → completed_verified', async () => {
+      const verifySpy = vi.fn().mockResolvedValue({
+        passed: true,
+        checks: [{ name: 'typecheck', ok: true, output: '', duration: 10 }],
+      });
+      const { bridge, ctx, onStream } = setupBridge({
+        agentLoopRun: async function* () {
+          yield* fileWriteEvents() as any;
+        },
+      });
+      // 注入 gate mock（setupBridge 默认未设置 completionGate）
+      (ctx.deps as any).completionGate = { verify: verifySpy };
+
+      await bridge.sendChat('请帮我测试这个修改');
+
+      expect(verifySpy).toHaveBeenCalledTimes(1);
+      expect(verifySpy.mock.calls[0][0].modifiedFiles).toContain('/test/foo.ts');
+      expect(extractDoneStatus(onStream)).toBe('completed_verified');
+    });
+
+    it('有文件修改 + 验证关键字 + gate 失败 → verification_failed', async () => {
+      const verifySpy = vi.fn().mockResolvedValue({
+        passed: false,
+        checks: [
+          { name: 'typecheck', ok: false, output: 'TS2307: 找不到模块', duration: 10 },
+        ],
+      });
+      const { bridge, ctx, onStream } = setupBridge({
+        agentLoopRun: async function* () {
+          yield* fileWriteEvents() as any;
+        },
+      });
+      (ctx.deps as any).completionGate = { verify: verifySpy };
+
+      await bridge.sendChat('请帮我检查构建');
+
+      expect(verifySpy).toHaveBeenCalledTimes(1);
+      expect(extractDoneStatus(onStream)).toBe('verification_failed');
+    });
+
+    it('边界：gate.verify 抛异常 → completed_with_warnings', async () => {
+      const verifySpy = vi.fn().mockRejectedValue(new Error('spawn ENOENT'));
+      const { bridge, ctx, onStream } = setupBridge({
+        agentLoopRun: async function* () {
+          yield* fileWriteEvents() as any;
+        },
+      });
+      (ctx.deps as any).completionGate = { verify: verifySpy };
+
+      await bridge.sendChat('请帮我验证');
+
+      // chat-bridge.ts catch 后用 { passed: true, checks: [], warnings: [err] } 兜底
+      // toCompletionStatus: warnings 非空 → completed_with_warnings
+      expect(verifySpy).toHaveBeenCalledTimes(1);
+      expect(extractDoneStatus(onStream)).toBe('completed_with_warnings');
+    });
+
+    it('边界：工具调用 isError=true 不计入 modifiedFiles，不触发验证', async () => {
+      const verifySpy = vi.fn();
+      const { bridge, ctx, onStream } = setupBridge({
+        agentLoopRun: async function* () {
+          yield {
+            type: 'tool_call_start',
+            toolName: 'file_write',
+            toolCallId: 'tw-err',
+            args: { path: '/test/failed.ts' },
+          };
+          yield {
+            type: 'tool_call_result',
+            toolName: 'file_write',
+            toolCallId: 'tw-err',
+            result: '写入失败',
+            isError: true,
+          };
+          yield { type: 'done', content: '', usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } };
+        },
+      });
+      (ctx.deps as any).completionGate = { verify: verifySpy };
+
+      await bridge.sendChat('请帮我测试');
+
+      // isError=true 不加入 modifiedFiles → modifiedFiles.size=0 → 不触发验证
+      expect(verifySpy).not.toHaveBeenCalled();
+      expect(extractDoneStatus(onStream)).toBe('completed_unverified');
+    });
+  });
+
+  // ============================================================
+  // Phase 94（修复）：auto 模式下所有工具自动批准
+  // AUTO_MODE_CONFIRM_TOOLS 已清空——用户选择 auto 模式 = 明确信任 Agent
+  // 真正的危险操作（rm -rf /、format 等）由 PermissionEngine DEFAULT_DENY_RULES 硬拦截
+  // ============================================================
+  describe('Phase 94（修复）：auto 模式全部工具自动批准', () => {
+    it.each(['file_edit', 'browser', 'shell_exec', 'git_op', 'file_write', 'spawn_agent'])(
+      'auto 模式下 %s 自动批准（不触发 requestUserConfirmation）',
+      async (toolName) => {
+        let confirmCalled = false;
+        const { bridge, onToolConfirmRequest } = setupBridge({
+          autonomyMode: 'auto',
+          agentLoopRun: async function* (params) {
+            const result = await params.onConfirmTool(toolName, { path: '/test/x' });
+            // auto 模式下应该直接返回 true
+            expect(result).toBe(true);
+            confirmCalled = true;
+            yield { type: 'done', content: '', usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } };
+          },
+        });
+
+        await bridge.sendChat('编辑文件');
+
+        expect(confirmCalled).toBe(true);
+        // onToolConfirmRequest 不应被调用（auto 模式不弹确认框）
+        expect(onToolConfirmRequest).not.toHaveBeenCalled();
+      },
+    );
   });
 });

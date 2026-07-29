@@ -88,13 +88,12 @@ describe('Phase 73 Part C：follow-up 队列', () => {
       loop.followUp('后续任务');
 
       const statusBefore = loop.getQueueStatus();
-      expect(statusBefore.steering).toBe(0);
+      // getQueueStatus() 只返回 { followUp: number }，无 steering 字段
       expect(statusBefore.followUp).toBe(1);
 
       loop.clearAllQueues();
 
       const statusAfter = loop.getQueueStatus();
-      expect(statusAfter.steering).toBe(0);
       expect(statusAfter.followUp).toBe(0);
     });
 

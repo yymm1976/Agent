@@ -56,16 +56,40 @@ interface ManagerLike {
   historyNodeIds: string[];
 }
 
+/**
+ * Phase 89：BranchPersistence 构造选项
+ * - maxNodes：节点上限（透传给 BranchManager 或本地使用）
+ * - maxBranches：分支上限（透传给 BranchManager 或本地使用）
+ * - undoStackSize：撤销栈大小（透传给 BranchOperations 或本地使用）
+ *
+ * 注：本类不直接持有 BranchManager，opts 存储为字段，
+ *     调用方可通过 getOptions() 读取后透传给 BranchManager/BranchOperations。
+ *     这样消除了原"构造函数签名谎称接受 opts 但实际丢弃"的假消费链。
+ */
+export interface BranchPersistenceOptions {
+  maxNodes?: number;
+  maxBranches?: number;
+  undoStackSize?: number;
+}
+
 export class BranchPersistence {
   private readonly filePath: string;
   private readonly backupPath: string;
   private readonly snapshotDir: string;
+  /** Phase 89：持久化构造选项（存储以供调用方透传给 BranchManager） */
+  private readonly options?: BranchPersistenceOptions;
 
-  constructor(rootDir: string) {
+  constructor(rootDir: string, opts?: BranchPersistenceOptions) {
     const convDir = path.join(rootDir, '.routedev', 'conversation');
     this.filePath = path.join(convDir, 'tree.jsonl');
     this.backupPath = path.join(convDir, 'tree.jsonl.bak');
     this.snapshotDir = path.join(convDir, 'snapshots');
+    this.options = opts;
+  }
+
+  /** Phase 89：获取构造选项，供调用方透传给 BranchManager/BranchOperations */
+  getOptions(): BranchPersistenceOptions | undefined {
+    return this.options;
   }
 
   // ============================================================

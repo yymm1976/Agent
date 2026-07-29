@@ -52,6 +52,16 @@ export interface BranchSummaryNode extends BaseNode {
 /** 分支节点联合类型 */
 export type BranchNode = MessageNode | CompactionNode | BranchSummaryNode;
 
+/**
+ * Phase 89：BranchManager 构造选项
+ * - maxNodes：节点 Map 上限（默认 5000）
+ * - maxBranches：分支 Map 上限（默认 100）
+ */
+export interface BranchManagerOptions {
+  maxNodes?: number;
+  maxBranches?: number;
+}
+
 /** 分支信息 */
 export interface BranchInfo {
   id: string;           // 稳定的分支 ID（不随 append 变化）
@@ -75,9 +85,18 @@ export class BranchManager {
   /** initFromHistory 时记录每条消息对应的节点 ID（按 history 顺序） */
   private historyNodeIds: string[] = [];
   /** P6：节点 Map 上限（超出时归档早期非活跃节点） */
-  private readonly maxNodes = 5000;
+  private readonly maxNodes: number;
   /** P6：分支 Map 上限 */
-  private readonly maxBranches = 100;
+  private readonly maxBranches: number;
+
+  /**
+   * Phase 89：构造函数接受可选 opts，允许外部配置 maxNodes/maxBranches
+   * 未传入时使用默认值（5000/100），保持向后兼容
+   */
+  constructor(opts?: BranchManagerOptions) {
+    this.maxNodes = opts?.maxNodes ?? 5000;
+    this.maxBranches = opts?.maxBranches ?? 100;
+  }
 
   /** 从对话历史初始化分支结构（追加一个虚拟根节点） */
   initFromHistory(history: LLMMessage[]): void {

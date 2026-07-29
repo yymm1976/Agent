@@ -31,8 +31,21 @@ import { createDefaultEngine } from '../../src/tools/permission-engine.js';
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const APP_INIT_PATH = path.join(PROJECT_ROOT, 'src', 'runtime', 'app-init.ts');
+// Phase 78 重构：createDefaultEngine/setSandboxLevel/setApproval 已迁移至 app-init-tools.ts
+// 源码静态分析需同时读取两文件，保证迁移后断言仍能命中
+const APP_INIT_TOOLS_PATH = path.join(PROJECT_ROOT, 'src', 'runtime', 'app-init-tools.ts');
 const PROJECT_MEMORY_PATH = path.join(PROJECT_ROOT, 'src', 'memory', 'project-memory.ts');
 const SPAWN_AGENT_PATH = path.join(PROJECT_ROOT, 'src', 'tools', 'builtin', 'spawn-agent.ts');
+// Phase 74-G：SANDBOX_LEVEL_OPTIONS / 沙箱级 Select 控件已迁移至 SettingsSecurityTab.tsx
+const SETTINGS_SECURITY_TAB_PATH = path.join(
+  PROJECT_ROOT,
+  'desktop',
+  'renderer',
+  'src',
+  'components',
+  'settings',
+  'SettingsSecurityTab.tsx',
+);
 const SETTINGS_PAGE_PATH = path.join(
   PROJECT_ROOT,
   'desktop',
@@ -52,25 +65,43 @@ async function readFile(filePath: string): Promise<string> {
   return fsp.readFile(filePath, 'utf-8');
 }
 
+/** 读取 app-init.ts + app-init-tools.ts 合并内容（Phase 78 重构后两者均需参与断言） */
+async function readAppInitMerged(): Promise<string> {
+  const [main, tools] = await Promise.all([
+    readFile(APP_INIT_PATH),
+    readFile(APP_INIT_TOOLS_PATH),
+  ]);
+  return main + '\n' + tools;
+}
+
+/** 读取 SettingsPage + SettingsSecurityTab 合并内容（Phase 74-G 重构后两者均需参与断言） */
+async function readSettingsMerged(): Promise<string> {
+  const [page, tab] = await Promise.all([
+    readFile(SETTINGS_PAGE_PATH),
+    readFile(SETTINGS_SECURITY_TAB_PATH),
+  ]);
+  return page + '\n' + tab;
+}
+
 // ============================================================
 // 1. app-init.ts 中 permissionEngine 从 config.security.sandbox 读取并调用 setSandboxLevel（Task 1）
 // ============================================================
 describe('Phase 48 E2E - Task 1: permissionEngine 接线 config.security.sandbox', () => {
   it('app-init.ts 包含 createDefaultEngine 创建 permissionEngine', async () => {
-    const content = await readFile(APP_INIT_PATH);
+    const content = await readAppInitMerged();
     expect(content).toContain('createDefaultEngine');
     expect(content).toContain('permissionEngine');
   });
 
   it('app-init.ts 从 config.security.sandbox 读取并调用 setSandboxLevel', async () => {
-    const content = await readFile(APP_INIT_PATH);
+    const content = await readAppInitMerged();
     // Phase 48 Task 1：从配置应用沙箱级
     expect(content).toContain('config.security?.sandbox');
     expect(content).toContain('permissionEngine.setSandboxLevel');
   });
 
   it('app-init.ts 从 config.security.approval 读取并调用 setApproval', async () => {
-    const content = await readFile(APP_INIT_PATH);
+    const content = await readAppInitMerged();
     expect(content).toContain('config.security?.approval');
     expect(content).toContain('permissionEngine.setApproval');
   });
@@ -90,12 +121,14 @@ describe('Phase 48 E2E - Task 1: permissionEngine 接线 config.security.sandbox
 // 2. app-init.ts 中调用 loadProjectDoc（Task 2）
 // ============================================================
 describe('Phase 48 E2E - Task 2: app-init.ts 调用 loadProjectDoc', () => {
-  it('app-init.ts 导入 loadProjectDoc', async () => {
+  // G-F027：loadProjectDoc 已从 app-init 移除（无消费方，数据流断裂）
+  // 这两个测试仅验证历史接线，跳过以反映当前架构
+  it.skip('app-init.ts 导入 loadProjectDoc', async () => {
     const content = await readFile(APP_INIT_PATH);
     expect(content).toMatch(/import.*loadProjectDoc.*from.*'\.\.\/memory\/project-memory\.js'/);
   });
 
-  it('app-init.ts 调用 loadProjectDoc 并将结果注入 projectMemory', async () => {
+  it.skip('app-init.ts 调用 loadProjectDoc 并将结果注入 projectMemory', async () => {
     const content = await readFile(APP_INIT_PATH);
     // Phase 48 Task 2：接线 loadProjectDoc
     expect(content).toContain('loadProjectDoc(cwd');
@@ -192,12 +225,12 @@ describe('Phase 48 E2E - Task 5: package.json scripts 包含 lint:descriptions',
 // ============================================================
 describe('Phase 48 E2E - Task 1 UI: SettingsPage 沙箱级选择器', () => {
   it('SettingsPage.tsx 导入 SandboxLevel 类型', async () => {
-    const content = await readFile(SETTINGS_PAGE_PATH);
+    const content = await readSettingsMerged();
     expect(content).toContain('SandboxLevel');
   });
 
   it('SettingsPage.tsx 定义 SANDBOX_LEVEL_OPTIONS 常量（3 个选项）', async () => {
-    const content = await readFile(SETTINGS_PAGE_PATH);
+    const content = await readSettingsMerged();
     expect(content).toContain('SANDBOX_LEVEL_OPTIONS');
     expect(content).toContain("'read-only'");
     expect(content).toContain("'workspace-write'");
@@ -205,7 +238,7 @@ describe('Phase 48 E2E - Task 1 UI: SettingsPage 沙箱级选择器', () => {
   });
 
   it('SettingsPage.tsx 包含沙箱级 Select 控件', async () => {
-    const content = await readFile(SETTINGS_PAGE_PATH);
+    const content = await readSettingsMerged();
     expect(content).toContain('id="security-sandbox"');
     // 控件绑定到 draft.security.sandbox
     expect(content).toMatch(/value=\{draft\.security\.sandbox\}/);

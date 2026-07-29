@@ -12,9 +12,11 @@ import type { AppConfig } from '../shared/config-types.js';
 import type { LLMMessage } from '../../src/router/types.js';
 import { LLMClientManager } from '../../src/router/llm/index.js';
 import { TokenTracker } from '../../src/router/tracker.js';
+import { CacheStatsTracker } from '../../src/router/cache-optimizer.js';
 import { ScenarioClassifier } from '../../src/router/classifier.js';
 import { ModelRouter } from '../../src/router/router.js';
 import { buildRouterConfig } from '../../src/router/config.js';
+import { lookupModelCost } from '../../src/router/model-catalog.js';
 import { createAppDependencies } from '../../src/runtime/app-init.js';
 // F-058：MCP 自动连接失败汇总日志
 import { logger } from '../../src/utils/logger.js';
@@ -24,10 +26,13 @@ import type {
   MCPInstallPayload,
   MCPInstallResult,
   SkillInstallPayload,
-  AgentProfileInfo,
+  AgentProfileSummary,
   AgentProfileDetail,
   ProfileSavePayload,
   ProfileOpResult,
+  VersionMeta,
+  VersionRecord,
+  FieldDiff,
   ResumableGoalIpcInfo,
   ExperimentInfo,
   HookInfo,
@@ -61,6 +66,19 @@ import {
 
 // 向后兼容：原 engine-bridge.ts 导出的类型，从此处 re-export 供外部消费方继续引用
 export type { EngineBridgeOptions, SkillInfo, SkillPreview, MCPToolInfo };
+
+/**
+ * 从 provider id 或 baseUrl 推断 clientType
+ * 让 DeepSeek/Qwen/Ollama 子类生效（继承 OpenAIClient 但有环境变量回退等定制）
+ */
+function inferClientType(p: { id: string; protocol: string; baseUrl: string }): 'deepseek' | 'qwen' | 'ollama' | undefined {
+  const id = p.id.toLowerCase();
+  const url = p.baseUrl.toLowerCase();
+  if (id.includes('deepseek') || url.includes('deepseek')) return 'deepseek';
+  if (id.includes('qwen') || url.includes('dashscope') || url.includes('qwen')) return 'qwen';
+  if (id.includes('ollama') || url.includes('ollama') || url.includes('localhost:11434')) return 'ollama';
+  return undefined;
+}
 
 /**
  * RouteDev 核心引擎封装
@@ -125,12 +143,16 @@ export class RouteDevEngine {
         protocol: p.protocol,
         baseUrl: p.baseUrl,
         apiKey: p.apiKey,
+        // 从 provider id 或 baseUrl 推断 clientType，让 DeepSeek/Qwen/Ollama 子类生效
+        clientType: inferClientType(p),
       })),
     );
     ctx.clientManager = clientManager;
 
     const routerConfig = buildRouterConfig(ctx.config);
     ctx.tracker = new TokenTracker(routerConfig.budget);
+    // Phase 96+ A3.3：缓存命中统计追踪器（与 tracker 同生命周期，destroy 时一并置 null）
+    ctx.cacheStatsTracker = new CacheStatsTracker();
     ctx.modelRouter = new ModelRouter(routerConfig, ctx.tracker, ctx.config.providers);
 
     const readyClients = clientManager.getReadyClients();
@@ -193,6 +215,12 @@ export class RouteDevEngine {
     ctx.profileManager.loadAll().catch((err) => {
       console.error('[Engine] AgentProfileManager.loadAll 失败:', err);
     });
+
+    // Phase 96 P0-1：加载上次对话历史（重启恢复）
+    // fail-open，加载失败不阻塞初始化
+    this.chatBridge.loadHistoryOnStart().catch((err) => {
+      logger.warn('[Engine] loadHistoryOnStart failed', { err });
+    });
   }
 
   async reloadConfig(config: AppConfig): Promise<void> {
@@ -227,6 +255,8 @@ export class RouteDevEngine {
       }
       this.ctx.deps = null;
     }
+    // Phase 96 P0-1：退出前强制持久化对话历史，跳过防抖
+    await this.chatBridge.flushOnShutdown();
     // Phase 48 Task 4：清理 profileManager 引用，防止 reload 后旧实例残留
     this.ctx.profileManager = null;
   }
@@ -508,29 +538,32 @@ export class RouteDevEngine {
 
     // Phase 79 Task 4：复用 PermissionEngine 进行权限校验
     // IPC 无用户确认通道，deny/confirm 决策均拒绝执行；仅 auto 放行
+    // Phase 94 修复：permissionEngine 未注入时 fail-closed（之前为 fail-open 跳过校验）
     const permissionEngine = this.ctx.deps.permissionEngine;
-    if (permissionEngine) {
-      try {
-        const mode = this.ctx.config.autonomy?.defaultMode ?? 'semi';
-        const decision = permissionEngine.check(name, args, mode);
-        if (decision.decision === 'deny') {
-          // F-069 修复：记录权限拒绝审计日志
-          this.ctx.deps.audit?.log('user_deny', name, { reason: decision.reason, source: 'ipc' }, 'denied', 'ipc');
-          return { success: false, error: `权限拒绝: ${decision.reason}` };
-        }
-        if (decision.decision === 'confirm') {
-          // IPC 无确认通道，confirm 决策 fail-closed 拒绝
-          // F-069 修复：记录 confirm 拒绝审计日志
-          this.ctx.deps.audit?.log('user_deny', name, { reason: decision.reason, source: 'ipc', detail: 'confirm not supported via IPC' }, 'denied', 'ipc');
-          return { success: false, error: `权限要求确认（IPC 不支持确认通道）: ${decision.reason}` };
-        }
-        // auto → 放行
-      } catch (err) {
-        // fail-closed：权限引擎异常时拒绝
-        // F-069 修复：记录权限校验异常审计日志
-        this.ctx.deps.audit?.log('user_deny', name, { error: err instanceof Error ? err.message : String(err), source: 'ipc' }, 'failure', 'ipc');
-        return { success: false, error: `权限校验异常 (fail-closed): ${err instanceof Error ? err.message : String(err)}` };
+    if (!permissionEngine) {
+      this.ctx.deps.audit?.log('user_deny', name, { reason: '权限引擎未初始化', source: 'ipc' }, 'failure', 'ipc');
+      return { success: false, error: '权限引擎未初始化，拒绝执行（fail-closed）' };
+    }
+    try {
+      const mode = this.ctx.config.autonomy?.defaultMode ?? 'semi';
+      const decision = permissionEngine.check(name, args, mode);
+      if (decision.decision === 'deny') {
+        // F-069 修复：记录权限拒绝审计日志
+        this.ctx.deps.audit?.log('user_deny', name, { reason: decision.reason, source: 'ipc' }, 'denied', 'ipc');
+        return { success: false, error: `权限拒绝: ${decision.reason}` };
       }
+      if (decision.decision === 'confirm') {
+        // IPC 无确认通道，confirm 决策 fail-closed 拒绝
+        // F-069 修复：记录 confirm 拒绝审计日志
+        this.ctx.deps.audit?.log('user_deny', name, { reason: decision.reason, source: 'ipc', detail: 'confirm not supported via IPC' }, 'denied', 'ipc');
+        return { success: false, error: `权限要求确认（IPC 不支持确认通道）: ${decision.reason}` };
+      }
+      // auto → 放行
+    } catch (err) {
+      // fail-closed：权限引擎异常时拒绝
+      // F-069 修复：记录权限校验异常审计日志
+      this.ctx.deps.audit?.log('user_deny', name, { error: err instanceof Error ? err.message : String(err), source: 'ipc' }, 'failure', 'ipc');
+      return { success: false, error: `权限校验异常 (fail-closed): ${err instanceof Error ? err.message : String(err)}` };
     }
 
     // F-N016 修复：test_connection 工具未在 ToolExecutor 注册，
@@ -538,6 +571,12 @@ export class RouteDevEngine {
     // 临时构造 LLM 客户端做轻量连通性测试，避免渲染进程调用不存在的工具导致失败。
     if (name === 'test_connection') {
       return this.configBridge.handleTestConnection(args);
+    }
+
+    // Phase 96 P1-4：list_models 同样未在 ToolExecutor 注册，内联委托给 ConfigBridge.handleListModels
+    // 临时构造 LLM 客户端调用 provider 的 list models API，返回模型 ID 列表供 UI 展示。
+    if (name === 'list_models') {
+      return this.configBridge.handleListModels(args);
     }
 
     try {
@@ -613,13 +652,87 @@ export class RouteDevEngine {
     });
   }
 
+  /**
+   * Phase 96+ A3.3：实时费用 + 缓存命中率统计快照（驱动 UI StatsBar）
+   *
+   * 聚合源：
+   *   - tracker.getStats()：token 多维度统计
+   *   - tracker.getSessionCost(costResolver)：会话费用（美元）
+   *   - tracker.getUsagePercent()：日预算使用百分比
+   *   - cacheStatsTracker.getStats()：缓存命中 session/turn 两层视图
+   *
+   * costResolver 由 AppConfig.providers 构造，合并用户配置 cost 与 catalog 默认值
+   *
+   * @returns stats 快照（结构见 ipc-types.ts StatsSnapshot），engine 未就绪时返回 zero 快照
+   */
+  async getStatsSnapshot(): Promise<import('../shared/ipc-types.js').StatsSnapshot> {
+    const tracker = this.ctx.tracker;
+    const cacheStats = this.ctx.cacheStatsTracker;
+
+    // 引擎未就绪时返回 zero 快照（IPC fail-open 默认值）
+    if (!tracker || !cacheStats) {
+      return {
+        tokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        cost: { totalUsd: 0, byModel: {} },
+        cache: {
+          session: { hit: 0, miss: 0, total: 0, hitRate: 0 },
+          turn: { hit: 0, miss: 0, total: 0, hitRate: 0 },
+        },
+        budgetUsagePercent: 0,
+        activeModels: [],
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    // 构造 costResolver：遍历 providers[*].models，对每个 modelId 解析 ModelCostInfo
+    // 优先级：用户在 ModelConfig 中显式配置的 cost → catalog 默认值
+    const providerModels = new Map<string, { input?: number; output?: number; cacheRead?: number }>();
+    for (const provider of this.ctx.config.providers ?? []) {
+      for (const model of provider.models ?? []) {
+        // 仅取第一个匹配的同名模型（避免重复定义互相覆盖）
+        if (!providerModels.has(model.id)) {
+          providerModels.set(model.id, {
+            input: model.inputCostPerMillion,
+            output: model.outputCostPerMillion,
+            cacheRead: model.cacheReadCostPerMillion,
+          });
+        }
+      }
+    }
+    const costResolver = (modelId: string) => {
+      const userCfg = providerModels.get(modelId);
+      if (userCfg && (userCfg.input !== undefined || userCfg.output !== undefined)) {
+        return {
+          input: userCfg.input ?? 0,
+          output: userCfg.output ?? 0,
+          cacheRead: userCfg.cacheRead,
+        };
+      }
+      // 回退到 model-catalog（内置常见模型定价）
+      return lookupModelCost(modelId);
+    };
+
+    const tokenStats = tracker.getStats();
+    const cost = tracker.getSessionCost(costResolver);
+    const cache = cacheStats.getStats();
+
+    return {
+      tokens: tokenStats.total,
+      cost,
+      cache,
+      budgetUsagePercent: tracker.getUsagePercent(),
+      activeModels: Object.keys(tokenStats.byModel),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
   // ============================================================
   // Profile 领域委托（ProfileBridge）
   // G-022a：从本文件拆分至 bridges/profile-bridge.ts
   // ============================================================
 
   /** 列出所有 Profile（不含 systemPrompt） */
-  async listProfiles(): Promise<AgentProfileInfo[]> {
+  async listProfiles(): Promise<AgentProfileSummary[]> {
     return this.profileBridge.listProfiles();
   }
 
@@ -641,6 +754,43 @@ export class RouteDevEngine {
   /** 复制 Profile 为自定义副本（需传入新名称） */
   async duplicateProfile(id: string, newName: string): Promise<ProfileOpResult> {
     return this.profileBridge.duplicateProfile(id, newName);
+  }
+
+  /** 从 SKILL.md 文件导入 Profile（自动分配新 id 避免冲突） */
+  async importProfile(inputPath: string): Promise<ProfileOpResult> {
+    return this.profileBridge.importProfile(inputPath);
+  }
+
+  /** 列出指定 Profile 的所有版本元数据（按时间倒序） */
+  async listProfileVersions(profileId: string): Promise<VersionMeta[]> {
+    return this.profileBridge.listVersions(profileId);
+  }
+
+  /** 获取指定版本完整记录（含 snapshot） */
+  async getProfileVersion(profileId: string, versionId: string): Promise<VersionRecord | null> {
+    return this.profileBridge.getVersion(profileId, versionId);
+  }
+
+  /** 回滚到指定版本 */
+  async rollbackProfile(profileId: string, versionId: string): Promise<ProfileOpResult> {
+    return this.profileBridge.rollbackProfile(profileId, versionId);
+  }
+
+  /** 比较两个版本的字段差异 */
+  async diffProfileVersions(
+    profileId: string,
+    fromVersionId: string,
+    toVersionId: string,
+  ): Promise<FieldDiff[]> {
+    return this.profileBridge.diffVersions(profileId, fromVersionId, toVersionId);
+  }
+
+  /** 比较当前 Profile 与指定历史版本的字段差异 */
+  async diffProfileCurrentWith(
+    profileId: string,
+    targetVersionId: string,
+  ): Promise<FieldDiff[]> {
+    return this.profileBridge.diffCurrentWith(profileId, targetVersionId);
   }
 
   // ============================================================

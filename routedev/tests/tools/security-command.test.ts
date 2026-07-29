@@ -94,5 +94,37 @@ describe('SecurityChecker.checkCommand（Phase 29 Task 3 改造）', () => {
       expect(result.allowed).toBe(true);
       expect(result.requiresConfirmation).toBe(false);
     });
+
+    it('Phase 96 修复：含 && 命令链的命令不应被误判为管道需确认', () => {
+      // 回归测试：原 command-parser.ts 把 chainParts.length > 1 算作 hasPipe，
+      // 导致 cmd1 && cmd2 被误拦为「命令含管道或命令替换」
+      // 修复后 && 不再触发 hasPipe，子命令已独立经过白/黑名单检查
+      const checker = createChecker({ commandWhitelist: [], commandBlacklist: [] });
+      const result = checker.checkCommand('cd routedev && pnpm test', mockContext);
+      expect(result.allowed).toBe(true);
+      expect(result.requiresConfirmation).toBe(false);
+    });
+
+    it('Phase 96 修复：含 || 命令链的命令不应被误判为管道需确认', () => {
+      const checker = createChecker({ commandWhitelist: [], commandBlacklist: [] });
+      const result = checker.checkCommand('pnpm test || echo failed', mockContext);
+      expect(result.allowed).toBe(true);
+      expect(result.requiresConfirmation).toBe(false);
+    });
+
+    it('Phase 96 修复：含 ; 命令链的命令不应被误判为管道需确认', () => {
+      const checker = createChecker({ commandWhitelist: [], commandBlacklist: [] });
+      const result = checker.checkCommand('echo first; echo second', mockContext);
+      expect(result.allowed).toBe(true);
+      expect(result.requiresConfirmation).toBe(false);
+    });
+
+    it('Phase 96 修复：命令链中的子命令仍受黑名单约束', () => {
+      // && 不绕过黑名单：子命令 rm 仍被拦截
+      const checker = createChecker({ commandWhitelist: [], commandBlacklist: ['rm'] });
+      const result = checker.checkCommand('echo ok && rm file', mockContext);
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('黑名单');
+    });
   });
 });

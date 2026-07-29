@@ -102,7 +102,7 @@ export function SettingsExperimentTab({ draft, updateDraft }: SettingsExperiment
   }, [loadExperiments, diffForId]);
 
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>并行实验</CardTitle>
@@ -143,7 +143,7 @@ export function SettingsExperimentTab({ draft, updateDraft }: SettingsExperiment
               value={experiment.maxParallel}
               onChange={(e) => updateExperiment({ maxParallel: Number(e.target.value) })}
             />
-            <p className="text-xs text-rd-textMuted">同时运行的最大实验分支数（2-5）。</p>
+            <p className="text-xs text-rd-textMuted">同时运行的最大实验分支数，2-5。</p>
           </div>
 
           <div className="space-y-2">
@@ -205,15 +205,15 @@ export function SettingsExperimentTab({ draft, updateDraft }: SettingsExperiment
                       <span className="ml-3">耗时: {(exp.duration / 1000).toFixed(1)}秒</span>
                     )}
                     {exp.tokenUsage !== undefined && exp.tokenUsage > 0 && (
-                      <span className="ml-3">Token: {exp.tokenUsage}</span>
+                      <span className="ml-3">用量: {exp.tokenUsage}</span>
                     )}
                   </div>
                   <div className="text-xs text-rd-textSubtle truncate" title={exp.task}>
                     {exp.task}
                   </div>
-                  {exp.modifiedFiles.length > 0 && (
+                  {(exp.modifiedFiles?.length ?? 0) > 0 && (
                     <div className="text-xs text-rd-textMuted">
-                      修改文件: {exp.modifiedFiles.length} 个
+                      修改文件: {exp.modifiedFiles?.length ?? 0} 个
                     </div>
                   )}
                   {exp.error && (
@@ -234,7 +234,11 @@ export function SettingsExperimentTab({ draft, updateDraft }: SettingsExperiment
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => handleAdopt(exp.id)}
+                    onClick={() => {
+                      // 采纳前确认，操作不可逆
+                      if (!window.confirm(`确定要采纳实验分支 ${exp.name} 吗？此操作不可逆`)) return;
+                      handleAdopt(exp.id);
+                    }}
                     title="采纳此实验分支"
                   >
                     <Check size={14} />
@@ -244,7 +248,11 @@ export function SettingsExperimentTab({ draft, updateDraft }: SettingsExperiment
                     variant="outline"
                     size="sm"
                     className="text-rd-danger hover:bg-rd-danger/10"
-                    onClick={() => handleDiscard(exp.id)}
+                    onClick={() => {
+                      // 丢弃前确认，操作不可逆
+                      if (!window.confirm(`确定要丢弃实验分支 ${exp.name} 吗？此操作不可逆`)) return;
+                      handleDiscard(exp.id);
+                    }}
                     title="丢弃此实验分支"
                   >
                     <X size={14} />

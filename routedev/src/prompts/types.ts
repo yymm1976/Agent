@@ -40,8 +40,18 @@ export interface PromptContext {
   language?: string;
   /** 当前模型 tier */
   modelTier?: string;
+  /**
+   * Phase 96 P2-6：位置参数列表（Claude Code 风格 $1/$2/.../$9）
+   * 由 skill 调用方注入，用于 $1/$@/$ARGUMENTS 占位符替换
+   */
+  positionalArgs?: string[];
+  /**
+   * Phase 96 P2-6：skill 名（用于 $0 占位符）
+   * 由 skill 调用方注入
+   */
+  skillName?: string;
   /** 自由扩展 */
-  [key: string]: string | undefined;
+  [key: string]: string | string[] | undefined;
 }
 
 /** PromptTemplateManager 配置 */

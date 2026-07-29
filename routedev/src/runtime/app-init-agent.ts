@@ -34,6 +34,8 @@ import { LoopDetectionMiddleware } from '../agent/middleware/loop-detection.js';
 import { MentionResolverMiddleware } from '../agent/middleware/mention-resolver.js';
 // TD-04：PermissionEngine 接入 Agent Loop 的 onActing 中间件
 import { PermissionMiddleware } from '../agent/middleware/permission-middleware.js';
+import { ExplorationBudgetMiddleware } from '../agent/middleware/exploration-budget-middleware.js';
+import { SkillMentionMiddleware } from '../agent/middleware/skill-mention-middleware.js';
 import { HookRunner } from '../agent/hooks.js';
 import { registerBuiltinHooks } from '../hooks/built-in.js';
 import { HookEnhancementManager } from '../hooks/hook-enhancement.js';
@@ -154,6 +156,8 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
         });
       }
     }, CLEANUP_INTERVAL_MS);
+    // 清理定时器不阻止进程退出
+    cleanupTimer.unref?.();
     // P0-14：注册 shutdown 钩子，进程退出前清除定时器
     registerShutdownHook(60, 'skill-lifecycle-cleanup-timer', () => {
       clearInterval(cleanupTimer);
@@ -300,6 +304,8 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
           autoApprovePatterns: config.autonomy?.autoApprovePatterns ?? [],
         });
         childLoop.setMiddlewarePipeline(pluginSystem.middlewarePipeline);
+        // 子 Agent 共享父会话的压缩器，防止子 Agent 的 messages 膨胀超出模型窗口
+        childLoop.setCompactor(ctx.contextManager ?? null);
 
         const childSystemPrompt = profile?.systemPrompt
           ?? options?.systemPrompt
@@ -469,6 +475,18 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
     logger.warn('PermissionMiddleware skipped: permissionEngine not available');
   }
 
+  // Phase 94：注册 ExplorationBudgetMiddleware 到 onActing 阶段
+  // 主 Agent 连续调用 N 次只读工具未分发时，注入提示建议改用 spawn_agent
+  const explorationMiddleware = new ExplorationBudgetMiddleware();
+  pluginSystem.middlewarePipeline.register('onActing', explorationMiddleware.getHandler());
+  logger.info('ExplorationBudgetMiddleware registered', { budget: 5 });
+
+  // Phase 94：注册 SkillMentionMiddleware 到 onUserMessage 阶段
+  // 用户消息提及"按 XXX Skill 流程执行"时，注入 spawn_agent 强约束提示
+  const skillMentionMiddleware = new SkillMentionMiddleware();
+  pluginSystem.middlewarePipeline.register('onUserMessage', skillMentionMiddleware.getHandler());
+  logger.info('SkillMentionMiddleware registered');
+
   // ===== Phase 39：CodeMapContextMiddleware 接线（fail-open 动态 import） =====
   // Phase 81 Task 4：packs.codeMap.enabled 门控（standard-pack，默认 false 退出装配）
   const codegraphCfg = config.codegraph;
@@ -521,16 +539,16 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   }
 
   // ===== Phase 40：渐进式信任 / 质量监测 / 用户经验 接线（全部 fail-open 动态 import） =====
-  // Phase 81 Task 3：freeze 层 F-01/F-02/F-06 退出默认装配
-  //   三个模块同属 Phase 40 freeze 组，统一由 config.packs.trustGradient.enabled 门控
-  //   默认 false → 不装配；用户显式 enabled:true 可恢复全部三个模块的装配
+  // TD-27：TrustGradient pack 拆分——F-01 临时授权提升为 Core
+  //   用户显式临时授权（hasTemporaryGrant）是权限系统基础能力，不再受 pack 门控
+  //   F-02（QualitySignal）/ F-06（ExpertisePrompt）仍由 packs.trustGradient.enabled 门控
 
-  // 4.1 TrustGradientManager 接线
-  // Phase 79: TrustGradient Freeze — 仅静态档位配置 + 用户显式临时授权，不做会话内动态升级
+  // 4.1 TrustGradientManager 接线（Core：临时授权）
+  // Phase 79: 仅静态档位配置 + 用户显式临时授权，不做会话内动态升级
   //   setLevel(baseLevel) 一次设定后不再动态调整；PermissionEngine.check() 已旁路 level-based 动态决策
-  // Phase 81 Task 3：packs.trustGradient.enabled 门控（freeze 层 F-01）
+  // TD-27：移除 packs.trustGradient.enabled 门控，临时授权作为 Core 无条件装配
   const trustCfg = config.trust;
-  if (trustCfg && config.packs?.trustGradient?.enabled) {
+  if (trustCfg) {
     const trustModulePath = '../tools/trust-gradient.js';
     import(trustModulePath)
       .then((mod: { TrustGradientManager: new (sessionId: string, level?: string) => import('../tools/trust-gradient.js').TrustGradientManager }) => {
@@ -845,14 +863,11 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   });
 
   // 3. CompletionGate——独立代码验证门（typecheck/lint/tests）
-  // G-F038 修复：受 config.packs.goalAdvanced.enabled 门控
   const safetyCfg = config.optimization?.safety;
-  const completionGate = config.packs?.goalAdvanced?.enabled
-    ? createCompletionGate({
-        gateTimeout: safetyCfg?.gateTimeout ?? 180000,
-        gateRetry: safetyCfg?.gateRetry ?? 1,
-      })
-    : undefined;
+  const completionGate = createCompletionGate({
+    gateTimeout: safetyCfg?.gateTimeout ?? 180000,
+    gateRetry: safetyCfg?.gateRetry ?? 1,
+  });
 
   // 5. TaskOrchestrator——统一工作流编排器
   // F-053 类型安全：入口非空校验，避免 as 强制断言掩盖依赖缺失
@@ -906,36 +921,12 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
   }
 
   // ===== Phase 44：消息节点持久化 / 分支联动 接线（fail-open 动态 import） =====
-
-  // 1. BranchPersistence 接线：消息树 JSONL 持久化 + 备份 + 快照
-  const conversationCfg = config.conversation;
-  if (conversationCfg?.persistTree !== false) {
-    const branchPersistencePath = '../agent/branch-persistence.js';
-    import(branchPersistencePath)
-      .then((mod: { BranchPersistence: new (cwd: string, opts?: unknown) => { init: () => Promise<void> } }) => {
-        const persistence = new mod.BranchPersistence(cwd, {
-          maxNodes: conversationCfg.maxNodes,
-          maxBranches: conversationCfg.maxBranches,
-          undoStackSize: conversationCfg.undoStackSize,
-        });
-        persistence.init().catch((e: unknown) => {
-          logger.debug('BranchPersistence init failed', {
-            error: e instanceof Error ? e.message : String(e),
-          });
-        });
-        logger.info('BranchPersistence registered', {
-          persistTree: conversationCfg.persistTree,
-          maxNodes: conversationCfg.maxNodes,
-        });
-      })
-      .catch((err: unknown) => {
-        logger.debug('BranchPersistence not available yet', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-  }
-
-  // 2. F-019 删除死代码：BranchLinkageManager 创建块已移除（无消费方）
+  // Phase 96 P0-1 修复：删除 BranchPersistence 假消费链
+  // 原代码调用 persistence.init()，但 BranchPersistence 类无 init() 方法，且实例未传递给任何消费方
+  // BranchPersistence 数据模型（BranchNode 树）与 conversationHistory（线性 LLMMessage[]）不匹配
+  // 线性对话历史的重启恢复改由 ConversationPersistence 承担（在 chat-bridge 接入）
+  // BranchPersistence 留待未来 BranchManager 接入时再启用
+  // F-019 删除死代码：BranchLinkageManager 创建块已移除（无消费方）
   // 3. ExperimentManager 单例：在同步作用域创建，确保 /experiment 命令与 engine-bridge 复用同一实例
   const experimentManager = new ExperimentManager(cwd);
 
@@ -1153,6 +1144,8 @@ export function createAgentSubsystem(ctx: InitContext): Partial<AppDependencies>
           autoApprovePatterns: config.autonomy?.autoApprovePatterns ?? [],
         });
         innerAgentLoop.setTraceCollector(trace!);
+        // DualLoop 内部 Agent 共享压缩器，防止内部循环 messages 膨胀
+        innerAgentLoop.setCompactor(ctx.contextManager ?? null);
         orchestrator.setInnerAgent(innerAgentLoop);
         agentLoop!.setDualLoopOrchestrator(orchestrator);
         logger.info('Phase 49 DualLoopOrchestrator integrated', { enabled: true, innerAgent: true });

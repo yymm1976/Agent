@@ -293,9 +293,11 @@ describe('ReActAgentLoop', () => {
         events.push(event);
       }
 
-      // 应该有 error 事件（达到最大迭代）
-      const errorEvent = events.find(e => e.type === 'error' && (e as { error: string }).error.includes('最大迭代'));
-      expect(errorEvent).toBeDefined();
+      // Phase 94：达到最大迭代 → escalation 事件（升级人工介入）
+      const escalationEvent = events.find(
+        e => e.type === 'escalation' && (e as { reason: string }).reason.includes('最大迭代'),
+      );
+      expect(escalationEvent).toBeDefined();
 
       // 应该有 done 事件
       const doneEvent = events.find(e => e.type === 'done');

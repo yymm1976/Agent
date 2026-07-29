@@ -4,13 +4,14 @@
 // Phase 74-C：从 ChatPage.tsx 抽离，保持渲染结果完全一致
 // Phase 74-D：在 fork 点（有分支派生的消息）上方内联渲染 BranchSwitcher
 
-import { useRef, useCallback, useMemo, memo } from 'react';
+import { useRef, useCallback, useMemo, memo, useState } from 'react';
 import type { ChatMessage } from '../../store/useRouteDevStore.js';
 import type { Conversation } from '../../store/useProjectsStore.js';
 import type { OutputStyle } from '../ToolCallCard.js';
 import { TaskBlock } from './TaskBlock.js';
 import { MessageBubble } from './MessageBubble.js';
 import { BranchSwitcher } from './BranchSwitcher.js';
+import { ConfirmDialog } from '../ui/dialog.js';
 
 function MessageListImpl({
   messages,
@@ -44,6 +45,15 @@ function MessageListImpl({
 }) {
   // 消息 ID -> DOM 元素映射，用于跳转
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  // 确认对话框状态（替代原生 confirm()，避免 frame:false 窗口失焦 bug）
+  const [confirmState, setConfirmState] = useState<{
+    open: boolean;
+    title: string;
+    message: string;
+    variant: 'default' | 'danger';
+    onConfirm: () => void;
+  }>({ open: false, title: '', message: '', variant: 'default', onConfirm: () => {} });
 
   // 复制文本到剪贴板的 fallback 方案：当 navigator.clipboard 不可用时使用
   const fallbackCopy = useCallback((text: string) => {
@@ -79,21 +89,42 @@ function MessageListImpl({
   }, [fallbackCopy]);
 
   const handleTaskDelete = useCallback((msg: ChatMessage) => {
-    if (confirm('确定删除该任务块？将一并删除提问、思考过程、工具调用与回复。')) {
-      deleteMessage(msg.id);
-    }
+    setConfirmState({
+      open: true,
+      title: '删除任务块',
+      message: '确定删除该任务块？将一并删除提问、思考过程、工具调用与回复。',
+      variant: 'danger',
+      onConfirm: () => {
+        deleteMessage(msg.id);
+        setConfirmState((s) => ({ ...s, open: false }));
+      },
+    });
   }, [deleteMessage]);
 
   const handleMsgDelete = useCallback((msg: ChatMessage) => {
-    if (confirm('确定删除该消息？删除后下次对话不会注入此消息作为上下文。')) {
-      deleteMessage(msg.id);
-    }
+    setConfirmState({
+      open: true,
+      title: '删除消息',
+      message: '确定删除该消息？删除后下次对话不会注入此消息作为上下文。',
+      variant: 'danger',
+      onConfirm: () => {
+        deleteMessage(msg.id);
+        setConfirmState((s) => ({ ...s, open: false }));
+      },
+    });
   }, [deleteMessage]);
 
   const handleRetry = useCallback((msg: ChatMessage) => {
-    if (confirm('重试将删除该消息及其后的所有消息，并重新发送。继续？')) {
-      retryMessage(msg.id);
-    }
+    setConfirmState({
+      open: true,
+      title: '重试消息',
+      message: '重试将删除该消息及其后的所有消息，并重新发送。继续？',
+      variant: 'default',
+      onConfirm: () => {
+        retryMessage(msg.id);
+        setConfirmState((s) => ({ ...s, open: false }));
+      },
+    });
   }, [retryMessage]);
 
   const handleFork = useCallback((msg: ChatMessage) => {
@@ -203,6 +234,18 @@ function MessageListImpl({
           );
         });
       })}
+
+      {/* 确认对话框（替代原生 confirm()，避免 frame:false 窗口失焦 bug） */}
+      <ConfirmDialog
+        open={confirmState.open}
+        title={confirmState.title}
+        message={confirmState.message}
+        variant={confirmState.variant}
+        confirmText="确认"
+        cancelText="取消"
+        onConfirm={confirmState.onConfirm}
+        onCancel={() => setConfirmState((s) => ({ ...s, open: false }))}
+      />
     </>
   );
 }

@@ -36,6 +36,7 @@ export default function App() {
   const config = useRouteDevStore((s) => s.config);
   const configLoading = useRouteDevStore((s) => s.configLoading);
   const configError = useRouteDevStore((s) => s.configError);
+  const hasEverHadProviders = useRouteDevStore((s) => s.hasEverHadProviders);
   const isProcessing = useRouteDevStore((s) => s.isProcessing);
   const currentModel = useRouteDevStore((s) => s.currentModel);
   const pendingConfirm = useRouteDevStore((s) => s.pendingConfirm);
@@ -52,7 +53,7 @@ export default function App() {
   const routeDevMessages = useRouteDevStore((s) => s.messages);
   // 兼容子组件 props 形状：组装为 routeDev 对象传给 ChatPage / SettingsPage
   const routeDev = {
-    config, configLoading, configError,
+    config, configLoading, configError, hasEverHadProviders,
     isProcessing, currentModel, pendingConfirm, lastTokenSnapshot, messages: routeDevMessages,
     sendMessage, confirmTool, stopGeneration, saveConfig, reloadConfig,
     deleteMessage, retryMessage,
@@ -158,6 +159,17 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentProjectId, currentConversationId]);
 
+  // 项目切换时立即更新 engine 工作目录（不等对话加载）
+  // 解决：用户选择项目后，cwd 仍为 process.cwd() 的问题
+  useEffect(() => {
+    if (!currentProjectId) return;
+    const project = projects.find(p => p.id === currentProjectId);
+    if (project?.path) {
+      window.routedev?.project?.setCwd?.(project.path);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentProjectId, projects]);
+
   // 消息变化时实时写回当前对话（保证流式输出也能持久化）
   useEffect(() => {
     if (!currentProjectId || !currentConversationId) return;
@@ -218,7 +230,13 @@ export default function App() {
   }
 
   // 首次启动：未配置任何 Provider 且未主动跳过时显示设置向导
-  if (!routeDev.config || (routeDev.config.providers.length === 0 && !routeDev.config.general.setupSkipped)) {
+  // Bug #5 修复：增加 hasEverHadProviders 检查，避免保存错误导致 providers 临时清空时误触发 SetupWizard
+  // 一旦用户曾配置过 provider，就不再显示 SetupWizard（即使 providers 临时为空也进入主界面）
+  const shouldShowSetupWizard = !routeDev.config ||
+    (routeDev.config.providers.length === 0 &&
+      !routeDev.config.general.setupSkipped &&
+      !routeDev.hasEverHadProviders);
+  if (shouldShowSetupWizard) {
     return (
       <div className="grid h-full grid-rows-[auto_minmax(0,1fr)]">
         <TitleBar />

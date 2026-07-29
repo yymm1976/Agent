@@ -184,11 +184,11 @@ describe('ContextManager.compressEnhanced（Phase 21 Task 5）', () => {
       const files = await fs.readdir(offloadDir);
       expect(files.length).toBeGreaterThan(0);
 
-      // 压缩后的 tool_result 内容应包含 [offloaded] 标记
+      // 压缩后的 tool_result 内容应包含 [offloaded 标记（兼容新旧两种占位符格式）
       const offloadedMsg = compressed.find(m => {
-        if (typeof m.content === 'string') return m.content.includes('[offloaded]');
+        if (typeof m.content === 'string') return m.content.includes('[offloaded');
         if (Array.isArray(m.content)) {
-          return m.content.some(p => p.type === 'tool_result' && p.content.includes('[offloaded]'));
+          return m.content.some(p => p.type === 'tool_result' && p.content.includes('[offloaded'));
         }
         return false;
       });

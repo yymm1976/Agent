@@ -26,6 +26,8 @@ export interface ActingResult {
   requiresConfirmation?: boolean;
   /** Phase 79 Task 3：命中的权限规则 ID（fallback 决策时为 undefined，用于区分白名单放行 vs 规则放行） */
   permissionMatchedRule?: string;
+  /** Phase 94：探索预算超限提示（ExplorationBudgetMiddleware 设置，loop.ts 注入到 LLM 上下文） */
+  explorationSuggestion?: string;
 }
 
 /**
@@ -154,23 +156,27 @@ export class MiddlewareRunner {
   /**
    * onUserMessage 中间件——@-mention 解析等用户消息预处理（fail-open）
    * 中间件可读取 ctx.metadata.userMessage，解析 @-mention 后写回标准化消息
-   * @returns 中间件可能修改后的用户消息
+   * @returns 中间件可能修改后的用户消息 + Phase 94 扩展字段（skillFlowHint 等）
    */
-  async runOnUserMessage(userMessage: string): Promise<string> {
-    if (!this.middleware) return userMessage;
+  async runOnUserMessage(userMessage: string): Promise<{ userMessage: string; skillFlowHint?: string }> {
+    if (!this.middleware) return { userMessage };
     const mwCtx: MiddlewareContext = {
       phase: 'onUserMessage',
       metadata: { userMessage },
     };
     try {
       await this.middleware.execute('onUserMessage', mwCtx);
-      if (typeof mwCtx.metadata.userMessage === 'string') {
-        return mwCtx.metadata.userMessage;
-      }
+      const processed = typeof mwCtx.metadata.userMessage === 'string'
+        ? mwCtx.metadata.userMessage
+        : userMessage;
+      return {
+        userMessage: processed,
+        skillFlowHint: mwCtx.metadata.skillFlowHint as string | undefined,
+      };
     } catch (mwErr) {
       logger.warn('Middleware onUserMessage threw, continuing (fail-open)', { error: String(mwErr) });
     }
-    return userMessage;
+    return { userMessage };
   }
 
   /**
@@ -214,18 +220,24 @@ export class MiddlewareRunner {
    * Phase 53 Task 3：策略引擎检查（动作级 fail-closed）
    * 与中间件叠加：中间件已 deny 则跳过策略引擎；否则策略引擎再评估
    *
+   * @param toolName 工具名
+   * @param toolArgs 工具参数
+   * @param autonomyMode 自主度模式（传递给 PermissionMiddleware）
    * @returns { denied: true, reason } 表示拒绝执行；{ denied: false } 表示允许
    */
   async runOnActing(
     toolName: string,
     toolArgs: Record<string, unknown>,
+    autonomyMode?: 'manual' | 'semi' | 'auto',
   ): Promise<ActingResult> {
     if (!this.middleware) return { denied: false };
     const mwCtx: MiddlewareContext = {
       phase: 'onActing',
       toolName,
       toolArgs,
-      metadata: {},
+      metadata: {
+        autonomyMode: autonomyMode ?? 'semi',
+      },
     };
     try {
       await this.middleware.execute('onActing', mwCtx);
@@ -262,6 +274,7 @@ export class MiddlewareRunner {
       permissionDecision: mwCtx.metadata.permissionDecision as string | undefined,
       requiresConfirmation: mwCtx.metadata.requiresConfirmation as boolean | undefined,
       permissionMatchedRule: mwCtx.metadata.permissionMatchedRule as string | undefined,
+      explorationSuggestion: mwCtx.metadata.explorationSuggestion as string | undefined,
     };
   }
 

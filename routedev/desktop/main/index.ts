@@ -51,6 +51,29 @@ let tray: Tray | null = null;
 // setCwd 只接受集合内路径，防止渲染层被劫持后切到任意本地目录
 const authorizedCwds = new Set<string>();
 
+// 持久化最后使用的项目路径，启动时恢复（解决 process.cwd() 不正确的问题）
+const LAST_CWD_FILE = path.join(app.getPath('userData'), 'last-project-cwd.txt');
+
+function readLastCwd(): string | null {
+  try {
+    const content = fs.readFileSync(LAST_CWD_FILE, 'utf8').trim();
+    if (content && fs.existsSync(content) && isValidProjectCwd(content)) {
+      return content;
+    }
+  } catch {
+    // 文件不存在或读取失败，返回 null
+  }
+  return null;
+}
+
+function writeLastCwd(cwd: string): void {
+  try {
+    fs.writeFileSync(LAST_CWD_FILE, cwd, 'utf8');
+  } catch (err) {
+    console.error('[last-cwd] 持久化失败:', err);
+  }
+}
+
 /** 校验目标路径是否安全可用作项目工作目录 */
 function isValidProjectCwd(target: string): boolean {
   if (!target || typeof target !== 'string') return false;
@@ -350,8 +373,11 @@ app.whenReady().then(async () => {
       );
     }
 
+    // 恢复上次使用的项目路径，避免 process.cwd() 指向错误目录
+    const initialCwd = readLastCwd() ?? process.cwd();
+    
     engine = new RouteDevEngine(config, {
-      cwd: process.cwd(),
+      cwd: initialCwd,
       onStream: sendChatStream,
       onTokenProfile: sendTokenProfile,
       onTraceEvent: sendTraceEvent,
@@ -372,8 +398,15 @@ app.whenReady().then(async () => {
     });
     // C2 修复：将初始工作目录登记为已授权
     // F-038 修复：与 add/has 统一 toLowerCase 归一化
-    authorizedCwds.add(path.resolve(process.cwd()).toLowerCase());
-    await engine.initialize();
+    authorizedCwds.add(path.resolve(initialCwd).toLowerCase());
+    // 修复 Bug 1：providers 为空时跳过 engine.initialize，避免 createRouterSubsystem 抛错
+    // 场景：首次启动用户尚未配置 LLM；用户清空所有 provider
+    // 渲染进程会显示 SetupWizard 引导用户配置，配置完成后通过 config:reload 触发 initialize
+    if (config.providers && config.providers.length > 0) {
+      await engine.initialize();
+    } else {
+      console.warn('[Startup] providers 为空，跳过 engine.initialize（等待用户配置后 reload）');
+    }
   } catch (err) {
     console.error('Engine initialization failed:', err);
     dialog.showErrorBox(
@@ -886,10 +919,21 @@ ipcMain.handle('config:save', async (_event, rawConfig: unknown): Promise<Config
   }
   // G-F001：安全配置弱化检测——比较新旧配置，拒绝弱化安全字段的保存
   const oldConfig = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
-  const weakening = detectConfigWeakening(oldConfig, config);
-  if (weakening.length > 0) {
-    logger.warn('[Config] 检测到安全配置弱化', { weakening });
-    return { success: false, error: '安全配置弱化被拒绝', weakening };
+  // 修复 Bug 2：首次配置场景跳过安全弱化检测
+  // 场景：SetupWizard 跳过 / 首次配置，磁盘 config.yaml 不存在或 providers 为空
+  // 此时 oldConfig = DEFAULT_CONFIG（含 13 条 filesystem deny 规则），
+  // newConfig 可能用 schema 默认值（filesystem=[]），两者差异会被误判为弱化
+  // 判定标准：磁盘 providers 为空且未 setupSkipped（即真正的首次配置）
+  const isFirstTimeSetup =
+    Array.isArray(oldConfig.providers) &&
+    oldConfig.providers.length === 0 &&
+    !oldConfig.general.setupSkipped;
+  if (!isFirstTimeSetup) {
+    const weakening = detectConfigWeakening(oldConfig, config);
+    if (weakening.length > 0) {
+      logger.warn('[Config] 检测到安全配置弱化', { weakening });
+      return { success: false, error: '安全配置弱化被拒绝', weakening };
+    }
   }
   try {
     // G-001 修复：保存前检测掩码 apiKey，用磁盘真实值回填，防止掩码覆盖真实密钥
@@ -926,6 +970,15 @@ ipcMain.handle('config:save', async (_event, rawConfig: unknown): Promise<Config
           }
           return p;
         });
+        // Bug #4 防御性修复：合并磁盘中存在但新 config 中缺失的 provider
+        // 防止渲染层因任何原因丢失 provider 时，主进程能从磁盘恢复
+        const newProviderIds = new Set(config.providers.map(p => p.id));
+        for (const diskProvider of diskConfig.providers) {
+          if (!newProviderIds.has(diskProvider.id) && !isMaskedApiKey(diskProvider.apiKey)) {
+            logger.warn(`[Config] 防御性恢复磁盘 provider: ${diskProvider.id}（新配置中缺失）`);
+            config.providers.push(diskProvider);
+          }
+        }
       }
       // 回填 llmProviders 中的掩码 apiKey
       if (config.llmProviders && diskConfig.llmProviders) {
@@ -958,7 +1011,10 @@ ipcMain.handle('config:save', async (_event, rawConfig: unknown): Promise<Config
     engine?.updateConfig(config);
     // Grok F-011：updateConfig 仅更新内存 config，不重建 deps（LLM 客户端/分类器）。
     // 提示前端：provider/model 等结构性变更需调用 config:reload 才能真正生效。
-    return { success: true, needsReload: true };
+    // 修复：providers 为空时不触发 reload，避免 createRouterSubsystem 抛 "未配置任何 LLM provider"
+    // 场景：用户添加新 provider 但尚未填写 apiKey 时，cleanDraftForSave 过滤后 providers=[]
+    const hasValidProvider = Array.isArray(config.providers) && config.providers.length > 0;
+    return { success: true, needsReload: hasValidProvider };
   } catch (err) {
     return { success: false, error: safeError(err) };
   }
@@ -972,6 +1028,13 @@ ipcMain.handle('config:reload', createValidatedHandler<undefined, import('../../
   async () => {
     try {
       const cfg = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+      // 防御兜底：providers 为空时跳过 engine.reloadConfig，避免 createRouterSubsystem 抛错
+      // 场景：用户清空所有 provider、或从 SetupWizard 跳过时保存了空 providers
+      const hasProvider = Array.isArray(cfg.providers) && cfg.providers.length > 0;
+      if (!hasProvider) {
+        console.warn('[config:reload] providers 为空，跳过引擎重载');
+        return maskSensitiveConfig(cfg);
+      }
       await engine?.reloadConfig(cfg);
       // G-002 修复：返回前对敏感字段脱敏，防止明文 apiKey 泄露到渲染进程
       return maskSensitiveConfig(cfg);
@@ -1330,7 +1393,10 @@ ipcMain.on('project:set-cwd', (_event, cwd: string) => {
     console.error('[project:set-cwd] 拒绝未授权的工作目录:', resolved);
     return;
   }
-  engine.setCwd(resolved).catch((err) => {
+  engine.setCwd(resolved).then(() => {
+    // 持久化成功切换的路径，下次启动时恢复
+    writeLastCwd(resolved);
+  }).catch((err) => {
     console.error('[project:set-cwd] 切换工作目录失败:', err);
   });
 });
@@ -1367,6 +1433,447 @@ ipcMain.on('window:maximize', () => {
 });
 ipcMain.on('window:close', () => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+});
+
+// 修复顽固 bug：删除对话后所有输入框失焦（持续 50+ Phase）
+// 根因：renderer 调用原生 confirm() 在 frame:false 窗口上会破坏 webContents 焦点
+// 兜底：显式聚焦 BrowserWindow + webContents，确保 OS 级键盘焦点归还
+ipcMain.handle('window:restore-focus', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.focus();
+    mainWindow.webContents.focus();
+  }
+});
+
+// ============================================================
+// Phase 96 修复 I-1：补齐 preload 暴露但 main 未注册的 33 个 IPC 通道
+// 设计原则：
+//   - 简单通道直接实现（app 信息 / 剪贴板 / shell）
+//   - 复杂功能（engine / terminal / update / store）做 fail-open stub，
+//     返回安全默认值，避免渲染层 unhandled promise rejection
+//   - 全部带 try/catch，异常返回明确错误而非 reject
+// ============================================================
+
+// --- 应用 / 平台 (4) ---
+ipcMain.handle('app:get-info', async () => {
+  try {
+    return {
+      version: app.getVersion(),
+      name: app.getName(),
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      node: process.versions.node,
+      platform: process.platform,
+      arch: process.arch,
+      cwd: app.getAppPath(),
+    };
+  } catch (e) {
+    logger.error('app:get-info 失败', { error: e instanceof Error ? e.message : String(e) });
+    return null;
+  }
+});
+
+ipcMain.handle('app:get-path', async (_event, name: string) => {
+  try {
+    // Electron app.getPath 支持的名称白名单
+    const allowed = ['home', 'appData', 'userData', 'sessionData', 'temp', 'exe', 'desktop', 'documents', 'downloads', 'music', 'pictures', 'videos', 'recent', 'logs'];
+    if (!allowed.includes(name)) {
+      throw new Error(`不支持的路径名称: ${name}`);
+    }
+    return app.getPath(name as Electron.AppName);
+  } catch (e) {
+    logger.error('app:get-path 失败', { name, error: e instanceof Error ? e.message : String(e) });
+    throw e;
+  }
+});
+
+ipcMain.handle('app:quit', () => {
+  app.quit();
+});
+
+ipcMain.handle('app:relaunch', () => {
+  app.relaunch();
+  app.quit();
+});
+
+// --- 窗口控制 (2) ---
+ipcMain.handle('window:action', async (_event, action: string) => {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    switch (action) {
+      case 'minimize':
+        mainWindow.minimize();
+        break;
+      case 'maximize':
+        mainWindow.maximize();
+        break;
+      case 'unmaximize':
+        mainWindow.unmaximize();
+        break;
+      case 'close':
+        mainWindow.close();
+        break;
+      case 'restore':
+        mainWindow.restore();
+        break;
+      case 'show':
+        mainWindow.show();
+        break;
+      case 'hide':
+        mainWindow.hide();
+        break;
+      default:
+        throw new Error(`不支持的窗口动作: ${action}`);
+    }
+  } catch (e) {
+    logger.error('window:action 失败', { action, error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+ipcMain.handle('window:get-state', async () => {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { isMinimized: false, isMaximized: false, isFullScreen: false, isVisible: false, isActive: false };
+    }
+    return {
+      isMinimized: mainWindow.isMinimized(),
+      isMaximized: mainWindow.isMaximized(),
+      isFullScreen: mainWindow.isFullScreen(),
+      isVisible: mainWindow.isVisible(),
+      isActive: mainWindow.isActive(),
+    };
+  } catch (e) {
+    logger.error('window:get-state 失败', { error: e instanceof Error ? e.message : String(e) });
+    return null;
+  }
+});
+
+// --- 引擎 (4) ---
+// 引擎生命周期由 desktop/main/engine-bridge.ts 管理，这里做 fail-open stub
+// 渲染层调用会收到 'not-running' 状态，不会 reject
+ipcMain.handle('engine:get-state', async () => {
+  try {
+    if (!engine) {
+      return { status: 'not-running', sessionId: null };
+    }
+    // engine-bridge 有自己的状态机，这里仅做基础状态返回
+    return { status: 'running', sessionId: null };
+  } catch (e) {
+    logger.error('engine:get-state 失败', { error: e instanceof Error ? e.message : String(e) });
+    return { status: 'unknown', sessionId: null };
+  }
+});
+
+ipcMain.handle('engine:start', async () => {
+  try {
+    if (engine?.start) {
+      await engine.start();
+    } else {
+      logger.warn('engine:start 调用但 engine 未初始化或无 start 方法');
+    }
+  } catch (e) {
+    logger.error('engine:start 失败', { error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+ipcMain.handle('engine:stop', async () => {
+  try {
+    if (engine?.stop) {
+      await engine.stop();
+    }
+  } catch (e) {
+    logger.error('engine:stop 失败', { error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+ipcMain.handle('engine:restart', async () => {
+  try {
+    if (engine?.restart) {
+      await engine.restart();
+    }
+  } catch (e) {
+    logger.error('engine:restart 失败', { error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+// --- 终端 (5) ---
+// 终端功能由独立模块提供；这里做 stub 返回安全默认值
+// 避免渲染层调用时 reject；真正实现需引入 node-pty/xterm-headless
+const terminalSessions = new Map<string, { cwd: string; title: string; createdAt: number }>();
+
+ipcMain.handle('terminal:create', async (_event, options?: { cwd?: string; cols?: number; rows?: number }) => {
+  try {
+    const id = `term-${Date.now()}-${randomBytes(4).toString('hex')}`;
+    const cwd = options?.cwd || process.cwd();
+    terminalSessions.set(id, { cwd, title: path.basename(cwd), createdAt: Date.now() });
+    logger.info('terminal:create stub 已创建会话', { id, cwd });
+    return { id, cwd, pid: null, title: path.basename(cwd) };
+  } catch (e) {
+    logger.error('terminal:create 失败', { error: e instanceof Error ? e.message : String(e) });
+    throw e;
+  }
+});
+
+ipcMain.handle('terminal:destroy', async (_event, id: string) => {
+  try {
+    terminalSessions.delete(id);
+  } catch (e) {
+    logger.error('terminal:destroy 失败', { id, error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+ipcMain.handle('terminal:write', async (_event, id: string, _data: string) => {
+  // stub：真实终端功能未接入；这里不抛错避免渲染层报错
+  // TODO: 接入 node-pty 实现真实终端
+  if (!terminalSessions.has(id)) {
+    logger.warn('terminal:write 会话不存在', { id });
+  }
+});
+
+ipcMain.handle('terminal:resize', async (_event, id: string, _cols: number, _rows: number) => {
+  if (!terminalSessions.has(id)) {
+    logger.warn('terminal:resize 会话不存在', { id });
+  }
+});
+
+ipcMain.handle('terminal:list', async () => {
+  try {
+    const now = Date.now();
+    return Array.from(terminalSessions.entries()).map(([id, s]) => ({
+      id,
+      cwd: s.cwd,
+      title: s.title,
+      pid: null,
+      uptime: now - s.createdAt,
+    }));
+  } catch (e) {
+    logger.error('terminal:list 失败', { error: e instanceof Error ? e.message : String(e) });
+    return [];
+  }
+});
+
+// --- 对话框 / 通知 / Shell / 剪贴板 (9) ---
+ipcMain.handle('dialog:open', async (_event, options?: Electron.OpenDialogOptions) => {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { canceled: true, filePaths: [] };
+    }
+    return await dialog.showOpenDialog(mainWindow, options ?? {});
+  } catch (e) {
+    logger.error('dialog:open 失败', { error: e instanceof Error ? e.message : String(e) });
+    return { canceled: true, filePaths: [] };
+  }
+});
+
+ipcMain.handle('dialog:save', async (_event, options?: Electron.SaveDialogOptions) => {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { canceled: true, filePath: '' };
+    }
+    return await dialog.showSaveDialog(mainWindow, options ?? {});
+  } catch (e) {
+    logger.error('dialog:save 失败', { error: e instanceof Error ? e.message : String(e) });
+    return { canceled: true, filePath: '' };
+  }
+});
+
+ipcMain.handle('dialog:message', async (_event, options: Electron.MessageBoxOptions) => {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return 0;
+    }
+    return await dialog.showMessageBox(mainWindow, options);
+  } catch (e) {
+    logger.error('dialog:message 失败', { error: e instanceof Error ? e.message : String(e) });
+    return 0;
+  }
+});
+
+ipcMain.handle('notification:show', async (_event, options: Electron.NotificationConstructorOptions) => {
+  try {
+    // 静默降级：Electron 通知 API 跨平台差异大，这里仅写日志
+    // TODO: 接入完整 Notification 实现（需处理 macOS 沙盒 / Windows 应用 ID）
+    logger.info('notification:show stub', { title: options?.title });
+  } catch (e) {
+    logger.error('notification:show 失败', { error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+ipcMain.handle('shell:open-external', async (_event, url: string) => {
+  try {
+    await shell.openExternal(url);
+  } catch (e) {
+    logger.error('shell:open-external 失败', { url, error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+ipcMain.handle('shell:open-path', async (_event, filePath: string) => {
+  try {
+    // shell.openPath 返回错误字符串（成功返回 ""）
+    const err = await shell.openPath(filePath);
+    if (err) {
+      logger.warn('shell:openPath 返回错误', { filePath, err });
+    }
+    return filePath;
+  } catch (e) {
+    logger.error('shell:open-path 失败', { filePath, error: e instanceof Error ? e.message : String(e) });
+    throw e;
+  }
+});
+
+ipcMain.handle('shell:show-item-in-folder', async (_event, filePath: string) => {
+  try {
+    shell.showItemInFolder(filePath);
+  } catch (e) {
+    logger.error('shell:show-item-in-folder 失败', { filePath, error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+ipcMain.handle('clipboard:write-text', async (_event, text: string) => {
+  try {
+    const { clipboard } = await import('electron');
+    clipboard.writeText(text);
+  } catch (e) {
+    logger.error('clipboard:write-text 失败', { error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+ipcMain.handle('clipboard:read-text', async () => {
+  try {
+    const { clipboard } = await import('electron');
+    return clipboard.readText();
+  } catch (e) {
+    logger.error('clipboard:read-text 失败', { error: e instanceof Error ? e.message : String(e) });
+    return '';
+  }
+});
+
+// --- 项目 (3) ---
+// recent 列表持久化到 userData/projects.json
+const PROJECTS_FILE = path.join(app.getPath('userData'), 'projects.json');
+
+async function loadRecentProjects(): Promise<Array<{ path: string; name: string; lastOpened: number }>> {
+  try {
+    const raw = await fs.promises.readFile(PROJECTS_FILE, 'utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+async function saveRecentProjects(list: Array<{ path: string; name: string; lastOpened: number }>): Promise<void> {
+  try {
+    await fs.promises.writeFile(PROJECTS_FILE, JSON.stringify(list, null, 2), 'utf-8');
+  } catch (e) {
+    logger.warn('saveRecentProjects 写入失败', { error: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+ipcMain.handle('project:open', async (): Promise<{ path: string; name: string } | null> => {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) return null;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+      title: '选择项目目录',
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const p = result.filePaths[0];
+    return { path: p, name: path.basename(p) };
+  } catch (e) {
+    logger.error('project:open 失败', { error: e instanceof Error ? e.message : String(e) });
+    return null;
+  }
+});
+
+ipcMain.handle('project:get-recent', async () => {
+  return loadRecentProjects();
+});
+
+ipcMain.handle('project:add-recent', async (_event, projPath: string) => {
+  try {
+    const list = await loadRecentProjects();
+    const filtered = list.filter((p) => p.path !== projPath);
+    filtered.unshift({ path: projPath, name: path.basename(projPath), lastOpened: Date.now() });
+    // 仅保留最近 20 个
+    await saveRecentProjects(filtered.slice(0, 20));
+  } catch (e) {
+    logger.error('project:add-recent 失败', { error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+// --- 更新检查 (3) ---
+// 真实更新逻辑由 initUpdater() 处理；这里 stub 返回 null 表示"无更新"
+ipcMain.handle('update:check', async () => {
+  try {
+    // TODO: 接入 electron-updater 完整实现
+    // 当前 initUpdater() 已订阅自动检查；这里返回 null 让渲染层显示"未检查到更新"
+    return null;
+  } catch (e) {
+    logger.error('update:check 失败', { error: e instanceof Error ? e.message : String(e) });
+    return null;
+  }
+});
+
+ipcMain.handle('update:download', async () => {
+  try {
+    // TODO: 接入 electron-updater 下载流程
+    logger.warn('update:download stub 被调用（真实更新流程未接入）');
+  } catch (e) {
+    logger.error('update:download 失败', { error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+ipcMain.handle('update:install', async () => {
+  try {
+    // TODO: 接入 electron-updater 安装流程（quitAndInstall）
+    logger.warn('update:install stub 被调用');
+  } catch (e) {
+    logger.error('update:install 失败', { error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+// --- 键值存储 (3) ---
+// 简单的 JSON 文件 KV 存储，避免引入 electron-store 依赖
+const STORE_FILE = path.join(app.getPath('userData'), 'store.json');
+let storeCache: Record<string, unknown> | null = null;
+
+async function loadStore(): Promise<Record<string, unknown>> {
+  if (storeCache) return storeCache;
+  try {
+    const raw = await fs.promises.readFile(STORE_FILE, 'utf-8');
+    storeCache = JSON.parse(raw);
+  } catch {
+    storeCache = {};
+  }
+  return storeCache!;
+}
+
+async function persistStore(): Promise<void> {
+  if (!storeCache) return;
+  try {
+    await fs.promises.writeFile(STORE_FILE, JSON.stringify(storeCache, null, 2), 'utf-8');
+  } catch (e) {
+    logger.warn('persistStore 写入失败', { error: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+ipcMain.handle('store:get', async (_event, key: string) => {
+  const store = await loadStore();
+  return store[key];
+});
+
+ipcMain.handle('store:set', async (_event, key: string, value: unknown) => {
+  const store = await loadStore();
+  store[key] = value;
+  await persistStore();
+});
+
+ipcMain.handle('store:delete', async (_event, key: string) => {
+  const store = await loadStore();
+  if (key in store) {
+    delete store[key];
+    await persistStore();
+  }
 });
 
 // ============================================================
@@ -1700,6 +2207,15 @@ ipcMain.handle('profile:list', async () => {
   return engine.listProfiles();
 });
 
+// 获取单个 Profile 详情（含 systemPrompt），供 UI 导入后回填 state
+ipcMain.handle('profile:get', async (_event, id: string) => {
+  if (typeof id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(id)) {
+    return null;
+  }
+  if (!engine) return null;
+  return engine.getProfile(id);
+});
+
 ipcMain.handle('profile:save', async (_event, rawPayload: unknown) => {
   if (!engine) return { success: false, error: '引擎未初始化' };
   // TD-08：用 ipcGuard 统一参数校验
@@ -1767,6 +2283,97 @@ ipcMain.handle('profile:duplicate', async (_event, id: string, newName: string) 
   return engine.duplicateProfile(id, newName);
 });
 
+// AgentProfile 导入：弹出文件选择对话框，让用户选择 SKILL.md 文件
+// 数据流：renderer → IPC profile:import → dialog.showOpenDialog → engine.importProfile → AgentProfileManager.importProfile
+ipcMain.handle('profile:import', async () => {
+  if (!engine) return { success: false, error: '引擎未初始化' };
+  const result = await dialog.showOpenDialog({
+    title: '导入 Agent Profile (SKILL.md)',
+    filters: [
+      { name: 'Markdown', extensions: ['md'] },
+      { name: '所有文件', extensions: ['*'] },
+    ],
+    properties: ['openFile'],
+  });
+  if (result.canceled || result.filePaths.length === 0) {
+    return { success: false, error: '用户取消选择' };
+  }
+  return engine.importProfile(result.filePaths[0]);
+});
+
+// ============================================================
+// AgentProfile 版本管理 IPC handler
+// 数据流：renderer → IPC profile:list-versions/get-version/rollback/diff-versions
+//         → engine-bridge 委托 → ProfileBridge → AgentProfileManager.getVersionManager()
+// fail-open：engine 未初始化时返回空数组/null/失败结果
+// ============================================================
+
+// 列出指定 Profile 的所有版本元数据（按时间倒序）
+ipcMain.handle('profile:list-versions', async (_event, profileId: string) => {
+  if (typeof profileId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(profileId)) {
+    return [];
+  }
+  if (!engine) return [];
+  return engine.listProfileVersions(profileId);
+});
+
+// 获取指定版本完整记录（含 snapshot）
+ipcMain.handle('profile:get-version', async (_event, profileId: string, versionId: string) => {
+  if (typeof profileId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(profileId)) {
+    return null;
+  }
+  if (typeof versionId !== 'string' || versionId.length === 0 || versionId.length > 128) {
+    return null;
+  }
+  if (!engine) return null;
+  return engine.getProfileVersion(profileId, versionId);
+});
+
+// 回滚到指定版本（破坏性操作，UI 应在调用前获得用户确认）
+ipcMain.handle('profile:rollback', async (_event, profileId: string, versionId: string) => {
+  if (typeof profileId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(profileId)) {
+    return { success: false, error: '无效的 profileId' };
+  }
+  if (typeof versionId !== 'string' || versionId.length === 0 || versionId.length > 128) {
+    return { success: false, error: '无效的 versionId' };
+  }
+  if (!engine) return { success: false, error: '引擎未初始化' };
+  return engine.rollbackProfile(profileId, versionId);
+});
+
+// 比较两个版本的字段差异（用于 UI 展示 diff 视图）
+ipcMain.handle(
+  'profile:diff-versions',
+  async (_event, profileId: string, fromVersionId: string, toVersionId: string) => {
+    if (typeof profileId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(profileId)) {
+      return [];
+    }
+    if (
+      typeof fromVersionId !== 'string' || fromVersionId.length === 0 || fromVersionId.length > 128 ||
+      typeof toVersionId !== 'string' || toVersionId.length === 0 || toVersionId.length > 128
+    ) {
+      return [];
+    }
+    if (!engine) return [];
+    return engine.diffProfileVersions(profileId, fromVersionId, toVersionId);
+  },
+);
+
+// 比较当前 Profile 与指定历史版本
+ipcMain.handle(
+  'profile:diff-current-with',
+  async (_event, profileId: string, targetVersionId: string) => {
+    if (typeof profileId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(profileId)) {
+      return [];
+    }
+    if (typeof targetVersionId !== 'string' || targetVersionId.length === 0 || targetVersionId.length > 128) {
+      return [];
+    }
+    if (!engine) return [];
+    return engine.diffProfileCurrentWith(profileId, targetVersionId);
+  },
+);
+
 // ============================================================
 // Phase 77 借鉴点 4：Voice Memo 式会话状态卡 IPC handler
 // 数据流：renderer → IPC session:get-status → engine-bridge.getSessionStatus → aggregateSessionStatus
@@ -1789,4 +2396,27 @@ ipcMain.handle('session:get-status', async (): Promise<import('../shared/ipc-typ
     };
   }
   return engine.getSessionStatus();
+});
+
+// ============================================================
+// Phase 96+ A3.3：实时费用 + 缓存命中率统计 IPC handler
+// 数据流：renderer → IPC stats:get-snapshot → engine-bridge.getStatsSnapshot
+//         → tracker.getStats / getSessionCost / cacheStatsTracker.getStats
+// fail-open：engine 未初始化时返回 zero 快照，避免渲染层 reject
+// ============================================================
+ipcMain.handle('stats:get-snapshot', async (): Promise<import('../shared/ipc-types.js').StatsSnapshot> => {
+  if (!engine) {
+    return {
+      tokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      cost: { totalUsd: 0, byModel: {} },
+      cache: {
+        session: { hit: 0, miss: 0, total: 0, hitRate: 0 },
+        turn: { hit: 0, miss: 0, total: 0, hitRate: 0 },
+      },
+      budgetUsagePercent: 0,
+      activeModels: [],
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  return engine.getStatsSnapshot();
 });

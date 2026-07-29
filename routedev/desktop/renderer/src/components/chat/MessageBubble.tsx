@@ -32,7 +32,7 @@ function GoalMessageBubble({ goalId }: { goalId: string }) {
       if (cancelled || !res?.ok || !Array.isArray(res.revisions)) return;
       // 服务端返回 JSON 解析结果，结构信任 + cast（fail-open：非法结构会被 GoalExecutionCard 忽略）
       setPlanRevisions(res.revisions as LocalPlanRevision[]);
-    }).catch(e => console.warn('[MessageBubble] planRevisions 加载失败:', e));
+    }).catch((e: unknown) => console.warn('[MessageBubble] planRevisions 加载失败:', e));
     return () => { cancelled = true; };
   }, [goalId]);
 
@@ -144,6 +144,7 @@ const MessageBubble = memo(function MessageBubble({
             status={message.toolStatus}
             args={message.toolArgs}
             result={message.toolResult}
+            deltaBuffer={message.toolDeltaBuffer}
           />
         </div>
       </div>
@@ -177,7 +178,8 @@ const MessageBubble = memo(function MessageBubble({
     return (
       <div ref={messageRef} className="group flex w-full items-end justify-end gap-2">
         <div className="flex max-w-[92%] flex-col items-end gap-1">
-          <div className="rounded-rd bg-rd-primary px-4 py-3 text-rd-primaryForeground shadow-rd">
+          {/* Phase 96：px-4 py-3 → px-3.5 py-2.5 收紧气泡内边距，配合 root 字号 15px 平衡视觉 */}
+          <div className="rounded-rd bg-rd-primary px-3.5 py-2.5 text-rd-primaryForeground shadow-rd">
             <div className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</div>
           </div>
           {actions}
@@ -193,7 +195,8 @@ const MessageBubble = memo(function MessageBubble({
           <Sparkles size={14} />
         </div>
         <div className="flex min-w-0 flex-1 flex-col items-start gap-1">
-          <div className="w-full rounded-rd bg-rd-surfaceHover px-4 py-3 text-rd-text shadow-rd">
+          {/* Phase 96：px-4 py-3 → px-3.5 py-2.5 收紧气泡内边距 */}
+          <div className="w-full rounded-rd bg-rd-surfaceHover px-3.5 py-2.5 text-rd-text shadow-rd">
             {message.content ? <MarkdownRenderer content={message.content} /> : null}
           </div>
           {actions}
@@ -208,7 +211,8 @@ const MessageBubble = memo(function MessageBubble({
         <Wrench size={14} />
       </div>
       <div className="flex min-w-0 flex-1 flex-col items-start gap-1">
-        <div className="w-full rounded-rd border border-rd-border bg-rd-surface px-4 py-3 text-rd-textMuted shadow-rd">
+        {/* Phase 96：px-4 py-3 → px-3.5 py-2.5 收紧气泡内边距 */}
+        <div className="w-full rounded-rd border border-rd-border bg-rd-surface px-3.5 py-2.5 text-rd-textMuted shadow-rd">
           <div className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</div>
         </div>
         {actions}

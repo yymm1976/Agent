@@ -2,7 +2,9 @@
 // 自动更新：仅在生产环境（app.isPackaged）启用，使用 electron-updater 检查并安装更新。
 
 import { app, dialog } from 'electron';
-import { autoUpdater } from 'electron-updater';
+// electron-updater 是 CommonJS 模块，ESM 环境下必须用默认导入再解构
+import electronUpdater from 'electron-updater';
+const { autoUpdater } = electronUpdater;
 
 /**
  * 初始化自动更新

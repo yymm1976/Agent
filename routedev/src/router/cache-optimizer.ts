@@ -171,6 +171,39 @@ export class CacheStatsTracker {
   }
 
   /**
+   * Phase 96+ A3.2：统一获取会话级 + 单轮缓存统计（供 UI 面板消费）
+   *
+   * 一次调用返回两层视图：
+   *   - session：会话级累计计数（压缩时不重置，反映整段会话命中情况）
+   *   - turn：单轮计数（每轮 LLM 调用后由 resetTurn 重置，反映当前这轮）
+   *
+   * 与 getSessionStats / getTurnHitRate 的关系：
+   *   - 本方法是上述两者的只读聚合，无新状态
+   *   - 供 IPC 一站式返回，避免渲染层发两次 invoke
+   */
+  getStats(): {
+    session: { hit: number; miss: number; total: number; hitRate: number };
+    turn: { hit: number; miss: number; total: number; hitRate: number };
+  } {
+    const sessTotal = this.sessCacheHit + this.sessCacheMiss;
+    const turnTotal = this.turnCacheHit + this.turnCacheMiss;
+    return {
+      session: {
+        hit: this.sessCacheHit,
+        miss: this.sessCacheMiss,
+        total: sessTotal,
+        hitRate: sessTotal > 0 ? this.sessCacheHit / sessTotal : 0,
+      },
+      turn: {
+        hit: this.turnCacheHit,
+        miss: this.turnCacheMiss,
+        total: turnTotal,
+        hitRate: turnTotal > 0 ? this.turnCacheHit / turnTotal : 0,
+      },
+    };
+  }
+
+  /**
    * Phase 55：记录单个 Worker 的缓存命中（按 goalId 聚合）
    *
    * @param goalId 目标 ID（用于聚合查询）

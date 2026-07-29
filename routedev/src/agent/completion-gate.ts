@@ -15,7 +15,8 @@ function runCommandAsync(
   options: { timeout: number; cwd: string; shell?: boolean },
 ): Promise<{ status: number | null; signal: string | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, options);
+    // windowsHide:true 防止 GUI 应用 spawn 子进程时弹出 cmd/console 窗口
+    const child = spawn(cmd, args, { ...options, windowsHide: true });
     let stdout = '';
     let stderr = '';
     child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf-8'); });
@@ -23,6 +24,49 @@ function runCommandAsync(
     child.on('close', (code, signal) => resolve({ status: code, signal, stdout, stderr }));
     child.on('error', () => resolve({ status: -1, signal: null, stdout, stderr }));
   });
+}
+
+// ============================================================
+// Phase 92：项目脚本适配
+// 优先用 package.json scripts + 检测到的包管理器，fallback 到 npx
+// ============================================================
+
+type PackageManager = 'pnpm' | 'yarn' | 'npm';
+
+/** 检测项目使用的包管理器（基于 lockfile） */
+function detectPackageManager(projectPath: string): PackageManager {
+  if (existsSync(join(projectPath, 'pnpm-lock.yaml'))) return 'pnpm';
+  if (existsSync(join(projectPath, 'yarn.lock'))) return 'yarn';
+  return 'npm';
+}
+
+/**
+ * 解析运行目标：优先用 package.json scripts 中对应的脚本
+ *
+ * 返回 null 表示无对应脚本，调用方应 fallback 到 npx 直接调用
+ * Windows 上 pm 是 .cmd 批处理，附加 .cmd 后缀避免 shell:true 注入风险
+ */
+function detectRunTarget(
+  projectPath: string,
+  scriptName: string,
+): { cmd: string; args: string[] } | null {
+  const pkgPath = join(projectPath, 'package.json');
+  if (!existsSync(pkgPath)) return null;
+  let scripts: Record<string, string> = {};
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    scripts = pkg.scripts ?? {};
+  } catch {
+    return null;
+  }
+  const scriptValue = scripts[scriptName];
+  if (typeof scriptValue !== 'string' || /no test specified/i.test(scriptValue)) {
+    return null;
+  }
+  const pm = detectPackageManager(projectPath);
+  const cmd = process.platform === 'win32' ? `${pm}.cmd` : pm;
+  // 统一用 `<pm> run <script>`（pnpm/yarn/npm 都支持）
+  return { cmd, args: ['run', scriptName] };
 }
 
 // --- 类型 ---
@@ -55,6 +99,27 @@ export interface GateResult {
   checks: GateCheck[];
   /** Phase 52 Task 7：饱和监测告警（saturationMonitor 注入且非 healthy 时填充） */
   warnings?: string[];
+}
+
+export type CompletionStatus =
+  | 'completed_verified'
+  | 'completed_with_warnings'
+  | 'completed_unverified'
+  | 'verification_failed'
+  | 'execution_failed'
+  | 'cancelled'
+  | 'blocked'
+  | 'recovery_available';
+
+export function toCompletionStatus(gateResult?: GateResult, executionSucceeded = true): CompletionStatus {
+  if (!executionSucceeded) return 'execution_failed';
+  if (!gateResult) return 'completed_unverified';
+  if (!gateResult.passed) return 'verification_failed';
+  if (gateResult.warnings?.length || gateResult.checks.some((check) => check.skipped || check.warnings?.length)) {
+    return 'completed_with_warnings';
+  }
+  if (gateResult.checks.length === 0) return 'completed_unverified';
+  return 'completed_verified';
 }
 
 /**
@@ -148,10 +213,14 @@ export class CompletionGate {
   private async runTypecheck(projectPath: string, _files: string[]): Promise<GateCheck> {
     const start = Date.now();
     try {
-      const result = await runCommandAsync('npx', ['tsc', '--noEmit'], {
+      // Phase 92：优先用 package.json scripts.typecheck，fallback 到 npx tsc
+      const target = detectRunTarget(projectPath, 'typecheck') ?? {
+        cmd: process.platform === 'win32' ? 'npx.cmd' : 'npx',
+        args: ['tsc', '--noEmit'],
+      };
+      const result = await runCommandAsync(target.cmd, target.args, {
         cwd: projectPath,
         timeout: TYPECHECK_TIMEOUT,
-        shell: process.platform === 'win32', // Windows 需要 shell
       });
 
       const duration = Date.now() - start;
@@ -189,10 +258,14 @@ export class CompletionGate {
   private async runLint(projectPath: string, _files: string[]): Promise<GateCheck> {
     const start = Date.now();
     try {
-      const result = await runCommandAsync('npx', ['eslint', '.', '--max-warnings=0'], {
+      // Phase 92：优先用 package.json scripts.lint，fallback 到 npx eslint
+      const target = detectRunTarget(projectPath, 'lint') ?? {
+        cmd: process.platform === 'win32' ? 'npx.cmd' : 'npx',
+        args: ['eslint', '.', '--max-warnings=0'],
+      };
+      const result = await runCommandAsync(target.cmd, target.args, {
         cwd: projectPath,
         timeout: LINT_TIMEOUT,
-        shell: process.platform === 'win32',
       });
 
       const duration = Date.now() - start;
@@ -230,14 +303,22 @@ export class CompletionGate {
   private async runTests(projectPath: string, files: string[]): Promise<GateCheck> {
     const start = Date.now();
     try {
-      // 优先用 vitest --related（只运行相关测试），fallback 到 vitest run
-      const args = files.length > 0
-        ? ['vitest', 'run', '--related', ...files]
-        : ['vitest', 'run'];
-
-      // C2 修复：Windows 上不使用 shell:true，避免 files 路径命令注入
-      // 直接调用 npx.cmd（Windows 上 npx 是 .cmd 批处理，必须带 .cmd 后缀才能不用 shell）
-      const cmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+      // Phase 92：优先用 package.json scripts.test（避免 vitest --related 在某些项目下缺失相关测试）
+      // fallback 到 npx vitest run [--related files]
+      const target = detectRunTarget(projectPath, 'test');
+      let cmd: string;
+      let args: string[];
+      if (target) {
+        cmd = target.cmd;
+        args = target.args;
+      } else {
+        // C2 修复：Windows 上不使用 shell:true，避免 files 路径命令注入
+        // 直接调用 npx.cmd（Windows 上 npx 是 .cmd 批处理，必须带 .cmd 后缀才能不用 shell）
+        cmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+        args = files.length > 0
+          ? ['vitest', 'run', '--related', ...files]
+          : ['vitest', 'run'];
+      }
       const result = await runCommandAsync(cmd, args, {
         cwd: projectPath,
         timeout: TEST_TIMEOUT,
@@ -310,3 +391,5 @@ export function createCompletionGate(config?: Partial<CompletionGateConfig>): Co
 
 // 暴露常量
 export { DEFAULT_CONFIG as DEFAULT_GATE_CONFIG, TYPECHECK_TIMEOUT, LINT_TIMEOUT, TEST_TIMEOUT };
+// Phase 92：导出供单元测试
+export { detectPackageManager, detectRunTarget };

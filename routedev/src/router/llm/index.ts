@@ -4,6 +4,7 @@
 
 import type { ILLMClient } from '../types.js';
 import { OpenAIClient } from './openai.js';
+import { OpenAIResponsesClient } from './openai-responses.js';
 import { AnthropicClient } from './anthropic.js';
 import { GeminiClient } from './gemini-client.js';
 import { DeepSeekClient } from './deepseek-client.js';
@@ -76,10 +77,18 @@ export function createLLMClient(config: LLMClientConfig): ILLMClient {
       break;
   }
 
-  // 按 protocol 分发：处理 openai/anthropic/gemini 基础客户端
+  // 按 protocol 分发：处理 openai/openai-responses/anthropic/gemini 基础客户端
   switch (config.protocol) {
     case 'openai':
       return new OpenAIClient({
+        providerId: config.id,
+        baseUrl: config.baseUrl,
+        apiKey: config.apiKey,
+        timeoutMs: config.timeoutMs,
+      });
+    case 'openai-responses':
+      // OpenAI Responses API 客户端（input/output items + instructions 模型）
+      return new OpenAIResponsesClient({
         providerId: config.id,
         baseUrl: config.baseUrl,
         apiKey: config.apiKey,
@@ -150,6 +159,54 @@ export class LLMClientManager {
   }
 
   /**
+   * Phase 96 P1-4：拉取指定 provider 的可用模型列表
+   * 调用 provider 的 list models API，返回模型 ID 数组
+   * provider 未注册或 client 不支持 getModels 时返回空数组（fail-open）
+   */
+  async getModels(providerId: string): Promise<string[]> {
+    const client = this.clients.get(providerId);
+    if (!client || !client.isReady() || !client.getModels) return [];
+    try {
+      return await client.getModels();
+    } catch (err) {
+      logger.warn('LLMClientManager.getModels failed (fail-open)', {
+        providerId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }
+  }
+
+  /**
+   * Phase 96 P1-4：批量刷新所有 provider 的模型列表
+   * 并发调用所有就绪 client 的 getModels，返回 providerId → modelIds 映射
+   * 单个 provider 失败不影响其他（fail-open，返回空数组）
+   */
+  async refreshAllModels(): Promise<Map<string, string[]>> {
+    const result = new Map<string, string[]>();
+    const entries = Array.from(this.clients.entries());
+    await Promise.all(
+      entries.map(async ([providerId, client]) => {
+        if (!client.isReady() || !client.getModels) {
+          result.set(providerId, []);
+          return;
+        }
+        try {
+          const models = await client.getModels();
+          result.set(providerId, models);
+        } catch (err) {
+          logger.warn('LLMClientManager.refreshAllModels: single provider failed', {
+            providerId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          result.set(providerId, []);
+        }
+      }),
+    );
+    return result;
+  }
+
+  /**
    * 从配置初始化所有客户端
    */
   initializeFromConfig(configs: LLMClientConfig[]): void {
@@ -214,6 +271,7 @@ export class LLMClientManager {
 
 // 导出所有相关类型和类
 export { OpenAIClient } from './openai.js';
+export { OpenAIResponsesClient } from './openai-responses.js';
 export { AnthropicClient } from './anthropic.js';
 export { BaseLLMClient } from './base.js';
 export { GeminiClient } from './gemini-client.js';

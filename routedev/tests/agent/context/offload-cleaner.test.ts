@@ -36,7 +36,7 @@ describe('offload-cleaner + Budget Offload 集成', () => {
   });
 
   // 用例 1：超预算工具输出写入 offload 文件
-  it('超预算工具输出应写入 offload 文件', () => {
+  it('超预算工具输出应写入 offload 文件', async () => {
     const sessionId = 'session-1';
     const pipeline = new ToolOutputPipeline({
       conciseThinkingEnabled: false,
@@ -46,7 +46,7 @@ describe('offload-cleaner + Budget Offload 集成', () => {
       sessionId,
     });
     const longContent = makeLongContent(5000);
-    const result = pipeline.process('read', longContent);
+    const result = await pipeline.process('read', longContent);
 
     expect(result.offloadedPath).toBeDefined();
     // 文件确实落盘
@@ -59,7 +59,7 @@ describe('offload-cleaner + Budget Offload 集成', () => {
   });
 
   // 用例 2：offload 文件路径正确返回给 Agent（在截断摘要后附加）
-  it('offload 文件路径应附加到截断摘要中供 Agent 引用', () => {
+  it('offload 文件路径应附加到截断摘要中供 Agent 引用', async () => {
     const sessionId = 'session-2';
     const pipeline = new ToolOutputPipeline({
       conciseThinkingEnabled: false,
@@ -69,7 +69,7 @@ describe('offload-cleaner + Budget Offload 集成', () => {
       sessionId,
     });
     const longContent = makeLongContent(6000);
-    const result = pipeline.process('exec', longContent);
+    const result = await pipeline.process('exec', longContent);
 
     // 摘要中包含 offload 文件路径引用
     expect(result.output).toContain(result.offloadedPath!);
@@ -82,7 +82,7 @@ describe('offload-cleaner + Budget Offload 集成', () => {
   });
 
   // 用例 3：写入失败时 fail-open 降级到内存截断
-  it('offload 写入失败时应 fail-open 降级到内存截断', () => {
+  it('offload 写入失败时应 fail-open 降级到内存截断', async () => {
     const sessionId = 'session-3';
     // 用一个不可能写入的路径触发 writeFileSync 失败
     // Windows 下 NUL 路径不可写；用嵌套不存在的根目录更稳妥
@@ -99,7 +99,7 @@ describe('offload-cleaner + Budget Offload 集成', () => {
       sessionId,
     });
     const longContent = makeLongContent(5000);
-    const result = pipeline.process('read', longContent);
+    const result = await pipeline.process('read', longContent);
 
     // 应该走 fail-open 分支：offloadedPath 未设置
     expect(result.offloadedPath).toBeUndefined();

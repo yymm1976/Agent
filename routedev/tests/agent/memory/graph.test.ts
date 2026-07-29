@@ -2,8 +2,11 @@
 // KnowledgeGraph 单元测试（PPR + 双路径召回 + Label Propagation + 持久化）
 
 import { describe, it, expect } from 'vitest';
-import { KnowledgeGraph } from '../../../src/agent/memory/graph.js';
+import { KnowledgeGraph, initKnowledgeGraphAdvanced } from '../../../src/agent/memory/graph.js';
 import type { GraphNode, GraphEdge } from '../../../src/agent/memory/graph.js';
+
+// 装配 detectCommunities / clusterSimilarNodes 等高级方法（kgAdvanced pack 默认不装配）
+initKnowledgeGraphAdvanced();
 
 /** 构造一个简单节点 */
 function makeNode(id: string, content: string, opts: Partial<GraphNode> = {}): GraphNode {

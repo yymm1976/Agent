@@ -8,6 +8,7 @@ import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';
 import { Select, SelectItem } from '../ui/select.js';
 import { Input } from '../ui/input.js';
+import { SettingsAdvancedSection } from './SettingsAdvancedSection.js';
 
 interface SettingsAppearanceTabProps {
   /** 当前配置草稿 */
@@ -34,11 +35,11 @@ export function SettingsAppearanceTab({
   updateUpdates,
 }: SettingsAppearanceTabProps) {
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>主题配色</CardTitle>
-          <CardDescription>选择应用的整体配色方案（黑白灰蓝）</CardDescription>
+          <CardDescription>选择应用的整体配色方案</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -76,7 +77,7 @@ export function SettingsAppearanceTab({
       <Card>
         <CardHeader>
           <CardTitle>主题色</CardTitle>
-          <CardDescription>自定义应用的主色调（按钮、选中态、聚焦框等）。默认紫色，可选预设色或自定义。</CardDescription>
+          <CardDescription>自定义应用的主色调，留空使用预设紫色</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap gap-3">
@@ -172,6 +173,7 @@ export function SettingsAppearanceTab({
         </CardContent>
       </Card>
 
+      <SettingsAdvancedSection title="界面行为与更新" description="UI 提示开关、通用行为、后台行为、自动更新（已有默认值）">
       <Card>
         <CardHeader>
           <CardTitle>UI 提示</CardTitle>
@@ -181,12 +183,13 @@ export function SettingsAppearanceTab({
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="ui-hot-reload-notify">配置热重载提示</Label>
-              <p className="text-xs text-rd-textMuted">开启后配置变更并热重载时在右下角显示短暂提示。</p>
+              <p className="text-xs text-rd-textMuted">暂未实现</p>
             </div>
             <Switch
               id="ui-hot-reload-notify"
               checked={draft.ui.hotReloadNotify}
               onCheckedChange={(checked) => updateUi({ hotReloadNotify: checked })}
+              disabled
             />
           </div>
         </CardContent>
@@ -216,11 +219,12 @@ export function SettingsAppearanceTab({
               id="general-startup"
               value={draft.general.startupBehavior}
               onChange={(e) => updateGeneral({ startupBehavior: e.target.value as 'restore' | 'project_select' })}
+              disabled
             >
               <SelectItem value="restore">恢复上次会话</SelectItem>
               <SelectItem value="project_select">显示项目选择器</SelectItem>
             </Select>
-            <p className="text-xs text-rd-textMuted">应用启动时直接恢复上次对话，或弹出项目选择器让用户选择。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现</p>
           </div>
 
           {/* 退出行为设置 */}
@@ -241,7 +245,7 @@ export function SettingsAppearanceTab({
             >
               <SelectItem value="exit">直接退出（杀掉后台进程）</SelectItem>
               <SelectItem value="minimize-to-tray">最小化到托盘</SelectItem>
-              <SelectItem value="ask">每次询问</SelectItem>
+              <SelectItem value="ask">每次询问（暂未实现，等同直接退出）</SelectItem>
             </Select>
             <p className="text-xs text-rd-textMuted">默认退出时杀掉所有后台进程（包括 LLM 请求和 MCP 连接），避免文件锁冲突。</p>
           </div>
@@ -251,36 +255,38 @@ export function SettingsAppearanceTab({
               id="bg-active-task"
               value={draft.general.backgroundBehavior.activeTaskOnClose}
               onChange={(e) => updateBackgroundBehavior({ activeTaskOnClose: e.target.value as 'terminate' | 'continue-in-background' | 'prompt' })}
-              disabled={draft.general.backgroundBehavior.backgroundBehavior === 'exit'}
+              disabled
             >
               <SelectItem value="terminate">终止任务</SelectItem>
               <SelectItem value="continue-in-background">后台继续</SelectItem>
               <SelectItem value="prompt">提示用户</SelectItem>
             </Select>
-            <p className="text-xs text-rd-textMuted">关闭时有正在执行的任务时的处理方式。退出模式下自动终止。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现</p>
           </div>
 
           {/* Phase 33 Task 3.1：更新策略 */}
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="updates-check">启动时检查更新</Label>
-              <p className="text-xs text-rd-textMuted">应用启动时自动检查是否有新版本。</p>
+              <p className="text-xs text-rd-textMuted">暂未实现</p>
             </div>
             <Switch
               id="updates-check"
               checked={draft.updates.checkOnStartup}
               onCheckedChange={(checked) => updateUpdates({ checkOnStartup: checked })}
+              disabled
             />
           </div>
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="updates-auto">自动安装更新</Label>
-              <p className="text-xs text-rd-textMuted">自动下载并安装更新；关闭则仅提示有新版本可用。</p>
+              <p className="text-xs text-rd-textMuted">暂未实现</p>
             </div>
             <Switch
               id="updates-auto"
               checked={draft.updates.autoUpdate}
               onCheckedChange={(checked) => updateUpdates({ autoUpdate: checked })}
+              disabled
             />
           </div>
         </CardContent>
@@ -298,22 +304,24 @@ export function SettingsAppearanceTab({
               id="ui-output-style"
               value={draft.ui.outputStyle}
               onChange={(e) => updateUi({ outputStyle: e.target.value as 'minimal' | 'standard' | 'verbose' })}
+              disabled
             >
               <SelectItem value="minimal">摘要</SelectItem>
               <SelectItem value="standard">关键细节</SelectItem>
               <SelectItem value="verbose">完整数据</SelectItem>
             </Select>
-            <p className="text-xs text-rd-textMuted">控制 Agent 回复的详细程度。摘要只给结论，关键细节附关键信息，完整数据展示完整原始数据。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现</p>
           </div>
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="ui-bell">启用终端 Bell 通知</Label>
-              <p className="text-xs text-rd-textMuted">关键事件（如等待审批、任务完成）触发系统提示音。</p>
+              <p className="text-xs text-rd-textMuted">暂未实现</p>
             </div>
             <Switch
               id="ui-bell"
               checked={draft.ui.bell}
               onCheckedChange={(checked) => updateUi({ bell: checked })}
+              disabled
             />
           </div>
           <div className="space-y-2">
@@ -323,11 +331,13 @@ export function SettingsAppearanceTab({
               type="number"
               value={draft.ui.idleHintSeconds}
               onChange={(e) => updateUi({ idleHintSeconds: Number(e.target.value) })}
+              disabled
             />
-            <p className="text-xs text-rd-textMuted">Agent 空闲超过此秒数后显示提示，引导用户继续操作。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现</p>
           </div>
         </CardContent>
       </Card>
+      </SettingsAdvancedSection>
     </div>
   );
 }

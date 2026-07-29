@@ -19,7 +19,7 @@ export function SettingsResultSchemaTab({ draft, updateDraft }: SettingsResultSc
   };
 
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>子 Agent 结果 Schema</CardTitle>

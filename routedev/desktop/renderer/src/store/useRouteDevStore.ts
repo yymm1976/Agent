@@ -11,6 +11,7 @@ import type {
   ToolConfirmPayload,
   TokenProfileSnapshot,
   GoalEvent,
+  CompletionStatus,
 } from '../../../shared/ipc-types.js';
 import type { TraceSpan } from '../../../../src/harness/trace-types.js';
 // 静态导入 useProjectsStore：该 store 仅导入本文件的类型（编译后移除），运行时无循环依赖
@@ -28,6 +29,14 @@ export interface ChatMessage {
   content: string;
   /** 模型推理过程（DeepSeek-R1 等 reasoning 模型的思考过程，显示在折叠区内） */
   reasoning?: string;
+  /**
+   * 中间自言自语：ReAct 循环里每轮工具调用前 LLM 输出的说明性文字
+   * 在 _addToolStart 时从 _assistantBuffer 封存，清空 buffer 让后续 text_delta 重新累积为最终输出
+   * 只有最后一轮（无后续 tool_call）的 text_delta 才会保留在 content 上
+   */
+  intermediateThoughts?: { id: string; text: string; timestamp: number }[];
+  /** 执行过程中的工作流状态；与工具调用一起按真实时间顺序呈现。 */
+  progressEvents?: { id: string; text: string; timestamp: number }[];
   /** 本条 assistant 回复匹配到的任务层级 */
   tier?: string;
   isStreaming?: boolean;
@@ -35,6 +44,16 @@ export interface ChatMessage {
   toolArgs?: Record<string, unknown>;
   toolResult?: unknown;
   toolStatus?: ToolCallStatus;
+  /**
+   * Phase 96 P1-1：工具调用 ID，用于关联 tool_call_delta 增量输出
+   * 仅在 tool_start 事件携带 toolCallId 时填充
+   */
+  toolCallId?: string;
+  /**
+   * Phase 96 P1-1：工具执行增量输出缓冲（shell_exec 等长任务的实时 stdout/stderr）
+   * tool_call_delta 事件追加到此字段，tool_done 时清空并写入 toolResult
+   */
+  toolDeltaBuffer?: string;
   error?: boolean;
   /** 任务 ID：同一次 sendMessage 产生的所有消息共享同一 taskId */
   taskId?: string;
@@ -48,6 +67,8 @@ export interface ChatMessage {
   taskCompleted?: boolean;
   /** Phase 54：Goal 执行标识——非空时用 GoalExecutionCard 替代文本渲染 */
   goalId?: string;
+  /** Phase 91：任务完成状态（仅本轮发生代码修改且 done 事件携带时设置） */
+  completionStatus?: CompletionStatus;
 }
 
 export interface PendingConfirm {
@@ -92,6 +113,8 @@ export interface RouteDevState {
   config: AppConfig | null;
   configLoading: boolean;
   configError: string | null;  // 配置加载失败时的错误信息，用于显示错误页面而非 SetupWizard
+  // Bug #5 修复：标记用户是否曾配置过 provider，避免保存错误导致 providers 清空时误触发 SetupWizard
+  hasEverHadProviders: boolean;
   pendingConfirm: PendingConfirm | null;
   tokenSnapshots: TokenProfileSnapshot[];
   traceEvents: TraceSpan[];
@@ -152,16 +175,26 @@ export interface RouteDevState {
   _pendingReasoning: string;
   /** reasoning 流式刷新调度句柄 */
   _reasoningRafHandle: number | null;
+  /**
+   * 中间自言自语累积列表：每次 _addToolStart 时从 _assistantBuffer 封存
+   * 任务完成时写到 latestAssistant.intermediateThoughts，渲染时按时间顺序穿插在工具调用之间
+   */
+  _intermediateThoughts: { id: string; text: string; timestamp: number }[];
+  /** 当前任务的工作流状态历史；完成时封存到 assistant 消息。 */
+  _progressEvents: { id: string; text: string; timestamp: number }[];
 
   // ===== 内部操作 =====
   _appendTextDelta: (chunk: string) => void;
   _flushPendingDelta: () => void;
   _appendReasoningDelta: (chunk: string) => void;
   _flushPendingReasoning: () => void;
+  _appendProgressEvent: (text: string) => void;
   _startAssistantMessage: () => void;
-  _finishAssistantMessage: () => void;
-  _addToolStart: (toolName: string, args?: Record<string, unknown>) => void;
-  _addToolDone: (toolName: string, result: unknown) => void;
+  _finishAssistantMessage: (completionStatus?: CompletionStatus) => void;
+  _addToolStart: (toolName: string, args?: Record<string, unknown>, toolCallId?: string) => void;
+  _addToolDone: (toolName: string, result: unknown, isError?: boolean, toolCallId?: string) => void;
+  /** Phase 96 P1-1：追加工具执行增量输出到对应 tool 消息的 toolDeltaBuffer */
+  _appendToolDelta: (toolCallId: string, chunk: string) => void;
   _setError: (error: string) => void;
   _setProcessing: (processing: boolean) => void;
   _setPendingConfirm: (confirm: PendingConfirm | null) => void;
@@ -186,6 +219,7 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
   config: null,
   configLoading: true,
   configError: null,
+  hasEverHadProviders: false,
   pendingConfirm: null,
   tokenSnapshots: [],
   traceEvents: [],
@@ -203,6 +237,8 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
   _reasoningBuffer: '',
   _pendingReasoning: '',
   _reasoningRafHandle: null,
+  _intermediateThoughts: [],
+  _progressEvents: [],
 
   // ===== 操作 =====
   sendMessage: (text) => {
@@ -288,6 +324,9 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
       _reasoningBuffer: '',
       _pendingReasoning: '',
       _reasoningRafHandle: null,
+      _intermediateThoughts: [],
+      _progressEvents: [],
+      _progressEvents: [],
     });
     window.routedev.chat.send({ text: trimmed } as ChatSendPayload);
   },
@@ -382,6 +421,7 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
       _reasoningBuffer: '',
       _pendingReasoning: '',
       _reasoningRafHandle: null,
+      _intermediateThoughts: [],
     });
     window.routedev.chat.send({ text: userText.trim() } as ChatSendPayload);
   },
@@ -419,10 +459,19 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
       });
     }
     if (state._assistantId) {
+      const finalThoughts = state._intermediateThoughts;
+      const finalProgressEvents = state._progressEvents;
       set({
         messages: state.messages.map((m) =>
           m.id === state._assistantId
-            ? { ...m, isStreaming: false, content: state._assistantBuffer, reasoning: state._reasoningBuffer || undefined }
+            ? {
+                ...m,
+                isStreaming: false,
+                content: state._assistantBuffer,
+                reasoning: state._reasoningBuffer || undefined,
+                ...(finalThoughts.length > 0 ? { intermediateThoughts: finalThoughts } : {}),
+                ...(finalProgressEvents.length > 0 ? { progressEvents: finalProgressEvents } : {}),
+              }
             : m,
         ),
         _assistantId: null,
@@ -432,6 +481,7 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
         _reasoningBuffer: '',
         _pendingReasoning: '',
         _reasoningRafHandle: null,
+        _intermediateThoughts: [],
       });
     }
   },
@@ -455,14 +505,44 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
   saveConfig: async (cfg) => {
     const result = await window.routedev.config.save(cfg);
     if (result.success) {
-      set({ config: cfg });
+      // 保存成功后从磁盘重新加载（主进程会脱敏返回），
+      // 确保 store.config 与磁盘一致，同时让主进程的掩码回填结果反映到 store
+      try {
+        const diskConfig = await window.routedev.config.reload();
+        // Bug #5：一旦磁盘有 provider 就标记 hasEverHadProviders，防止后续保存错误清空时误触发 SetupWizard
+        const hadProviders = Array.isArray(diskConfig.providers) && diskConfig.providers.length > 0;
+        set((prev) => ({
+          config: diskConfig,
+          hasEverHadProviders: prev.hasEverHadProviders || hadProviders,
+        }));
+      } catch {
+        // Bug 修复：reload 失败时用 config:get 从磁盘加载（不触发 engine.reloadConfig），
+        // 而非用 cleanedDraft（含掩码 apiKey）覆盖，避免掩码值污染 store.config
+        // config:save 已成功写入磁盘且 engine.updateConfig 已更新引擎内存配置，
+        // 仅 deps 重建失败（LLM 客户端/分类器），不影响配置正确性
+        try {
+          const diskConfig = await window.routedev.config.get();
+          const hadProviders = Array.isArray(diskConfig.providers) && diskConfig.providers.length > 0;
+          set((prev) => ({
+            config: diskConfig,
+            hasEverHadProviders: prev.hasEverHadProviders || hadProviders,
+          }));
+        } catch {
+          // config:get 也失败：不更新 config，保持旧值
+          // 用户可手动重启应用恢复
+        }
+      }
     }
     return result;
   },
 
   reloadConfig: async () => {
     const cfg = await window.routedev.config.reload();
-    set({ config: cfg });
+    const hadProviders = Array.isArray(cfg.providers) && cfg.providers.length > 0;
+    set((prev) => ({
+      config: cfg,
+      hasEverHadProviders: prev.hasEverHadProviders || hadProviders,
+    }));
   },
 
   executeCommand: (text) => {
@@ -549,6 +629,26 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
     });
   },
 
+  _appendProgressEvent: (text) => {
+    const normalized = text.trim();
+    const state = get();
+    if (!normalized || !state._assistantId) return;
+
+    // 相同的流式状态会重复抵达；只保留一次，避免时间线变成噪声。
+    const last = state._progressEvents[state._progressEvents.length - 1];
+    if (last?.text === normalized) return;
+
+    const event = { id: `progress-${Date.now()}`, text: normalized, timestamp: Date.now() };
+    const progressEvents = [...state._progressEvents, event];
+    set({
+      progressLabel: normalized,
+      _progressEvents: progressEvents,
+      messages: state.messages.map((message) =>
+        message.id === state._assistantId ? { ...message, progressEvents } : message,
+      ),
+    });
+  },
+
   _startAssistantMessage: () => {
     // 创建新的 assistant 消息，设置 _assistantId
     const state = get();
@@ -569,7 +669,7 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
     });
   },
 
-  _finishAssistantMessage: () => {
+  _finishAssistantMessage: (completionStatus) => {
     // 清除 _assistantId 和 _assistantBuffer，标记消息完成
     // 同时计算任务耗时并标记该任务下所有消息为已完成
     const state = get();
@@ -583,6 +683,8 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
     }
     const finalContent = state._assistantBuffer;
     const finalReasoning = state._reasoningBuffer;
+    const finalThoughts = state._intermediateThoughts;
+    const finalProgressEvents = state._progressEvents;
     const startTime = state._currentTaskStartTime;
     const duration = startTime ? Date.now() - startTime : 0;
     const taskId = state._currentTaskId;
@@ -595,6 +697,11 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
             isStreaming: false,
             content: finalContent,
             reasoning: finalReasoning || undefined,
+            // 中间自言自语：仅在封存过时才挂载，避免空数组污染
+            ...(finalThoughts.length > 0 ? { intermediateThoughts: finalThoughts } : {}),
+            ...(finalProgressEvents.length > 0 ? { progressEvents: finalProgressEvents } : {}),
+            // Phase 91：在 assistant 消息上记录完成状态（仅 done 事件携带时）
+            ...(completionStatus ? { completionStatus } : {}),
           };
         }
         // 给 user 消息（任务起始）记录耗时和完成标记
@@ -614,50 +721,97 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
       _reasoningBuffer: '',
       _pendingReasoning: '',
       _reasoningRafHandle: null,
+      _intermediateThoughts: [],
+      _progressEvents: [],
       isProcessing: false,
       _currentTaskId: null,
       _currentTaskStartTime: null,
     });
   },
 
-  _addToolStart: (toolName, args) => {
+  _addToolStart: (toolName, args, toolCallId) => {
     const state = get();
     const taskId = state._currentTaskId ?? undefined;
+    const now = Date.now();
+
+    // 关键修复：在创建 tool 消息前，把当前 _assistantBuffer 内容封存为一条中间自言自语
+    // 否则所有 text_delta 会累积到最终输出，导致中间说明文字和最终回答混在一起
+    // 封存后清空 buffer，让后续 text_delta 重新累积为最终输出
+    const currentText = state._assistantBuffer.trim();
+    const assistantId = state._assistantId;
+    const pendingDelta = state._pendingDelta;
+    const rafHandle = state._rafHandle;
+
+    // 清理待刷新的 rAF，避免封存后被旧 delta 覆盖
+    if (rafHandle !== null) {
+      window.clearTimeout(rafHandle);
+    }
+
+    const newIntermediate = currentText
+      ? [...state._intermediateThoughts, { id: `thought-${now}`, text: currentText, timestamp: now - 1 }]
+      : state._intermediateThoughts;
+
+    set({
+      _intermediateThoughts: newIntermediate,
+      _assistantBuffer: '',
+      _pendingDelta: '',
+      _rafHandle: null,
+      // 同步把 latestAssistant.content 清空（已封存到 intermediateThoughts）
+      // 这样 UI 上文字会"消失"并出现在折叠的思考块里，符合用户期望
+      messages: assistantId
+        ? state.messages.map((m) =>
+          m.id === assistantId ? { ...m, content: '' } : m,
+        )
+        : state.messages,
+    });
+
+    // pendingDelta 在封存后已丢弃（已通过 currentText 包含），无需再 flush
+    void pendingDelta;
+
     set({
       messages: [
-        ...state.messages,
+        ...get().messages,
         {
-          id: `tool-${Date.now()}`,
+          id: `tool-${now}`,
           role: 'system',
           content: '',
           toolName,
           toolArgs: args,
           toolStatus: 'running',
+          // Phase 96 P1-1：记录 toolCallId 以关联后续 tool_call_delta 增量输出
+          toolCallId,
+          toolDeltaBuffer: '',
           taskId,
-          timestamp: Date.now(),
+          timestamp: now,
         },
       ],
     });
   },
 
-  _addToolDone: (toolName, result) => {
+  _addToolDone: (toolName, result, isError, toolCallId) => {
     set((state) => {
       const newMessages = [...state.messages];
       // 从后往前查找匹配的 running 状态工具消息
+      // Phase 96 P1-1：优先用 toolCallId 精准匹配，回退到 toolName+running
       for (let i = newMessages.length - 1; i >= 0; i--) {
         const m = newMessages[i];
-        if (m.toolName === toolName && m.toolStatus === 'running') {
-          // 启发式检测结果是否为错误
-          const isError =
-            typeof result === 'string'
-              ? /error|fail|exception/i.test(result)
-              : result !== null &&
-                typeof result === 'object' &&
-                'error' in (result as Record<string, unknown>);
+        const matchById = toolCallId && m.toolCallId === toolCallId;
+        const matchByName = !toolCallId && m.toolName === toolName && m.toolStatus === 'running';
+        if ((matchById || matchByName) && m.toolStatus === 'running') {
+          // 优先使用工具返回的 isError 字段（真实成功/失败标志）
+          // 仅在未提供时回退到结构化 error 字段检测，禁止用文本启发式（避免列出 ErrorHandler.ts 等误判）
+          const finalIsError = isError !== undefined
+            ? isError
+            : result !== null &&
+              typeof result === 'object' &&
+              'error' in (result as Record<string, unknown>) &&
+              Boolean((result as Record<string, unknown>).error);
           newMessages[i] = {
             ...m,
-            toolStatus: isError ? 'error' : 'completed',
+            toolStatus: finalIsError ? 'error' : 'completed',
             toolResult: result,
+            // Phase 96 P1-1：工具完成时清空 delta buffer，避免重复展示
+            toolDeltaBuffer: undefined,
           };
           return { messages: newMessages };
         }
@@ -672,12 +826,47 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
             content: '',
             toolName,
             toolResult: result,
-            toolStatus: 'completed' as const,
+            toolStatus: (isError ? 'error' : 'completed') as ToolCallStatus,
             taskId: state._currentTaskId ?? undefined,
             timestamp: Date.now(),
           },
         ],
       };
+    });
+  },
+
+  // Phase 96 P1-1：追加工具增量输出到对应 tool 消息
+  // 同步更新（shell_exec 的 stdout chunk 频率远低于 LLM token 流，无需 rAF 节流）
+  _appendToolDelta: (toolCallId, chunk) => {
+    set((state) => {
+      const newMessages = [...state.messages];
+      // 优先按 toolCallId 精准匹配，回退到"最近一个同名 running 工具"
+      let targetIdx = -1;
+      if (toolCallId) {
+        for (let i = newMessages.length - 1; i >= 0; i--) {
+          if (newMessages[i].toolCallId === toolCallId && newMessages[i].toolStatus === 'running') {
+            targetIdx = i;
+            break;
+          }
+        }
+      }
+      if (targetIdx === -1) {
+        // 回退：找最近一个 running 工具（无 toolCallId 时的兼容路径）
+        for (let i = newMessages.length - 1; i >= 0; i--) {
+          if (newMessages[i].toolStatus === 'running') {
+            targetIdx = i;
+            break;
+          }
+        }
+      }
+      if (targetIdx === -1) return state; // 无目标工具，丢弃 chunk
+      const prev = newMessages[targetIdx];
+      // 限制 buffer 大小，避免超长输出拖慢渲染（保留尾部 64KB）
+      const MAX_BUFFER = 65536;
+      const prevBuffer = prev.toolDeltaBuffer ?? '';
+      const newBuffer = (prevBuffer + chunk).slice(-MAX_BUFFER);
+      newMessages[targetIdx] = { ...prev, toolDeltaBuffer: newBuffer };
+      return { messages: newMessages };
     });
   },
 
@@ -691,15 +880,28 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
       window.clearTimeout(state._reasoningRafHandle);
     }
     if (state._assistantId) {
-      // 追加错误信息到当前 assistant 消息
-      const finalContent = state._assistantBuffer + `\n⚠️ ${error}`;
+      // 先封存当前 assistant 消息（保留已生成内容，不追加错误文本）
+      const finalContent = state._assistantBuffer;
       const finalReasoning = state._reasoningBuffer || undefined;
+      const finalThoughts = state._intermediateThoughts;
+      const finalProgressEvents = state._progressEvents;
+      // 再追加一条独立的错误系统消息，避免错误与正常输出堆叠在一起
       set({
-        messages: state.messages.map((m) =>
-          m.id === state._assistantId
-            ? { ...m, content: finalContent, reasoning: finalReasoning, error: true, isStreaming: false }
-            : m,
-        ),
+        messages: [
+          ...state.messages.map((m) =>
+            m.id === state._assistantId
+              ? {
+                  ...m,
+                  content: finalContent,
+                  reasoning: finalReasoning,
+                  isStreaming: false,
+                  ...(finalThoughts.length > 0 ? { intermediateThoughts: finalThoughts } : {}),
+                  ...(finalProgressEvents.length > 0 ? { progressEvents: finalProgressEvents } : {}),
+                }
+              : m,
+          ),
+          { id: `err-${Date.now()}`, role: 'system', content: error, error: true, timestamp: Date.now() },
+        ],
         isProcessing: false,
         _assistantId: null,
         _assistantBuffer: '',
@@ -708,13 +910,16 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
         _reasoningBuffer: '',
         _pendingReasoning: '',
         _reasoningRafHandle: null,
+        _intermediateThoughts: [],
+        _progressEvents: [],
+        _progressEvents: [],
       });
     } else {
       // 无正在进行的 assistant 消息，创建新的错误消息
       set({
         messages: [
           ...state.messages,
-          { id: `err-${Date.now()}`, role: 'system', content: error, error: true },
+          { id: `err-${Date.now()}`, role: 'system', content: error, error: true, timestamp: Date.now() },
         ],
         isProcessing: false,
         _pendingDelta: '',
@@ -722,6 +927,8 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
         _reasoningBuffer: '',
         _pendingReasoning: '',
         _reasoningRafHandle: null,
+        _intermediateThoughts: [],
+        _progressEvents: [],
       });
     }
   },
@@ -867,7 +1074,11 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
   // Phase 54：设置待编辑计划（由 plan:edit-request 事件触发，驱动 StepEditor 显示）
   _setPendingPlanEdit: (planEdit) => set({ pendingPlanEdit: planEdit }),
 
-  _setConfig: (config) => set({ config }),
+  _setConfig: (config) => set((prev) => ({
+    config,
+    // Bug #5：首次加载时如果磁盘有 provider，标记 hasEverHadProviders
+    hasEverHadProviders: prev.hasEverHadProviders || (Array.isArray(config.providers) && config.providers.length > 0),
+  })),
 
   _setConfigLoading: (loading) => set({ configLoading: loading }),
 
@@ -926,15 +1137,21 @@ export function initIPCListeners(): () => void {
         store.getState()._appendReasoningDelta(payload.reasoning ?? '');
         break;
       case 'tool_start':
-        store.getState()._addToolStart(payload.toolName!, payload.toolArgs);
+        store.getState()._addToolStart(payload.toolName!, payload.toolArgs, payload.toolCallId);
+        break;
+      case 'tool_call_delta':
+        // Phase 96 P1-1：工具执行增量输出（shell_exec 等长任务的实时 stdout/stderr）
+        store.getState()._appendToolDelta(payload.toolCallId, payload.chunk ?? '');
         break;
       case 'tool_done':
-        store.getState()._addToolDone(payload.toolName!, payload.toolResult);
+        store.getState()._addToolDone(payload.toolName!, payload.toolResult, payload.isError, payload.toolCallId);
         break;
       case 'progress':
-        // 进度文案存入瞬态字段，不污染对话历史
+        // 同时保留到当前任务，完成后可按时间线回看。
+        if (payload.progress?.label) {
+          store.getState()._appendProgressEvent(payload.progress.label);
+        }
         store.setState((state) => ({
-          progressLabel: payload.progress?.label ?? null,
           currentModel: payload.progress?.modelId ?? state.currentModel,
           currentTier: payload.progress?.tier ?? state.currentTier,
           messages: payload.progress?.tier
@@ -949,10 +1166,31 @@ export function initIPCListeners(): () => void {
         store.setState({ progressLabel: null });
         store.getState()._setError(payload.error ?? '未知错误');
         break;
+      case 'thinking':
+        // 思考阶段提示也属于可回看的工作流状态。
+        if (payload.message) {
+          store.getState()._appendProgressEvent(payload.message);
+        }
+        break;
+      case 'escalation':
+        // 升级事件（达到 maxIterations 等）：作为独立系统消息显示，不追加到 assistant 文本
+        store.setState((state) => ({
+          messages: [
+            ...state.messages,
+            {
+              id: `escalation-${Date.now()}`,
+              role: 'system',
+              content: payload.reason ?? '任务因预算耗尽而中断',
+              error: true,
+              timestamp: Date.now(),
+            },
+          ],
+        }));
+        break;
       case 'done':
         // 重置进度文案并完成 assistant 消息
         store.setState({ progressLabel: null });
-        store.getState()._finishAssistantMessage();
+        store.getState()._finishAssistantMessage(payload.completionStatus);
         // 异步生成对话标题（仅首条消息时触发，避免每次都调用 LLM）
         void maybeGenerateTitle();
         break;

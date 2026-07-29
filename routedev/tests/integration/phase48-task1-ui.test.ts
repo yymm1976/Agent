@@ -39,11 +39,46 @@ const SETTINGS_PAGE_PATH = path.join(
   'pages',
   'SettingsPage.tsx',
 );
+// Phase 74-G：SANDBOX_LEVEL_OPTIONS / TOOL_CATEGORIES / 控件渲染已迁移至 SettingsSecurityTab.tsx
+// Phase 78 重构：updateSecurity/updateDraft/dirtyRef 迁移至 useSettingsDraft.ts，
+//               handleSave + 自动保存 useEffect 迁移至 useAutoSave.ts
+// 源码静态分析需同时读取四文件，保证迁移后断言仍能命中
+const SETTINGS_SECURITY_TAB_PATH = path.join(
+  PROJECT_ROOT,
+  'desktop',
+  'renderer',
+  'src',
+  'components',
+  'settings',
+  'SettingsSecurityTab.tsx',
+);
+const USE_SETTINGS_DRAFT_PATH = path.join(
+  PROJECT_ROOT,
+  'desktop',
+  'renderer',
+  'src',
+  'hooks',
+  'useSettingsDraft.ts',
+);
+const USE_AUTO_SAVE_PATH = path.join(
+  PROJECT_ROOT,
+  'desktop',
+  'renderer',
+  'src',
+  'hooks',
+  'useAutoSave.ts',
+);
 
 let settingsPageSource = '';
 async function loadSettingsPage(): Promise<string> {
   if (!settingsPageSource) {
-    settingsPageSource = await fs.readFile(SETTINGS_PAGE_PATH, 'utf-8');
+    const [page, tab, draft, autoSave] = await Promise.all([
+      fs.readFile(SETTINGS_PAGE_PATH, 'utf-8'),
+      fs.readFile(SETTINGS_SECURITY_TAB_PATH, 'utf-8'),
+      fs.readFile(USE_SETTINGS_DRAFT_PATH, 'utf-8'),
+      fs.readFile(USE_AUTO_SAVE_PATH, 'utf-8'),
+    ]);
+    settingsPageSource = page + '\n' + tab + '\n' + draft + '\n' + autoSave;
   }
   return settingsPageSource;
 }

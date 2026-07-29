@@ -65,22 +65,24 @@ function makeCard(overrides: Partial<SubAgentScoreCard> = {}): SubAgentScoreCard
 // ============================================================
 
 describe('DelegationGate', () => {
-  it('1. 缺少 design_doc 时无法创建 executor', () => {
+  it('1. Phase 94：executor 门控放宽——缺少 design_doc 时仍可通过（审阅链流程）', () => {
+    // Phase 94 修正：executor 只需 task_description，design_doc / write_file_list 改为可选
+    // 审阅链 planner → coder 流程中，planner 输出在 prompt 中传递，不强制为结构化字段
     const gate = new DelegationGate();
     const parent = makeParent();
     const task = makeTask({ designDoc: undefined, writeFiles: ['a.ts'], taskDescription: 't' });
     const result = gate.checkDelegationEligibility(parent, 'executor', task, makeContext());
-    expect(result.ok).toBe(false);
-    expect(result.reason).toContain('design_doc');
+    expect(result.ok).toBe(true);
   });
 
-  it('2. 缺少 diff 时无法创建 reviewer', () => {
+  it('2. Phase 94：reviewer 门控放宽——缺少 diff 时仍可通过（审阅链流程）', () => {
+    // Phase 94 修正：reviewer 只需 task_description，diff / design_doc 改为可选
+    // 审阅链 coder → reviewer 流程中，coder 产出在 prompt 中传递，不强制为结构化字段
     const gate = new DelegationGate();
     const parent = makeParent();
     const task = makeTask({ diff: undefined, designDoc: 'doc', taskDescription: 't' });
     const result = gate.checkDelegationEligibility(parent, 'reviewer', task, makeContext());
-    expect(result.ok).toBe(false);
-    expect(result.reason).toContain('diff');
+    expect(result.ok).toBe(true);
   });
 
   it('3. researcher 并行超过 3 个时被拒绝', () => {

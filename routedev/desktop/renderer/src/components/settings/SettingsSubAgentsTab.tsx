@@ -3,7 +3,8 @@
 // 从 SettingsPage.tsx 迁移
 
 import type { Dispatch, SetStateAction } from 'react';
-import { Users, Plus, Trash2, Eye, ChevronDown, ChevronRight } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Users, Plus, Trash2, Eye, ChevronDown, ChevronRight, Upload } from 'lucide-react';
 import type { AppConfig } from '../../../../shared/config-types.js';
 import type { AgentProfileUI } from '../../pages/settings-helpers.js';
 import { Button } from '../ui/button.js';
@@ -13,59 +14,11 @@ import { Label } from '../ui/label.js';
 import { Select, SelectItem } from '../ui/select.js';
 import { Badge } from '../ui/badge.js';
 import { Switch } from '../ui/switch.js';
+import { SettingsAdvancedSection } from './SettingsAdvancedSection.js';
+import { ProfileVersionPanel } from './ProfileVersionPanel.js';
 
-// 内置子 Agent Profile 模板（与 src/agents/profiles/builtin-templates.ts 保持一致）
-// 此处为 UI 展示用的静态副本，实际持久化由主进程 AgentProfileManager 负责
-const BUILTIN_AGENT_PROFILES: AgentProfileUI[] = [
-  {
-    id: 'builtin-researcher',
-    name: 'Researcher',
-    role: 'researcher',
-    modelId: 'default',
-    description: '只读调研子 Agent：负责代码探索、依赖分析、影响面评估，产出研究报告，不修改任何文件。',
-    systemPrompt: '# 角色定位\n你是 Researcher（调研员）。负责对代码库进行只读调研。\n\n# 绝对规则\n- 严格服从父 Agent 的委托契约，不越权、不扩展任务范围。\n- 仅使用 allowedTools 中声明的工具。\n\n# 禁止事项\n- 禁止写入、修改、删除任何文件。\n- 禁止执行有副作用的命令。\n\n# 输出格式\n输出 research_report（Markdown）：摘要 + 关键发现 + 影响面分析 + 风险建议。\n\n# 质疑权利\n若父 Agent 指令存在明显错误或安全风险，可提出质疑。',
-    allowedTools: ['read_file', 'code_map_explore', 'find_callers', 'find_callees', 'analyze_impact'],
-    forbiddenTools: ['file_write', 'file_edit', 'execute_command', 'run_tests', 'diff_view'],
-    canChallenge: true,
-    challengeSeverity: 'warning',
-    outputFormat: 'research_report',
-    maxTokens: 32000,
-    maxSteps: 20,
-    isBuiltin: true,
-  },
-  {
-    id: 'builtin-executor',
-    name: 'Executor',
-    role: 'executor',
-    modelId: 'default',
-    description: '代码实现子 Agent：负责按委托契约编写或修改代码，运行测试验证，产出代码变更。',
-    systemPrompt: '# 角色定位\n你是 Executor（执行者）。负责按委托契约实现具体代码变更并运行测试验证。\n\n# 绝对规则\n- 严格服从父 Agent 的委托契约，不越权、不扩展任务范围。\n- 仅使用 allowedTools 中声明的工具。\n\n# 禁止事项\n- 禁止扩展任务范围。\n- 禁止跳过测试直接交付。\n- 禁止修改与任务无关的文件。\n\n# 输出格式\n输出 code_change（Markdown）：变更摘要 + 变更清单 + 测试结果 + 遗留问题。\n\n# 质疑权利\n若父 Agent 指令存在明显错误或安全风险，可提出质疑。',
-    allowedTools: ['read_file', 'file_write', 'file_edit', 'execute_command', 'run_tests'],
-    forbiddenTools: ['code_map_explore', 'find_callers', 'find_callees', 'analyze_impact', 'diff_view'],
-    canChallenge: true,
-    challengeSeverity: 'blocking',
-    outputFormat: 'code_change',
-    maxTokens: 64000,
-    maxSteps: 30,
-    isBuiltin: true,
-  },
-  {
-    id: 'builtin-reviewer',
-    name: 'Reviewer',
-    role: 'reviewer',
-    modelId: 'default',
-    description: '代码审查子 Agent：负责对 Executor 产出的代码变更进行审查，运行测试复核，产出审查报告。',
-    systemPrompt: '# 角色定位\n你是 Reviewer（审查员）。负责对 Executor 提交的代码变更进行只读审查。\n\n# 绝对规则\n- 严格服从父 Agent 的委托契约，不越权、不扩展任务范围。\n- 仅使用 allowedTools 中声明的工具。\n\n# 禁止事项\n- 禁止直接修改被审查的代码。\n- 禁止执行有破坏性副作用的命令。\n- 禁止仅凭风格偏好给出 blocking 级别问题。\n\n# 输出格式\n输出 review_report（Markdown）：总体结论 + 问题清单 + 测试复核 + 亮点。\n\n# 质疑权利\n若父 Agent 指令存在明显错误或安全风险，可提出质疑。',
-    allowedTools: ['read_file', 'diff_view', 'run_tests'],
-    forbiddenTools: ['file_write', 'file_edit', 'execute_command', 'code_map_explore', 'find_callers', 'find_callees', 'analyze_impact'],
-    canChallenge: true,
-    challengeSeverity: 'blocking',
-    outputFormat: 'review_report',
-    maxTokens: 32000,
-    maxSteps: 15,
-    isBuiltin: true,
-  },
-];
+// Phase 94：内置 Profile 不再硬编码，统一通过 IPC 从主进程 AgentProfileManager 拉取
+// 与 src/agents/profiles/builtin-templates.ts 保持单一数据源，避免再次脱节
 
 interface SettingsSubAgentsTabProps {
   /** 当前配置草稿 */
@@ -101,8 +54,139 @@ export function SettingsSubAgentsTab({
   expandedAgentId,
   setExpandedAgentId,
 }: SettingsSubAgentsTabProps) {
+  // 导入状态提示
+  const [importStatus, setImportStatus] = useState<'idle' | 'importing' | 'success' | 'error'>('idle');
+  const [importMessage, setImportMessage] = useState('');
+  // Phase 94：内置 Profile 通过 IPC 动态拉取，避免硬编码与源代码脱节
+  const [builtinProfiles, setBuiltinProfiles] = useState<AgentProfileUI[]>([]);
+  /** 版本面板刷新信号（回滚成功后递增，强制重新加载版本列表） */
+  const [versionRefreshKey, setVersionRefreshKey] = useState(0);
+
+  /** 将 IPC Profile 详情映射为 UI 结构 */
+  const mapDetailToUI = (d: {
+    id: string;
+    name: string;
+    role: AgentProfileUI['role'];
+    modelId: string;
+    description: string;
+    systemPrompt?: string;
+    allowedTools: readonly string[] | string[];
+    forbiddenTools: readonly string[] | string[];
+    canChallenge: boolean;
+    challengeSeverity: AgentProfileUI['challengeSeverity'];
+    outputFormat: AgentProfileUI['outputFormat'];
+    maxTokens: number;
+    maxSteps: number;
+    isBuiltin: boolean;
+  }): AgentProfileUI => ({
+    id: d.id,
+    name: d.name,
+    role: d.role,
+    modelId: d.modelId,
+    description: d.description,
+    systemPrompt: d.systemPrompt ?? '',
+    allowedTools: [...d.allowedTools],
+    forbiddenTools: [...d.forbiddenTools],
+    canChallenge: d.canChallenge,
+    challengeSeverity: d.challengeSeverity,
+    outputFormat: d.outputFormat,
+    maxTokens: d.maxTokens,
+    maxSteps: d.maxSteps,
+    isBuiltin: d.isBuiltin,
+  });
+
+  // 挂载时拉取内置 Profile（list 不含 systemPrompt，需对内置项逐个 get 详情）
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const list = await window.routedev.profile.list();
+        const builtins = (list ?? []).filter((p) => p.isBuiltin);
+        const details = await Promise.all(
+          builtins.map((p) => window.routedev.profile.get(p.id)),
+        );
+        if (!mounted) return;
+        setBuiltinProfiles(
+          details
+            .filter((d): d is NonNullable<typeof d> => d !== null)
+            .map(mapDetailToUI),
+        );
+      } catch (err) {
+        console.error('[SettingsSubAgentsTab] 加载内置 Profile 失败:', err);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  /**
+   * 版本回滚成功后：重新拉取该 Profile 详情，刷新编辑区字段
+   */
+  const handleVersionRollbackSuccess = async (profileId: string) => {
+    try {
+      const detail = await window.routedev.profile.get(profileId);
+      if (!detail) return;
+      const mapped = mapDetailToUI(detail);
+      setAgentProfiles((prev) =>
+        prev.map((p) => (p.id === profileId ? mapped : p)),
+      );
+      setVersionRefreshKey((k) => k + 1);
+    } catch (err) {
+      console.error('[SettingsSubAgentsTab] 回滚后刷新 Profile 失败:', err);
+    }
+  };
+
+  /** 从外部 SKILL.md 文件导入 Profile */
+  const handleImport = async () => {
+    setImportStatus('importing');
+    setImportMessage('');
+    try {
+      const result = await window.routedev.profile.import();
+      if (!result.success) {
+        // 用户取消选择不算错误
+        if (result.error === '用户取消选择') {
+          setImportStatus('idle');
+          return;
+        }
+        setImportStatus('error');
+        setImportMessage(result.error || '导入失败');
+        return;
+      }
+      // 导入成功后获取完整 Profile 详情（含 systemPrompt）
+      if (result.id) {
+        const detail = await window.routedev.profile.get(result.id);
+        if (detail) {
+          const newProfile: AgentProfileUI = {
+            id: detail.id,
+            name: detail.name,
+            role: detail.role,
+            modelId: detail.modelId,
+            description: detail.description,
+            systemPrompt: detail.systemPrompt,
+            allowedTools: [...detail.allowedTools],
+            forbiddenTools: [...detail.forbiddenTools],
+            canChallenge: detail.canChallenge,
+            challengeSeverity: detail.challengeSeverity,
+            outputFormat: detail.outputFormat,
+            maxTokens: detail.maxTokens,
+            maxSteps: detail.maxSteps,
+            isBuiltin: detail.isBuiltin,
+          };
+          setAgentProfiles([...agentProfiles, newProfile]);
+          setExpandedAgentId(newProfile.id);
+          setImportStatus('success');
+          setImportMessage(`已导入：${newProfile.name}`);
+        }
+      }
+    } catch (err) {
+      setImportStatus('error');
+      setImportMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       {/* 说明卡片 */}
       <Card>
         <CardContent className="flex items-start justify-between gap-4 py-6">
@@ -111,7 +195,7 @@ export function SettingsSubAgentsTab({
             <div>
               <Label>子 Agent 配置</Label>
               <p className="text-xs text-rd-textMuted mt-1">
-                管理子 Agent 的角色 Profile：researcher（调研）、executor（执行）、reviewer（审查）。
+                管理子 Agent 的角色 Profile：researcher（调研）、planner（拆需求）、executor（执行）、reviewer（审查）、verifier（验证）、synthesizer（合成）。
                 每个 Profile 定义工具白名单、质疑权限、输出格式与 Token 预算，构成父 Agent 的委托契约。
               </p>
             </div>
@@ -119,6 +203,7 @@ export function SettingsSubAgentsTab({
         </CardContent>
       </Card>
 
+      <SettingsAdvancedSection title="派遣设置" description="子 Agent 并行上限、角色门控规则（已有默认值）">
       {/* Phase 43：子 Agent 派遣配置 */}
       <Card>
         <CardHeader>
@@ -129,7 +214,7 @@ export function SettingsSubAgentsTab({
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="subagents-enabled">启用子 Agent 派遣</Label>
-              <p className="text-xs text-rd-textMuted">关闭后父 Agent 不再派生子 Agent，所有任务在主线程完成。</p>
+              <p className="text-xs text-rd-textMuted">关闭后父 Agent 不再派生子 Agent，所有任务在主线程完成。需同时启用 multiAgent Pack。</p>
             </div>
             <Switch
               id="subagents-enabled"
@@ -155,13 +240,14 @@ export function SettingsSubAgentsTab({
               id="subagents-default-role"
               value={draft.subAgents.defaultRole}
               onChange={(e) => updateSubAgents({ defaultRole: e.target.value as typeof draft.subAgents.defaultRole })}
+              disabled
             >
               <SelectItem value="researcher">researcher（调研）</SelectItem>
               <SelectItem value="executor">executor（执行）</SelectItem>
               <SelectItem value="reviewer">reviewer（审查）</SelectItem>
               <SelectItem value="custom">custom（自定义）</SelectItem>
             </Select>
-            <p className="text-xs text-rd-textMuted">未指定角色时使用的默认角色。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现。</p>
           </div>
 
           {/* 角色门控规则 */}
@@ -176,6 +262,7 @@ export function SettingsSubAgentsTab({
                   min={0}
                   value={draft.subAgents.gateRules?.researcherMaxParallel ?? 3}
                   onChange={(e) => updateSubAgentsGateRules({ researcherMaxParallel: Number(e.target.value) })}
+                  disabled
                 />
               </div>
               <div className="space-y-2">
@@ -186,6 +273,7 @@ export function SettingsSubAgentsTab({
                   min={0}
                   value={draft.subAgents.gateRules?.executorMaxParallel ?? 2}
                   onChange={(e) => updateSubAgentsGateRules({ executorMaxParallel: Number(e.target.value) })}
+                  disabled
                 />
               </div>
               <div className="space-y-2">
@@ -196,13 +284,15 @@ export function SettingsSubAgentsTab({
                   min={0}
                   value={draft.subAgents.gateRules?.reviewerMaxParallel ?? 2}
                   onChange={(e) => updateSubAgentsGateRules({ reviewerMaxParallel: Number(e.target.value) })}
+                  disabled
                 />
               </div>
             </div>
-            <p className="text-xs text-rd-textMuted">每种角色同时可存在的最大子 Agent 数，0 表示不限制。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现，当前用内置默认值。</p>
           </div>
         </CardContent>
       </Card>
+      </SettingsAdvancedSection>
 
       {/* 内置配置区 */}
       <div className="space-y-3">
@@ -211,7 +301,7 @@ export function SettingsSubAgentsTab({
           <Badge variant="outline">不可删除</Badge>
         </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          {BUILTIN_AGENT_PROFILES.map((profile) => (
+          {builtinProfiles.map((profile) => (
             <Card key={profile.id}>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
@@ -269,7 +359,7 @@ export function SettingsSubAgentsTab({
                 {expandedAgentId === profile.id && (
                   <div className="mt-3 space-y-3 rounded-lg bg-rd-surfaceHover/50 p-3">
                     <div className="space-y-1">
-                      <Label className="text-xs">System Prompt</Label>
+                      <Label className="text-xs">System Prompt（仅供参考，实际由内置模板生成）</Label>
                       <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md bg-rd-surface p-2 text-xs text-rd-text">
                         {profile.systemPrompt}
                       </pre>
@@ -315,32 +405,58 @@ export function SettingsSubAgentsTab({
             <h3 className="text-sm font-semibold text-rd-text">我的配置</h3>
             <Badge variant="outline">{agentProfiles.length}</Badge>
           </div>
-          <Button
-            size="sm"
-            onClick={() => {
-              const newProfile: AgentProfileUI = {
-                id: `custom-${Date.now().toString(36)}`,
-                name: '新建 Profile',
-                role: 'custom',
-                modelId: 'default',
-                description: '自定义子 Agent Profile',
-                systemPrompt: '# 角色定位\n请描述该子 Agent 的角色与职责。\n\n# 绝对规则\n- 服从父 Agent 委托契约。\n\n# 禁止事项\n- 禁止越权操作。\n\n# 输出格式\n请定义输出格式。\n\n# 质疑权利\n可对错误指令提出质疑。',
-                allowedTools: ['read_file'],
-                forbiddenTools: [],
-                canChallenge: true,
-                challengeSeverity: 'warning',
-                outputFormat: 'custom',
-                maxTokens: 32000,
-                maxSteps: 20,
-                isBuiltin: false,
-              };
-              setAgentProfiles([...agentProfiles, newProfile]);
-              setExpandedAgentId(newProfile.id);
-            }}
-          >
-            <Plus size={14} /> 新建
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* 导入外部 SKILL.md 文件 */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={importStatus === 'importing'}
+              onClick={handleImport}
+            >
+              <Upload size={14} />
+              {importStatus === 'importing' ? '导入中...' : '导入'}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                const newProfile: AgentProfileUI = {
+                  id: `custom-${Date.now().toString(36)}`,
+                  name: '新建 Profile',
+                  role: 'custom',
+                  modelId: 'default',
+                  description: '自定义子 Agent Profile',
+                  systemPrompt: '# 角色定位\n请描述该子 Agent 的角色与职责。\n\n# 绝对规则\n- 服从父 Agent 委托契约。\n\n# 禁止事项\n- 禁止越权操作。\n\n# 输出格式\n请定义输出格式。\n\n# 质疑权利\n可对错误指令提出质疑。',
+                  allowedTools: ['read_file'],
+                  forbiddenTools: [],
+                  canChallenge: true,
+                  challengeSeverity: 'warning',
+                  outputFormat: 'custom',
+                  maxTokens: 32000,
+                  maxSteps: 20,
+                  isBuiltin: false,
+                };
+                setAgentProfiles([...agentProfiles, newProfile]);
+                setExpandedAgentId(newProfile.id);
+              }}
+            >
+              <Plus size={14} /> 新建
+            </Button>
+          </div>
         </div>
+
+        {/* 导入状态提示 */}
+        {importStatus === 'success' && (
+          <div className="flex items-center justify-between rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-sm text-green-600">
+            <span>{importMessage}</span>
+            <button className="text-xs text-green-600/70 hover:text-green-600" onClick={() => setImportStatus('idle')}>关闭</button>
+          </div>
+        )}
+        {importStatus === 'error' && (
+          <div className="flex items-center justify-between rounded-lg border border-rd-danger/30 bg-rd-danger/10 px-3 py-2 text-sm text-rd-danger">
+            <span>导入失败：{importMessage}</span>
+            <button className="text-xs text-rd-danger/70 hover:text-rd-danger" onClick={() => setImportStatus('idle')}>关闭</button>
+          </div>
+        )}
 
         {agentProfiles.length === 0 ? (
           <Card>
@@ -448,6 +564,9 @@ export function SettingsSubAgentsTab({
                           <SelectItem value="research_report">research_report</SelectItem>
                           <SelectItem value="code_change">code_change</SelectItem>
                           <SelectItem value="review_report">review_report</SelectItem>
+                          <SelectItem value="task_plan">task_plan</SelectItem>
+                          <SelectItem value="verification_report">verification_report</SelectItem>
+                          <SelectItem value="synthesis_report">synthesis_report</SelectItem>
                           <SelectItem value="custom">custom</SelectItem>
                         </Select>
                       </div>
@@ -546,6 +665,23 @@ export function SettingsSubAgentsTab({
                           <SelectItem value="warning">warning（仅记录）</SelectItem>
                           <SelectItem value="blocking">blocking（暂停流水线）</SelectItem>
                         </Select>
+                      </div>
+                    )}
+
+                    {/* Phase 94：版本历史时间轴 + Diff + 回滚 */}
+                    {!profile.isBuiltin && (
+                      <div className="space-y-2 pt-2">
+                        <Label>版本历史</Label>
+                        <p className="text-xs text-rd-textMuted">
+                          查看字段变更 Diff，并可一键回滚到历史版本（覆盖当前内容）。
+                        </p>
+                        <ProfileVersionPanel
+                          profileId={profile.id}
+                          refreshKey={versionRefreshKey}
+                          onRollbackSuccess={(id) => {
+                            void handleVersionRollbackSuccess(id);
+                          }}
+                        />
                       </div>
                     )}
                   </CardContent>

@@ -11,13 +11,15 @@ interface UseMcpCatalogOptions {
   activeTab: string;
   /** 来自 useSettingsDraft 的 updateDraft 函数（安装成功后同步 mcp 配置） */
   updateDraft: (patch: Partial<AppConfig>) => void;
+  /** 当前 draft（用于安装成功后合并新 server，避免整体替换丢失用户编辑） */
+  draft: AppConfig | null;
 }
 
 /**
  * MCP 插件市场 hook
  * 包含：8 个 state + 5 个 handler + 进入 MCP Tab 加载 useEffect
  */
-export function useMcpCatalog({ activeTab, updateDraft }: UseMcpCatalogOptions) {
+export function useMcpCatalog({ activeTab, updateDraft, draft }: UseMcpCatalogOptions) {
   const [catalogEntries, setCatalogEntries] = useState<MCPCatalogEntry[]>([]);
   const [catalogCategory, setCatalogCategory] = useState<string>('all');
   const [catalogSearch, setCatalogSearch] = useState('');
@@ -92,9 +94,20 @@ export function useMcpCatalog({ activeTab, updateDraft }: UseMcpCatalogOptions) 
       });
       setInstallResult({ id: installModal.id, success: result.success, error: result.error });
       if (result.success) {
-        // 安装成功后重新加载配置（后端已持久化，前端需同步 draft）
+        // 安装成功后同步 draft：合并磁盘新增的 server 到 draft，不整体替换 mcp 字段
+        // 之前用 updateDraft({ mcp: newConfig.mcp }) 会丢失用户正在编辑的 MCP 改动
         const newConfig = await window.routedev.config.get();
-        updateDraft({ mcp: newConfig.mcp });
+        // 合并策略：保留 draft 中已有的 server，追加磁盘新增的 server
+        const existingIds = new Set((draft?.mcp.servers ?? []).map((s) => s.id));
+        const newServers = newConfig.mcp.servers.filter((s) => !existingIds.has(s.id));
+        if (newServers.length > 0) {
+          updateDraft({
+            mcp: {
+              ...draft!.mcp,
+              servers: [...draft!.mcp.servers, ...newServers],
+            },
+          });
+        }
       }
     } catch (err) {
       setInstallResult({ id: installModal.id, success: false, error: err instanceof Error ? err.message : String(err) });

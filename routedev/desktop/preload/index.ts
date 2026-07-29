@@ -1,181 +1,379 @@
 // desktop/preload/index.ts
-// 预加载脚本：在隔离的渲染进程中暴露受控的 RouteDev API
+// Preload 脚本：在主进程与渲染进程之间桥接，通过 contextBridge 暴露 window.routedev API
+//
+// 设计要点：
+//   1. 严格按 desktop/shared/ipc-types.ts 的 RouteDevAPI 接口实现，确保类型契约一致
+//   2. 异步操作（查询/保存）走 ipcRenderer.invoke → ipcMain.handle
+//   3. 单向通知（fire-and-forget）走 ipcRenderer.send → ipcMain.on
+//   4. 事件订阅走 ipcRenderer.on / removeListener，on() 返回 unsubscribe 函数
+//   5. profile.import() 不接收参数（主进程会弹出文件选择对话框）
 
-import { contextBridge, ipcRenderer } from 'electron';
-import type { RouteDevAPI, MainToRendererEvent } from '../shared/ipc-types.js';
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import type {
+  RouteDevAPI,
+  MainToRendererChannel,
+  WindowAction,
+  WindowState,
+  EngineState,
+  TerminalCreateOptions,
+  TerminalInfo,
+  TerminalData,
+  TerminalExit,
+  OpenDialogOptions,
+  SaveDialogOptions,
+  DialogResult,
+  NotificationOptions,
+  ProjectInfo,
+  UpdateInfo,
+  UpdateProgress,
+  AppInfo,
+  AgentProfileDetail,
+  AgentProfileSummary,
+  ProfileOpResult,
+  ProfileSavePayload,
+  VersionMeta,
+  VersionRecord,
+  FieldDiff,
+  StatsSnapshot,
+} from '../shared/ipc-types.js';
 
-// V2-012 / V3-014 修复：main → renderer 推送 channel 白名单
-// 仅允许这些 channel 通过 on/off 注册监听器，防止渲染层监听任意 channel
-// （收集自 desktop/main/index.ts 中所有 webContents.send 调用）
-const ALLOWED_PUSH_CHANNELS = new Set<string>([
-  'chat:stream',
-  'chat:tool-confirm-request',
-  'token:profile',
-  'trace:event',
-  'goal:event',
-  'config:reloaded',
-  'plan:edit-request',
-]);
+// ============================================================
+// 事件订阅辅助
+// ============================================================
 
-// 维护 callback -> listener 的映射，使 off 可以正确解绑
-type ListenerMap = Map<
-  string,
-  Map<(payload: unknown) => void, (event: Electron.IpcRendererEvent, payload: unknown) => void>
->;
-
-const listenerMap: ListenerMap = new Map();
-
-function getChannelMap(channel: string): Map<(payload: unknown) => void, (event: Electron.IpcRendererEvent, payload: unknown) => void> {
-  let map = listenerMap.get(channel);
-  if (!map) {
-    map = new Map();
-    listenerMap.set(channel, map);
-  }
-  return map;
+/**
+ * 订阅主进程推送事件（内部实现，接受任意通道字符串）
+ * @param channel IPC 通道名（公开 on() 受 RouteDevAPI 类型约束为 MainToRendererChannel；
+ *                内部 onStateChanged/onEngineStateChanged 等订阅其它通道）
+ * @param callback 收到 payload 时回调
+ * @returns unsubscribe 函数（调用后移除监听）
+ */
+function on<T>(channel: string, callback: (payload: T) => void): () => void {
+  const listener = (_event: IpcRendererEvent, payload: T) => callback(payload);
+  ipcRenderer.on(channel, listener);
+  return () => {
+    ipcRenderer.removeListener(channel, listener);
+  };
 }
 
+/**
+ * 取消订阅（与 on 返回的 unsubscribe 等价，提供显式取消入口）
+ * 注意：on() 内部包了一层 listener，off 时无法直接通过 callback 引用移除；
+ * 推荐使用 on() 返回的 unsubscribe 函数完成清理，off() 仅作类型兼容
+ */
+function off(channel: MainToRendererChannel, callback: (payload: unknown) => void): void {
+  void channel;
+  void callback;
+}
+
+// ============================================================
+// RouteDevAPI 实现
+// ============================================================
+
 const api: RouteDevAPI = {
-  chat: {
-    send: (payload) => ipcRenderer.send('chat:send', payload),
-    confirmTool: (payload) => ipcRenderer.send('chat:confirm-tool', payload),
-    // G-004：支持可选 requestId 精准中断；不传则中断全部
-    stop: (requestId?: string) => ipcRenderer.send('chat:stop', requestId ? { requestId } : undefined),
-    syncHistory: (messages) => ipcRenderer.send('chat:sync-history', messages),
-    /** 使用杂活模型生成对话标题（首条消息后调用） */
-    generateTitle: (userMessage: string, assistantReply?: string) =>
-      ipcRenderer.invoke('chat:generate-title', userMessage, assistantReply),
+  // ===== 事件订阅 =====
+  on: <T = unknown>(channel: MainToRendererChannel, callback: (payload: T) => void) =>
+    on<T>(channel, callback),
+  off,
+
+  // ===== 应用 / 平台 =====
+  getAppInfo: () => ipcRenderer.invoke('app:get-info') as Promise<AppInfo>,
+  getPath: (name: string) => ipcRenderer.invoke('app:get-path', name) as Promise<string>,
+  quit: () => ipcRenderer.invoke('app:quit') as Promise<void>,
+  relaunch: () => ipcRenderer.invoke('app:relaunch') as Promise<void>,
+  platform: process.platform,
+  isElectron: true as const,
+
+  // ===== 窗口 =====
+  window: {
+    minimize: () => {
+      ipcRenderer.send('window:minimize');
+    },
+    maximize: () => {
+      ipcRenderer.send('window:maximize');
+    },
+    close: () => {
+      ipcRenderer.send('window:close');
+    },
+    restoreFocus: () => ipcRenderer.invoke('window:restore-focus') as Promise<void>,
+    action: (action: WindowAction) =>
+      ipcRenderer.invoke('window:action', action) as Promise<void>,
+    getState: () => ipcRenderer.invoke('window:get-state') as Promise<WindowState>,
+    onStateChanged: (callback) => on<WindowState>('window:state-changed', callback),
   },
-  config: {
-    get: () => ipcRenderer.invoke('config:get'),
-    save: (config) => ipcRenderer.invoke('config:save', config),
-    reload: () => ipcRenderer.invoke('config:reload'),
+
+  // ===== 引擎 =====
+  getEngineState: () => ipcRenderer.invoke('engine:get-state') as Promise<EngineState>,
+  startEngine: () => ipcRenderer.invoke('engine:start') as Promise<void>,
+  stopEngine: () => ipcRenderer.invoke('engine:stop') as Promise<void>,
+  restartEngine: () => ipcRenderer.invoke('engine:restart') as Promise<void>,
+  onEngineStateChanged: (callback) => on<EngineState>('engine:state-changed', callback),
+
+  // ===== 终端 =====
+  createTerminal: (options?: TerminalCreateOptions) =>
+    ipcRenderer.invoke('terminal:create', options) as Promise<TerminalInfo>,
+  destroyTerminal: (id: string) =>
+    ipcRenderer.invoke('terminal:destroy', id) as Promise<void>,
+  writeTerminal: (id: string, data: string) =>
+    ipcRenderer.invoke('terminal:write', id, data) as Promise<void>,
+  resizeTerminal: (id: string, cols: number, rows: number) =>
+    ipcRenderer.invoke('terminal:resize', id, cols, rows) as Promise<void>,
+  listTerminals: () => ipcRenderer.invoke('terminal:list') as Promise<TerminalInfo[]>,
+  onTerminalData: (callback) => on<TerminalData>('terminal:data', callback),
+  onTerminalExit: (callback) => on<TerminalExit>('terminal:exit', callback),
+  onTerminalTitle: (callback) => on<{ id: string; title: string }>('terminal:title', callback),
+
+  // ===== 对话框 / 通知 / Shell / 剪贴板 =====
+  openDialog: (options?: OpenDialogOptions) =>
+    ipcRenderer.invoke('dialog:open', options) as Promise<DialogResult>,
+  saveDialog: (options?: SaveDialogOptions) =>
+    ipcRenderer.invoke('dialog:save', options) as Promise<DialogResult>,
+  showMessage: (options) => ipcRenderer.invoke('dialog:message', options) as Promise<number>,
+  showNotification: (options: NotificationOptions) =>
+    ipcRenderer.invoke('notification:show', options) as Promise<void>,
+  openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url) as Promise<void>,
+  openPath: (path: string) => ipcRenderer.invoke('shell:open-path', path) as Promise<string>,
+  showItemInFolder: (path: string) =>
+    ipcRenderer.invoke('shell:show-item-in-folder', path) as Promise<void>,
+  writeClipboard: (text: string) =>
+    ipcRenderer.invoke('clipboard:write-text', text) as Promise<void>,
+  readClipboard: () => ipcRenderer.invoke('clipboard:read-text') as Promise<string>,
+
+  // ===== 项目 =====
+  project: {
+    open: () => ipcRenderer.invoke('project:open') as Promise<ProjectInfo | null>,
+    getRecent: () => ipcRenderer.invoke('project:get-recent') as Promise<ProjectInfo[]>,
+    addRecent: (path: string) =>
+      ipcRenderer.invoke('project:add-recent', path) as Promise<void>,
+    setCwd: (cwd: string) => {
+      ipcRenderer.send('project:set-cwd', cwd);
+    },
+  },
+
+  // ===== 更新 =====
+  checkForUpdates: () => ipcRenderer.invoke('update:check') as Promise<UpdateInfo | null>,
+  downloadUpdate: () => ipcRenderer.invoke('update:download') as Promise<void>,
+  installUpdate: () => ipcRenderer.invoke('update:install') as Promise<void>,
+  onUpdateAvailable: (callback) => on<UpdateInfo>('update:available', callback),
+  onUpdateProgress: (callback) => on<UpdateProgress>('update:progress', callback),
+  onUpdateDownloaded: (callback) => on<UpdateInfo>('update:downloaded', callback),
+  onUpdateError: (callback) => on<string>('update:error', callback),
+
+  // ===== 存储 =====
+  storeGet: <T>(key: string) =>
+    ipcRenderer.invoke('store:get', key) as Promise<T | undefined>,
+  storeSet: <T>(key: string, value: T) =>
+    ipcRenderer.invoke('store:set', key, value) as Promise<void>,
+  storeDelete: (key: string) => ipcRenderer.invoke('store:delete', key) as Promise<void>,
+
+  // ===== 文件系统（受限） =====
+  fs: {
+    read: (filePath: string) =>
+      ipcRenderer.invoke('fs:read', filePath) as Promise<{ data: string; error?: string }>,
+    selectFolder: (defaultPath?: string) =>
+      ipcRenderer.invoke('fs:select-folder', defaultPath) as Promise<string | null>,
+    openFolder: (filePath: string) =>
+      ipcRenderer.invoke('fs:open-folder', filePath) as Promise<boolean>,
+  },
+
+  // ===== Chat / 命令 / 工具 / 计划编辑 =====
+  chat: {
+    send: (payload) => {
+      ipcRenderer.send('chat:send', payload);
+    },
+    confirmTool: (payload) => {
+      ipcRenderer.send('chat:confirm-tool', payload);
+    },
+    stop: (requestId?: string) => {
+      ipcRenderer.send('chat:stop', requestId ? { requestId } : undefined);
+    },
+    generateTitle: (userMessage: string, assistantReply?: string) =>
+      ipcRenderer.invoke('chat:generate-title', userMessage, assistantReply) as Promise<string>,
+    syncHistory: (messages) => {
+      ipcRenderer.send('chat:sync-history', messages);
+    },
   },
   command: {
-    execute: (payload) => ipcRenderer.invoke('command:execute', payload),
+    execute: (payload) =>
+      ipcRenderer.invoke('command:execute', typeof payload === 'string' ? { text: payload } : payload) as Promise<unknown>,
   },
   tool: {
-    execute: (payload) => ipcRenderer.invoke('tool:execute', payload),
+    execute: (payload) => ipcRenderer.invoke('tool:execute', payload) as Promise<unknown>,
   },
-  mcp: {
-    status: () => ipcRenderer.invoke('mcp:status'),
-    tools: () => ipcRenderer.invoke('mcp:tools'),
-    catalog: {
-      list: (category?: string) => ipcRenderer.invoke('mcp:catalog:list', category),
-      search: (query: string) => ipcRenderer.invoke('mcp:catalog:search', query),
-    },
-    install: (payload) => ipcRenderer.invoke('mcp:install', payload),
-    connect: (serverId: string) => ipcRenderer.invoke('mcp:connect', serverId),
-    disconnect: (serverId: string) => ipcRenderer.invoke('mcp:disconnect', serverId),
-  },
-  skill: {
-    list: () => ipcRenderer.invoke('skill:list'),
-    preview: (name: string) => ipcRenderer.invoke('skill:preview', name),
-    toggle: (name: string, enabled: boolean) => ipcRenderer.invoke('skill:toggle', { name, enabled }),
-    create: (payload) => ipcRenderer.invoke('skill:create', payload),
-    delete: (name: string) => ipcRenderer.invoke('skill:delete', name),
-    reload: () => ipcRenderer.invoke('skill:reload'),
-    route: (taskDescription: string) => ipcRenderer.invoke('skill:route', taskDescription),
-  },
-  fs: {
-    read: (filePath: string) => ipcRenderer.invoke('fs:read', filePath),
-    selectFolder: (defaultPath?: string) => ipcRenderer.invoke('fs:select-folder', defaultPath),
-    openFolder: (filePath: string) => ipcRenderer.invoke('fs:open-folder', filePath),
-  },
-  project: {
-    /** 切换项目工作目录，通知 main 进程更新 engine.cwd */
-    setCwd: (cwd: string) => ipcRenderer.send('project:set-cwd', cwd),
-  },
-  window: {
-    minimize: () => ipcRenderer.send('window:minimize'),
-    maximize: () => ipcRenderer.send('window:maximize'),
-    close: () => ipcRenderer.send('window:close'),
-  },
-  // Phase 39：实验分支管理
-  experiment: {
-    list: () => ipcRenderer.invoke('experiment:list'),
-    adopt: (experimentId: string) => ipcRenderer.invoke('experiment:adopt', experimentId),
-    discard: (experimentId: string) => ipcRenderer.invoke('experiment:discard', experimentId),
-    getDiff: (experimentId: string) => ipcRenderer.invoke('experiment:get-diff', experimentId),
-  },
-  // Phase 39：Hook 管理
-  hook: {
-    list: () => ipcRenderer.invoke('hook:list'),
-    toggle: (hookId: string, enabled: boolean) => ipcRenderer.invoke('hook:toggle', { hookId, enabled }),
-    create: (payload) => ipcRenderer.invoke('hook:create', payload),
-    delete: (hookId: string) => ipcRenderer.invoke('hook:delete', hookId),
-  },
-  // Phase 47 Task 6：Checkpoint 时间轴
-  checkpoint: {
-    list: (projectId?: string) => ipcRenderer.invoke('checkpoint:list', projectId),
-    rollback: (checkpointId: string) => ipcRenderer.invoke('checkpoint:rollback', checkpointId),
-  },
-  // Phase 54：计划编辑响应（StepEditor 确认/取消后回传主进程）
   plan: {
-    respondEdit: (payload) => ipcRenderer.send('plan:edit-response', payload),
-    // Phase 71：读取 plan 修订历史 + 触发遗漏点检查
-    getRevisions: (goalId: string) => ipcRenderer.invoke('plan:get-revisions', goalId),
-    checkOmissions: (goalId: string) => ipcRenderer.invoke('plan:check-omissions', goalId),
+    respondEdit: (payload) => {
+      ipcRenderer.send('plan:edit-response', payload);
+    },
+    getRevisions: (goalId: string) =>
+      ipcRenderer.invoke('plan:get-revisions', goalId) as Promise<{
+        ok: boolean;
+        revisions?: unknown[];
+        error?: string;
+      }>,
+    checkOmissions: (goalId: string) =>
+      ipcRenderer.invoke('plan:check-omissions', goalId) as Promise<{
+        ok: boolean;
+        result?: { omissions: unknown[]; summary: string };
+        error?: string;
+      }>,
   },
-  // Phase 77 借鉴点 7：冷启动恢复——查询/恢复/放弃可恢复 goal
+
+  // ===== Config =====
+  config: {
+    get: () => ipcRenderer.invoke('config:get') as Promise<import('../shared/ipc-types.js').AppConfig>,
+    save: (config) => ipcRenderer.invoke('config:save', config) as Promise<import('../shared/ipc-types.js').ConfigSaveResult>,
+    reload: () => ipcRenderer.invoke('config:reload') as Promise<import('../shared/ipc-types.js').AppConfig>,
+  },
+
+  // ===== MCP =====
+  mcp: {
+    status: () => ipcRenderer.invoke('mcp:status') as Promise<import('../shared/ipc-types.js').MCPStatus>,
+    tools: () =>
+      ipcRenderer.invoke('mcp:tools') as Promise<{ tools: import('../shared/ipc-types.js').MCPToolInfo[] }>,
+    connect: (serverId: string) =>
+      ipcRenderer.invoke('mcp:connect', serverId) as Promise<import('../shared/ipc-types.js').MCPConnectionResult>,
+    disconnect: (serverId: string) =>
+      ipcRenderer.invoke('mcp:disconnect', serverId) as Promise<import('../shared/ipc-types.js').MCPConnectionResult>,
+    install: (payload) =>
+      ipcRenderer.invoke('mcp:install', payload) as Promise<import('../shared/ipc-types.js').MCPInstallResult>,
+    catalog: {
+      list: (category?: string) =>
+        ipcRenderer.invoke('mcp:catalog:list', category) as Promise<import('../shared/ipc-types.js').MCPCatalogResult>,
+      search: (query: string) =>
+        ipcRenderer.invoke('mcp:catalog:search', query) as Promise<import('../shared/ipc-types.js').MCPCatalogResult>,
+    },
+  },
+
+  // ===== Skill =====
+  skill: {
+    list: () => ipcRenderer.invoke('skill:list') as Promise<import('../shared/ipc-types.js').SkillInfo[]>,
+    preview: (name: string) =>
+      ipcRenderer.invoke('skill:preview', name) as Promise<import('../shared/ipc-types.js').SkillPreview | null>,
+    toggle: (name: string, enabled: boolean) =>
+      ipcRenderer.invoke('skill:toggle', { name, enabled }) as Promise<boolean>,
+    create: (payload) =>
+      ipcRenderer.invoke('skill:create', payload) as Promise<{ success: boolean; error?: string; path?: string }>,
+    delete: (name: string) =>
+      ipcRenderer.invoke('skill:delete', name) as Promise<{ success: boolean; error?: string }>,
+    reload: () => ipcRenderer.invoke('skill:reload') as Promise<{ count: number }>,
+    route: (taskDescription: string) =>
+      ipcRenderer.invoke('skill:route', taskDescription) as Promise<{
+        skills: import('../shared/ipc-types.js').SkillInfo[];
+      }>,
+  },
+
+  // ===== Hook =====
+  hook: {
+    list: () => ipcRenderer.invoke('hook:list') as Promise<import('../shared/ipc-types.js').HookInfo[]>,
+    toggle: (hookId: string, enabled: boolean) =>
+      ipcRenderer.invoke('hook:toggle', { hookId, enabled }) as Promise<{ success: boolean; error?: string }>,
+    create: (payload) =>
+      ipcRenderer.invoke('hook:create', payload) as Promise<{ success: boolean; hookId?: string; error?: string }>,
+    delete: (hookId: string) =>
+      ipcRenderer.invoke('hook:delete', hookId) as Promise<{ success: boolean; error?: string }>,
+  },
+
+  // ===== Experiment =====
+  experiment: {
+    list: () => ipcRenderer.invoke('experiment:list') as Promise<import('../shared/ipc-types.js').ExperimentInfo[]>,
+    adopt: (id: string) =>
+      ipcRenderer.invoke('experiment:adopt', id) as Promise<{ success: boolean; error?: string }>,
+    discard: (id: string) =>
+      ipcRenderer.invoke('experiment:discard', id) as Promise<{ success: boolean; error?: string }>,
+    getDiff: (id: string) =>
+      ipcRenderer.invoke('experiment:get-diff', id) as Promise<{ diff: string; filesChanged: number; error?: string }>,
+  },
+
+  // ===== Goal =====
   goal: {
-    listResumable: () => ipcRenderer.invoke('goal:list-resumable'),
-    resume: (goalId: string) => ipcRenderer.invoke('goal:resume', goalId),
-    discard: (goalId: string) => ipcRenderer.invoke('goal:discard', goalId),
+    listResumable: () =>
+      ipcRenderer.invoke('goal:list-resumable') as Promise<import('../shared/ipc-types.js').ResumableGoalIpcInfo[]>,
+    resume: (goalId: string) =>
+      ipcRenderer.invoke('goal:resume', goalId) as Promise<{ success: boolean; error?: string }>,
+    discard: (goalId: string) =>
+      ipcRenderer.invoke('goal:discard', goalId) as Promise<{ success: boolean; error?: string }>,
   },
-  // Phase 73 Part C：Steering / Follow-up 双消息队列 API
-  agent: {
-    followUp: (content: string) => ipcRenderer.send('agent:followUp', content),
-    clearAllQueues: () => ipcRenderer.send('agent:clearAllQueues'),
-    setFollowUpMode: (mode: 'all' | 'one-at-a-time') => ipcRenderer.send('agent:setFollowUpMode', mode),
-    getQueueStatus: () => ipcRenderer.invoke('agent:queueStatus'),
-    getFollowUpQueue: () => ipcRenderer.invoke('agent:getFollowUpQueue'),
-    removeFollowUp: (index: number) => ipcRenderer.invoke('agent:removeFollowUp', index),
-  },
-  // Phase 77 借鉴点 4：Voice Memo 式会话状态卡 API
-  session: {
-    getStatus: () => ipcRenderer.invoke('session:get-status'),
-  },
-  on: (channel, callback) => {
-    // V2-012 / V3-014：校验 channel 是否在白名单内
-    if (!ALLOWED_PUSH_CHANNELS.has(channel)) {
-      console.warn(`[preload] Blocked unknown channel: ${channel}`);
-      return;
-    }
-    const channelMap = getChannelMap(channel);
-    if (channelMap.has(callback)) return;
-    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
-      callback(payload as MainToRendererEvent['payload']);
-    };
-    channelMap.set(callback, listener);
-    ipcRenderer.on(channel, listener);
-  },
-  // Phase 77：运行回放与评分卡 API
+
+  // ===== Trace =====
   trace: {
-    listSessions: (limit?: number) => ipcRenderer.invoke('trace:list-sessions', limit),
-    replay: (sessionId: string, step?: number) => ipcRenderer.invoke('trace:replay', sessionId, step),
-    scorecard: (sessionId: string) => ipcRenderer.invoke('trace:scorecard', sessionId),
+    listSessions: (limit?: number) =>
+      ipcRenderer.invoke('trace:list-sessions', limit) as Promise<import('../shared/ipc-types.js').TraceSession[]>,
+    replay: (sessionId: string, step?: number) =>
+      ipcRenderer.invoke('trace:replay', sessionId, step) as Promise<import('../shared/ipc-types.js').TimelineEvent[]>,
+    scorecard: (sessionId: string) =>
+      ipcRenderer.invoke('trace:scorecard', sessionId) as Promise<import('../shared/ipc-types.js').Scorecard | null>,
   },
-  // AgentProfile 管理 API（Grok F-010 修复：暴露 engine-bridge 的 profile 方法）
+
+  // ===== Checkpoint =====
+  checkpoint: {
+    list: (projectId?: string) =>
+      ipcRenderer.invoke('checkpoint:list', projectId) as Promise<import('../shared/ipc-types.js').CheckpointInfo[]>,
+    rollback: (checkpointId: string) =>
+      ipcRenderer.invoke('checkpoint:rollback', checkpointId) as Promise<{ success: boolean; error?: string }>,
+  },
+
+  // ===== Agent（follow-up 队列） =====
+  agent: {
+    followUp: (content: string) => {
+      ipcRenderer.send('agent:followUp', content);
+    },
+    clearAllQueues: () => {
+      ipcRenderer.send('agent:clearAllQueues');
+    },
+    setFollowUpMode: (mode) => {
+      ipcRenderer.send('agent:setFollowUpMode', mode);
+    },
+    queueStatus: () =>
+      ipcRenderer.invoke('agent:queueStatus') as Promise<import('../shared/ipc-types.js').AgentQueueStatus>,
+    getFollowUpQueue: () =>
+      ipcRenderer.invoke('agent:getFollowUpQueue') as Promise<import('../shared/ipc-types.js').FollowUpItem[]>,
+    removeFollowUp: (index: number) =>
+      ipcRenderer.invoke('agent:removeFollowUp', index) as Promise<boolean>,
+  },
+
+  // ===== Session 状态卡 =====
+  session: {
+    getStatus: () =>
+      ipcRenderer.invoke('session:get-status') as Promise<import('../shared/ipc-types.js').SessionStatus>,
+  },
+
+  // ===== Phase 96+ A3.3：实时费用 + 缓存命中率统计 =====
+  stats: {
+    getSnapshot: () =>
+      ipcRenderer.invoke('stats:get-snapshot') as Promise<StatsSnapshot>,
+  },
+
+  // ===== Agent Profile =====
   profile: {
-    list: () => ipcRenderer.invoke('profile:list'),
-    save: (payload) => ipcRenderer.invoke('profile:save', payload),
-    delete: (id: string) => ipcRenderer.invoke('profile:delete', id),
-    duplicate: (id: string, newName: string) => ipcRenderer.invoke('profile:duplicate', id, newName),
-  },
-  off: (channel, callback) => {
-    // V2-012 / V3-014：校验 channel 是否在白名单内（与 on 保持一致）
-    if (!ALLOWED_PUSH_CHANNELS.has(channel)) {
-      console.warn(`[preload] Blocked unknown channel: ${channel}`);
-      return;
-    }
-    const channelMap = listenerMap.get(channel);
-    if (!channelMap) return;
-    const listener = channelMap.get(callback);
-    if (listener) {
-      ipcRenderer.removeListener(channel, listener);
-      channelMap.delete(callback);
-    }
+    list: () => ipcRenderer.invoke('profile:list') as Promise<AgentProfileSummary[]>,
+    get: (id: string) =>
+      ipcRenderer.invoke('profile:get', id) as Promise<AgentProfileDetail | null>,
+    save: (profile: ProfileSavePayload) =>
+      ipcRenderer.invoke('profile:save', profile) as Promise<ProfileOpResult>,
+    delete: (id: string) =>
+      ipcRenderer.invoke('profile:delete', id) as Promise<ProfileOpResult>,
+    duplicate: (id: string, newName: string) =>
+      ipcRenderer.invoke('profile:duplicate', id, newName) as Promise<ProfileOpResult>,
+    /** 弹出文件选择对话框导入 SKILL.md（无参数） */
+    import: () => ipcRenderer.invoke('profile:import') as Promise<ProfileOpResult>,
+    /** 列出版本历史（时间倒序） */
+    listVersions: (profileId: string) =>
+      ipcRenderer.invoke('profile:list-versions', profileId) as Promise<VersionMeta[]>,
+    /** 获取指定版本完整记录 */
+    getVersion: (profileId: string, versionId: string) =>
+      ipcRenderer.invoke('profile:get-version', profileId, versionId) as Promise<VersionRecord | null>,
+    /** 回滚到指定版本 */
+    rollback: (profileId: string, versionId: string) =>
+      ipcRenderer.invoke('profile:rollback', profileId, versionId) as Promise<ProfileOpResult>,
+    /** 比较两个版本的字段差异 */
+    diffVersions: (profileId: string, fromVersionId: string, toVersionId: string) =>
+      ipcRenderer.invoke('profile:diff-versions', profileId, fromVersionId, toVersionId) as Promise<FieldDiff[]>,
+    /** 比较当前 Profile 与指定历史版本 */
+    diffCurrentWith: (profileId: string, targetVersionId: string) =>
+      ipcRenderer.invoke('profile:diff-current-with', profileId, targetVersionId) as Promise<FieldDiff[]>,
   },
 };
 
 contextBridge.exposeInMainWorld('routedev', api);
+
+export type { RouteDevAPI };

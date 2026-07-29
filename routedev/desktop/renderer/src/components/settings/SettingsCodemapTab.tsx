@@ -23,7 +23,7 @@ interface SettingsCodemapTabProps {
  */
 export function SettingsCodemapTab({ draft, updateDraft }: SettingsCodemapTabProps) {
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       {/* 说明卡片 */}
       <Card>
         <CardContent className="flex items-start justify-between gap-4 py-6">
@@ -46,7 +46,7 @@ export function SettingsCodemapTab({ draft, updateDraft }: SettingsCodemapTabPro
             <Sparkles size={16} className="text-rd-primary" />
             代码地图引擎（升级版）
           </CardTitle>
-          <CardDescription>tree-sitter (WASM) + SQLite + PageRank + Aider 风格渲染</CardDescription>
+          <CardDescription>代码索引与可视化</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           {/* 引擎选择 */}
@@ -99,6 +99,18 @@ export function SettingsCodemapTab({ draft, updateDraft }: SettingsCodemapTabPro
             />
           </div>
 
+          {/* Watch Mode（Phase 71 Task A5） */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <p className="text-sm text-rd-text">Watch Mode</p>
+              <p className="text-xs text-rd-textMuted mt-1">监听文件变更触发增量索引，默认关闭避免无谓 IO。</p>
+            </div>
+            <Switch
+              checked={draft.codeMap?.watchMode === true}
+              onCheckedChange={(checked) => updateDraft({ codeMap: { ...draft.codeMap, watchMode: checked } })}
+            />
+          </div>
+
           {/* 索引排除目录 */}
           <div className="space-y-2">
             <Label>索引排除目录</Label>
@@ -135,6 +147,53 @@ export function SettingsCodemapTab({ draft, updateDraft }: SettingsCodemapTabPro
                 onCheckedChange={(checked) => updateDraft({ codeMap: { ...draft.codeMap, enableSemanticEdges: checked } })}
               />
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* CodeGraph MCP 配置（Phase 39） */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Sparkles size={16} className="text-rd-primary" />
+            CodeGraph MCP
+          </CardTitle>
+          <CardDescription>CodeGraph 增强引擎外接（默认关闭，使用内置轻量引擎）</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* 启用开关 */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <p className="text-sm text-rd-text">启用 CodeGraph</p>
+              <p className="text-xs text-rd-textMuted mt-1">开启后使用 CodeGraph MCP 外接增强引擎。</p>
+            </div>
+            <Switch
+              checked={draft.codegraph?.enabled === true}
+              onCheckedChange={(checked) => updateDraft({ codegraph: { ...draft.codegraph, enabled: checked } })}
+            />
+          </div>
+
+          {/* 工作区路径 */}
+          <div className="space-y-2">
+            <Label>工作区路径</Label>
+            <Input
+              value={draft.codegraph?.workspace ?? '.'}
+              onChange={(e) => updateDraft({ codegraph: { ...draft.codegraph, workspace: e.target.value } })}
+              placeholder="."
+            />
+            <p className="text-xs text-rd-textMuted">CodeGraph 索引的工作区路径，默认当前目录。</p>
+          </div>
+
+          {/* 自动索引 */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <p className="text-sm text-rd-text">自动索引</p>
+              <p className="text-xs text-rd-textMuted mt-1">开启后文件变更自动重建 CodeGraph 索引。</p>
+            </div>
+            <Switch
+              checked={draft.codegraph?.autoIndex !== false}
+              onCheckedChange={(checked) => updateDraft({ codegraph: { ...draft.codegraph, autoIndex: checked } })}
+            />
           </div>
         </CardContent>
       </Card>

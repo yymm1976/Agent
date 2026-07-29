@@ -62,6 +62,31 @@ describe('PermissionEngine', () => {
       expect(result.decision).toBe('confirm');
       expect(result.matchedRuleId).toBe('confirm-shell-exec');
     });
+
+    it('shell_exec 在 auto 模式下 confirm 降级为 auto', () => {
+      const engine = createDefaultEngine();
+      const result = engine.check(
+        'shell_exec',
+        { command: 'ls -la' },
+        'auto',
+      );
+      expect(result.decision).toBe('auto');
+      expect(result.matchedRuleId).toBe('confirm-shell-exec');
+    });
+
+    it('git_op 在 auto 模式下 confirm 降级为 auto', () => {
+      const engine = createDefaultEngine();
+      const result = engine.check('git_op', { operation: 'push' }, 'auto');
+      expect(result.decision).toBe('auto');
+      expect(result.matchedRuleId).toBe('confirm-git-op');
+    });
+
+    it('web_search 在 auto 模式下 confirm 降级为 auto', () => {
+      const engine = createDefaultEngine();
+      const result = engine.check('web_search', { query: 'test' }, 'auto');
+      expect(result.decision).toBe('auto');
+      expect(result.matchedRuleId).toBe('confirm-web-search');
+    });
   });
 
   describe('autonomy mode fallback', () => {
@@ -111,8 +136,9 @@ describe('PermissionEngine', () => {
           description: '所有工具都需确认',
         },
       ]);
-      expect(engine.check('anything', {}, 'auto').decision).toBe('confirm');
-      expect(engine.check('shell_exec', {}, 'auto').decision).toBe('confirm');
+      // Phase 94：auto 模式下 confirm 规则降级为 auto
+      expect(engine.check('anything', {}, 'auto').decision).toBe('auto');
+      expect(engine.check('shell_exec', {}, 'auto').decision).toBe('auto');
     });
 
     it('通配符不匹配非前缀工具', () => {
@@ -153,10 +179,10 @@ describe('PermissionEngine', () => {
       expect(
         engine.check('shell_exec', { command: 'rm -rf /' }, 'auto').decision,
       ).toBe('deny');
-      // 普通命令 → confirm
+      // Phase 94：普通命令命中 confirm 规则，auto 模式下降级为 auto
       expect(
         engine.check('shell_exec', { command: 'ls' }, 'auto').decision,
-      ).toBe('confirm');
+      ).toBe('auto');
     });
 
     it('argsPredicate 返回 false 时不命中该规则', () => {
@@ -323,10 +349,16 @@ describe('PermissionEngine', () => {
       expect(result.decision).toBe('confirm');
     });
 
-    it('git_op 命中 confirm 规则 → semi 模式下 confirm', () => {
-      // 原 App.tsx: permissionChecker.addRule({ toolPattern: 'git_op', level: 'confirm' })
+    it('git_op 读操作（status/log/diff/blame）→ semi 模式下 auto（Phase 95 修复）', () => {
+      // Phase 95：读类 git 操作不再被 workspace-write 沙箱 deny，也不强制 confirm
       const engine = createDefaultEngine();
       const result = engine.check('git_op', { operation: 'status' }, 'semi');
+      expect(result.decision).toBe('auto');
+    });
+
+    it('git_op 写操作（add/commit/push/pull/prune）→ semi 模式下 confirm', () => {
+      const engine = createDefaultEngine();
+      const result = engine.check('git_op', { operation: 'commit' }, 'semi');
       expect(result.decision).toBe('confirm');
     });
 
@@ -337,13 +369,8 @@ describe('PermissionEngine', () => {
       expect(result.decision).toBe('confirm');
     });
 
-    it('auto 模式下 confirm 规则仍返回 confirm（PermissionEngine 不自动放行 confirm）', () => {
-      // 关键差异：原 PermissionChecker 在 auto 模式下会把 confirm 降级为 auto
-      // PermissionEngine 严格遵守三层：confirm 就是 confirm，需用户确认
-      // 这是设计选择——更安全的权限模型
-      const engine = createDefaultEngine();
-      const result = engine.check('shell_exec', { command: 'ls' }, 'auto');
-      expect(result.decision).toBe('confirm');
-    });
+    // Phase 94 修复：auto 模式下 confirm 规则降级为 auto（原"严格三层"测试已删除）
+    // 全自动模式下用户已授权自动执行，confirm 规则统一降级为 auto
+    // 详见 "默认规则集" describe 中的 shell_exec/git_op/web_search auto 模式降级测试
   });
 });

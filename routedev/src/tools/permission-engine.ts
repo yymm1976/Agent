@@ -42,7 +42,9 @@ type ToolCategory = 'read' | 'write' | 'shell' | 'network' | 'git-read' | 'git-w
  */
 const SANDBOX_ALLOWED: Record<SandboxLevel, ToolCategory[]> = {
   'read-only': ['read', 'git-read'],
-  'workspace-write': ['read', 'write', 'shell', 'git-read'],
+  // Phase 94：workspace-write 放开 agent / mcp——Sub-Agent 分发是核心能力，
+  // 不应被默认沙箱拦截；network 仍保留给 full-access（外部访问需更高授权）
+  'workspace-write': ['read', 'write', 'shell', 'git-read', 'agent', 'mcp'],
   'full-access': ['read', 'write', 'shell', 'network', 'git-read', 'git-write', 'agent', 'mcp'],
 };
 
@@ -195,8 +197,17 @@ export class PermissionEngine {
    * - 已知工具按 TOOL_CATEGORY_MAP 映射
    * - mcp__ 前缀归为 'mcp'
    * - 未知工具默认归为 'write'（保守策略）
+   * - Phase 95 修复：git_op 根据 operation 参数动态区分读/写类
+   *   原 TOOL_CATEGORY_MAP 无差别归 git-write，导致 status/log/diff/blame 等
+   *   只读操作也被 workspace-write 沙箱直接 deny
    */
-  categorize(toolName: string): ToolCategory {
+  categorize(toolName: string, args?: Record<string, unknown>): ToolCategory {
+    // git_op 按 operation 动态分类：读类 → git-read，写类 → git-write
+    if (toolName === 'git_op') {
+      const op = typeof args?.operation === 'string' ? args.operation : '';
+      const READ_OPS = new Set(['status', 'log', 'diff', 'blame']);
+      return READ_OPS.has(op) ? 'git-read' : 'git-write';
+    }
     const mapped = TOOL_CATEGORY_MAP[toolName];
     if (mapped) {
       return mapped;
@@ -269,8 +280,8 @@ export class PermissionEngine {
     args: Record<string, unknown>,
     mode: AutonomyMode,
   ): PermissionCheckResult {
-    // 工具分类（沙箱级和审批级共用）
-    const category = this.categorize(toolName);
+    // 工具分类（沙箱级和审批级共用）—— Phase 95：传入 args 支持 git_op 按 operation 动态分类
+    const category = this.categorize(toolName, args);
 
     // 0. 沙箱级检查（确定性 deny）— 陷阱 #136：必须在审批级之前
     // 向后兼容：仅在沙箱显式激活时执行（未配置时跳过，行为与 Phase 47 前一致）
@@ -324,11 +335,13 @@ export class PermissionEngine {
     // 3. confirm 次之（confirm 优先级高于 trust 临时放行）
     const confirmRule = matched.find(r => r.layer === 'confirm');
     if (confirmRule) {
+      // 全自动模式下，confirm 规则降级为 auto（用户已授权自动执行）
+      const decision = mode === 'auto' ? 'auto' : 'confirm';
       return this.applyApproval(category, {
-        decision: 'confirm',
+        decision,
         matchedRuleId: confirmRule.id,
         reason: confirmRule.description,
-      });
+      }, mode);
     }
 
     // auto 命中 → 放行（仍需经过审批级检查）
@@ -338,7 +351,7 @@ export class PermissionEngine {
         decision: 'auto',
         matchedRuleId: autoRule.id,
         reason: autoRule.description,
-      });
+      }, mode);
     }
 
     // 4. 无规则命中 → 按 autonomy mode fallback
@@ -347,12 +360,12 @@ export class PermissionEngine {
       return this.applyApproval(category, {
         decision: 'auto',
         reason: trustReason ?? 'TrustGradient 临时放行',
-      });
+      }, mode);
     }
     return this.applyApproval(category, {
       decision: mode === 'auto' ? 'auto' : 'confirm',
       reason: 'Fallback: 无匹配规则，按自主度模式决定',
-    });
+    }, mode);
   }
 
   /**
@@ -361,14 +374,17 @@ export class PermissionEngine {
    * 对非 deny 决策应用审批级旋钮：
    * - never-ask：confirm → auto（用户不想被询问）
    * - always-ask：headless → deny（陷阱 #135）；非 headless → auto 升级为 confirm
+   *   Phase 94 修复：auto 自主度模式下用户已授权，always-ask 不再强制升级
    * - on-request：不改变决策
    *
    * @param category 工具类别
    * @param result 规则检查结果（非 deny）
+   * @param mode 当前自主度模式（Phase 94：auto 模式下 always-ask 不升级）
    */
   private applyApproval(
     category: ToolCategory,
     result: PermissionCheckResult,
+    mode: AutonomyMode,
   ): PermissionCheckResult {
     // 向后兼容：沙箱未激活时跳过审批级检查（行为与 Phase 47 前一致）
     if (!this.sandboxActive) {
@@ -400,7 +416,8 @@ export class PermissionEngine {
         };
       }
       // 非 headless：auto 升级为 confirm（强制询问）
-      if (result.decision === 'auto') {
+      // Phase 94 修复：auto 自主度模式下用户已授权自动执行，always-ask 不强制升级
+      if (result.decision === 'auto' && mode !== 'auto') {
         return {
           decision: 'confirm',
           matchedRuleId: result.matchedRuleId,
@@ -656,7 +673,23 @@ export const DEFAULT_CONFIRM_RULES: PermissionRule[] = [
     id: 'confirm-git-op',
     layer: 'confirm',
     toolPattern: 'git_op',
+    // Phase 95：只对写类 git 操作（add/commit/push/pull/prune）confirm
+    // 读类（status/log/diff/blame）走 auto 规则放行，不再要求确认
+    argsPredicate: a => {
+      const op = typeof a?.operation === 'string' ? a.operation : '';
+      return !['status', 'log', 'diff', 'blame'].includes(op);
+    },
     description: 'Git 写操作需要确认',
+  },
+  {
+    id: 'auto-git-read',
+    layer: 'auto',
+    toolPattern: 'git_op',
+    argsPredicate: a => {
+      const op = typeof a?.operation === 'string' ? a.operation : '';
+      return ['status', 'log', 'diff', 'blame'].includes(op);
+    },
+    description: 'Git 读操作（status/log/diff/blame）自动放行',
   },
   {
     id: 'confirm-web-search',
@@ -700,6 +733,13 @@ export const DEFAULT_AUTO_RULES: PermissionRule[] = [
     layer: 'auto',
     toolPattern: 'test_connection',
     description: '连接测试（轻量 LLM 请求）自动放行',
+  },
+  // Phase 96 P1-4：list_models 走 auto 规则放行，拉取 provider 可用模型列表（只读操作）
+  {
+    id: 'auto-list-models',
+    layer: 'auto',
+    toolPattern: 'list_models',
+    description: '拉取 provider 模型列表（只读 GET 请求）自动放行',
   },
 ];
 

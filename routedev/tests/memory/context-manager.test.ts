@@ -119,10 +119,11 @@ describe('ContextManager', () => {
       expect(mgr.shouldCompress(10, 900)).toBe(true);
     });
 
-    it('should return false when checkpointEnabled=false', () => {
+    it('should still compress when checkpointEnabled=false (compression decoupled from checkpoint)', () => {
       const { writer } = createMockWriter();
       const mgr = createManager(writer, { enabled: false, window: 100, threshold: 0.8 });
-      expect(mgr.shouldCompress(10, 1000)).toBe(false);
+      // 压缩与 checkpoint 解耦：token 超阈值时仍应触发压缩
+      expect(mgr.shouldCompress(10, 1000)).toBe(true);
     });
   });
 

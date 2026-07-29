@@ -47,8 +47,9 @@ describe('ExecutionVerifier', () => {
   });
 
   it('should return medium qualityScore when some signals fail', async () => {
-    mockSpawnSync.mockImplementation((_cmd: any, args: any) => {
-      if (args?.includes('vitest')) {
+    // 源码 spawnSync(vitestBin, ['run', ...], ...)：args 不含 'vitest'，需检查 _cmd（二进制路径）
+    mockSpawnSync.mockImplementation((_cmd: any, _args: any) => {
+      if (_cmd?.includes('vitest')) {
         return { status: 1, stdout: '', stderr: 'test failed' } as any;
       }
       return { status: 0, stdout: '', stderr: '' } as any;

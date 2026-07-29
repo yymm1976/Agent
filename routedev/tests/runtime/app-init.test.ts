@@ -202,6 +202,27 @@ function makeTempCwd(): string {
 // ============================================================
 
 describe('createAppDependencies', () => {
+  // Phase 91：生产代码 fail-fast（app-init-agent.ts 缺核心依赖即 throw），
+  // 所有测试统一注入最小 mock 核心依赖；fail-fast 行为由专门测试验证。
+  const classifier = {
+    classify: vi.fn().mockResolvedValue({ tier: 'simple', confidence: 0.9, reasoning: 'mock', source: 'rule' }),
+  } as unknown as import('../../src/router/classifier.js').ScenarioClassifier;
+  const modelRouter = {
+    route: vi.fn().mockResolvedValue({
+      model: { id: 'test-model', name: 'Test', provider: 'provider-1', tier: 'simple', contextWindow: 128000, capabilities: [], latencyMs: 0, available: true },
+      providerId: 'provider-1', fallbackUsed: false, originalTier: 'simple', degraded: false,
+    }),
+    recordModelSuccess: vi.fn(),
+    recordModelFailure: vi.fn(),
+  } as unknown as import('../../src/router/router.js').ModelRouter;
+  const tracker = {
+    record: vi.fn(),
+    recordUsage: vi.fn(),
+    recordTaskUsage: vi.fn().mockReturnValue('ok'),
+    getUsagePercent: () => 0,
+    getStats: () => ({ total: { totalTokens: 0 } }),
+  } as unknown as import('../../src/router/tracker.js').TokenTracker;
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -212,7 +233,7 @@ describe('createAppDependencies', () => {
       const clientManager = createMockClientManager();
       const cwd = makeTempCwd();
 
-      const deps = createAppDependencies(config, clientManager, 'test-model', cwd);
+      const deps = createAppDependencies(config, clientManager, 'test-model', cwd, classifier, modelRouter, tracker);
 
       // 工具链
       expect(deps.registry).toBeInstanceOf(ToolRegistry);
@@ -260,7 +281,7 @@ describe('createAppDependencies', () => {
     it('primaryClient 从 config.providers[0] 对应的 clientManager 客户端获取', () => {
       const config = makeConfig();
       const clientManager = createMockClientManager();
-      createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
+      createAppDependencies(config, clientManager, 'test-model', makeTempCwd(), classifier, modelRouter, tracker);
 
       // primaryProviderId = config.providers[0].id = 'provider-1'
       // 注：primaryClient 字段已从 AppDependencies 移除（仅 app-init.ts 内部消费），
@@ -271,7 +292,7 @@ describe('createAppDependencies', () => {
     it('checkpointClient 从 checkpoint.modelId 对应的 provider 获取', () => {
       const config = makeConfig();
       const clientManager = createMockClientManager();
-      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
+      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd(), classifier, modelRouter, tracker);
 
       // checkpoint.modelId = 'checkpoint-model'，属于 provider-1
       expect(deps.checkpointClient).toBeDefined();
@@ -283,7 +304,7 @@ describe('createAppDependencies', () => {
         checkpoint: { enabled: true, triggers: [], modelId: 'nonexistent-model', maxTokensPerCheckpoint: 500 },
       });
       const clientManager = createMockClientManager();
-      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
+      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd(), classifier, modelRouter, tracker);
 
       // 回退到 fallbackClient（listAll 的第一个）
       expect(deps.checkpointClient).toBe(clientManager._clients.get('provider-1'));
@@ -297,7 +318,7 @@ describe('createAppDependencies', () => {
     it('tokenTracking.enabled 默认为 true 时创建 profiler', () => {
       const config = makeConfig();
       const clientManager = createMockClientManager();
-      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
+      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd(), classifier, modelRouter, tracker);
 
       expect(deps.profiler).not.toBeNull();
       expect(deps.profiler).toBeInstanceOf(TokenProfiler);
@@ -311,7 +332,7 @@ describe('createAppDependencies', () => {
         },
       });
       const clientManager = createMockClientManager();
-      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
+      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd(), classifier, modelRouter, tracker);
 
       expect(deps.profiler).toBeNull();
     });
@@ -320,16 +341,14 @@ describe('createAppDependencies', () => {
   // Phase 59：initAnalyzer 为 null 的场景测试已删除（源文件 src/agent/init-analyzer.ts 已清理）
 
   describe('可选依赖 classifier/modelRouter/tracker', () => {
-    it('未传入 classifier/modelRouter 时仍能正常创建（使用桩执行器）', () => {
+    // Phase 91：生产代码已 fail-fast（app-init-agent.ts 第 856 行 throw），
+    // 测试同步改为 expect.toThrow，不再期望"用桩继续创建"。
+    it('未传入 classifier/modelRouter/tracker 时 fail-fast 抛出错误', () => {
       const config = makeConfig();
       const clientManager = createMockClientManager();
-      // 不传 classifier 和 modelRouter
-      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
-
-      // E1 删除：durableExecutor 字段已从 AppDependencies 移除（上位替代为 GoalPersistence）
-      // 注：taskOrchestrator 字段已从 AppDependencies 移除（仅 app-init.ts 内部消费），
-      // 此处验证 unifiedReviewer 仍可创建（依赖链路完整）
-      expect(deps.unifiedReviewer).toBeInstanceOf(UnifiedReviewer);
+      // 显式不传核心依赖（undefined, undefined, undefined）以验证 fail-fast
+      expect(() => createAppDependencies(config, clientManager, 'test-model', makeTempCwd(), undefined, undefined, undefined))
+        .toThrow(/classifier\/modelRouter\/tracker 未注入/);
     });
 
     it('传入 classifier/modelRouter/tracker 时正常创建', () => {
@@ -372,7 +391,7 @@ describe('createAppDependencies', () => {
     it('初始值为空字符串', () => {
       const config = makeConfig();
       const clientManager = createMockClientManager();
-      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
+      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd(), classifier, modelRouter, tracker);
 
       expect(deps.sharedSystemPromptRef).toEqual({ current: '' });
     });
@@ -380,7 +399,7 @@ describe('createAppDependencies', () => {
     it('引用可被外部修改（App.tsx 同步更新此 ref）', () => {
       const config = makeConfig();
       const clientManager = createMockClientManager();
-      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
+      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd(), classifier, modelRouter, tracker);
 
       deps.sharedSystemPromptRef.current = '新的系统提示词';
       expect(deps.sharedSystemPromptRef.current).toBe('新的系统提示词');
@@ -391,7 +410,7 @@ describe('createAppDependencies', () => {
     it('ToolRegistry 注册了内置工具', () => {
       const config = makeConfig();
       const clientManager = createMockClientManager();
-      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
+      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd(), classifier, modelRouter, tracker);
 
       // 验证注册了至少 10 个工具（基础工具 + spawn_agent + todo + notes 等）
       const tools = deps.registry.list();
@@ -401,7 +420,7 @@ describe('createAppDependencies', () => {
     it('adapter 设置了 TraceCollector', () => {
       const config = makeConfig();
       const clientManager = createMockClientManager();
-      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
+      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd(), classifier, modelRouter, tracker);
 
       // 验证 trace 和 audit 共享同一个 sessionId
       expect(deps.trace).toBeInstanceOf(TraceCollector);
@@ -411,7 +430,7 @@ describe('createAppDependencies', () => {
     it('agentLoop 设置了 TraceCollector 和 Profiler', () => {
       const config = makeConfig();
       const clientManager = createMockClientManager();
-      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
+      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd(), classifier, modelRouter, tracker);
 
       // 验证 agentLoop 创建成功（内部已注入 trace 和 profiler）
       expect(deps.agentLoop).toBeInstanceOf(ReActAgentLoop);
@@ -422,7 +441,7 @@ describe('createAppDependencies', () => {
     it('使用 currentModel 对应的 contextWindow', () => {
       const config = makeConfig();
       const clientManager = createMockClientManager();
-      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
+      const deps = createAppDependencies(config, clientManager, 'test-model', makeTempCwd(), classifier, modelRouter, tracker);
 
       // test-model 的 contextWindow 为 128000
       expect(deps.contextManager).toBeInstanceOf(ContextManager);
@@ -432,7 +451,7 @@ describe('createAppDependencies', () => {
       const config = makeConfig();
       const clientManager = createMockClientManager();
       // 传入不存在的 model id
-      const deps = createAppDependencies(config, clientManager, 'nonexistent-model', makeTempCwd());
+      const deps = createAppDependencies(config, clientManager, 'nonexistent-model', makeTempCwd(), classifier, modelRouter, tracker);
 
       expect(deps.contextManager).toBeInstanceOf(ContextManager);
     });
@@ -442,7 +461,7 @@ describe('createAppDependencies', () => {
     it('返回值满足 AppDependencies 接口所有字段', () => {
       const config = makeConfig();
       const clientManager = createMockClientManager();
-      const deps: AppDependencies = createAppDependencies(config, clientManager, 'test-model', makeTempCwd());
+      const deps: AppDependencies = createAppDependencies(config, clientManager, 'test-model', makeTempCwd(), classifier, modelRouter, tracker);
 
       // 验证所有 AppDependencies 必需字段都存在且不为 undefined
       // 注意：仅检查 AppDependencies 接口中实际存在的必需字段

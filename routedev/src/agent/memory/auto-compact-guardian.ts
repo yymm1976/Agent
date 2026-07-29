@@ -13,10 +13,12 @@ export interface AutoCompactConfig {
 export const DEFAULT_GUARDIAN_CONFIG: AutoCompactConfig = {
   enabled: false,
   contextWindow: 200000,
-  reservedTokensForSummary: 20000,
-  autoCompactBuffer: 13000,
-  warningBuffer: 20000,
-  errorBuffer: 20000,
+  // 预留给摘要/系统提示的预算；过大导致阈值过晚（552k/500k 仍不压缩）
+  reservedTokensForSummary: 8000,
+  // 剩余 buffer 越小越早触发 compact（在接近窗口上限前主动压）
+  autoCompactBuffer: 40000,
+  warningBuffer: 60000,
+  errorBuffer: 30000,
   maxConsecutiveFailures: 3,
 };
 
@@ -37,6 +39,21 @@ export class AutoCompactGuardian {
   private consecutiveFailures = 0;
 
   constructor(private config: AutoCompactConfig) {}
+
+  /**
+   * 运行时更新 contextWindow（用户切换模型时调用）
+   * 避免 Guardian 用旧模型的窗口大小判断新模型的压缩时机
+   */
+  updateContextWindow(contextWindow: number): void {
+    if (typeof contextWindow !== 'number' || contextWindow < 10000) return;
+    if (this.config.contextWindow !== contextWindow) {
+      logger.info('AutoCompactGuardian: contextWindow updated', {
+        from: this.config.contextWindow,
+        to: contextWindow,
+      });
+      this.config = { ...this.config, contextWindow };
+    }
+  }
 
   calculateTokenState(currentTokens: number): TokenState {
     if (!this.config.enabled) {

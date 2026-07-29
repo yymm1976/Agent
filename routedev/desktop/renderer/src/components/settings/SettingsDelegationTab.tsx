@@ -15,8 +15,8 @@ interface SettingsDelegationTabProps {
 }
 
 const DEPTH_PASSING_MODES = [
-  { value: 'counter', label: 'counter（计数器传递）' },
-  { value: 'env', label: 'env（环境变量传递）' },
+  { value: 'counter', label: '计数器传递' },
+  { value: 'env', label: '环境变量传递' },
 ] as const;
 
 export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegationTabProps) {
@@ -35,12 +35,12 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
   };
 
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>委托策略</CardTitle>
           <CardDescription>
-            控制子 Agent 委托的四维约束（深度/并行/专家/工具）与三态策略（绑定/隔离/传播）。
+            控制子 Agent 委托的深度、并行、专家与工具调用约束。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -51,13 +51,13 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
             </div>
             <Switch
               id="delegation-bounded"
-              checked={policy.boundedDelegationEnabled ?? false}
+              checked={policy.boundedDelegationEnabled ?? true}
               onCheckedChange={(checked) => updatePolicy({ boundedDelegationEnabled: checked })}
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="delegation-max-depth">最大委托深度（0-5）</Label>
+            <Label htmlFor="delegation-max-depth">最大委托深度</Label>
             <Input
               id="delegation-max-depth"
               type="number"
@@ -66,11 +66,11 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
               value={policy.maxDepth ?? 1}
               onChange={(e) => updatePolicy({ maxDepth: Number(e.target.value) })}
             />
-            <p className="text-xs text-rd-textMuted">0 表示禁止委托；5 为极深嵌套（不推荐）。</p>
+            <p className="text-xs text-rd-textMuted">0 表示禁止委托；5 为极深嵌套，不推荐。</p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="delegation-max-parallel">最大并行子 Agent（1-10）</Label>
+            <Label htmlFor="delegation-max-parallel">最大并行子 Agent</Label>
             <Input
               id="delegation-max-parallel"
               type="number"
@@ -103,7 +103,7 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
             </div>
             <Switch
               id="delegation-refuse-specialist"
-              checked={policy.refuseIfSpecialistUnavailable ?? false}
+              checked={policy.refuseIfSpecialistUnavailable ?? true}
               onCheckedChange={(checked) => updatePolicy({ refuseIfSpecialistUnavailable: checked })}
             />
           </div>
@@ -121,7 +121,7 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="delegation-sub-context-tokens">子 Agent 最大上下文 Token（1000-200000）</Label>
+            <Label htmlFor="delegation-sub-context-tokens">子 Agent 最大上下文长度</Label>
             <Input
               id="delegation-sub-context-tokens"
               type="number"
@@ -140,7 +140,7 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
         <CardHeader>
           <CardTitle>子 Agent 模块开关</CardTitle>
           <CardDescription>
-            Phase 55 新增的委托体系模块开关。
+            委托体系各模块的接入开关。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -149,7 +149,7 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="delegation-gate-enabled">委托门控</Label>
-              <p className="text-xs text-rd-textMuted">DelegationGate 委托前检查资格,防止无效委托。</p>
+              <p className="text-xs text-rd-textMuted">委托前检查资格，防止无效委托。需同时启用对应的能力 Pack。</p>
             </div>
             <Switch
               id="delegation-gate-enabled"
@@ -162,7 +162,7 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="delegation-enforcer-enabled">委托执行器</Label>
-              <p className="text-xs text-rd-textMuted">DelegationEnforcer 执行中校验工具调用,契约履行保障。</p>
+              <p className="text-xs text-rd-textMuted">执行中校验工具调用，保障契约履行。需同时启用对应的能力 Pack。</p>
             </div>
             <Switch
               id="delegation-enforcer-enabled"
@@ -175,7 +175,7 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="lifecycle-enabled">生命周期管理</Label>
-              <p className="text-xs text-rd-textMuted">SubAgentLifecycle + AntiAbuseDetector 生命周期与反滥用。</p>
+              <p className="text-xs text-rd-textMuted">子 Agent 生命周期管理与反滥用检测。需同时启用对应的能力 Pack。</p>
             </div>
             <Switch
               id="lifecycle-enabled"
@@ -188,7 +188,7 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="score-card-enabled">质量评分卡</Label>
-              <p className="text-xs text-rd-textMuted">SubAgentScoreCardCollector 执行后收集评分。</p>
+              <p className="text-xs text-rd-textMuted">子 Agent 执行后收集质量评分。需同时启用对应的能力 Pack。</p>
             </div>
             <Switch
               id="score-card-enabled"
@@ -201,7 +201,7 @@ export function SettingsDelegationTab({ draft, updateDraft }: SettingsDelegation
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="context-packer-enabled">上下文打包器</Label>
-              <p className="text-xs text-rd-textMuted">ContextPacker 按角色打包上下文,选择性传递。</p>
+              <p className="text-xs text-rd-textMuted">按角色打包上下文，选择性传递。需同时启用对应的能力 Pack。</p>
             </div>
             <Switch
               id="context-packer-enabled"

@@ -33,11 +33,11 @@ export function SettingsOptimizationTab({
   updatePrompts,
 }: SettingsOptimizationTabProps) {
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>Token 追踪</CardTitle>
-          <CardDescription>分组件 Token 估算与会话快照</CardDescription>
+          <CardDescription>追踪各组件的 Token 用量</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
@@ -78,7 +78,7 @@ export function SettingsOptimizationTab({
       <Card>
         <CardHeader>
           <CardTitle>生产安全防护</CardTitle>
-          <CardDescription>先读后写、工具输出截断、独立验证门等防护机制</CardDescription>
+          <CardDescription>防止误操作的安全防护机制</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
@@ -146,7 +146,7 @@ export function SettingsOptimizationTab({
       <Card>
         <CardHeader>
           <CardTitle>简洁输出</CardTitle>
-          <CardDescription>让 AI 回答像电报，不是作文——输出纪律 + 工具结果裁剪</CardDescription>
+          <CardDescription>控制输出的简洁程度</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
@@ -167,7 +167,7 @@ export function SettingsOptimizationTab({
       <Card>
         <CardHeader>
           <CardTitle>提示词模板系统</CardTitle>
-          <CardDescription>自定义模板目录、项目级覆盖与缓存策略</CardDescription>
+          <CardDescription>自定义提示词模板</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">

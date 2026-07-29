@@ -3,8 +3,12 @@
 // 从 SettingsPage.tsx 迁移
 
 import type { Dispatch, SetStateAction } from 'react';
-import { Server, Plus, Trash2, Eye, EyeOff, Zap, Brain, Gauge, Lightbulb } from 'lucide-react';
+import { Server, Plus, Trash2, Eye, EyeOff, Zap, Brain, Gauge, Lightbulb, RefreshCw } from 'lucide-react';
 import type { AppConfig, ModelConfig } from '../../../../shared/config-types.js';
+// Phase 96 P1-4：从内置 catalog 查询模型元数据（cost / contextWindow / capabilities）
+// catalog 是 pure TS（仅依赖 type ModelCapability），可被 renderer 直接 import
+// 路径说明：本文件在 desktop/renderer/src/components/settings/，到项目根需 5 个 ../
+import { lookupModelMeta } from '../../../../../src/router/model-catalog.js';
 import { Button } from '../ui/button.js';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/card.js';
 import { Input } from '../ui/input.js';
@@ -21,12 +25,12 @@ interface ModelEditorState {
 
 /** 协议对应的 Badge 样式 */
 function protocolBadgeVariant(protocol: string): BadgeProps['variant'] {
-  return protocol === 'openai' ? 'primary' : 'outline';
+  return protocol === 'openai' || protocol === 'openai-responses' ? 'primary' : 'outline';
 }
 
 /** 协议对应的图标容器样式 */
 function protocolIconClass(protocol: string): string {
-  return protocol === 'openai'
+  return protocol === 'openai' || protocol === 'openai-responses'
     ? 'bg-rd-primary/10 text-rd-primary'
     : 'bg-rd-warning/10 text-rd-warning';
 }
@@ -52,6 +56,12 @@ interface SettingsProvidersTabProps {
   testingProvider: number | null;
   /** 测试连接结果（按 provider index） */
   testResults: Record<number, { success: boolean; message: string } | null>;
+  /** Phase 96 P1-4：刷新远程模型列表 handler */
+  handleRefreshModels: (index: number) => void;
+  /** 正在拉取模型列表的 provider index */
+  refreshingModels: number | null;
+  /** 远程模型列表结果（按 provider index） */
+  remoteModels: Record<number, { success: boolean; models?: string[]; message: string } | null>;
   /** 打开新增模型模态 */
   openAddModel: (pIdx: number) => void;
   /** 打开编辑模型模态 */
@@ -81,6 +91,9 @@ export function SettingsProvidersTab({
   handleTestConnection,
   testingProvider,
   testResults,
+  handleRefreshModels,
+  refreshingModels,
+  remoteModels,
   openAddModel,
   openEditModel,
   removeModel,
@@ -90,7 +103,7 @@ export function SettingsProvidersTab({
 }: SettingsProvidersTabProps) {
   return (
     <>
-      <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+      <div className="space-y-6">
         {draft.providers.length === 0 ? (
           <Card className="flex flex-col items-center justify-center py-12 text-center">
             <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-rd-primary/10 text-rd-primary">
@@ -139,7 +152,7 @@ export function SettingsProvidersTab({
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     {/* Provider ID 自动生成，不再显示给用户编辑 */}
                     <div className="space-y-2">
-                      <Label htmlFor={`provider-${pIdx}-name`}>显示名称（可选）</Label>
+                      <Label htmlFor={`provider-${pIdx}-name`}>显示名称</Label>
                       <Input
                         id={`provider-${pIdx}-name`}
                         value={provider.name}
@@ -153,10 +166,12 @@ export function SettingsProvidersTab({
                       <Select
                         id={`provider-${pIdx}-protocol`}
                         value={provider.protocol}
-                        onChange={(e) => updateProvider(pIdx, { protocol: e.target.value as 'openai' | 'anthropic' })}
+                        onChange={(e) => updateProvider(pIdx, { protocol: e.target.value as 'openai' | 'openai-responses' | 'anthropic' | 'gemini' })}
                       >
                         <SelectItem value="openai">OpenAI</SelectItem>
+                        <SelectItem value="openai-responses">OpenAI Responses</SelectItem>
                         <SelectItem value="anthropic">Anthropic</SelectItem>
+                        <SelectItem value="gemini">Gemini</SelectItem>
                       </Select>
                       <p className="text-xs text-rd-textMuted">决定使用哪个 SDK 发起请求。OpenAI 协议兼容大多数第三方服务。</p>
                     </div>
@@ -211,9 +226,22 @@ export function SettingsProvidersTab({
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <Label>模型列表</Label>
-                      <Button variant="outline" size="sm" onClick={() => openAddModel(pIdx)}>
-                        <Plus size={14} /> 添加模型
-                      </Button>
+                      <div className="flex gap-2">
+                        {/* Phase 96 P1-4：刷新远程模型列表，调用 provider 的 list models API */}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRefreshModels(pIdx)}
+                          disabled={refreshingModels === pIdx}
+                          title="从 Provider 拉取可用模型列表"
+                        >
+                          <RefreshCw size={14} className={refreshingModels === pIdx ? 'animate-spin' : ''} />
+                          <span className="ml-1.5">刷新模型</span>
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => openAddModel(pIdx)}>
+                          <Plus size={14} /> 添加模型
+                        </Button>
+                      </div>
                     </div>
                     {provider.models.length === 0 ? (
                       <div className="rounded-lg bg-rd-surfaceHover p-4 text-center text-sm text-rd-textMuted">
@@ -221,37 +249,77 @@ export function SettingsProvidersTab({
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        {provider.models.map((model, mIdx) => (
-                          <div
-                            key={mIdx}
-                            className="flex items-center justify-between rounded-lg bg-rd-surfaceHover px-4 py-3 transition hover:bg-rd-surfaceHighlight"
-                          >
-                            <div className="flex items-center gap-3">
-                              <div className="min-w-0">
-                                <div className="text-sm font-medium text-rd-text">
-                                  {model.name || model.id || `模型 ${mIdx + 1}`}
-                                </div>
-                                <div className="text-xs text-rd-textMuted">
-                                  {model.id} · {model.contextWindow.toLocaleString()} tokens
-                                  {model.capabilities.length > 0 && ` · ${model.capabilities.join(', ')}`}
+                        {provider.models.map((model, mIdx) => {
+                          // Phase 96 P1-4：从内置 catalog 查询模型元数据（价格 / 上下文窗口）
+                          // catalog 未收录的模型返回 undefined，不显示价格信息
+                          const meta = lookupModelMeta(model.id);
+                          const costText = meta
+                            ? `$${meta.cost.input}/${meta.cost.output} per M tokens`
+                            : null;
+                          return (
+                            <div
+                              key={mIdx}
+                              className="flex items-center justify-between rounded-lg bg-rd-surfaceHover px-4 py-3 transition hover:bg-rd-surfaceHighlight"
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-medium text-rd-text">
+                                    {model.name || model.id || `模型 ${mIdx + 1}`}
+                                  </div>
+                                  <div className="text-xs text-rd-textMuted">
+                                    {model.id} · {model.contextWindow.toLocaleString()} tokens
+                                    {model.capabilities.length > 0 && ` · ${model.capabilities.join(', ')}`}
+                                    {costText && ` · ${costText}`}
+                                  </div>
                                 </div>
                               </div>
+                              <div className="flex items-center gap-2">
+                                <Button variant="ghost" size="sm" onClick={() => openEditModel(pIdx, mIdx)}>
+                                  编辑
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-rd-danger hover:bg-rd-danger/10 hover:text-rd-danger"
+                                  onClick={() => removeModel(pIdx, mIdx)}
+                                >
+                                  <Trash2 size={16} />
+                                </Button>
+                              </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <Button variant="ghost" size="sm" onClick={() => openEditModel(pIdx, mIdx)}>
-                                编辑
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="text-rd-danger hover:bg-rd-danger/10 hover:text-rd-danger"
-                                onClick={() => removeModel(pIdx, mIdx)}
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Phase 96 P1-4：远程模型列表展示（刷新后显示返回的模型 ID） */}
+                    {remoteModels[pIdx] && (
+                      <div className="rounded-lg border border-rd-border p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className={`text-xs ${remoteModels[pIdx]!.success ? 'text-rd-success' : 'text-rd-danger'}`}>
+                            {remoteModels[pIdx]!.message}
+                          </span>
+                          {remoteModels[pIdx]!.success && remoteModels[pIdx]!.models && remoteModels[pIdx]!.models.length > 0 && (
+                            <span className="text-xs text-rd-textMuted">
+                              点击模型 ID 复制到剪贴板，再"添加模型"粘贴
+                            </span>
+                          )}
+                        </div>
+                        {remoteModels[pIdx]!.success && remoteModels[pIdx]!.models && remoteModels[pIdx]!.models.length > 0 && (
+                          <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
+                            {remoteModels[pIdx]!.models!.map((modelId) => (
+                              <button
+                                key={modelId}
+                                type="button"
+                                onClick={() => navigator.clipboard?.writeText(modelId).catch(() => {})}
+                                className="rounded-md bg-rd-surfaceHover px-2 py-1 text-xs text-rd-textMuted transition hover:bg-rd-primary/10 hover:text-rd-primary"
+                                title="点击复制模型 ID"
                               >
-                                <Trash2 size={16} />
-                              </Button>
-                            </div>
+                                {modelId}
+                              </button>
+                            ))}
                           </div>
-                        ))}
+                        )}
                       </div>
                     )}
                   </div>
@@ -265,13 +333,14 @@ export function SettingsProvidersTab({
         )}
 
         {/* ===== 推理模式（Phase 42） ===== */}
+        {/* 暂未实现：仅展示 UI，按钮全部禁用 */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Brain size={16} className="text-rd-primary" />
               推理模式
             </CardTitle>
-            <CardDescription>控制 Agent 的推理深度与速度平衡</CardDescription>
+            <CardDescription>暂未实现</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -286,8 +355,9 @@ export function SettingsProvidersTab({
                   <button
                     key={mode.id}
                     type="button"
+                    disabled
                     onClick={() => updateDraft({ reasoningMode: mode.id })}
-                    className={`flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-colors ${
+                    className={`flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-colors pointer-events-none opacity-60 ${
                       active
                         ? 'border-rd-primary bg-rd-primary/10 text-rd-text'
                         : 'border-rd-border bg-rd-surface text-rd-textMuted hover:bg-rd-surfaceHover hover:text-rd-text'
@@ -349,9 +419,23 @@ export function SettingsProvidersTab({
                     <Input
                       value={modelEditor.model.name}
                       onChange={(e) => setModelEditor({ ...modelEditor, model: { ...modelEditor.model, name: e.target.value } })}
-                      placeholder="留空则自动使用模型 ID"
+                      placeholder="留空则使用模型 ID"
                     />
                     <p className="text-xs text-rd-textMuted">在界面上展示的友好名称。</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="model-tier">场景层级</Label>
+                    <Select
+                      id="model-tier"
+                      value={modelEditor.model.tier}
+                      onChange={(e) => setModelEditor({ ...modelEditor, model: { ...modelEditor.model, tier: e.target.value as ModelConfig['tier'] } })}
+                    >
+                      <SelectItem value="simple">简单</SelectItem>
+                      <SelectItem value="medium">中等</SelectItem>
+                      <SelectItem value="complex">复杂</SelectItem>
+                      <SelectItem value="reasoning">推理</SelectItem>
+                    </Select>
+                    <p className="text-xs text-rd-textMuted">用于路由兜底映射，建议与模型能力匹配</p>
                   </div>
                   <div className="space-y-2">
                     <Label>能力标签</Label>
@@ -363,9 +447,9 @@ export function SettingsProvidersTab({
                           model: { ...modelEditor.model, capabilities: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) as ModelConfig['capabilities'] },
                         })
                       }
-                      placeholder="code, vision, reasoning（逗号分隔）"
+                      placeholder="multimodal, code, reasoning, fast, cheap"
                     />
-                    <p className="text-xs text-rd-textMuted">用逗号分隔多个能力标签，便于路由分类。</p>
+                    <p className="text-xs text-rd-textMuted">目前仅 multimodal 被视觉模块消费</p>
                   </div>
                 </div>
               </details>

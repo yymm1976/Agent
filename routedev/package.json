@@ -27,6 +27,7 @@
     "predist:electron": "tsx scripts/clean-release.ts",
     "dist:electron:safe": "tsx scripts/build-with-retry.ts",
     "lint:descriptions": "tsx scripts/lint-descriptions.ts",
+    "audit:prompt": "tsx scripts/audit-system-prompt.ts",
     "detect-dead-code": "node --import tsx/esm scripts/detect-dead-code.ts",
     "verify:slimdown": "tsx scripts/verify-slimdown.ts",
     "prepare": "husky install",

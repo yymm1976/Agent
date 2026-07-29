@@ -140,7 +140,7 @@ export const SafetyConfigSchema = z.object({
   /** 是否启用"先读后写"强制（file_write/file_edit 前必须 file_read 过） */
   readBeforeWrite: z.boolean().default(true),
   /** 工具输出最大字符数（超过则智能截断，优先保留错误区域） */
-  maxToolOutputChars: z.number().int().min(1000).max(100000).default(16000),
+  maxToolOutputChars: z.number().int().min(1000).max(100000).default(8000),
   /** 是否启用独立代码验证门（typecheck/lint/tests） */
   completionGate: z.boolean().default(true),
   /** 验证门总超时（毫秒） */
@@ -207,18 +207,18 @@ export type ClarificationConfig = z.infer<typeof ClarificationConfigSchema>;
 export const OptimizationConfigSchema = z.object({
   /** Token 可观测性（默认开启） */
   tokenTracking: z.preprocess((v) => v ?? {}, TokenTrackingConfigSchema),
-  /** 简洁思考约束（实验性，默认关闭） */
+  /** 简洁思考约束（默认开启：工具输出 >2000 字符时 800 首 + 标记 + 800 尾） */
   conciseThinking: z.object({
-    enabled: z.boolean().default(false),
-  }).default({ enabled: false }),
+    enabled: z.boolean().default(true),
+  }).default({ enabled: true }),
   /**
-   * Phase 72 Task B2：内容路由压缩（按内容类型分派）
+   * Phase 72 Task B2：内容路由压缩（按内容类型分派，默认开启）
    * 启用后 ToolOutputPipeline 会在 Sanitizer 之后调用 ContentRouter：
    *   - JSON 走统计采样、代码走 AST/正则摘要、散文走 ksentence、<200 token 直通
    */
   contentRouting: z.object({
-    enabled: z.boolean().default(false),
-  }).default({ enabled: false }),
+    enabled: z.boolean().default(true),
+  }).default({ enabled: true }),
   /** 统一工作流编排（Phase 31 Task 1） */
   workflow: z.preprocess((v) => v ?? {}, WorkflowConfigSchema),
   /** 生产安全防护（Phase 31 Task 6） */
@@ -746,8 +746,8 @@ export type SkillLifecycleConfig = z.infer<typeof SkillLifecycleConfigSchema>;
  *     接入层根据此开关决定是否调用 computeRecoveryScope
  */
 export const BoundedRecoveryConfigSchema = z.object({
-  /** 是否启用有界局部恢复 */
-  enabled: z.boolean().default(true),
+  /** 是否启用有界局部恢复（默认 false，由接入层控制） */
+  enabled: z.boolean().default(false),
   /** 最大回溯步数（含失败步骤本身，1-10，默认 3） */
   maxBacktrack: z.number().int().min(1).max(10).default(3),
   /** 是否启用工件绑定（注册 StepArtifact 以追踪依赖） */
@@ -772,7 +772,7 @@ export const Phase52IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.obj
   boundedRecovery: z.preprocess((v) => v ?? {}, BoundedRecoveryConfigSchema),
   /** Task 4：组合式路由 */
   compositionalRouting: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(true),
+    enabled: z.boolean().default(false),
     maxDecompositionIterations: z.number().int().min(1).max(5).default(2),
     semanticRetrieval: z.boolean().default(true),
     maxParallelSkills: z.number().int().min(1).max(4).default(2),

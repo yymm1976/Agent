@@ -70,7 +70,10 @@ export class FileSearchTool implements ITool {
 
     try {
       const results: string[] = [];
-      const files = await walkDir(context.workingDirectory, maxResults * 5);
+      // Phase 96 修复：walkDir 上限从 maxResults*5=100 提高到 2000
+      // 大仓库（含 archive/refs/out 等）配额 100 不够，会扫不到目标文件
+      // 配合 search-utils.ts 的 IGNORED_DIRS 跳过大目录，2000 已足够覆盖源码区
+      const files = await walkDir(context.workingDirectory, 2000);
 
       for (const filePath of files) {
         if (results.length >= maxResults) break;
@@ -80,7 +83,15 @@ export class FileSearchTool implements ITool {
 
         if (isIgnoredPath(relativePath)) continue;
 
-        if (pattern && !matchGlob(pattern, fileName)) continue;
+        // Phase 95 修复：pattern 含路径分隔符时（如 **/version-manager.ts 或 agents/*.ts）
+        // 必须对 relativePath 匹配，否则只匹配 basename 会丢失层级信息导致全 fail
+        if (pattern) {
+          const patternHasSep = pattern.includes('/') || pattern.includes('\\');
+          const matched = patternHasSep
+            ? matchGlob(pattern, relativePath) || matchGlob(pattern.replace(/^[*][*][/\\]/, ''), relativePath) || matchGlob(pattern.replace(/^[*][*][/\\]/, ''), fileName)
+            : matchGlob(pattern, fileName);
+          if (!matched) continue;
+        }
 
         if (query) {
           try {

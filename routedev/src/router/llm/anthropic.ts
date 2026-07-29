@@ -23,8 +23,9 @@ import type {
   ToolCallRequest,
   TokenUsageInfo,
   ContentPart,
+  LLMToolDefinition,
 } from '../types.js';
-import { LLMError } from '../types.js';
+import { LLMError, THINKING_BUDGET_TOKENS } from '../types.js';
 import { logger } from '../../utils/logger.js';
 
 /**
@@ -63,6 +64,17 @@ export class AnthropicClient extends BaseLLMClient {
   /** 检查客户端是否就绪（apiKey 已配置且客户端已构造） */
   override isReady(): boolean {
     return this._isReady;
+  }
+
+  /**
+   * Phase 96 P1-4：Anthropic list models 使用 x-api-key + anthropic-version header
+   * 覆盖基类的 Bearer 认证方式
+   */
+  protected override buildListModelsHeaders(): Record<string, string> {
+    return {
+      'x-api-key': this.apiKey,
+      'anthropic-version': '2023-06-01',
+    };
   }
 
   /**
@@ -132,6 +144,8 @@ export class AnthropicClient extends BaseLLMClient {
       let currentToolName = '';
       let inputTokens = 0;
       let outputTokens = 0;
+      // Phase 96 P1-2：当前是否在 thinking block 内（用于 signature_delta 路由）
+      let inThinkingBlock = false;
 
       for await (const event of stream) {
         switch (event.type) {
@@ -151,6 +165,10 @@ export class AnthropicClient extends BaseLLMClient {
                 type: 'tool_call_start',
                 toolCall: { id: currentToolId, name: currentToolName },
               };
+            } else if (event.content_block.type === 'thinking') {
+              // Phase 96 P1-2：thinking 块开始，标记进入 thinking 状态
+              // thinking 增量通过 thinking_delta 事件产出，签名通过 signature_delta 产出
+              inThinkingBlock = true;
             }
             break;
 
@@ -164,6 +182,16 @@ export class AnthropicClient extends BaseLLMClient {
                 toolCallId: currentToolId,
                 argumentsDelta: event.delta.partial_json,
               };
+            } else if (event.delta.type === 'thinking_delta') {
+              // Phase 96 P1-2：extended thinking 增量，转发为 reasoning_delta 事件
+              // 与 OpenAI 客户端的 reasoning_delta 事件类型对齐，UI 层统一订阅
+              yield { type: 'reasoning_delta', text: event.delta.thinking };
+            } else if (event.delta.type === 'signature_delta') {
+              // thinking 块的加密签名增量，目前不暴露给上层（保留以备未来验签需求）
+              // 不 yield，仅记录 debug 日志
+              logger.debug('anthropic: thinking signature_delta received', {
+                signatureLength: event.delta.signature?.length ?? 0,
+              });
             }
             break;
 
@@ -173,6 +201,10 @@ export class AnthropicClient extends BaseLLMClient {
               yield { type: 'tool_call_end', toolCallId: currentToolId };
               currentToolId = '';
               currentToolName = '';
+            }
+            if (inThinkingBlock) {
+              // Phase 96 P1-2：thinking 块结束，重置标记
+              inThinkingBlock = false;
             }
             break;
 
@@ -270,6 +302,28 @@ export class AnthropicClient extends BaseLLMClient {
       }
     }
 
+    // Phase 96 P1-2：Anthropic extended thinking 支持
+    // 仅在 thinkingLevel 设置且非 'off' 时启用；其他 provider 客户端忽略此字段
+    // 注意：thinking 启用时 max_tokens 必须 > budget_tokens，否则 API 报错
+    if (options.thinkingLevel && options.thinkingLevel !== 'off') {
+      const budgetTokens = THINKING_BUDGET_TOKENS[options.thinkingLevel];
+      // 确保 max_tokens 足够容纳 thinking budget + 输出
+      const currentMax = typeof params.max_tokens === 'number' ? params.max_tokens : 4096;
+      if (currentMax <= budgetTokens) {
+        // max_tokens 不够容纳 thinking budget，自动上调
+        // 推荐 max_tokens = budget_tokens + 至少 4k 输出空间
+        params.max_tokens = budgetTokens + 4096;
+      }
+      // thinking 字段类型在 Anthropic SDK 中为 ThinkingConfigParam，
+      // 这里用 as unknown as 绕过 SDK 类型定义的版本差异（不同版本字段名略有差异）
+      (params as unknown as { thinking?: { type: 'enabled'; budget_tokens: number } }).thinking = {
+        type: 'enabled',
+        budget_tokens: budgetTokens,
+      };
+      // thinking 启用时 temperature 必须设为 1（Anthropic API 限制）
+      params.temperature = 1;
+    }
+
     return params;
   }
 
@@ -345,8 +399,12 @@ export class AnthropicClient extends BaseLLMClient {
 
   /**
    * 转换工具定义
+   *
+   * Phase 96 P1-6：Anthropic 协议无 strict 字段，input_schema 本身即 JSON Schema 约束。
+   * tool.strict 字段在此被忽略（不报错，保持向后兼容）。
+   * 如需更强制约束，可在 tool_choice 上设置 'tool' 强制模型调用指定工具。
    */
-  private convertTools(tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>): Tool[] {
+  private convertTools(tools: LLMToolDefinition[]): Tool[] {
     return tools.map((tool) => ({
       name: tool.name,
       description: tool.description,
@@ -367,6 +425,9 @@ export class AnthropicClient extends BaseLLMClient {
 
   /**
    * 提取内容和工具调用
+   *
+   * Phase 96 P1-2：thinking block 不计入 content（避免 LLM 把 thinking 当作回复）
+   * 但通过 logger 记录以便调试；未来如需暴露给上层，可在 LLMResponse 新增 thinking 字段
    */
   private extractContent(content: ContentBlock[]): {
     content: string;
@@ -383,6 +444,14 @@ export class AnthropicClient extends BaseLLMClient {
           id: block.id,
           name: block.name,
           arguments: block.input as Record<string, unknown>,
+        });
+      } else if (block.type === 'thinking') {
+        // Phase 96 P1-2：非流式 thinking block，记录日志不暴露给上层
+        // thinking 内容是模型的内部推理，不应作为最终回复返回给用户
+        const thinkingBlock = block as { type: 'thinking'; thinking: string; signature?: string };
+        logger.debug('anthropic: non-stream thinking block received', {
+          thinkingLength: thinkingBlock.thinking.length,
+          hasSignature: !!thinkingBlock.signature,
         });
       }
     }

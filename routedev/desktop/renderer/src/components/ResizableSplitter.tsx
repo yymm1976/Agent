@@ -75,7 +75,7 @@ export function ResizableSplitter({
   return (
     <div
       onMouseDown={handleMouseDown}
-      className="relative w-3 shrink-0 cursor-col-resize"
+      className="relative w-2 shrink-0 cursor-col-resize"
       title="拖动调整宽度"
     >
       {/* 中间竖线：默认透明，hover/drag 时显现 */}

@@ -112,8 +112,9 @@ describe('内置模板字段', () => {
     expect(EXECUTOR_PROFILE.allowedTools).toContain('file_edit');
   });
 
-  it('8. reviewer 模板 allowedTools 不含 file_write', () => {
-    expect(REVIEWER_PROFILE.allowedTools).not.toContain('file_write');
+  it('8. reviewer 模板 allowedTools 含 file_write（写审查报告）但不含 file_edit', () => {
+    // ReviewChain：审核人需要 file_write 写 context/review-report.md
+    expect(REVIEWER_PROFILE.allowedTools).toContain('file_write');
     expect(REVIEWER_PROFILE.allowedTools).not.toContain('file_edit');
   });
 

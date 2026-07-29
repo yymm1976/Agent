@@ -27,6 +27,8 @@ import { resolveSecurePath } from '../security-enhanced.js';
 import { ConfigGuard } from './config-guard.js';
 // 编辑历史单例：file-edit 写入前 push 原内容，/undo 命令弹栈恢复
 import { editHistory } from './edit-history.js';
+// Phase 96 P1-3：BOM 检测与保留，编辑写回时保留原文件 BOM 状态
+import { readWithBomInfo, writeWithBomInfo } from './bom-utils.js';
 
 /** 单条替换编辑 */
 interface EditEntry {
@@ -336,8 +338,9 @@ export class FileEditTool implements ITool {
       // 真正的冲突判定在写入前的第二层用内容比对兜底
       const baselineMtimeMs = preStats.mtimeMs;
 
-      // 读取原文件内容
-      const original = await fs.readFile(filePath, 'utf-8');
+      // Phase 96 P1-3：使用 readWithBomInfo 显式检测 BOM，写回时按原状态保留
+      // 之前用 fs.readFile(filePath, 'utf-8') 会自动剥离 BOM 且无感知，写回时 BOM 丢失
+      const { content: original, hadBom } = await readWithBomInfo(filePath);
 
       // 按 action 分支计算 modified
       let modified: string;
@@ -369,7 +372,10 @@ export class FileEditTool implements ITool {
             output: '',
             error: result.error,
             durationMs: 0,
-            metadata: result.metadata,
+            metadata: {
+              path: filePath,
+              ...result.metadata,
+            },
           };
         }
         modified = result.modified;
@@ -469,7 +475,8 @@ export class FileEditTool implements ITool {
       }
 
       // 写回文件（临界区终点）
-      await fs.writeFile(filePath, modified, 'utf-8');
+      // Phase 96 P1-3：按原文件 BOM 状态写回，保留 Windows 历史遗留文件的 BOM
+      await writeWithBomInfo(filePath, modified, hadBom);
 
       const stats = await fs.stat(filePath);
       const lines = modified.split('\n').length;
@@ -622,16 +629,23 @@ export class FileEditTool implements ITool {
       if (matchCount === 0) {
         return {
           ok: false,
-          error: `oldString 在文件中未找到匹配。请检查 oldString 是否正确（注意空白字符和缩进）。`,
-          metadata: { failedEdit: oldString.slice(0, 80) },
+          error: `STRING_NOT_FOUND: oldString 在文件中未找到匹配。请检查 oldString 是否正确（注意空白字符和缩进）。`,
+          metadata: {
+            errorType: 'STRING_NOT_FOUND',
+            failedEdit: oldString.slice(0, 80),
+          },
         };
       }
 
       if (matchCount > 1) {
         return {
           ok: false,
-          error: `oldString 在文件中有 ${matchCount} 处匹配，必须唯一。请提供更多上下文使匹配唯一。`,
-          metadata: { matchCount, failedEdit: oldString.slice(0, 80) },
+          error: `STRING_NOT_UNIQUE: oldString 在文件中有 ${matchCount} 处匹配，必须唯一。请提供更多上下文使匹配唯一。`,
+          metadata: {
+            errorType: 'STRING_NOT_UNIQUE',
+            matchCount,
+            failedEdit: oldString.slice(0, 80),
+          },
         };
       }
 

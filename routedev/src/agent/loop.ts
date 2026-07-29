@@ -23,6 +23,7 @@ import type {
   RoutingResult,
   TokenUsageInfo,
   ContentPart,
+  ToolCallRequest,
 } from '../router/types.js';
 import type { ReActConfig, ReActEvent, ToolExecutorAdapter, ConfirmToolCallback } from './loop-config.js';
 import { DEFAULT_REACT_CONFIG } from './loop-config.js';
@@ -30,6 +31,8 @@ import { logger } from '../utils/logger.js';
 import type { AgentMessage } from './message-types.js';
 import { defaultConvertToLlm } from './message-types.js';
 import type { ToolResult } from '../tools/types.js';
+// 工具调用修复 pipeline（Phase 96+：借鉴 Reasonix 四道工序）
+import { run as runRepairPipeline } from '../tools/tool-call-repair/pipeline.js';
 // TD-10 委托模块（组合模式）
 import { LoopContextManager } from './context-manager.js';
 import type { LLMStreamResult } from './context-manager.js';
@@ -41,6 +44,8 @@ import type { DualLoopOrchestrator } from './dual-loop-orchestrator.js';
 import { VirtualFS, createVFS } from './context/virtual-fs.js';
 // PlanState（type-only import）
 import type { PlanState } from './context/plan-state.js';
+// token 估算（用于 ReAct 循环内压缩阈值判断）
+import { estimateTokens } from '../utils/token-estimate.js';
 
 /**
  * F-102：消息窗口截断阈值（保留最近 N 条，保证 tool_use/tool_result 成对）
@@ -64,6 +69,21 @@ export interface SystemBlock {
   text: string;
   /** Anthropic prompt cache 标记；不打则该 block 不参与缓存 */
   cache_control?: { type: 'ephemeral' };
+}
+
+/**
+ * 压缩器接口（type-only，避免循环依赖）
+ * 供 ReActAgentLoop 在 ReAct 循环中按 token 阈值压缩 messages
+ */
+export interface CompactorLike {
+  shouldCompressEnhanced(
+    messageCount: number,
+    estimatedTokens: number,
+  ): { should: boolean; action?: string };
+  compressEnhanced(
+    messages: LLMMessage[],
+    options?: { force?: boolean; maxTokens?: number },
+  ): Promise<{ compressed: LLMMessage[] }>;
 }
 
 /** ReAct 循环运行参数 */
@@ -92,6 +112,8 @@ export interface ReActRunParams {
   onModelSuccess?: (modelId: string) => void;
   /** 模型调用失败回调 */
   onModelFailure?: (modelId: string, error: unknown) => void;
+  /** 自主度模式（传递给权限中间件） */
+  autonomyMode?: 'manual' | 'semi' | 'auto';
 }
 
 /**
@@ -116,11 +138,17 @@ export class ReActAgentLoop {
   private ctxMgr = new LoopContextManager();
   private mwRunner = new MiddlewareRunner();
   private memIntegration = new MemoryIntegration();
-  /**
-   * Phase 79 Task 5：当前 run() 期间的确认回调（run 开始时设置，结束清理）
+  /** Phase 79 Task 5：当前 run() 期间的确认回调（run 开始时设置，结束清理）
    * 子 Agent 通过 getCurrentConfirmTool() 获取父会话的确认通道，实现委托确认
    */
   private currentConfirmTool: ConfirmToolCallback | null = null;
+  /** 当前 run() 期间的自主度模式（传递给权限中间件） */
+  private currentAutonomyMode: 'manual' | 'semi' | 'auto' = 'semi';
+  /**
+   * 压缩器（可选）：注入后在 ReAct 循环每轮迭代前检查 messages 的 token 数，
+   * 超过阈值时调用 compressEnhanced 压缩，防止 messages 膨胀超出模型窗口
+   */
+  private compactor: CompactorLike | null = null;
 
   constructor(toolExecutor: ToolExecutorAdapter, config?: Partial<ReActConfig>) {
     this.config = { ...DEFAULT_REACT_CONFIG, ...config };
@@ -233,6 +261,14 @@ export class ReActAgentLoop {
     this.memIntegration.setMacroManager(manager);
   }
 
+  /**
+   * 注入压缩器（可选）：注入后在 ReAct 循环每轮迭代前检查并压缩 messages
+   * 传 null 可显式卸载
+   */
+  setCompactor(compactor: CompactorLike | null): void {
+    this.compactor = compactor;
+  }
+
   /** Phase 53 Task 9：注入预算监控器（可选） */
   setBudgetMonitor(monitor: import('./budget-monitor.js').BudgetMonitor | null): void {
     this.ctxMgr.setBudgetMonitor(monitor);
@@ -279,6 +315,8 @@ export class ReActAgentLoop {
 
     // Phase 79 Task 5：保存当前确认回调，供子 Agent 通过 getCurrentConfirmTool() 委托确认
     this.currentConfirmTool = onConfirmTool ?? null;
+    // 保存当前自主度模式，供权限中间件使用
+    this.currentAutonomyMode = params.autonomyMode ?? 'semi';
 
     // C6 修复：触发 on-session-start 钩子
     await this.mwRunner.fireHookSafe('on-session-start', {});
@@ -303,8 +341,14 @@ export class ReActAgentLoop {
 
       // 宏展开 + onUserMessage 中间件
       const effectiveUserMessage = this.memIntegration.expandMacros(userMessage);
-      const finalUserMessage = await this.mwRunner.runOnUserMessage(effectiveUserMessage);
+      const userMsgResult = await this.mwRunner.runOnUserMessage(effectiveUserMessage);
+      const finalUserMessage = userMsgResult.userMessage;
       messages.push({ role: 'user', content: finalUserMessage });
+
+      // Phase 94：Skill 流程提及提示注入到首条 user 消息之后
+      if (userMsgResult.skillFlowHint) {
+        messages.push({ role: 'user', content: userMsgResult.skillFlowHint });
+      }
 
       // 获取可用工具定义
       const rawToolDefs = this.config.toolsEnabled ? this.toolExecutor.getToolDefinitions() : [];
@@ -314,6 +358,13 @@ export class ReActAgentLoop {
       let consecutiveErrors = 0;
       let totalUsage: TokenUsageInfo = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
       let finalContent = '';
+      /** 上一轮 LLM 返回的真实 inputTokens（含 system/tools），压缩决策优先用它 */
+      let lastRoundInputTokens = 0;
+      /**
+       * 工具调用修复 pipeline 用：最近 N 轮已执行的工具调用（按时间倒序）
+       * 每轮工具执行后追加到队首，超过 WINDOW_SIZE 自动淘汰尾部
+       */
+      const recentToolCalls: ToolCallRequest[] = [];
 
       // Phase 73 Part C：双层循环——外层 follow-up 驱动，内层 ReAct 循环
       // V3-018 修复：添加全局迭代次数上限，防止 follow-up 队列持续注入导致无限循环
@@ -324,12 +375,14 @@ export class ReActAgentLoop {
           logger.warn('FollowUp loop reached max iterations, breaking', {
             iteration: followupIteration,
           });
-          const overflowError: ReActEvent = {
-            type: 'error',
-            error: `FollowUp 循环达到最大迭代次数 (${MAX_FOLLOWUP_ITERATIONS})，终止执行`,
+          // Phase 94：FollowUp 上限也升级人工
+          const overflowEscalation: ReActEvent = {
+            type: 'escalation',
+            reason: `FollowUp 循环达到最大迭代次数 (${MAX_FOLLOWUP_ITERATIONS})，Agent 持续追问但未收敛。请用户介入：直接给出答案或调整任务。`,
+            iterations: MAX_FOLLOWUP_ITERATIONS,
             usage: totalUsage,
           };
-          yield overflowError; trace?.recordEvent(overflowError);
+          yield overflowEscalation; trace?.recordEvent(overflowEscalation);
           const overflowDone: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
           yield overflowDone; trace?.recordEvent(overflowDone);
           break followUpLoop;
@@ -347,6 +400,43 @@ export class ReActAgentLoop {
           // C5 修复：迭代开始前取出 next_iteration 模式的转向消息
           this.ctxMgr.drainSteeringIntoMessages(messages, 'next_iteration');
           iteration++;
+
+          // 压缩检查：优先用上一轮 API 真实 inputTokens（含 system/tools），
+          // 估算值会严重偏低，导致 552k/500k 仍不触发。
+          if (this.compactor) {
+            try {
+              const estimatedTokens = messages.reduce((acc, msg) => {
+                const t = typeof msg.content === 'string'
+                  ? msg.content
+                  : JSON.stringify(msg.content);
+                return acc + estimateTokens(t);
+              }, 0);
+              // lastRoundInputTokens 在 LLM 返回后更新；首轮为 0 则用估算
+              const tokensForDecision = Math.max(lastRoundInputTokens, estimatedTokens);
+              const decision = this.compactor.shouldCompressEnhanced(messages.length, tokensForDecision);
+              if (decision.should || decision.action === 'warn') {
+                // warn 也尝试压缩：接近上限时主动减负，避免下一轮直接超窗
+                if (decision.should || tokensForDecision >= estimatedTokens) {
+                  const { compressed } = await this.compactor.compressEnhanced(messages);
+                  if (compressed.length < messages.length || compressed !== messages) {
+                    messages.length = 0;
+                    messages.push(...compressed);
+                    // 压缩后重置真实 token 计数，下一轮以新 usage 为准
+                    lastRoundInputTokens = 0;
+                    logger.info('ReAct loop: messages compacted', {
+                      tokensBefore: tokensForDecision,
+                      action: decision.action,
+                      messagesAfter: compressed.length,
+                    });
+                  }
+                }
+              }
+            } catch (err) {
+              logger.warn('ReAct loop: compact failed, continue with original messages', {
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
 
           logger.debug('ReAct iteration', { iteration, maxIterations: this.config.maxIterations, messageCount: messages.length });
 
@@ -423,6 +513,34 @@ export class ReActAgentLoop {
             // ===== 判断：文本回复 or 工具调用？ =====
             if (result.toolCalls.length > 0) {
               // ----- 有工具调用 -----
+              // Phase 96+：工具调用修复 pipeline（借鉴 Reasonix 四道工序）
+              //   1. scavenge — 从 reasoning_content 捞回被吃掉的 tool-call JSON
+              //   2. truncation — 修复不完整的 arguments JSON
+              //   3. flatten — 打平过深嵌套参数
+              //   4. storm — 检测重复调用并注入反思提示
+              // pipeline 不抛异常（内部 try/catch 兜底），失败时原样返回
+              const repairResult = runRepairPipeline({
+                toolCalls: result.toolCalls,
+                reasoningContent: result.reasoning,
+                rawText: result.content,
+                recentToolCalls,
+              });
+              result.toolCalls = repairResult.toolCalls;
+              // storm 工序可能注入反思提示，作为 user 消息 push 到 messages
+              for (const reflection of repairResult.reflections) {
+                messages.push({ role: 'user', content: reflection });
+              }
+              if (repairResult.summary.some((s) => s.repaired)) {
+                logger.info('ToolCallRepair.pipeline: repairs applied', {
+                  steps: repairResult.summary.filter((s) => s.repaired).map((s) => `${s.step}(${s.reason})`),
+                });
+              }
+              // 修复后可能为空（storm 全部抑制），按无工具调用处理
+              if (result.toolCalls.length === 0) {
+                // 跳过工具执行，继续下一轮迭代让 LLM 重新思考
+                continue;
+              }
+
               // 将 assistant 消息（含 tool_calls）加入上下文
               const assistantContent: ContentPart[] = result.content
                 ? [{ type: 'text', text: result.content }]
@@ -442,11 +560,13 @@ export class ReActAgentLoop {
                 // ===== 并行模式 =====
                 // 阶段1：串行权限校验 + 确认 + 中间件检查
                 const approvedCalls: typeof result.toolCalls = [];
+                // Phase 94：并行模式下收集最后一个 actingResult 的 explorationSuggestion（中间件对每次 onActing 都设置，最后一个最有意义）
+                let lastExplorationSuggestion: string | undefined;
                 for (const toolCall of result.toolCalls) {
                   yield { type: 'tool_call_start', toolName: toolCall.name, toolCallId: toolCall.id, args: toolCall.arguments };
 
                   // Phase 79 Task 3：onActing 中间件 + 策略引擎前置（fail-closed）
-                  const actingResult = await this.mwRunner.runOnActing(toolCall.name, toolCall.arguments);
+                  const actingResult = await this.mwRunner.runOnActing(toolCall.name, toolCall.arguments, this.currentAutonomyMode);
                   if (actingResult.denied) {
                     const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[被拦截] ${actingResult.reason ?? '未知原因'}`);
                     yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
@@ -455,10 +575,13 @@ export class ReActAgentLoop {
                   }
 
                   // Phase 79 Task 3/5：根据权限决策确定是否需要用户确认
+                  // 修复：auto 模式下所有工具直接放行（与串行模式逻辑一致）
                   const permDecision = actingResult.permissionDecision;
                   const permMatchedRule = actingResult.permissionMatchedRule;
                   let needsConfirmation: boolean;
-                  if (permDecision === 'confirm' || actingResult.requiresConfirmation) {
+                  if (this.currentAutonomyMode === 'auto') {
+                    needsConfirmation = false;
+                  } else if (permDecision === 'confirm' || actingResult.requiresConfirmation) {
                     needsConfirmation = true;
                   } else if (permDecision === 'auto' && permMatchedRule) {
                     needsConfirmation = false;
@@ -504,20 +627,30 @@ export class ReActAgentLoop {
                   }
 
                   approvedCalls.push(toolCall);
+                  // Phase 94：收集 explorationSuggestion（覆盖式，保留最后一个）
+                  if (actingResult.explorationSuggestion) {
+                    lastExplorationSuggestion = actingResult.explorationSuggestion;
+                  }
                 }
 
                 // 阶段2：并行执行所有已批准的工具
                 if (approvedCalls.length > 0) {
                   const useStructured = typeof this.toolExecutor.executeToolStructured === 'function';
                   const toolStartTimes = approvedCalls.map(() => Date.now());
+                  // Phase 96 P1-1：每个工具一个 delta buffer，并行执行时收集增量输出
+                  // allSettled 完成后按顺序 drain，避免多工具输出交错
+                  const deltaBuffers: ReActEvent[][] = approvedCalls.map(tc => []);
                   // C8 修复：用 allSettled 隔离单个工具异常
                   const settled = await Promise.allSettled(
-                    approvedCalls.map(tc =>
-                      useStructured
-                        ? this.toolExecutor.executeToolStructured!(tc.name, tc.id, tc.arguments)
-                        : this.toolExecutor.executeTool(tc.name, tc.id, tc.arguments)
-                            .then(output => ({ output, isError: /\[工具错误\]|\[被拦截\]/.test(output) })),
-                    ),
+                    approvedCalls.map((tc, idx) => {
+                      const onUpdate = (chunk: string) => {
+                        deltaBuffers[idx].push({ type: 'tool_call_delta', toolName: tc.name, toolCallId: tc.id, chunk });
+                      };
+                      return useStructured
+                        ? this.toolExecutor.executeToolStructured!(tc.name, tc.id, tc.arguments, { signal, onUpdate, autonomyMode: this.currentAutonomyMode })
+                        : this.toolExecutor.executeTool(tc.name, tc.id, tc.arguments, { signal, onUpdate, autonomyMode: this.currentAutonomyMode })
+                            .then(output => ({ output, isError: /\[工具错误\]|\[被拦截\]/.test(output) }));
+                    }),
                   );
                   const execResults = settled.map((s, i) => {
                     if (s.status === 'fulfilled') return s.value as { output: string; isError: boolean };
@@ -530,6 +663,10 @@ export class ReActAgentLoop {
                   for (let i = 0; i < approvedCalls.length; i++) {
                     const tc = approvedCalls[i];
                     const execResult = execResults[i] as { output: string; isError: boolean };
+                    // Phase 96 P1-1：先 yield 该工具的所有增量输出
+                    for (const delta of deltaBuffers[i]) {
+                      yield delta;
+                    }
                     const toolResult = await this.ctxMgr.sanitizeToolResult(tc.name, execResult.output, tc.arguments);
                     const isError = execResult.isError;
                     const toolDuration = Date.now() - toolStartTimes[i];
@@ -539,6 +676,11 @@ export class ReActAgentLoop {
 
                     yield { type: 'tool_call_result', toolName: tc.name, toolCallId: tc.id, result: toolResult, isError };
                     messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: tc.id, content: toolResult, isError }] });
+
+                    // Phase 94：探索预算超限提示注入 LLM 上下文（并行模式：用最后一个 actingResult 的 suggestion）
+                    if (lastExplorationSuggestion && i === approvedCalls.length - 1) {
+                      messages.push({ role: 'user', content: [{ type: 'text' as const, text: `[系统提示] ${lastExplorationSuggestion}` }] });
+                    }
 
                     // Compose 管线自动流转评估
                     const toolResultForAdvance: ToolResult = { success: !isError, output: toolResult, durationMs: toolDuration, error: isError ? toolResult : undefined };
@@ -552,7 +694,7 @@ export class ReActAgentLoop {
 
                   // Phase 79 Task 3：onActing 中间件 + 策略引擎前置（fail-closed）
                   // PermissionEngine.check() 在此被调用，deny 拦截、confirm 驱动用户确认、auto 放行
-                  const actingResult = await this.mwRunner.runOnActing(toolCall.name, toolCall.arguments);
+                  const actingResult = await this.mwRunner.runOnActing(toolCall.name, toolCall.arguments, this.currentAutonomyMode);
                   if (actingResult.denied) {
                     const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[被拦截] ${actingResult.reason ?? '未知原因'}`);
                     yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
@@ -565,10 +707,16 @@ export class ReActAgentLoop {
                   // - auto 决策且命中显式规则 → 放行
                   // - auto 决策但来自 fallback（无匹配规则）→ Task 5: 仅 autoApprovePatterns 白名单工具放行
                   // - 无 permissionDecision（PermissionMiddleware 未注册）→ 回退到 autoApprovePatterns
+                  //
+                  // 修复：auto 模式下，所有工具直接放行（needsConfirmation = false）
+                  // 理由：用户选择了 auto 模式 = 明确信任 Agent，不应再弹确认框。
+                  // 真正的危险操作已被 PermissionEngine DEFAULT_DENY_RULES 硬拦截（deny 不受 autonomyMode 影响）。
                   const permDecision = actingResult.permissionDecision;
                   const permMatchedRule = actingResult.permissionMatchedRule;
                   let needsConfirmation: boolean;
-                  if (permDecision === 'confirm' || actingResult.requiresConfirmation) {
+                  if (this.currentAutonomyMode === 'auto') {
+                    needsConfirmation = false;
+                  } else if (permDecision === 'confirm' || actingResult.requiresConfirmation) {
                     needsConfirmation = true;
                   } else if (permDecision === 'auto' && permMatchedRule) {
                     needsConfirmation = false;
@@ -624,16 +772,36 @@ export class ReActAgentLoop {
                   }
 
                   // 工具执行（P1-5 修复：优先使用结构化执行）
+                  // Phase 96 P1-1：透传 signal + onUpdate 支持流式输出与取消
                   const useStructured = typeof this.toolExecutor.executeToolStructured === 'function';
                   let toolResult: string;
                   let isError: boolean;
                   const toolStartTime = Date.now();
                   if (useStructured) {
-                    const structured = await this.toolExecutor.executeToolStructured!(toolCall.name, toolCall.id, toolCall.arguments);
+                    const stream = this.createToolStream<{ output: string; isError: boolean; images?: Array<{ mediaType: string; data: string }> }>(toolCall.name, toolCall.id);
+                    const toolPromise = this.toolExecutor.executeToolStructured!(
+                      toolCall.name, toolCall.id, toolCall.arguments,
+                      { signal, onUpdate: stream.onUpdate, autonomyMode: this.currentAutonomyMode },
+                    );
+                    const structured = yield* stream.drain(toolPromise);
                     toolResult = structured.output;
                     isError = structured.isError;
+                    // Phase 96 P2-10：图片结果作为独立 user 消息注入 ContentPart.image
+                    // 放在 tool_result 之后，让 LLM 同时看到工具文本结果和图片
+                    if (structured.images && structured.images.length > 0) {
+                      const imageParts: ContentPart[] = structured.images.map(img => ({
+                        type: 'image' as const,
+                        source: { type: 'base64' as const, mediaType: img.mediaType, data: img.data },
+                      }));
+                      messages.push({ role: 'user', content: imageParts });
+                    }
                   } else {
-                    toolResult = await this.toolExecutor.executeTool(toolCall.name, toolCall.id, toolCall.arguments);
+                    const stream = this.createToolStream<string>(toolCall.name, toolCall.id);
+                    const toolPromise = this.toolExecutor.executeTool(
+                      toolCall.name, toolCall.id, toolCall.arguments,
+                      { signal, onUpdate: stream.onUpdate, autonomyMode: this.currentAutonomyMode },
+                    );
+                    toolResult = yield* stream.drain(toolPromise);
                     isError = /\[工具错误\]|\[被拦截\]/.test(toolResult);
                   }
                   const toolDuration = Date.now() - toolStartTime;
@@ -647,10 +815,23 @@ export class ReActAgentLoop {
                   yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError };
                   messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError }] });
 
+                  // Phase 94：探索预算超限提示注入 LLM 上下文
+                  if (actingResult.explorationSuggestion) {
+                    messages.push({ role: 'user', content: [{ type: 'text' as const, text: `[系统提示] ${actingResult.explorationSuggestion}` }] });
+                  }
+
                   // Compose 管线自动流转评估
                   const toolResultForAdvance: ToolResult = { success: !isError, output: toolResult, durationMs: toolDuration, error: isError ? toolResult : undefined };
                   this.memIntegration.evaluateAdvance(toolResultForAdvance);
                 }
+              }
+
+              // Phase 96+：更新 recentToolCalls 供下轮修复 pipeline 使用
+              //   按 time 倒序维护，超过 storm.WINDOW_SIZE（5）条自动淘汰尾部
+              //   并行与串行两条路径在此汇合，统一更新
+              recentToolCalls.unshift(...result.toolCalls);
+              if (recentToolCalls.length > 5) {
+                recentToolCalls.length = 5;
               }
 
               // C7 修复：messages 窗口截断（保留最近 MESSAGE_WINDOW_THRESHOLD 条，保证 tool_use/tool_result 成对）
@@ -727,13 +908,14 @@ export class ReActAgentLoop {
           }
         }
 
-        // 达到最大迭代次数
-        const maxIterError: ReActEvent = {
-          type: 'error',
-          error: `达到最大迭代次数 (${this.config.maxIterations})，终止执行`,
+        // 达到最大迭代次数 → Phase 94：升级人工介入而非裸终止
+        const escalationEvent: ReActEvent = {
+          type: 'escalation',
+          reason: `达到最大迭代次数 (${this.config.maxIterations})，Agent 未能在预算内完成任务。可能原因：预探索过载、子 Agent 未分发、任务拆分不足。请用户介入：检查任务定义、提高迭代上限或手动接管。`,
+          iterations: this.config.maxIterations,
           usage: totalUsage,
         };
-        yield maxIterError; trace?.recordEvent(maxIterError);
+        yield escalationEvent; trace?.recordEvent(escalationEvent);
         const doneEvent: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
         yield doneEvent; trace?.recordEvent(doneEvent);
         // maxIterations 退出不处理 follow-up（避免无限循环）
@@ -744,6 +926,9 @@ export class ReActAgentLoop {
       await this.mwRunner.fireHookSafe('on-session-end', {});
       // Phase 79 Task 5：清理当前确认回调，避免 run 结束后残留
       this.currentConfirmTool = null;
+      // Phase 96 I-2 修复：session 结束时反馈 useful，强化召回记忆的 validatedCount
+      // 避免知识图谱只增不减、computeConfidence 的时间衰减使记忆逐渐失去召回价值
+      this.memIntegration.commitMemoryFeedback();
     }
   }
 
@@ -803,5 +988,69 @@ export class ReActAgentLoop {
     this.memIntegration.extractCitationsFromText(result.content);
 
     return result;
+  }
+
+  /**
+   * Phase 96 P1-1：工具流式执行辅助
+   *
+   * 创建一个 onUpdate 回调和一个 drain async generator。
+   * 调用方把 onUpdate 传给 toolExecutor 的 callOptions，把 toolPromise 传给 drain。
+   * drain 会实时 yield 出 tool_call_delta 事件（来自 onUpdate），最终返回 tool 的结果。
+   *
+   * 设计：
+   * - 工具执行（生产者）通过 onUpdate 把 stdout/stderr 增量推入 buffer
+   * - drain（消费者）与 toolPromise 竞争：buffer 有数据则 yield，无数据则等待
+   * - toolPromise resolve/reject 时唤醒 drain，drain 清空 buffer 后 return/throw
+   *
+   * 用于串行模式下的实时流式输出。并行模式不使用此方法（避免多工具输出交错）。
+   */
+  private createToolStream<T>(
+    toolName: string,
+    toolCallId: string,
+  ): {
+    onUpdate: (chunk: string) => void;
+    drain: (toolPromise: Promise<T>) => AsyncGenerator<ReActEvent, T>;
+  } {
+    const buffer: ReActEvent[] = [];
+    let resolveNext: (() => void) | null = null;
+
+    const wake = () => {
+      const r = resolveNext;
+      resolveNext = null;
+      r?.();
+    };
+
+    const onUpdate = (chunk: string) => {
+      buffer.push({ type: 'tool_call_delta', toolName, toolCallId, chunk });
+      wake();
+    };
+
+    async function* drain(toolPromise: Promise<T>): AsyncGenerator<ReActEvent, T> {
+      // 用对象包装避免 TypeScript CFA 把 resolved 收窄为 null（闭包内赋值后外部读取需用属性访问）
+      // resolved 三态：null=未完成，{ok:true,value}={已成功}，{ok:false,error}={已失败}
+      const state: { resolved: { ok: true; value: T } | { ok: false; error: unknown } | null } = {
+        resolved: null,
+      };
+      toolPromise.then(
+        v => { state.resolved = { ok: true, value: v }; wake(); },
+        e => { state.resolved = { ok: false, error: e }; wake(); },
+      );
+
+      while (true) {
+        // 先把 buffer 里所有事件 yield 出去
+        while (buffer.length > 0) {
+          yield buffer.shift()!;
+        }
+        // 检查工具是否已完成
+        if (state.resolved) {
+          if (state.resolved.ok) return state.resolved.value;
+          throw state.resolved.error;
+        }
+        // 等待下一次唤醒（onUpdate 或 toolPromise 完成）
+        await new Promise<void>(r => { resolveNext = r; });
+      }
+    }
+
+    return { onUpdate, drain };
   }
 }

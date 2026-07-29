@@ -45,7 +45,9 @@ export function createObservabilitySubsystem(ctx: InitContext): Partial<AppDepen
 
   // [I-4] OpenTelemetry exporter（P2.5）：受 config.observability.enabled 守护，fail-open
   // 使用变量路径让 TypeScript 无法静态解析，避免模块缺失时 typecheck 失败
-  if (config.observability?.enabled) {
+  // 通过局部变量收窄消除非空断言（observability 已在 if 内确认存在）
+  const observability = config.observability;
+  if (observability?.enabled) {
     const otelExporterModulePath = '../observability/otel-exporter.js';
     import(otelExporterModulePath)
       .then(({ OtelExporter }) => {
@@ -54,13 +56,13 @@ export function createObservabilitySubsystem(ctx: InitContext): Partial<AppDepen
           .then(({ setActiveOtelExporter }) => {
             const exporter = new OtelExporter({
               enabled: true,
-              serviceName: config.observability!.serviceName || 'routedev',
-              endpoint: config.observability!.endpoint,
-              headers: config.observability!.headers,
-              exportIntervalMs: config.observability!.exportIntervalMs,
+              serviceName: observability.serviceName || 'routedev',
+              endpoint: observability.endpoint,
+              headers: observability.headers,
+              exportIntervalMs: observability.exportIntervalMs,
             });
             setActiveOtelExporter(exporter);
-            logger.info('OtelExporter enabled', { endpoint: config.observability!.endpoint });
+            logger.info('OtelExporter enabled', { endpoint: observability.endpoint });
           })
           .catch((err) => { logger.warn('OtelExporter fail-open', { error: String(err) }); });
       })

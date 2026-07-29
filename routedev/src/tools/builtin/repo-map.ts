@@ -16,6 +16,11 @@ import {
   type TopSymbolEntry,
 } from '../../code-map/database.js';
 
+/** 输出字符硬上限，防止大仓库 repo_map 撑爆上下文 */
+const MAX_OUTPUT_CHARS = 8000;
+/** maxFiles 硬上限 */
+const HARD_MAX_FILES = 80;
+
 export class RepoMapTool implements ITool {
   readonly definition: ToolDefinition = {
     name: 'repo_map',
@@ -29,7 +34,7 @@ export class RepoMapTool implements ITool {
         },
         maxFiles: {
           type: 'number',
-          description: '最大文件数（默认 100；DB 路径默认 50）',
+          description: `最大文件数（默认 50；上限 ${HARD_MAX_FILES}）`,
         },
         maxSignaturesPerFile: {
           type: 'number',
@@ -76,7 +81,7 @@ export class RepoMapTool implements ITool {
     }
 
     const start = Date.now();
-    const maxFiles = (args.maxFiles as number) ?? undefined;
+    const maxFiles = this.resolveMaxFiles(args.maxFiles as number | undefined);
 
     // 优先尝试 code-map DB（Aider 风格：top 文件 + 每文件 top 3 符号签名）
     const dbPath = path.join(
@@ -87,13 +92,18 @@ export class RepoMapTool implements ITool {
     );
     if (fs.existsSync(dbPath)) {
       try {
-        const dbResult = this.buildFromDB(dbPath, maxFiles ?? 50);
+        const dbResult = this.buildFromDB(dbPath, maxFiles);
         if (dbResult !== null) {
+          const clipped = this.clipOutput(dbResult.output);
           return {
             success: true,
-            output: dbResult.output,
+            output: clipped.output,
             durationMs: Date.now() - start,
-            metadata: { source: 'code-map-db', fileCount: dbResult.fileCount },
+            metadata: {
+              source: 'code-map-db',
+              fileCount: dbResult.fileCount,
+              truncated: clipped.truncated,
+            },
           };
         }
       } catch (e) {
@@ -108,7 +118,7 @@ export class RepoMapTool implements ITool {
       const entries = await buildRepoMap(
         {
           root: scanPath,
-          maxFiles: (args.maxFiles as number) ?? 100,
+          maxFiles,
           maxSignaturesPerFile: (args.maxSignaturesPerFile as number) ?? 10,
         },
         // M2 修复：传入允许的目录边界，让 buildRepoMap 也做防御性校验
@@ -125,12 +135,16 @@ export class RepoMapTool implements ITool {
         };
       }
 
-      const output = renderRepoMap(entries, 400);
+      const clipped = this.clipOutput(renderRepoMap(entries, 400));
       return {
         success: true,
-        output,
+        output: clipped.output,
         durationMs,
-        metadata: { source: 'regex-fallback', fileCount: entries.length },
+        metadata: {
+          source: 'regex-fallback',
+          fileCount: entries.length,
+          truncated: clipped.truncated,
+        },
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -141,6 +155,23 @@ export class RepoMapTool implements ITool {
         durationMs: Date.now() - start,
       };
     }
+  }
+
+  private resolveMaxFiles(raw?: number): number {
+    if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return 50;
+    return Math.min(Math.floor(raw), HARD_MAX_FILES);
+  }
+
+  private clipOutput(output: string): { output: string; truncated: boolean } {
+    if (output.length <= MAX_OUTPUT_CHARS) {
+      return { output, truncated: false };
+    }
+    return {
+      output:
+        output.slice(0, MAX_OUTPUT_CHARS) +
+        `\n\n[...repo_map 已截断：共 ${output.length} 字符，仅显示前 ${MAX_OUTPUT_CHARS} 字符]`,
+      truncated: true,
+    };
   }
 
   /**

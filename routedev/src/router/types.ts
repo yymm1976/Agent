@@ -121,6 +121,8 @@ export interface ClassificationResult {
   source: ClassificationSource;
   /** deterministic 命中时携带的规则 ID，供路由层透传；其他路径无此字段 */
   matchedRuleId?: string;
+  /** Phase 94：任务形状（单步实现 / 多步实现 / 调查 / 问答），用于驱动 spawn_agent 分发策略 */
+  taskShape?: 'single-step' | 'multi-step-impl' | 'investigation' | 'qa';
 }
 
 /** 分类器上下文（Phase 32 Task 4.6：为 LLM 分类提供项目背景信息） */
@@ -219,13 +221,62 @@ export interface LLMRequestOptions {
       strict?: boolean;
     };
   };
+  /**
+   * Phase 96 P1-2：Anthropic extended thinking 等级
+   *
+   * 七档分级（参考 PI Agent 实现）：
+   *   - 'off'      关闭 thinking
+   *   - 'minimal'  极简（~1k budget tokens）
+   *   - 'low'      低（~5k budget tokens）
+   *   - 'medium'   中（~10k budget tokens）
+   *   - 'high'     高（~32k budget tokens）
+   *   - 'xhigh'    极高（~64k budget tokens）
+   *   - 'max'      最大（~128k budget tokens，需 max_tokens 配合上调）
+   *
+   * 仅 Anthropic Claude 3.7+ 支持；其他 provider 忽略此字段（不报错）
+   */
+  thinkingLevel?: ThinkingLevel;
 }
+
+/**
+ * Phase 96 P1-2：Anthropic extended thinking 等级
+ *
+ * 与 PI Agent 对齐的七档分级；每档对应 Anthropic API 的 budget_tokens 上限
+ */
+export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/**
+ * Phase 96 P1-2：thinking level → budget_tokens 映射
+ *
+ * budget_tokens 是 Anthropic API 的 thinking.budget_tokens 字段，
+ * 表示允许模型在最终回复前用于内部推理的最大 token 数
+ */
+export const THINKING_BUDGET_TOKENS: Record<ThinkingLevel, number> = {
+  off: 0,
+  minimal: 1024,
+  low: 5120,
+  medium: 10240,
+  high: 32768,
+  xhigh: 65536,
+  max: 131072,
+};
 
 /** 工具定义（传给 LLM 的 function schema） */
 export interface LLMToolDefinition {
   name: string;
   description: string;
   parameters: Record<string, unknown>; // JSON Schema
+  /**
+   * Phase 96 P1-6：是否启用 Structured Outputs / Constrained Sampling
+   *
+   * - OpenAI（Chat Completions + Responses API）：透传到 tools[i].function.strict / tools[i].strict
+   *   启用后模型输出严格遵循 parameters 定义的 JSON Schema（不支持的字段会被拒绝）
+   * - Anthropic / Gemini：协议无 strict 字段，input_schema / parameters 本身即约束，忽略此字段
+   * - Ollama：可在 format 字段做 JSON Schema 强约束（暂未实现）
+   *
+   * 缺省为 undefined，由 client 默认行为决定（OpenAI 默认 false，OpenAI Responses 默认 null）
+   */
+  strict?: boolean;
 }
 
 /** 非流式响应 */
@@ -260,6 +311,25 @@ export interface ILLMClient {
 
   /** 检查客户端是否就绪（API Key 已配置） */
   isReady(): boolean;
+
+  /**
+   * Phase 96 P1-4：从 provider API 拉取可用模型列表
+   * 调用各 provider 的 list models 端点（如 /v1/models、/v1beta/models）
+   * 返回模型 ID 数组；不支持列表 API 的 provider 返回空数组
+   */
+  getModels?(): Promise<string[]>;
+}
+
+/**
+ * Phase 96 P1-4：模型列表条目（从 provider API 拉取的原始信息）
+ */
+export interface RemoteModelInfo {
+  /** 模型 ID（provider 返回的原始 ID） */
+  id: string;
+  /** 模型展示名（缺省时回退到 id） */
+  name?: string;
+  /** 上下文窗口（provider 返回时才有，缺省为 0 表示未知） */
+  contextWindow?: number;
 }
 
 // ============================================================

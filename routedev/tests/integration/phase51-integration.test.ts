@@ -55,7 +55,7 @@ import { AgentActivityStore, splitModelLabel, buildLineage } from '../../src/age
 
 // 配置合并
 import { deepMergeConfig, loadConfig } from '../../src/config/loader.js';
-import { AppConfigSchema, ErrorDisplaySchema } from '../../src/config/schema.js';
+import { AppConfigSchema } from '../../src/config/schema.js';
 import { DEFAULT_CONFIG } from '../../src/config/defaults.js';
 
 // Profile 类型
@@ -505,7 +505,9 @@ describe('Phase 51 场景 3: 配置三层合并', () => {
 // 场景 4: 错误受众分层 (Task 9 集成)
 // ============================================================
 
-describe('Phase 51 场景 4: 错误受众分层', () => {
+// ErrorDisplaySchema 已从 src/config/schema.ts 移除（错误受众分层特性已下线），
+// 跳过整个 describe 块以反映当前架构
+describe.skip('Phase 51 场景 4: 错误受众分层', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

@@ -37,6 +37,18 @@ export interface ToolDefinition {
    * 若任一为 'sequential'，则整个 batch 回退为串行执行，避免状态竞争。
    */
   executionMode?: 'sequential' | 'parallel';
+  /**
+   * Phase 96 P1-6：是否启用 Structured Outputs / Constrained Sampling
+   *
+   * 设为 true 时，OpenAI 客户端会透传 strict=true 给 API，模型输出严格遵循
+   * parameters 定义的 JSON Schema（不支持的字段会被拒绝）。
+   * Anthropic/Gemini 协议无 strict 字段，此字段被忽略（input_schema 本身即约束）。
+   *
+   * 缺省为 undefined，由 client 默认行为决定。
+   * 注意：OpenAI strict=true 要求 parameters 必须是完整的 JSON Schema（含 type/properties），
+   * 且不支持 additionalProperties、$ref、union type 等高级特性。
+   */
+  strict?: boolean;
 }
 
 /**
@@ -78,6 +90,8 @@ export interface ToolExecutionContext {
   environment: Record<string, string>;
   /** 超时时间（毫秒） */
   timeoutMs: number;
+  /** 当前自主度；auto 仅跳过可确认项，绝不绕过安全硬拒绝。 */
+  autonomyMode?: 'auto' | 'semi' | 'manual';
   /**
    * 可选：用户确认回调
    * 当安全检查返回 requiresConfirmation=true 时，executor 会调用此回调请求用户确认
@@ -85,6 +99,22 @@ export interface ToolExecutionContext {
    * 未提供时：requiresConfirmation=true 的工具会被拒绝执行（安全默认）
    */
   requestConfirmation?: (reason: string) => Promise<boolean>;
+  /**
+   * Phase 96 P1-1：可选的 AbortSignal，传递给工具以支持中途取消
+   *
+   * shell_exec 等长任务工具应监听 signal.aborted 并终止子进程；
+   * 其他工具可忽略此字段（短任务无需取消支持）
+   */
+  signal?: AbortSignal;
+  /**
+   * Phase 96 P1-1：可选的增量输出回调
+   *
+   * shell_exec 等长任务工具在收到 stdout/stderr 增量时调用此回调，
+   * 把中间状态推送给上层（loop → IPC → 渲染层），让用户和 LLM 看到执行进度
+   *
+   * 注意：回调应做节流处理（如 100ms），避免高频 stdout 触发过多事件
+   */
+  onUpdate?: (chunk: string) => void;
 }
 
 // ============================================================
@@ -124,6 +154,11 @@ export interface StructuredToolResult {
   status: ToolStatus;
   data?: unknown;
   error?: { code: ToolErrorCode; message: string };
+  /**
+   * Phase 96 P2-10：执行结果中携带的图片内容（base64 编码）
+   * 仅 file_read 等图片读取工具会填充此字段，loop 收到后会注入为 ContentPart.image
+   */
+  images?: Array<{ mediaType: string; data: string }>;
 }
 
 /** 工具执行结果 */
@@ -135,6 +170,14 @@ export interface ToolResult {
   durationMs: number;
   /** 额外元数据（如文件变更列表） */
   metadata?: Record<string, unknown>;
+  /**
+   * Phase 96 P2-10：图片内容（用于多模态 LLM 输入）
+   *
+   * file_read 读取图片文件时填充此字段，上游 LLM 客户端会将其转换为
+   * ContentPart.image 注入到消息中。output 字段仍保留简短描述（如"[图片: foo.png 800x600]"）。
+   * 非图片文件不填充此字段。
+   */
+  images?: Array<{ mediaType: string; data: string }>;
   /**
    * Phase 72 Task C1：结构化三态结果（可选增强字段）
    *

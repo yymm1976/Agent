@@ -98,6 +98,8 @@ export class ScenarioClassifier {
    */
   async classify(input: ClassificationInput): Promise<ClassificationResult> {
     const query = input.query.trim();
+    // Phase 94：任务形状检测（一次计算，所有分支复用）
+    const taskShape = this.detectTaskShape(query);
 
     // 1. 命令匹配
     const commandMatch = this.matchCommand(query);
@@ -108,6 +110,7 @@ export class ScenarioClassifier {
         confidence: commandMatch.confidence,
         reasoning: commandMatch.reason,
         source: 'rule',
+        taskShape,
       };
     }
 
@@ -124,6 +127,7 @@ export class ScenarioClassifier {
         reasoning: `Deterministic rule matched: ${deterministicRule.id}`,
         source: 'deterministic',
         matchedRuleId: deterministicRule.id,
+        taskShape,
       };
     }
 
@@ -136,7 +140,7 @@ export class ScenarioClassifier {
       try {
         const llmResult = await this.classifyWithLLM(query, input.context);
         // Phase 81 Task 2：LLM 分类结果经 tier 收敛
-        return { ...llmResult, tier: this.collapseTier(llmResult.tier) };
+        return { ...llmResult, tier: this.collapseTier(llmResult.tier), taskShape };
       } catch (err) {
         logger.error('LLM classification failed, falling back to keyword matching', {
           error: err instanceof Error ? err.message : String(err),
@@ -149,6 +153,7 @@ export class ScenarioClassifier {
             confidence: keywordMatch.confidence,
             reasoning: keywordMatch.reason,
             source: 'rule',
+            taskShape,
           };
         }
       }
@@ -162,6 +167,7 @@ export class ScenarioClassifier {
           confidence: keywordMatch.confidence,
           reasoning: keywordMatch.reason,
           source: 'rule',
+          taskShape,
         };
       }
     }
@@ -173,7 +179,55 @@ export class ScenarioClassifier {
       confidence: 0.3,
       reasoning: 'Fallback tier (LLM classifier bypassed, conservative strategy)',
       source: 'rule',
+      taskShape,
     };
+  }
+
+  /**
+   * Phase 94：任务形状检测
+   *
+   * 基于关键词启发式判断任务形状，驱动 spawn_agent 分发策略：
+   *   - multi-step-impl：多文件实现 / 重构 / 加版本管理 / 审阅链流程 → 主 Agent 必须分发
+   *   - investigation：调查 / 排查 / 为什么 / debug → 鼓励 spawn_agent(researcher)
+   *   - single-step：单文件修改 / 改一行 / 加注释
+   *   - qa：问答 / 解释 / 是什么
+   *
+   * 命中优先级：multi-step-impl > investigation > single-step > qa（保守策略）
+   */
+  private detectTaskShape(query: string): 'single-step' | 'multi-step-impl' | 'investigation' | 'qa' {
+    const lower = query.toLowerCase();
+
+    // 多步实现：实现 + 给 X 加 / 版本管理 / 重构 / 审阅链 / Skill 流程
+    const multiStepPatterns = [
+      /给\s+.+\s+(加|添加|实现)/,
+      /版本管理|版本化/,
+      /重构|refactor/i,
+      /审阅链|审查链|review\s*chain|reviewchain/i,
+      /按\s+.+\s+skill\s*(流程)?\s*(执行|跑)/i,
+      /spawn_agent|spawn-agent/i,
+      /多文件|多个文件/,
+    ];
+    if (multiStepPatterns.some(p => p.test(query) || p.test(lower))) {
+      return 'multi-step-impl';
+    }
+
+    // 调查：为什么 / 排查 / 调试 / 失败 / 报错
+    const investigationPatterns = [
+      /为什么|排查|调试|debug/i,
+      /失败|报错|挂了|不工作/,
+      /为什么.*不|怎么.*不/,
+    ];
+    if (investigationPatterns.some(p => p.test(query) || p.test(lower))) {
+      return 'investigation';
+    }
+
+    // 单步：改 / 加 / 删（短指令）
+    if (/^(改|加|删|修|去掉)/.test(query) && query.length < 30) {
+      return 'single-step';
+    }
+
+    // 默认：问答
+    return 'qa';
   }
 
   /**

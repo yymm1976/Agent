@@ -94,4 +94,87 @@ describe('TokenTracker', () => {
     expect(trackOnlyTracker.checkBudget()).toBe(true);
     trackOnlyTracker.destroy();
   });
+
+  // ===== Phase 96+ A3.2：getSessionCost 测试 =====
+  describe('getSessionCost (Phase 96+ A3.2)', () => {
+    it('未传入 resolver 时返回 0', () => {
+      tracker.record({ inputTokens: 100, outputTokens: 50, totalTokens: 150 }, { modelId: 'gpt-4o', agentId: 'main', stepId: 's1' });
+      const result = tracker.getSessionCost();
+      expect(result.totalUsd).toBe(0);
+      expect(Object.keys(result.byModel)).toHaveLength(0);
+    });
+
+    it('resolver 未命中模型时跳过该记录', () => {
+      tracker.record({ inputTokens: 100, outputTokens: 50, totalTokens: 150 }, { modelId: 'unknown-model', agentId: 'main', stepId: 's1' });
+      const resolver = (id: string) => (id === 'gpt-4o' ? { input: 2.5, output: 10 } : undefined);
+      const result = tracker.getSessionCost(resolver);
+      expect(result.totalUsd).toBe(0);
+      expect(Object.keys(result.byModel)).toHaveLength(0);
+    });
+
+    it('单次调用按 input/output 单价正确计费', () => {
+      // gpt-4o: input $2.5/M, output $10/M, cacheRead $1.25/M
+      // 1000 input + 500 output = 0.0025 + 0.005 = 0.0075
+      tracker.record(
+        { inputTokens: 1000, outputTokens: 500, totalTokens: 1500 },
+        { modelId: 'gpt-4o', agentId: 'main', stepId: 's1' },
+      );
+      const resolver = (id: string) =>
+        id === 'gpt-4o' ? { input: 2.5, output: 10, cacheRead: 1.25 } : undefined;
+      const result = tracker.getSessionCost(resolver);
+      expect(result.totalUsd).toBeCloseTo(0.0075, 6);
+      expect(result.byModel['gpt-4o']).toBeCloseTo(0.0075, 6);
+    });
+
+    it('cacheReadInputTokens 按 cacheRead 单价计费', () => {
+      // gpt-4o: 1000 input (cached=800) + 500 output
+      // = (1000 × 2.5 + 800 × 1.25 + 500 × 10) / 1M = (2500 + 1000 + 5000) / 1M = 0.0085
+      tracker.record(
+        {
+          inputTokens: 1000,
+          outputTokens: 500,
+          totalTokens: 1500,
+          cacheReadInputTokens: 800,
+        },
+        { modelId: 'gpt-4o', agentId: 'main', stepId: 's1' },
+      );
+      const resolver = (id: string) =>
+        id === 'gpt-4o' ? { input: 2.5, output: 10, cacheRead: 1.25 } : undefined;
+      const result = tracker.getSessionCost(resolver);
+      // cacheRead 是 input 子集，calculateCallCost 视 input 与 cacheRead 独立计费
+      // 故 (1000 × 2.5 + 800 × 1.25 + 500 × 10) / 1M = 0.0085
+      expect(result.totalUsd).toBeCloseTo(0.0085, 6);
+    });
+
+    it('多模型按模型聚合', () => {
+      tracker.record(
+        { inputTokens: 1000, outputTokens: 0, totalTokens: 1000 },
+        { modelId: 'gpt-4o', agentId: 'main', stepId: 's1' },
+      );
+      tracker.record(
+        { inputTokens: 1000, outputTokens: 0, totalTokens: 1000 },
+        { modelId: 'claude-3-5-sonnet', agentId: 'main', stepId: 's2' },
+      );
+      const resolver = (id: string) => {
+        if (id === 'gpt-4o') return { input: 2.5, output: 10 };
+        if (id === 'claude-3-5-sonnet') return { input: 3, output: 15 };
+        return undefined;
+      };
+      const result = tracker.getSessionCost(resolver);
+      expect(result.byModel['gpt-4o']).toBeCloseTo(0.0025, 6);
+      expect(result.byModel['claude-3-5-sonnet']).toBeCloseTo(0.003, 6);
+      expect(result.totalUsd).toBeCloseTo(0.0055, 6);
+    });
+
+    it('reset 后费用归零', () => {
+      tracker.record(
+        { inputTokens: 1000, outputTokens: 500, totalTokens: 1500 },
+        { modelId: 'gpt-4o', agentId: 'main', stepId: 's1' },
+      );
+      const resolver = () => ({ input: 2.5, output: 10 });
+      expect(tracker.getSessionCost(resolver).totalUsd).toBeGreaterThan(0);
+      tracker.reset();
+      expect(tracker.getSessionCost(resolver).totalUsd).toBe(0);
+    });
+  });
 });

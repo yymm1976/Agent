@@ -10,6 +10,8 @@ import { checkPathBoundary } from './search-utils.js';
 import { resolveSecurePath } from '../security-enhanced.js';
 // Phase 53 Task 7：配置保护守卫（阻止弱化安全/治理配置）
 import { ConfigGuard } from './config-guard.js';
+// Phase 96 P1-3：BOM 检测与保留，覆盖写入时保留原文件 BOM 状态
+import { readWithBomInfo, writeWithBomInfo, stripBom } from './bom-utils.js';
 
 // V3-022 修复：写入内容大小上限（10MB），防止超大文件写入导致资源耗尽
 const MAX_WRITE_SIZE = 10 * 1024 * 1024;
@@ -122,9 +124,26 @@ export class FileWriteTool implements ITool {
       await fs.mkdir(dir, { recursive: true });
 
       if (append) {
-        await fs.appendFile(filePath, content, 'utf-8');
+        // 追加模式：不主动处理 BOM（追加到已有文件末尾，BOM 状态由原文件决定）
+        // 但需剥离开头可能的 BOM 字符（用户传入的 content 若以 BOM 开头会污染中段）
+        const cleanContent = stripBom(content);
+        await fs.appendFile(filePath, cleanContent, 'utf-8');
       } else {
-        await fs.writeFile(filePath, content, 'utf-8');
+        // 覆盖模式：保留原文件 BOM 状态（若原文件存在且带 BOM，写回时也带 BOM）
+        // Phase 96 P1-3 修复：之前 fs.writeFile(path, content, 'utf-8') 永远不写 BOM，
+        // 导致带 BOM 的文件被覆盖后 BOM 静默丢失
+        let hadBom = false;
+        try {
+          const existing = await readWithBomInfo(filePath);
+          hadBom = existing.hadBom;
+        } catch {
+          // 文件不存在（新建场景）—— 不主动加 BOM（保持 UTF-8 无 BOM 现代惯例）
+        }
+        // 若用户传入 content 以 BOM 开头，视为用户显式要求带 BOM
+        const userExplicitBom = content.length > 0 && content.charCodeAt(0) === 0xfeff;
+        const shouldWriteBom = hadBom || userExplicitBom;
+        const cleanContent = stripBom(content);
+        await writeWithBomInfo(filePath, cleanContent, shouldWriteBom);
       }
 
       const stats = await fs.stat(filePath);

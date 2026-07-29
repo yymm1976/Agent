@@ -14,6 +14,7 @@ import { Input } from '../ui/input.js';
 import { Label } from '../ui/label.js';
 import { Select, SelectItem } from '../ui/select.js';
 import { Switch } from '../ui/switch.js';
+import { SettingsAdvancedSection } from './SettingsAdvancedSection.js';
 
 /** 网络搜索配置 patch 类型 */
 type WebSearchPatch = Partial<{
@@ -79,7 +80,7 @@ export function SettingsSecurityTab({
   selectedSearchEngine, setSelectedSearchEngine,
 }: SettingsSecurityTabProps) {
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       {/* TD-09：autonomy=auto 时显示红色强警告框 */}
       {draft.autonomy?.defaultMode === 'auto' && (
         <div
@@ -114,12 +115,13 @@ export function SettingsSecurityTab({
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="security-boundary">启用目录边界限制</Label>
-              <p className="text-xs text-rd-textMuted">限制 Agent 只能读写当前项目目录内的文件，防止越权访问其他目录。</p>
+              <p className="text-xs text-rd-textMuted">暂未实现，目录边界始终强制</p>
             </div>
             <Switch
               id="security-boundary"
               checked={draft.security.directoryBoundary}
               onCheckedChange={(checked) => updateSecurity({ directoryBoundary: checked })}
+              disabled
             />
           </div>
           <div className="flex items-center justify-between">
@@ -139,8 +141,9 @@ export function SettingsSecurityTab({
               id="security-blacklist"
               value={draft.security.commandBlacklist.join(', ')}
               onChange={(e) => updateSecurity({ commandBlacklist: e.target.value.split(',').map((s) => s.trim()) })}
+              disabled
             />
-            <p className="text-xs text-rd-textMuted">匹配到的 shell 命令会被直接拦截。命令与工具黑白名单可在"命令与工具"标签页详细配置。</p>
+            <p className="text-xs text-rd-textMuted">请在"命令与工具"标签页配置</p>
           </div>
           <div className="space-y-2">
             <Label htmlFor="security-sensitive">敏感文件 pattern（逗号分隔）</Label>
@@ -166,6 +169,7 @@ export function SettingsSecurityTab({
         </CardContent>
       </Card>
 
+      <SettingsAdvancedSection title="高级安全配置" description="网络运行时安全、权限规则、网络搜索、对抗性验证、渐进式信任（已有默认值）">
       {/* 网络与运行时安全（SSRF / Bash / HTTPS / 速率限制 / 开发认证） */}
       <Card>
         <CardHeader>
@@ -220,12 +224,13 @@ export function SettingsSecurityTab({
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="security-dev-auth">开发模式认证</Label>
-              <p className="text-xs text-rd-textMuted">开发环境下要求认证，避免未授权访问开发服务器。</p>
+              <p className="text-xs text-rd-textMuted">暂未实现</p>
             </div>
             <Switch
               id="security-dev-auth"
               checked={draft.security.devModeAuth}
               onCheckedChange={(checked) => updateSecurity({ devModeAuth: checked })}
+              disabled
             />
           </div>
         </CardContent>
@@ -402,11 +407,12 @@ export function SettingsSecurityTab({
               id="adv-tier"
               value={draft.adversarial.modelTier}
               onChange={(e) => updateAdversarial({ modelTier: e.target.value as 'fast' | 'main' })}
+              disabled
             >
               <SelectItem value="fast">fast（廉价快速）</SelectItem>
               <SelectItem value="main">main（与主 Agent 相同）</SelectItem>
             </Select>
-            <p className="text-xs text-rd-textMuted">对抗性验证使用的模型层级。fast 省钱但可能不够精准，main 更准但更贵。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现，实际用分类器路由</p>
           </div>
         </CardContent>
       </Card>
@@ -415,7 +421,7 @@ export function SettingsSecurityTab({
       <Card>
         <CardHeader>
           <CardTitle>渐进式信任</CardTitle>
-          <CardDescription>7 级信任梯度 + 临时授权 + 偏好持久化（借鉴 Claude Code）</CardDescription>
+          <CardDescription>多级信任梯度、临时授权与偏好持久化</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {/* G-F037: Freeze 警告徽章 */}
@@ -443,12 +449,13 @@ export function SettingsSecurityTab({
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="trust-temp-grants">启用临时授权</Label>
-              <p className="text-xs text-rd-textMuted">会话级临时授权，resume 时不恢复，到期自动失效。</p>
+              <p className="text-xs text-rd-textMuted">暂未实现</p>
             </div>
             <Switch
               id="trust-temp-grants"
               checked={draft.trust.enableTemporaryGrants}
               onCheckedChange={(checked) => updateTrust({ enableTemporaryGrants: checked })}
+              disabled
             />
           </div>
           {draft.trust.enableTemporaryGrants && (
@@ -460,19 +467,21 @@ export function SettingsSecurityTab({
                 min={1}
                 value={draft.trust.grantTTLMinutes}
                 onChange={(e) => updateTrust({ grantTTLMinutes: Number(e.target.value) })}
+                disabled
               />
-              <p className="text-xs text-rd-textMuted">临时授权有效期，超过此时间自动失效，默认 30 分钟。</p>
+              <p className="text-xs text-rd-textMuted">暂未实现</p>
             </div>
           )}
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="trust-persist">启用偏好持久化</Label>
-              <p className="text-xs text-rd-textMuted">跨会话保留授权偏好，避免重复确认。默认关闭以保安全。</p>
+              <p className="text-xs text-rd-textMuted">暂未实现</p>
             </div>
             <Switch
               id="trust-persist"
               checked={draft.trust.enablePersistentPreferences}
               onCheckedChange={(checked) => updateTrust({ enablePersistentPreferences: checked })}
+              disabled
             />
           </div>
           {draft.trust.enablePersistentPreferences && (
@@ -484,12 +493,14 @@ export function SettingsSecurityTab({
                 min={1}
                 value={draft.trust.maxPersistentGrants}
                 onChange={(e) => updateTrust({ maxPersistentGrants: Number(e.target.value) })}
+                disabled
               />
-              <p className="text-xs text-rd-textMuted">持久化偏好上限，超出时淘汰最旧条目，默认 200。</p>
+              <p className="text-xs text-rd-textMuted">暂未实现</p>
             </div>
           )}
         </CardContent>
       </Card>
+      </SettingsAdvancedSection>
 
       {/* Phase 48：沙箱级与审批级覆盖（PermissionEngine 双旋钮 UI） */}
       <Card>
@@ -515,7 +526,7 @@ export function SettingsSecurityTab({
             </Select>
             <p className="text-xs text-rd-textMuted">
               决定工具能执行的操作范围。read-only: 仅读取；workspace-write: 读写工作区；
-              full-access: 完全访问（含网络/Shell/Git 写）。
+              full-access: 完全访问（含网络/Shell/Git 写）。read-only 下 git 操作不可用。
             </p>
           </div>
 

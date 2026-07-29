@@ -161,10 +161,7 @@ export interface GoalRunnerDeps {
   executionVerifier?: ExecutionVerifier;
   routingRegretTracker?: RoutingRegretTracker;
   routingOrchestrator?: RoutingOrchestrator;
-  // Phase 65：记忆系统（可选，由 app-init.ts 注入）
-  memoryStore?: import('../memory/memory-store.js').MemoryStore;
-  hybridRetriever?: import('../memory/hybrid-retriever.js').HybridRetriever;
-  localMaintenance?: import('../memory/local-maintenance.js').LocalMaintenancePolicy;
+  // TD-26：Phase 65 记忆系统已退役（memoryStore/hybridRetriever/localMaintenance 移除）
   // Phase 68：知识图谱（可选，由 app-init.ts 注入）
   provenanceGraph?: import('../memory/provenance-graph.js').ProvenanceGraph;
   kanObstacleChecker?: import('../skills/kan-obstacle-checker.js').KanObstacleChecker;
@@ -208,7 +205,7 @@ export interface GoalRunnerCtx {
   /** 验证目标完成度（LLM 验证）（recovery 模块） */
   verifyPlan: (plan: GoalPlan) => Promise<boolean>;
   /** 运行独立代码验证门（typecheck/lint/tests）（recovery 模块） */
-  runCompletionGate: (plan: GoalPlan) => Promise<void>;
+  runCompletionGate: (plan: GoalPlan) => Promise<import('../agent/completion-gate.js').GateResult | undefined>;
   /** 旧迭代闭环 fallback（DualLoop 未启用或异常时使用）（recovery 模块） */
   legacyIterativeLoop: (plan: GoalPlan) => Promise<void>;
   /** DualLoop 双循环恢复（含 BoundedRecovery）（recovery 模块） */

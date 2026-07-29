@@ -33,7 +33,8 @@ describe('Phase 40 Integration - Schema 配置', () => {
   it('quality 配置段：默认值正确填充', () => {
     const config = AppConfigSchema.parse({}) as AppConfig;
     expect(config.quality).toBeDefined();
-    expect(config.quality.enableImplicitFeedback).toBe(true);
+    // Phase 81 Task 3 F-02：enableImplicitFeedback 默认从 true 改为 false（freeze 层）
+    expect(config.quality.enableImplicitFeedback).toBe(false);
     expect(config.quality.negativeSignalThreshold).toBe(0.4);
     expect(config.quality.signalRetentionDays).toBe(30);
     expect(config.quality.autoImproveKnowledgeGraph).toBe(true);

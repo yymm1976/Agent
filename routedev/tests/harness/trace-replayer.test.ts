@@ -389,9 +389,9 @@ describe('TraceReplayer', () => {
       ];
       const replayer = new TraceReplayer(makeMockCollector([], spans));
       const boundaries = await replayer.getStepBoundaries('s1');
-      // stepId=0 是 falsy，所以 detail?.stepId ?? i+1 → i+1 = 1
+      // stepId=0 是有效值，??（nullish coalescing）不把 0 视为 nullish，所以 0 ?? i+1 → 0
       expect(boundaries).toHaveLength(1);
-      expect(boundaries[0].stepIndex).toBe(1);
+      expect(boundaries[0].stepIndex).toBe(0);
     });
   });
 

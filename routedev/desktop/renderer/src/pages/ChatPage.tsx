@@ -9,7 +9,7 @@
 //   后续 74-D 可改为细粒度 selector + 按需传入 props，进一步减少 ChatPage 重渲染范围
 
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { UploadCloud, FolderOpen, History, GitBranch } from 'lucide-react';
+import { FolderOpen, History, GitBranch } from 'lucide-react';
 import type { ChatMessage, PendingConfirm } from '../hooks/useRouteDev.js';
 import type { AppConfig, AutonomyMode } from '../../../shared/config-types.js';
 import type { TokenProfileSnapshot } from '../../../../src/agent/token-profiler.js';
@@ -54,10 +54,9 @@ interface ChatPageProps {
 }
 
 export function ChatPage({
-  messages, isProcessing, pendingConfirm, config, lastTokenSnapshot,
+  messages, isProcessing, currentModel, pendingConfirm, config, lastTokenSnapshot,
   sendMessage, confirmTool, stopGeneration, saveConfig, deleteMessage, retryMessage,
 }: ChatPageProps) {
-  const [dragOver, setDragOver] = useState(false);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [queue, setQueue] = useState<string[]>([]);
   const [queueExpanded, setQueueExpanded] = useState(false);
@@ -219,17 +218,6 @@ export function ChatPage({
     setEditingQueueIdx(null); setEditingQueueValue('');
   };
 
-  // 文件拖拽处理
-  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setDragOver(true); };
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false);
-  };
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault(); setDragOver(false);
-    // 拖拽事件保留在 ChatPage 层（Card 容器），文件处理由 InputArea 消费
-  };
-
   // 监听快捷键事件（由 useKeyboardShortcuts 通过 window 自定义事件派发）
   useEffect(() => {
     const focusInput = () => {
@@ -252,11 +240,10 @@ export function ChatPage({
   return (
     <Card
       className="relative flex h-full flex-col overflow-hidden rounded-none border-0 bg-rd-surface p-0 shadow-none"
-      onDragOver={handleDragOver} onDragEnter={handleDragOver}
-      onDragLeave={handleDragLeave} onDrop={handleDrop}
     >
       {/* 状态栏 */}
-      <div className="flex h-14 shrink-0 items-center justify-between px-5">
+      {/* Phase 96：px-5 → px-4 收紧内容到窗口边的距离 */}
+      <div className="flex h-14 shrink-0 items-center justify-between px-4">
         <div className="flex items-center gap-2 overflow-x-auto">
           {currentProject && (
             <Badge variant="default" className="shrink-0 gap-1.5">
@@ -267,6 +254,11 @@ export function ChatPage({
                   <FolderOpen size={14} />
                 </button>
               )}
+            </Badge>
+          )}
+          {currentModel && (
+            <Badge variant="outline" className="max-w-[220px] shrink-0" title={`当前模型: ${currentModel}`}>
+              <span className="truncate">模型: {currentModel}</span>
             </Badge>
           )}
           {tokenUsage > 0 && (
@@ -300,16 +292,44 @@ export function ChatPage({
 
       {/* 消息区 */}
       <div className="relative flex min-h-0 flex-1">
+        {/* Phase 96：px-5 py-4 space-y-2.5 → px-4 py-3 space-y-4
+            - 左右 padding 20→16px：减少内容到窗口边的留白
+            - 上下 padding 16→12px：减少顶部留白
+            - space-y 10→16px：拉开消息间距，解决「字挤在一块」 */}
         <div ref={scrollRef} onScroll={handleScroll}
-          className="flex-1 space-y-2.5 overflow-y-auto px-5 py-4">
+          className="flex-1 space-y-4 overflow-y-auto px-4 py-3">
           {/* Phase 77：Voice Memo 式会话状态卡（无活跃 goal 时不渲染） */}
           {sessionStatus && sessionStatus.status !== 'idle' && (
             <SessionStatusCard status={sessionStatus} />
           )}
           {messages.length === 0 ? (
-            <div className="relative flex h-full items-start justify-center pt-[18%]">
+            <div className="relative flex h-full items-center justify-center overflow-hidden px-6 pb-[10%]">
               <NeuralNetworkBackground />
-              <h1 className="relative z-10 select-none text-5xl font-black tracking-tight text-rd-primary/20">RouteDev</h1>
+              <div className="relative z-10 flex max-w-2xl flex-col items-center text-center">
+                <span className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-rd-primary">RouteDev</span>
+                <h1 className="text-3xl font-bold tracking-tight text-rd-text">从一个清晰的目标开始</h1>
+                <p className="mt-3 max-w-lg text-sm leading-6 text-rd-textMuted">
+                  描述你想完成的工作；我会先理解项目，再选择合适的工具、模型与执行方式。
+                </p>
+                <div className="mt-7 grid w-full gap-2 text-left sm:grid-cols-3">
+                  {[
+                    { title: '了解项目', prompt: '浏览当前项目，说明模块职责、关键链路和风险。' },
+                    { title: '修复问题', prompt: '分析当前错误，定位根因并给出修复方案。' },
+                    { title: '实现功能', prompt: '根据我的需求制定实现计划，并在确认后开始修改。' },
+                  ].map(({ title, prompt }) => (
+                    <button
+                      key={title}
+                      type="button"
+                      onClick={() => handleSubmit(prompt)}
+                      className="rounded-rd border border-rd-border bg-rd-surface/80 px-3 py-3 text-left transition hover:border-rd-primary/40 hover:bg-rd-surfaceHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rd-primary"
+                    >
+                      <span className="block text-sm font-semibold text-rd-text">{title}</span>
+                      <span className="mt-1 block text-xs leading-5 text-rd-textMuted">{prompt}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-5 text-xs text-rd-textSubtle">也可以直接在下方输入，Enter 发送，Shift+Enter 换行。</p>
+              </div>
             </div>
           ) : (
             <MessageList messages={messages} isProcessing={isProcessing} outputStyle={outputStyle}
@@ -348,16 +368,6 @@ export function ChatPage({
           />
         )}
       </div>
-
-      {/* 拖拽提示遮罩 */}
-      {dragOver && (
-        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-rd-background/80 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-2 text-rd-primary">
-            <UploadCloud size={48} />
-            <p className="text-lg font-medium">松开以添加文件</p>
-          </div>
-        </div>
-      )}
 
       {/* 工具确认弹窗 */}
       {pendingConfirm && <ToolConfirmDialog pending={pendingConfirm} onConfirm={confirmTool} />}

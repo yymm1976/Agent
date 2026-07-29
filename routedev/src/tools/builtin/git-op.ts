@@ -68,7 +68,16 @@ export class GitOpTool implements ITool {
     const opArgs = (args.args as string[]) ?? [];
 
     try {
-      const git: SimpleGit = simpleGit(context.workingDirectory);
+      // windowsHide + pipe：阻止 simple-git 在 Windows 上闪出 console 窗口
+      // simple-git 类型只声明了 uid/gid，运行时仍透传完整 spawn 选项
+      const git: SimpleGit = simpleGit({
+        baseDir: context.workingDirectory,
+        maxConcurrentProcesses: 1,
+        spawnOptions: {
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      } as unknown as Parameters<typeof simpleGit>[0]);
       let output = '';
 
       switch (operation) {
@@ -78,8 +87,13 @@ export class GitOpTool implements ITool {
           break;
         }
         case 'log': {
-          const log = await git.log(opArgs.length > 0 ? opArgs : ['-10']);
-          output = log.all.map(c => `${c.hash.slice(0, 7)} ${c.date} ${c.message}`).join('\n');
+          // Phase 96 修复：原 git.log(opArgs) 不支持 --oneline/-5 等 raw 参数
+          // simple-git 的 log() 接受 LogOptions 对象而非字符串数组，
+          // 当用户传 ['-5', '--oneline'] 时输出会残缺（只回 1 条 hash）
+          // 改用 git.raw 直接调用 git log，保留所有 raw 参数语义
+          // 默认行为：不传 args 时显示最近 10 条 with 默认格式
+          const logArgs = opArgs.length > 0 ? opArgs : ['-10', '--pretty=format:%h %ad %s', '--date=short'];
+          output = await git.raw(['log', ...logArgs]);
           break;
         }
         case 'diff': {

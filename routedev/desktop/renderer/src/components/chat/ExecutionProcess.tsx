@@ -1,11 +1,13 @@
 // desktop/renderer/src/components/chat/ExecutionProcess.tsx
-// 执行过程：思考层 + 动作层折叠树
-// Phase 74-C：从 ChatPage.tsx 抽离，保持渲染结果完全一致
+// 执行过程：时间线列表——按时间顺序合并中间自言自语 + 工具调用组
+// C-V2：从"思考/动作两层折叠"改为时间线，体现 ReAct 循环真实发生顺序
+// - intermediateThoughts（每轮工具调用前的说明性文字）独立成折叠条目
+// - 同类相邻工具调用合并成一组（如连续多次 code_search 合并为"已搜索 N 次"）
+// - reasoning（reasoning 模型的深度思考）单独折叠在时间线末尾，作为整体推理背景
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
-  Wrench, Brain, ChevronRight, ChevronDown,
-  CheckCircle2, XCircle, Loader2,
+  Activity, Brain, ChevronRight, ChevronDown, Loader2,
 } from 'lucide-react';
 import type { ToolCallItem } from '../ToolCallCard.js';
 import { ActionSummaryRow, SubAgentRow } from '../ToolCallCard.js';
@@ -32,12 +34,10 @@ export interface ThinkingStep {
 
 export function parseReasoningSteps(reasoningText: string, isThinking: boolean): ThinkingStep[] {
   if (!reasoningText) return [];
-  // 按换行分割，再按中文句号/英文句号分割
   const rawLines = reasoningText
     .split(/\n+/)
     .map((line) => line.trim())
     .filter(Boolean);
-  // 进一步按句号拆分过长的行
   const steps: string[] = [];
   for (const line of rawLines) {
     const sentences = line.split(/[。.]/).map((s) => s.trim()).filter(Boolean);
@@ -61,30 +61,6 @@ export function parseReasoningSteps(reasoningText: string, isThinking: boolean):
   });
 }
 
-function buildProcessSummary(totalToolCalls: number, duration: number, hasReasoning: boolean): string {
-  const parts = ['过程记录'];
-  if (hasReasoning) parts.push('含思考');
-  if (totalToolCalls > 0) parts.push(`${totalToolCalls} 次操作`);
-  if (duration > 0) parts.push(formatDuration(duration));
-  return parts.join(' · ');
-}
-
-function countToolStatus(items: ToolCallItem[]): { success: number; error: number; running: number } {
-  return items.reduce(
-    (acc, item) => {
-      if (item.status === 'completed') acc.success += 1;
-      else if (item.status === 'error') acc.error += 1;
-      else acc.running += 1;
-      return acc;
-    },
-    { success: 0, error: 0, running: 0 },
-  );
-}
-
-/**
- * 树枝节点：在连续竖线（由父容器 border-l 提供）上挂一个带水平连接线的子项。
- * 竖线颜色使用主题专属 --rd-tree-line，比背景浅一点且不抢戏，各主题单独适配。
- */
 function TreeBranch({
   children,
   className = '',
@@ -100,18 +76,6 @@ function TreeBranch({
   );
 }
 
-/** 状态图标 */
-function StatusDot({ status }: { status: 'running' | 'completed' | 'error' | 'active' | 'done' }) {
-  if (status === 'running' || status === 'active') {
-    return <Loader2 size={12} className="shrink-0 animate-spin text-rd-primary" />;
-  }
-  if (status === 'error') {
-    return <XCircle size={12} className="shrink-0 text-rd-danger" />;
-  }
-  return <CheckCircle2 size={12} className="shrink-0 text-rd-success" />;
-}
-
-/** 过程记录入口：一行摘要，点击展开/折叠整棵树 */
 function ProcessEntry({
   summary,
   expanded,
@@ -194,21 +158,120 @@ function FoldableSection({
   );
 }
 
+/** 时间线条目：思考块或工具组，按 timestamp 排序合并 */
+type TimelineEntry =
+  | { kind: 'thought'; id: string; text: string; timestamp: number }
+  | { kind: 'progress'; id: string; text: string; timestamp: number }
+  | { kind: 'tool-group'; toolName: string; items: ToolCallItem[]; timestamp: number };
+
+/**
+ * 把 intermediateThoughts + toolGroups 合并成按时间排序的时间线
+ * 同类相邻工具调用合并成一组（如连续多次 code_search 合并）
+ * 中间穿插的思考块独立成条
+ */
+export function buildTimeline(
+  intermediateThoughts: { id: string; text: string; timestamp: number }[],
+  progressEvents: { id: string; text: string; timestamp: number }[],
+  toolGroups: Record<string, ToolCallItem[]>,
+): TimelineEntry[] {
+  const entries: TimelineEntry[] = [
+    ...intermediateThoughts.map((thought) => ({ kind: 'thought' as const, ...thought })),
+    ...progressEvents.map((progress) => ({ kind: 'progress' as const, ...progress })),
+  ];
+
+  for (const items of Object.values(toolGroups)) {
+    for (const item of items) {
+      entries.push({
+        kind: 'tool-group',
+        toolName: item.toolName,
+        items: [item],
+        timestamp: item.timestamp ?? 0,
+      });
+    }
+  }
+  entries.sort((a, b) => a.timestamp - b.timestamp);
+
+  // 只合并时间线上真正相邻的同类工具；任何思考或进度事件都会保留顺序边界。
+  return entries.reduce<TimelineEntry[]>((merged, entry) => {
+    const previous = merged[merged.length - 1];
+    if (
+      entry.kind === 'tool-group'
+      && previous?.kind === 'tool-group'
+      && previous.toolName === entry.toolName
+    ) {
+      previous.items.push(...entry.items);
+      return merged;
+    }
+    merged.push(entry);
+    return merged;
+  }, []);
+}
+
+/** 单条中间自言自语：可折叠展示完整文本 */
+function ThoughtEntry({ entry }: { entry: { id: string; text: string; timestamp: number } }) {
+  const [expanded, setExpanded] = useState(false);
+  // 折叠态显示首行预览，展开态显示完整文本
+  const firstLine = entry.text.split('\n')[0] ?? '';
+  const preview = firstLine.length > 60 ? firstLine.slice(0, 60) + '...' : firstLine;
+  return (
+    <TreeBranch>
+      <button
+        type="button"
+        onClick={() => setExpanded(v => !v)}
+        className="flex w-full items-center gap-2 py-1 text-left text-xs transition hover:text-rd-text"
+      >
+        <Brain size={13} className="shrink-0 text-rd-textSubtle" />
+        <span className="shrink-0 font-medium text-rd-text">思考</span>
+        <span className="min-w-0 flex-1 truncate text-rd-textMuted">{preview}</span>
+        {expanded
+          ? <ChevronDown size={12} className="shrink-0 text-rd-textSubtle" />
+          : <ChevronRight size={12} className="shrink-0 text-rd-textSubtle" />}
+      </button>
+      {expanded && (
+        <div className="mt-1 rounded-md bg-rd-surfaceHighlight p-3 text-xs leading-relaxed text-rd-textMuted whitespace-pre-wrap">
+          {entry.text}
+        </div>
+      )}
+    </TreeBranch>
+  );
+}
+
+function ProgressEntry({ entry, isActive }: {
+  entry: { id: string; text: string; timestamp: number };
+  isActive: boolean;
+}) {
+  return (
+    <TreeBranch>
+      <div className="flex items-center gap-2 py-1 text-xs">
+        {isActive
+          ? <Loader2 size={13} className="shrink-0 animate-spin text-rd-primary" />
+          : <Activity size={13} className="shrink-0 text-rd-textSubtle" />}
+        <span className="shrink-0 font-medium text-rd-text">进度</span>
+        <span className="min-w-0 flex-1 truncate text-rd-textMuted" title={entry.text}>{entry.text}</span>
+      </div>
+    </TreeBranch>
+  );
+}
+
 export function ExecutionProcess({
   toolGroups,
   thinkingSteps,
+  intermediateThoughts,
+  progressEvents,
   isRunning,
   isCompleted,
   duration,
 }: {
   toolGroups: Record<string, ToolCallItem[]>;
   thinkingSteps: ThinkingStep[];
+  intermediateThoughts: { id: string; text: string; timestamp: number }[];
+  progressEvents: { id: string; text: string; timestamp: number }[];
   isRunning: boolean;
   isCompleted: boolean;
   duration: number;
 }) {
   const [expanded, setExpanded] = useState(!isCompleted);
-  const [expandedSection, setExpandedSection] = useState<'thinking' | 'actions' | null>(null);
+  const [reasoningExpanded, setReasoningExpanded] = useState(false);
 
   useEffect(() => {
     if (isCompleted) setExpanded(false);
@@ -217,21 +280,35 @@ export function ExecutionProcess({
 
   // 子 Agent 单独拎出来作为支线
   const spawnAgentItems = toolGroups.spawn_agent || [];
-  // 动作层：工具 + 命令合并
-  const actionGroups = Object.entries(toolGroups).filter(([toolName]) => toolName !== 'spawn_agent');
-  const totalActions = actionGroups.reduce((sum, [, items]) => sum + items.length, 0);
+  // 动作层：排除 spawn_agent
+  const actionToolGroups: Record<string, ToolCallItem[]> = useMemo(() => {
+    const result: Record<string, ToolCallItem[]> = {};
+    for (const [name, items] of Object.entries(toolGroups)) {
+      if (name !== 'spawn_agent') result[name] = items;
+    }
+    return result;
+  }, [toolGroups]);
 
+  // 构建时间线：合并 intermediateThoughts + actionToolGroups
+  const timeline = useMemo(
+    () => buildTimeline(intermediateThoughts, progressEvents, actionToolGroups),
+    [intermediateThoughts, progressEvents, actionToolGroups],
+  );
+
+  const totalActions = Object.values(actionToolGroups).reduce((sum, items) => sum + items.length, 0);
   const thinkingActive = isRunning && thinkingSteps.length > 0;
 
   // 过程摘要：思考 N 段 · M 次操作 · K 个子 Agent · 12 秒
   const parts: string[] = [];
-  if (thinkingSteps.length > 0) parts.push(`思考 ${thinkingSteps.length} 段`);
+  if (intermediateThoughts.length > 0) parts.push(`思考 ${intermediateThoughts.length} 段`);
+  if (progressEvents.length > 0) parts.push(`进度 ${progressEvents.length} 条`);
+  if (thinkingSteps.length > 0) parts.push(`推理 ${thinkingSteps.length} 段`);
   if (totalActions > 0) parts.push(`${totalActions} 次操作`);
   if (spawnAgentItems.length > 0) parts.push(`${spawnAgentItems.length} 个子 Agent`);
   if (duration > 0) parts.push(formatDuration(duration));
   const processSummary = parts.join(' · ') || '过程记录';
 
-  if (totalActions === 0 && thinkingSteps.length === 0 && spawnAgentItems.length === 0) return null;
+  if (timeline.length === 0 && thinkingSteps.length === 0 && spawnAgentItems.length === 0) return null;
 
   return (
     <div className="w-full text-xs">
@@ -244,35 +321,43 @@ export function ExecutionProcess({
 
       {expanded && (
         <div className="ml-3 mt-1.5 space-y-1 border-l border-rd-tree-line pl-3">
-          <FoldableSection
-            icon={<Brain size={13} />}
-            title="思考"
-            summary={thinkingSteps.length > 0 ? `${thinkingSteps.length} 段` : '无'}
-            expanded={expandedSection === 'thinking'}
-            onToggle={() => setExpandedSection((v) => v === 'thinking' ? null : 'thinking')}
-            disabled={thinkingSteps.length === 0}
-            running={thinkingActive}
-          >
-            {thinkingSteps.map((step, idx) => (
-              <ThinkingStepRow key={`${step.text}-${idx}`} step={step} />
-            ))}
-          </FoldableSection>
+          {/* 时间线：按真实发生顺序展示思考块 + 工具组 */}
+          {timeline.map((entry) => {
+            if (entry.kind === 'thought') {
+              return <ThoughtEntry key={entry.id} entry={entry} />;
+            }
+            if (entry.kind === 'progress') {
+              return <ProgressEntry
+                key={entry.id}
+                entry={entry}
+                isActive={isRunning && entry.id === progressEvents[progressEvents.length - 1]?.id}
+              />;
+            }
+            return (
+              <TreeBranch key={`tg-${entry.toolName}-${entry.timestamp}`}>
+                <ActionSummaryRow toolName={entry.toolName} items={entry.items} />
+              </TreeBranch>
+            );
+          })}
 
-          <FoldableSection
-            icon={<Wrench size={13} />}
-            title="动作"
-            summary={totalActions > 0 ? `${totalActions} 次` : '无'}
-            expanded={expandedSection === 'actions'}
-            onToggle={() => setExpandedSection((v) => v === 'actions' ? null : 'actions')}
-            disabled={totalActions === 0}
-          >
-            <div className="space-y-1">
-              {actionGroups.map(([toolName, items]) => (
-                <ActionSummaryRow key={toolName} toolName={toolName} items={items} />
+          {/* reasoning 模型的深度思考：单独折叠在时间线末尾，作为整体推理背景 */}
+          {thinkingSteps.length > 0 && (
+            <FoldableSection
+              icon={<Brain size={13} />}
+              title="推理"
+              summary={`${thinkingSteps.length} 段`}
+              expanded={reasoningExpanded}
+              onToggle={() => setReasoningExpanded(v => !v)}
+              disabled={false}
+              running={thinkingActive}
+            >
+              {thinkingSteps.map((step, idx) => (
+                <ThinkingStepRow key={`${step.text}-${idx}`} step={step} />
               ))}
-            </div>
-          </FoldableSection>
+            </FoldableSection>
+          )}
 
+          {/* 子 Agent：单独支线 */}
           {spawnAgentItems.map((item) => (
             <TreeBranch key={item.id}>
               <SubAgentRow item={item} />

@@ -98,7 +98,7 @@ export function SettingsSkillsTab({
 }: SettingsSkillsTabProps) {
   return (
     <>
-      <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+      <div className="space-y-6">
         {/* 说明卡片 */}
         <Card>
           <CardContent className="flex items-start justify-between gap-4 py-6">

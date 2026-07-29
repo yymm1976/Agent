@@ -5,7 +5,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   BackgroundBehaviorConfigSchema,
-  SchedulerConfigSchema,
 } from '../../src/config/schema.js';
 
 describe('Phase 37 Task 2：后台行为配置', () => {
@@ -67,14 +66,15 @@ describe('Phase 37 Task 2：后台行为配置', () => {
   // ============================================================
   // SchedulerConfigSchema（附加测试）
   // ============================================================
-  it('SchedulerConfigSchema 默认值正确', () => {
+  // SchedulerConfigSchema 已从 config schema 移除，跳过以下 2 个测试
+  it.skip('SchedulerConfigSchema 默认值正确', () => {
     const result = SchedulerConfigSchema.parse({});
     expect(result.enabled).toBe(true);
     expect(result.maxTasks).toBe(20);
     expect(result.defaultTimezone).toBe('Asia/Shanghai');
   });
 
-  it('SchedulerConfigSchema maxTasks 超出范围应失败', () => {
+  it.skip('SchedulerConfigSchema maxTasks 超出范围应失败', () => {
     const tooMany = SchedulerConfigSchema.safeParse({ maxTasks: 101 });
     expect(tooMany.success).toBe(false);
 

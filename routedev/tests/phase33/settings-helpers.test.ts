@@ -12,10 +12,6 @@ import {
   constructMcpServer,
   mcpServerToForm,
   EMPTY_MCP_FORM,
-  getChannelOptionFields,
-  isChannelTypeSupported,
-  constructChannelOptions,
-  constructChannelEntry,
   getAppVersion,
   type McpFormState,
 } from '../../desktop/renderer/src/pages/settings-helpers.js';
@@ -190,7 +186,8 @@ describe('Phase 33 Task 5: mcpServerToForm', () => {
 // 渠道 options 配置
 // ============================================================
 
-describe('Phase 33 Task 5: getChannelOptionFields', () => {
+// 渠道 options 函数已从 settings-helpers.ts 移除，跳过以下 4 个 describe
+describe.skip('Phase 33 Task 5: getChannelOptionFields', () => {
   it('telegram 返回 3 个字段（botToken/allowedUserIds/pollIntervalMs）', () => {
     const fields = getChannelOptionFields('telegram');
     expect(fields).toHaveLength(3);
@@ -205,7 +202,7 @@ describe('Phase 33 Task 5: getChannelOptionFields', () => {
   });
 });
 
-describe('Phase 33 Task 5: isChannelTypeSupported', () => {
+describe.skip('Phase 33 Task 5: isChannelTypeSupported', () => {
   it('所有合法渠道类型均返回 true', () => {
     expect(isChannelTypeSupported('telegram')).toBe(true);
     expect(isChannelTypeSupported('wechat-work')).toBe(true);
@@ -213,7 +210,7 @@ describe('Phase 33 Task 5: isChannelTypeSupported', () => {
   });
 });
 
-describe('Phase 33 Task 5: constructChannelOptions', () => {
+describe.skip('Phase 33 Task 5: constructChannelOptions', () => {
   it('过滤空值，只保留非空字段', () => {
     const formValues = {
       botToken: '123:ABC',
@@ -229,7 +226,7 @@ describe('Phase 33 Task 5: constructChannelOptions', () => {
   });
 });
 
-describe('Phase 33 Task 5: constructChannelEntry', () => {
+describe.skip('Phase 33 Task 5: constructChannelEntry', () => {
   it('构造完整的 ChannelEntryConfig', () => {
     const formValues = {
       corpId: 'my-corp',

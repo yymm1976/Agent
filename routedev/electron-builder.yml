@@ -5,7 +5,7 @@ asar: true
 asarUnpack:
   - node_modules/tiktoken/**/*
 directories:
-  output: release-v6
+  output: release-v25
   buildResources: build
 files:
   - out/main/**/*
@@ -24,6 +24,9 @@ win:
     - target: nsis
       arch:
         - x64
+    - target: portable
+      arch:
+        - x64
   signAndEditExecutable: false
   icon: build/icon.ico
 nsis:
@@ -31,6 +34,8 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: always
   createStartMenuShortcut: true
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}
 mac:
   target:
     - dmg

@@ -22,7 +22,6 @@ export type UsageEvent =
   | { kind: 'tool'; name: string }
   | { kind: 'command'; name: string }
   | { kind: 'pack'; name: string; action: 'load' | 'skip' }
-  // 预留扩展点：Phase 81+ 配置门控开关计数，当前类型已定义但生产暂未接入
   | { kind: 'config_gate'; name: string; enabled: boolean };
 
 // ============================================================
@@ -40,7 +39,6 @@ export type UsageEvent =
  *   - tool:file_read
  *   - command:/help
  *   - pack:multi-agent:load
- *   - config_gate:vision:false
  */
 export class UsageCounter {
   /** 计数表（key → 累计次数） */

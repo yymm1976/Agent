@@ -25,8 +25,11 @@ const goldenDataset = JSON.parse(
 
 describe('Phase 32 Task 3.1: Classifier Golden Dataset Eval', () => {
   // 无 LLM 客户端的分类器——仅使用规则引擎 + 关键词 + 长度启发式
+  // Phase 81 引入 simpleRoutingEnabled（默认 true，medium/reasoning → complex），
+  // 本测试验证原四级 tier 分类，显式关闭以保持测试基线
   const classifier = new ScenarioClassifier({
     classifierModel: 'gpt-4o-mini',
+    simpleRoutingEnabled: false,
     // llmClient 不设置——强制走规则路径，保证测试确定性
   });
 
@@ -64,6 +67,9 @@ function createRouterConfig(): RouterConfig {
     ],
     budget: { dailyLimitTokens: 1000000, warningThreshold: 0.8 },
     fallback: { enabled: true, modelId: 'gpt-4o-mini' },
+    // Phase 81 引入 simpleRoutingEnabled（默认 true，medium/reasoning → complex），
+    // 本测试验证原四级 tier 路由，显式关闭
+    simpleRoutingEnabled: false,
   } as any;
 }
 

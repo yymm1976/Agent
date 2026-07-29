@@ -38,7 +38,7 @@ export function SettingsRouterTab({
   removeRule,
 }: SettingsRouterTabProps) {
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>路由偏好</CardTitle>
@@ -59,7 +59,7 @@ export function SettingsRouterTab({
                   <SelectItem key={m.id} value={m.id}>{m.name || m.id}</SelectItem>
                 ))}
               </Select>
-              <p className="text-xs text-rd-textMuted">判断用户请求复杂度等级的模型，建议选最便宜的模型以节省成本。</p>
+              <p className="text-xs text-rd-textMuted">分类器模型，需启用 LLM 分类器后才会调用，默认走关键词匹配</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="router-preference">用户偏好</Label>
@@ -67,12 +67,13 @@ export function SettingsRouterTab({
                 id="router-preference"
                 value={draft.router.userPreference}
                 onChange={(e) => updateDraft({ router: { ...draft.router, userPreference: e.target.value as 'saving' | 'balanced' | 'premium' } })}
+                disabled
               >
                 <SelectItem value="saving">省钱</SelectItem>
                 <SelectItem value="balanced">平衡</SelectItem>
                 <SelectItem value="premium">高质量</SelectItem>
               </Select>
-              <p className="text-xs text-rd-textMuted">同等级任务有多个候选模型时，优先选便宜还是高质量的模型。</p>
+              <p className="text-xs text-rd-textMuted">暂未实现</p>
             </div>
           </div>
         </CardContent>
@@ -115,7 +116,7 @@ export function SettingsRouterTab({
                 value={draft.router.budget.perRequestLimit ?? ''}
                 onChange={(e) => updateBudget({ perRequestLimit: e.target.value ? Number(e.target.value) : undefined })}
               />
-              <p className="text-xs text-rd-textMuted">单次请求 Token 上限，超过会自动截断或降级。留空表示不限制。</p>
+              <p className="text-xs text-rd-textMuted">单次请求 Token 上限，事后检查超限则在 enforce 模式下让下次请求降级，留空不检查</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="budget-threshold">降级阈值: {draft.router.budget.degradationThreshold.toFixed(2)}</Label>
@@ -129,7 +130,7 @@ export function SettingsRouterTab({
                 onChange={(e) => updateBudget({ degradationThreshold: Number(e.target.value) })}
                 className="mt-2 w-full accent-rd-primary"
               />
-              <p className="text-xs text-rd-textMuted">日用量达到此比例时开始降级到更便宜的模型。0.8 表示用到 80% 时触发。</p>
+              <p className="text-xs text-rd-textMuted">日用量达到此比例时记录告警，达到 100% 时才在 enforce 模式下降级</p>
             </div>
           </div>
         </CardContent>
@@ -149,7 +150,10 @@ export function SettingsRouterTab({
             <div className="overflow-hidden rounded-lg border border-rd-border">
               {/* 列宽分配：任务等级 3 / 主选模型 8 / 操作 1 */}
               <div className="grid grid-cols-12 gap-2 border-b border-rd-border bg-rd-surface px-3 py-2 text-xs font-semibold text-rd-textMuted">
-                <div className="col-span-3">任务等级</div>
+                <div className="col-span-3">
+                  任务等级
+                  <p className="mt-0.5 text-xs font-normal text-rd-textMuted">默认 medium/reasoning 会折叠到 complex</p>
+                </div>
                 <div className="col-span-8">主选模型</div>
                 <div className="col-span-1 text-right">操作</div>
               </div>

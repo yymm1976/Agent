@@ -87,8 +87,10 @@ export function createRouterSubsystem(ctx: InitContext): Partial<AppDependencies
     });
   }
 
-  // ===== Phase 61：ACRouter 闭环模型路由（config.closedLoopRouting.enabled 守护） =====
-  // 原为返回语句中的 IIFE，现迁移到路由子系统
+  // ===== Phase 61：ACRouter 闭环模型路由 =====
+  // TD-25 解冻：packs.acRouter.enabled 默认 true（从 freeze 提升为 standard-pack）
+  // 有效门控仅为 closedLoopRouting.enabled（默认 false，用户显式启用后 /goal 路径使用 ACRouter）
+  // 架构全程 fail-open：orchestrator 路由失败自动回退到基础 modelRouter.route()
   const clrCfg = config.closedLoopRouting;
   let routingHistory: RoutingHistory | undefined;
   let routingMemory: RoutingMemory | undefined;

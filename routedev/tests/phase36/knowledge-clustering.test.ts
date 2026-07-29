@@ -4,8 +4,11 @@
 // Phase 57：原 dream-to-graph 改名 consolidation，去拟人化措辞
 
 import { describe, it, expect } from 'vitest';
-import { KnowledgeGraph } from '../../src/agent/memory/graph.js';
+import { KnowledgeGraph, initKnowledgeGraphAdvanced } from '../../src/agent/memory/graph.js';
 import type { GraphNode, GraphEdge } from '../../src/agent/memory/graph.js';
+
+// 装配 detectCommunities / clusterSimilarNodes 等高级方法（kgAdvanced pack 默认不装配）
+initKnowledgeGraphAdvanced();
 
 // ============================================================
 // 测试辅助

@@ -107,9 +107,7 @@ describe('Phase 32 Task 5.3: Token Tracker 双计数修复', () => {
     expect(tracker.getTaskUsagePercent()).toBeGreaterThan(0);
 
     // 调用 recordTaskUsage()——只查询状态，不累加（避免双计数）
-    const status = tracker.recordTaskUsage(
-      { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-    );
+    const status = tracker.recordTaskUsage();
 
     // 使用百分比应 > 0（基于 record 累加的 taskSpent）
     expect(tracker.getTaskUsagePercent()).toBeGreaterThan(0);

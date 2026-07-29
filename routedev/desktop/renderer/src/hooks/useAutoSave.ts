@@ -5,7 +5,7 @@
 import { useState, useEffect, type RefObject, type Dispatch, type SetStateAction } from 'react';
 import type { AppConfig } from '../../../shared/config-types.js';
 import type { ConfigSaveResult } from '../../../shared/ipc-types.js';
-import { cleanDraftForSave, deepClone } from '../pages/settings-helpers.js';
+import { cleanDraftForSave } from '../pages/settings-helpers.js';
 
 /** 保存提示类型 */
 export type SaveResult = { success: boolean; message: string } | null;
@@ -17,8 +17,6 @@ interface UseAutoSaveOptions {
   setDraft: Dispatch<SetStateAction<AppConfig | null>>;
   /** 脏标记 ref（来自 useSettingsDraft，标识是否有未保存改动） */
   dirtyRef: RefObject<boolean>;
-  /** 跳过同步标记 ref（来自 useSettingsDraft，保存成功后跳过一次 config→draft 同步） */
-  skipSyncRef: RefObject<boolean>;
   /** 已保存的 config（用于卸载时恢复预览主题） */
   config: AppConfig | null;
   /** 保存配置的 IPC 调用 */
@@ -41,7 +39,7 @@ interface UseAutoSaveOptions {
  * 注：saveResult/saveResult 由主组件管理，本 hook 仅消费并触发其变化
  */
 export function useAutoSave({
-  draft, setDraft, dirtyRef, skipSyncRef,
+  draft, setDraft, dirtyRef,
   config, saveConfig, reloadConfig, saveResult, setSaveResult,
 }: UseAutoSaveOptions) {
   const [saving, setSaving] = useState(false);
@@ -59,22 +57,9 @@ export function useAutoSave({
     // Phase 74-G：保存前清理逻辑已抽离到 settings-helpers.ts 的 cleanDraftForSave
     const cleanedDraft = cleanDraftForSave(draft);
     setSaving(true);
+    // store.saveConfig 内部已调用 config:reload 并更新 store.config，
+    // 此处无需再调用 reloadConfig，避免双重 reload 导致 config 引用二次变化
     const result = await saveConfig(cleanedDraft);
-    // G-016：saveConfig 仅更新内存，需显式调用 reloadConfig 才能重建 deps
-    // 仅当主进程标记 needsReload 时才调用，避免无谓的重载
-    if (result.success && result.needsReload && reloadConfig) {
-      try {
-        await reloadConfig();
-      } catch (err) {
-        console.error('[SettingsPage] reloadConfig 失败:', err);
-        setSaving(false);
-        setSaveResult({
-          success: true,
-          message: `配置已保存，但热重载失败: ${err instanceof Error ? err.message : String(err)}。重启应用后生效。`,
-        });
-        return;
-      }
-    }
     setSaving(false);
     if (!silent || !result.success) {
       setSaveResult({
@@ -82,15 +67,16 @@ export function useAutoSave({
         message: result.success ? '配置已自动保存并热重载' : `保存失败: ${result.error ?? '未知错误'}`,
       });
     }
-    // 保存成功后跳过 config→draft 同步，保留用户正在编辑的 draft
-    // draft 保留原始内容（包括未通过校验的 Provider），避免用户看到表单清空
     if (result.success) {
-      skipSyncRef.current = true;
+      // 保存成功：重置 dirtyRef，让 config→draft 同步 effect 能正常工作
+      // store.saveConfig 内部已 reload，config 变化会触发 useSettingsDraft 同步 draft
+      // useSettingsDraft 的 dirtyRef 守卫会保护用户在同步窗口内的编辑
       dirtyRef.current = false;
-      // 用 cleanedDraft 更新 draft（已保存的有效 Provider 用清理后的版本）
-      // 但保留未通过校验的 Provider，让用户继续编辑
-      const failedProviders = draft.providers.filter((p) => !p.apiKey.trim());
-      setDraft(deepClone({ ...cleanedDraft, providers: [...cleanedDraft.providers, ...failedProviders], router: { ...cleanedDraft.router, fallbackChain: draft.router.fallbackChain ?? [] } }));
+    } else {
+      // Bug 修复：保存失败时保留 dirtyRef=true，确保用户后续编辑或手动保存能再次触发
+      // 之前重置 dirtyRef=false 会导致用户不修改字段就无法再次自动保存
+      // 保存失败的原因可能是临时性的（如 URL 输入到一半 schema 校验失败），
+      // 保留 dirtyRef 让用户继续编辑后能自动重试保存
     }
   };
 
@@ -105,13 +91,15 @@ export function useAutoSave({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
 
-  // 主题和字体大小实时预览：draft 变化时立即应用到 <html>，无需先保存
+  // 主题、字体大小和主题色实时预览：draft 变化时立即应用到 <html>，无需先保存
   useEffect(() => {
     if (!draft) return;
     const root = document.documentElement;
     root.setAttribute('data-theme', draft.general.appearanceTheme);
     root.style.setProperty('--rd-font-size', `${draft.general.fontSize}px`);
-  }, [draft?.general.appearanceTheme, draft?.general.fontSize]);
+    // 同步主题色到 CSS 变量，留空则清除自定义值回退到预设
+    root.style.setProperty('--rd-primary', draft.general.accentColor || '');
+  }, [draft?.general.appearanceTheme, draft?.general.fontSize, draft?.general.accentColor]);
 
   // 组件卸载时恢复到已保存的 config 值（若用户未保存则回退预览）
   useEffect(() => {

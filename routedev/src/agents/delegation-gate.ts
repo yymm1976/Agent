@@ -26,11 +26,14 @@ type DelegationGateRules = Record<AgentRole, DelegationGateRule>;
 /** 默认门控规则 */
 export const DEFAULT_GATE_RULES: DelegationGateRules = {
   researcher: { when: ['need_facts', 'impact_analysis', 'unknown_domain'], maxParallel: 3, requires: ['task_description'] },
-  executor: { when: ['design_confirmed', 'task_isolated'], maxParallel: 2, requires: ['design_doc', 'write_file_list'] },
-  reviewer: { when: ['after_execution', 'before_merge'], maxParallel: 2, requires: ['diff', 'design_doc'] },
+  // Phase 94：审阅链流程放宽——executor 只需 task_description（design_doc / write_file_list 由 planner 输出后在 prompt 中传递，不强制为结构化字段）
+  executor: { when: ['design_confirmed', 'task_isolated'], maxParallel: 2, requires: ['task_description'] },
+  // Phase 94：reviewer 只需 task_description（diff / design_doc 由 coder 产出后在 prompt 中传递，不强制为结构化字段）
+  reviewer: { when: ['after_execution', 'before_merge'], maxParallel: 2, requires: ['task_description'] },
   // TD-01：补齐扩展角色门控规则
   planner: { when: ['need_plan', 'task_decomposition'], maxParallel: 2, requires: ['task_description'] },
-  verifier: { when: ['after_execution', 'need_verification'], maxParallel: 2, requires: ['diff', 'design_doc'] },
+  // Phase 94：verifier 同 reviewer，放宽 diff / design_doc 要求
+  verifier: { when: ['after_execution', 'need_verification'], maxParallel: 2, requires: ['task_description'] },
   synthesizer: { when: ['need_synthesis', 'multi_source_merge'], maxParallel: 2, requires: ['task_description'] },
   'review-planner': { when: ['before_execution', 'plan_review'], maxParallel: 2, requires: ['task_description'] },
   custom: { when: ['manual'], maxParallel: 2, requires: ['task_description'] },

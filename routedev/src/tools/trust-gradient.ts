@@ -13,9 +13,7 @@
 import type { AutonomyMode } from '../config/schema.js';
 import { logger } from '../utils/logger.js';
 import { createHash } from 'node:crypto';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { safeWriteJSONSync } from '../utils/safe-write.js';
+import type { ProjectTrustStore } from './project-trust-store.js';
 
 /**
  * 7 级信任梯度（借鉴 Claude Code）
@@ -30,17 +28,6 @@ import { safeWriteJSONSync } from '../utils/safe-write.js';
  *   7. trusted       — 完全信任（仅用于测试环境）
  */
 export type TrustLevel = 'plan' | 'default' | 'acceptEdits' | 'acceptAll' | 'auto' | 'bypassPermissions' | 'trusted';
-
-/** 信任级别排序（数字越大越宽松） */
-const TRUST_LEVEL_ORDER: Record<TrustLevel, number> = {
-  plan: 0,
-  default: 1,
-  acceptEdits: 2,
-  acceptAll: 3,
-  auto: 4,
-  bypassPermissions: 5,
-  trusted: 6,
-};
 
 /**
  * 五级操作风险分类（Phase 40 Task 1）
@@ -73,15 +60,6 @@ const TRUST_RISK_TOLERANCE: Record<TrustLevel, RiskLevel[]> = {
   trusted: ['read', 'write', 'execute', 'network', 'push'],
 };
 
-/** 所有风险级别按严重程度排序（用于比较） */
-const RISK_SEVERITY: Record<RiskLevel, number> = {
-  read: 0,
-  write: 1,
-  execute: 2,
-  network: 3,
-  push: 4,
-};
-
 /** 临时授权记录（会话级，resume 时不恢复） */
 interface TemporaryGrant {
   toolName: string;
@@ -91,20 +69,6 @@ interface TemporaryGrant {
   expiresAt: number;
   /** 路径前缀（可选，用于前缀匹配——对路径参数做前缀放行） */
   pathPrefix?: string;
-}
-
-/** 持久化偏好记录（写入 .routedev/trust-preferences.json） */
-interface TrustPreference {
-  /** 工具名 pattern（如 "file_write"） */
-  toolPattern: string;
-  /** 参数 pattern（可选，如路径前缀 "src/utils/"） */
-  argsPattern?: string;
-  /** 风险级别 */
-  riskLevel: RiskLevel;
-  /** 授予时间戳 */
-  grantedAt: number;
-  /** 过期时间戳（可选，不填表示永久） */
-  expiresAt?: number;
 }
 
 /** 默认临时授权有效期：30 分钟 */
@@ -127,6 +91,17 @@ export class TrustGradientManager {
   private sessionId: string;
   /** P6：临时授权 Map 上限（超出时淘汰最旧的未过期项） */
   private readonly maxGrants = 1000;
+  /**
+   * P2-8：可选的持久化仓库
+   *
+   * 注入后：
+   *   - setLevel 自动调用 store.save(cwd, level) 持久化到 .routedev/trust.json
+   *   - 启动时可通过 loadInheritedFromStore() 加载继承的级别
+   * 未注入时（默认）：保持纯内存行为，向后兼容
+   */
+  private trustStore: ProjectTrustStore | null = null;
+  /** P2-8：当前工作目录（持久化用） */
+  private cwd: string | null = null;
 
   constructor(sessionId: string) {
     this.sessionId = sessionId;
@@ -135,6 +110,45 @@ export class TrustGradientManager {
   /** 获取当前信任级别 */
   getLevel(): TrustLevel {
     return this.currentLevel;
+  }
+
+  /**
+   * P2-8：注入 ProjectTrustStore 并设置当前工作目录
+   *
+   * 注入后 setLevel 会自动持久化到 cwd/.routedev/trust.json
+   * 不自动加载（loadInheritedFromStore 由调用方显式触发，避免构造期 IO）
+   *
+   * @param store 信任仓库实例
+   * @param cwd 当前工作目录绝对路径
+   */
+  attachPersistence(store: ProjectTrustStore, cwd: string): void {
+    this.trustStore = store;
+    this.cwd = cwd;
+    logger.debug('TrustGradientManager: persistence attached', { cwd });
+  }
+
+  /**
+   * P2-8：从 store 加载继承的信任级别
+   *
+   * 调用 store.findInherited(cwd) 向上查找最近的 .routedev/trust.json，
+   * 找到时把当前级别设为该值；找不到时保持默认。
+   *
+   * 设计：仅恢复"信任级别"这一持久化字段，不恢复临时授权
+   * （保持 Claude Code 的"resume 时不恢复权限"设计）
+   *
+   * @returns 加载来源信息（含 sourcePath / isLocal）
+   */
+  async loadInheritedFromStore(): Promise<{ sourcePath: string | null; isLocal: boolean } | null> {
+    if (!this.trustStore || !this.cwd) return null;
+    const inherited = await this.trustStore.findInherited(this.cwd);
+    this.currentLevel = inherited.level;
+    logger.info('Trust level loaded from store (inherited)', {
+      level: inherited.level,
+      sourcePath: inherited.sourcePath,
+      isLocal: inherited.isLocal,
+      session: this.sessionId,
+    });
+    return { sourcePath: inherited.sourcePath, isLocal: inherited.isLocal };
   }
 
   /** 设置信任级别 */
@@ -146,6 +160,16 @@ export class TrustGradientManager {
       session: this.sessionId,
     });
     this.currentLevel = level;
+    // P2-8：注入了 store 时持久化到磁盘（fire-and-forget，不阻塞调用方）
+    if (this.trustStore && this.cwd) {
+      this.trustStore.save(this.cwd, level).catch((err) => {
+        logger.warn('TrustGradientManager: failed to persist trust level', {
+          cwd: this.cwd,
+          level,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
   }
 
   /**
@@ -364,91 +388,6 @@ export class TrustGradientManager {
   /** 获取当前临时授权数量（用于测试） */
   getTemporaryGrantsCount(): number {
     return this.temporaryGrants.size;
-  }
-
-  /**
-   * 获取已记忆的偏好列表（用于 /trust prefs 命令）
-   * @returns 偏好记录数组
-   */
-  getPreferences(): TrustPreference[] {
-    const prefs: TrustPreference[] = [];
-    for (const [, grant] of this.temporaryGrants) {
-      prefs.push({
-        toolPattern: grant.toolName,
-        argsPattern: grant.pathPrefix,
-        riskLevel: this.classifyRisk(grant.toolName, {}),
-        grantedAt: grant.grantedAt,
-        expiresAt: grant.expiresAt,
-      });
-    }
-    return prefs.sort((a, b) => b.grantedAt - a.grantedAt);
-  }
-
-  /**
-   * 持久化偏好到 .routedev/trust-preferences.json
-   *
-   * V2-018：使用统一的原子写入工具（tmp + rename + 残留清理 + rename 失败回滚），
-   * 替换原有的内联 tmp+rename 实现。原实现缺少 rename 失败时的临时文件清理。
-   *
-   * @param dirPath 项目根目录路径
-   */
-  savePreferences(dirPath: string): void {
-    const prefDir = path.join(dirPath, '.routedev');
-    const prefPath = path.join(prefDir, 'trust-preferences.json');
-
-    // 确保目录存在
-    fs.mkdirSync(prefDir, { recursive: true });
-
-    const prefs = this.getPreferences();
-    safeWriteJSONSync(prefPath, prefs, { spaces: 2 });
-
-    logger.info('Trust preferences saved', { count: prefs.length, path: prefPath });
-  }
-
-  /**
-   * 从 .routedev/trust-preferences.json 加载偏好
-   *
-   * @param dirPath 项目根目录路径
-   * @returns 加载的偏好数量（文件不存在时返回 0）
-   */
-  loadPreferences(dirPath: string): number {
-    const prefPath = path.join(dirPath, '.routedev', 'trust-preferences.json');
-
-    if (!fs.existsSync(prefPath)) {
-      return 0;
-    }
-
-    let prefs: TrustPreference[];
-    try {
-      const raw = fs.readFileSync(prefPath, 'utf-8');
-      prefs = JSON.parse(raw) as TrustPreference[];
-    } catch (err) {
-      logger.warn('Failed to load trust preferences, ignoring', { error: String(err) });
-      return 0;
-    }
-
-    if (!Array.isArray(prefs)) return 0;
-
-    const now = Date.now();
-    let loaded = 0;
-    for (const pref of prefs) {
-      // 跳过已过期的偏好
-      if (pref.expiresAt && now > pref.expiresAt) continue;
-
-      // 将偏好还原为临时授权
-      const args: Record<string, unknown> = {};
-      if (pref.argsPattern) {
-        args.path = pref.argsPattern;
-      }
-      const ttlMs = pref.expiresAt ? pref.expiresAt - now : DEFAULT_GRANT_TTL_MS;
-      if (ttlMs <= 0) continue;
-
-      this.grantTemporary(pref.toolPattern, args, ttlMs);
-      loaded++;
-    }
-
-    logger.info('Trust preferences loaded', { count: loaded, path: prefPath });
-    return loaded;
   }
 
   /**

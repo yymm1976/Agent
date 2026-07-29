@@ -17,12 +17,16 @@ import type {
 import { logger } from '../utils/logger.js';
 // Phase 80 Task 2：本地使用计数器类型导入
 import type { UsageCounter } from '../observability/usage-counter.js';
+// Phase 89：注入 SecurityConfig 用于工具黑白名单检查
+import type { SecurityConfig } from '../config/schema-security.js';
 
 export class ToolExecutor implements IToolExecutor {
   private registry: IToolRegistry;
   private securityChecker?: ISecurityChecker;
   /** Phase 80 Task 2：本地使用计数器（可选，fail-open） */
   private usageCounter?: UsageCounter;
+  /** Phase 89：安全配置（工具黑白名单等），未注入时跳过名单检查 */
+  private securityConfig?: SecurityConfig;
 
   constructor(registry: IToolRegistry) {
     this.registry = registry;
@@ -35,6 +39,11 @@ export class ToolExecutor implements IToolExecutor {
   /** Phase 80 Task 2：注入使用计数器（由 app-init-tools 装配时调用） */
   setUsageCounter(counter: UsageCounter): void {
     this.usageCounter = counter;
+  }
+
+  /** Phase 89：注入安全配置（由 app-init-tools 装配时调用），供工具黑白名单检查使用 */
+  setSecurityConfig(config: SecurityConfig): void {
+    this.securityConfig = config;
   }
 
   async execute(
@@ -53,6 +62,33 @@ export class ToolExecutor implements IToolExecutor {
         error: `工具 "${toolName}" 未注册`,
         durationMs: Date.now() - startTime,
       };
+    }
+
+    // Phase 89：工具黑白名单检查（在 SecurityChecker 之前的额外检查）
+    // - toolBlacklist 命中则拒绝（支持通配符，如 mcp_*）
+    // - toolWhitelist 非空且未命中则拒绝
+    // - 未注入 securityConfig 时跳过名单检查（向后兼容）
+    if (this.securityConfig) {
+      const blacklist = this.securityConfig.toolBlacklist ?? [];
+      if (blacklist.some((p) => this.matchToolPattern(toolName, p))) {
+        logger.warn('Tool execution denied by toolBlacklist', { toolName });
+        return {
+          success: false,
+          output: '',
+          error: `工具 "${toolName}" 被黑名单拦截`,
+          durationMs: Date.now() - startTime,
+        };
+      }
+      const whitelist = this.securityConfig.toolWhitelist ?? [];
+      if (whitelist.length > 0 && !whitelist.some((p) => this.matchToolPattern(toolName, p))) {
+        logger.warn('Tool execution denied by toolWhitelist (not in whitelist)', { toolName });
+        return {
+          success: false,
+          output: '',
+          error: `工具 "${toolName}" 不在白名单中`,
+          durationMs: Date.now() - startTime,
+        };
+      }
     }
 
     try {
@@ -104,7 +140,7 @@ export class ToolExecutor implements IToolExecutor {
             };
           }
           // C3 修复：敏感文件 requiresConfirmation 透传
-          if (secResult.requiresConfirmation) {
+          if (secResult.requiresConfirmation && context.autonomyMode !== 'auto') {
             const confirmed = await this.requestConfirmation(context, secResult.reason ?? '敏感文件操作需确认');
             if (!confirmed) {
               return {
@@ -138,7 +174,7 @@ export class ToolExecutor implements IToolExecutor {
             };
           }
           // C3 修复：网络请求 requiresConfirmation 透传
-          if (secResult.requiresConfirmation) {
+          if (secResult.requiresConfirmation && context.autonomyMode !== 'auto') {
             const confirmed = await this.requestConfirmation(context, secResult.reason ?? '网络请求需确认');
             if (!confirmed) {
               return {
@@ -168,7 +204,7 @@ export class ToolExecutor implements IToolExecutor {
           };
         }
         // C3 修复：含管道/命令替换的命令 requiresConfirmation 透传
-        if (secResult.requiresConfirmation) {
+        if (secResult.requiresConfirmation && context.autonomyMode !== 'auto') {
           const confirmed = await this.requestConfirmation(context, secResult.reason ?? 'Shell 命令需确认');
           if (!confirmed) {
             return {
@@ -212,6 +248,19 @@ export class ToolExecutor implements IToolExecutor {
         durationMs: duration,
       };
     }
+  }
+
+  /**
+   * Phase 89：工具名通配符匹配
+   * - pattern 含 `*`：去掉所有 `*` 后做前缀匹配（如 `mcp_*` 匹配 `mcp_xxx`）
+   * - pattern 不含 `*`：精确匹配
+   */
+  private matchToolPattern(toolName: string, pattern: string): boolean {
+    if (pattern.includes('*')) {
+      const prefix = pattern.replace(/\*/g, '');
+      return toolName.startsWith(prefix);
+    }
+    return toolName === pattern;
   }
 
   /** 判断是否为文件操作类工具（P1-1：增加 list_directory） */

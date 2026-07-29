@@ -2,7 +2,7 @@
 // Google Gemini 原生协议客户端实现
 // API: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
 // 认证：x-goog-api-key header
-// 支持：非流式 generateContent、流式 streamGenerateContent (SSE)、system_instruction
+// 支持：非流式 generateContent、流式 streamGenerateContent (SSE)、system_instruction、工具调用 (function calling)
 
 import { BaseLLMClient } from './base.js';
 import type {
@@ -11,15 +11,18 @@ import type {
   LLMStreamEvent,
   LLMMessage,
   TokenUsageInfo,
+  ToolCallRequest,
 } from '../types.js';
 import { LLMError } from '../types.js';
 
 /** Gemini API 默认 base URL */
 const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
-/** Gemini content part（文本） */
+/** Gemini content part（文本或函数调用/响应） */
 interface GeminiPart {
-  text: string;
+  text?: string;
+  functionCall?: { name: string; args: Record<string, unknown> };
+  functionResponse?: { name: string; response: Record<string, unknown> };
 }
 
 /** Gemini content（一条消息） */
@@ -42,9 +45,18 @@ interface GeminiResponse {
   error?: { message?: string; status?: string };
 }
 
+/** 工具调用 ID 计数器（Gemini 不返回 call ID，自动生成） */
+let toolCallCounter = 0;
+
+/** 生成唯一工具调用 ID */
+function nextToolCallId(): string {
+  return `gemini-call-${Date.now()}-${++toolCallCounter}`;
+}
+
 /**
  * Google Gemini 协议客户端
  * 使用 Gemini 原生格式（contents/parts/candidates），不依赖 OpenAI 兼容接口
+ * 支持工具调用（function calling）
  */
 export class GeminiClient extends BaseLLMClient {
   readonly protocol = 'gemini' as const;
@@ -69,6 +81,14 @@ export class GeminiClient extends BaseLLMClient {
   }
 
   /**
+   * Phase 96 P1-4：Gemini list models 使用 x-goog-api-key header
+   * 覆盖基类的 Bearer 认证方式
+   */
+  protected override buildListModelsHeaders(): Record<string, string> {
+    return { 'x-goog-api-key': this.apiKey };
+  }
+
+  /**
    * 非流式调用
    */
   async complete(options: LLMRequestOptions): Promise<LLMResponse> {
@@ -81,7 +101,6 @@ export class GeminiClient extends BaseLLMClient {
     try {
       const url = `${this.baseUrl}/models/${encodeURIComponent(options.model)}:generateContent`;
       const body = this.buildRequestBody(options);
-      // V2-021 修复：透传 options.signal 到 fetchWithTimeout，支持取消请求
       const response = await this.fetchWithTimeout(
         url,
         {
@@ -98,14 +117,18 @@ export class GeminiClient extends BaseLLMClient {
 
       const data = await this.parseJsonResponse<GeminiResponse>(response, options.model);
       const content = this.extractText(data);
+      const toolCalls = this.extractToolCalls(data);
       const usage = this.extractUsage(data);
-      const finishReason = this.mapFinishReason(data.candidates?.[0]?.finishReason);
+      // 有工具调用时 finishReason 强制为 tool_use
+      const finishReason = toolCalls.length > 0
+        ? 'tool_use'
+        : this.mapFinishReason(data.candidates?.[0]?.finishReason);
 
       this.logResponse(options.model, usage, Date.now() - startTime);
 
       return {
         content,
-        toolCalls: [],
+        toolCalls,
         usage,
         finishReason,
         model: options.model,
@@ -128,7 +151,6 @@ export class GeminiClient extends BaseLLMClient {
     try {
       const url = `${this.baseUrl}/models/${encodeURIComponent(options.model)}:streamGenerateContent?alt=sse`;
       const body = this.buildRequestBody(options);
-      // V2-021 修复：透传 options.signal 到 fetchWithTimeout，支持流式取消
       const response = await this.fetchWithTimeout(
         url,
         {
@@ -160,8 +182,9 @@ export class GeminiClient extends BaseLLMClient {
       let inputTokens = 0;
       let outputTokens = 0;
       let lastFinishReason: 'stop' | 'tool_use' | 'length' | 'error' = 'stop';
+      let hasToolCalls = false;
 
-      // 解析 SSE 流：每条消息以 "data: " 开头，以空行分隔
+      // 解析 SSE 流
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -171,15 +194,14 @@ export class GeminiClient extends BaseLLMClient {
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
 
-        // 按行处理 SSE
         const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // 保留最后未完成的行
+        buffer = lines.pop() || '';
 
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed || !trimmed.startsWith('data: ')) continue;
 
-          const jsonStr = trimmed.slice(6); // 去掉 "data: " 前缀
+          const jsonStr = trimmed.slice(6);
           try {
             const chunk = JSON.parse(jsonStr) as GeminiResponse;
 
@@ -189,20 +211,27 @@ export class GeminiClient extends BaseLLMClient {
               yield { type: 'text_delta', text };
             }
 
-            // 提取 token 使用量（最后一个 chunk 通常包含 usageMetadata）
+            // 提取工具调用（Gemini 流式中 functionCall 整体返回，非增量）
+            const toolCalls = this.extractToolCalls(chunk);
+            for (const tc of toolCalls) {
+              hasToolCalls = true;
+              yield { type: 'tool_call_start', toolCall: { id: tc.id, name: tc.name } };
+              yield { type: 'tool_call_delta', toolCallId: tc.id, argumentsDelta: JSON.stringify(tc.arguments) };
+              yield { type: 'tool_call_end', toolCallId: tc.id };
+            }
+
+            // token 使用量
             if (chunk.usageMetadata) {
               inputTokens = chunk.usageMetadata.promptTokenCount ?? inputTokens;
               outputTokens = chunk.usageMetadata.candidatesTokenCount ?? outputTokens;
             }
 
-            // 提取 finishReason
+            // finishReason
             const fr = chunk.candidates?.[0]?.finishReason;
             if (fr) {
               lastFinishReason = this.mapFinishReason(fr);
             }
           } catch (e) {
-            // 跳过无法解析的 chunk（可能是心跳或部分数据）
-            // eslint-disable-next-line no-console
             console.warn(`[gemini-client] 跳过无法解析的 chunk: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
@@ -216,18 +245,27 @@ export class GeminiClient extends BaseLLMClient {
           if (text) {
             yield { type: 'text_delta', text };
           }
+          const toolCalls = this.extractToolCalls(chunk);
+          for (const tc of toolCalls) {
+            hasToolCalls = true;
+            yield { type: 'tool_call_start', toolCall: { id: tc.id, name: tc.name } };
+            yield { type: 'tool_call_delta', toolCallId: tc.id, argumentsDelta: JSON.stringify(tc.arguments) };
+            yield { type: 'tool_call_end', toolCallId: tc.id };
+          }
           if (chunk.usageMetadata) {
             inputTokens = chunk.usageMetadata.promptTokenCount ?? inputTokens;
             outputTokens = chunk.usageMetadata.candidatesTokenCount ?? outputTokens;
           }
         } catch (e) {
-          // 忽略解析错误（缓冲区剩余数据通常不完整）
-          // eslint-disable-next-line no-console
           console.warn(`[gemini-client] 缓冲区剩余数据解析失败: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
 
-      // 输出 usage 事件
+      // 有工具调用时 finishReason 强制为 tool_use
+      if (hasToolCalls) {
+        lastFinishReason = 'tool_use';
+      }
+
       const usage: TokenUsageInfo = {
         inputTokens,
         outputTokens,
@@ -237,7 +275,6 @@ export class GeminiClient extends BaseLLMClient {
 
       this.logResponse(options.model, usage, Date.now() - startTime);
 
-      // 输出 done 事件
       yield { type: 'done', finishReason: lastFinishReason };
     } catch (err) {
       throw this.normalizeError(err, options.model);
@@ -252,11 +289,24 @@ export class GeminiClient extends BaseLLMClient {
       contents: this.convertMessages(options.messages),
     };
 
-    // system instruction（Gemini 用 system_instruction 字段，不在 contents 中）
+    // system instruction
     if (options.systemPrompt) {
       body.system_instruction = {
         parts: [{ text: options.systemPrompt }],
       };
+    }
+
+    // 工具声明（Gemini function calling）
+    // Phase 96 P1-6：Gemini functionDeclarations 协议无 strict 字段，
+    // parameters 本身即 OpenAPI 3.0 schema 约束，t.strict 字段被忽略。
+    if (options.tools && options.tools.length > 0) {
+      body.tools = [{
+        functionDeclarations: options.tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          parameters: t.parameters,
+        })),
+      }];
     }
 
     // generationConfig
@@ -276,19 +326,74 @@ export class GeminiClient extends BaseLLMClient {
    * - system → system_instruction（在 buildRequestBody 中处理）
    * - user → role: 'user'
    * - assistant → role: 'model'
+   * - tool_use → functionCall part（model 角色）
+   * - tool_result → functionResponse part（user 角色）
    */
   private convertMessages(messages: LLMMessage[]): GeminiContent[] {
     const contents: GeminiContent[] = [];
+    // 维护 toolUseId → toolName 映射，用于 functionResponse 匹配
+    const toolIdToName = new Map<string, string>();
 
     for (const msg of messages) {
       // system 消息由 system_instruction 处理，跳过
       if (msg.role === 'system') continue;
 
-      const role: 'user' | 'model' = msg.role === 'assistant' ? 'model' : 'user';
-      const text = this.extractMessageText(msg.content);
+      // 先扫描 tool_use，建立 id → name 映射
+      if (Array.isArray(msg.content)) {
+        for (const part of msg.content) {
+          if (part.type === 'tool_use') {
+            toolIdToName.set(part.id, part.name);
+          }
+        }
+      }
 
-      if (text) {
-        contents.push({ role, parts: [{ text }] });
+      const role: 'user' | 'model' = msg.role === 'assistant' ? 'model' : 'user';
+
+      if (typeof msg.content === 'string') {
+        contents.push({ role, parts: [{ text: msg.content }] });
+        continue;
+      }
+
+      if (Array.isArray(msg.content)) {
+        const textParts: string[] = [];
+        const toolCallParts: GeminiPart[] = [];
+        const toolResultParts: GeminiPart[] = [];
+
+        for (const part of msg.content) {
+          if (part.type === 'text') {
+            textParts.push(part.text);
+          } else if (part.type === 'tool_use') {
+            // 工具调用 → functionCall part
+            toolCallParts.push({
+              functionCall: { name: part.name, args: part.arguments },
+            });
+          } else if (part.type === 'tool_result') {
+            // 工具结果 → functionResponse part
+            const toolName = toolIdToName.get(part.toolUseId) || part.toolUseId;
+            let responseObj: Record<string, unknown>;
+            try {
+              responseObj = JSON.parse(part.content);
+            } catch {
+              responseObj = { result: part.content };
+            }
+            toolResultParts.push({
+              functionResponse: { name: toolName, response: responseObj },
+            });
+          }
+        }
+
+        // 文本内容
+        if (textParts.length > 0) {
+          contents.push({ role, parts: [{ text: textParts.join('\n') }] });
+        }
+        // 工具调用（model 角色）
+        if (toolCallParts.length > 0) {
+          contents.push({ role: 'model', parts: toolCallParts });
+        }
+        // 工具结果（user 角色，Gemini 用 functionResponse part）
+        if (toolResultParts.length > 0) {
+          contents.push({ role: 'user', parts: toolResultParts });
+        }
       }
     }
 
@@ -296,28 +401,32 @@ export class GeminiClient extends BaseLLMClient {
   }
 
   /**
-   * 从 LLMMessage.content 提取纯文本（支持 string 和 ContentPart[]）
-   */
-  private extractMessageText(content: string | LLMMessage['content']): string {
-    if (typeof content === 'string') {
-      return content;
-    }
-    if (Array.isArray(content)) {
-      return content
-        .filter((part) => part.type === 'text')
-        .map((part) => (part as { text: string }).text)
-        .join('\n');
-    }
-    return '';
-  }
-
-  /**
-   * 从响应中提取文本
+   * 从响应中提取纯文本（仅 text part）
    */
   private extractText(data: GeminiResponse): string {
     const parts = data.candidates?.[0]?.content?.parts;
     if (!parts || parts.length === 0) return '';
-    return parts.map((p) => p.text).join('');
+    return parts.filter((p) => p.text).map((p) => p.text!).join('');
+  }
+
+  /**
+   * 从响应中提取工具调用（functionCall parts）
+   */
+  private extractToolCalls(data: GeminiResponse): ToolCallRequest[] {
+    const parts = data.candidates?.[0]?.content?.parts;
+    if (!parts) return [];
+
+    const toolCalls: ToolCallRequest[] = [];
+    for (const part of parts) {
+      if (part.functionCall) {
+        toolCalls.push({
+          id: nextToolCallId(),
+          name: part.functionCall.name,
+          arguments: part.functionCall.args || {},
+        });
+      }
+    }
+    return toolCalls;
   }
 
   /**
@@ -348,7 +457,7 @@ export class GeminiClient extends BaseLLMClient {
       case 'RECITATION':
         return 'error';
       default:
-        return reason ? 'stop' : 'stop';
+        return 'stop';
     }
   }
 }

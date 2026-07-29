@@ -45,10 +45,10 @@ export function SettingsMemoryTab({
   updateMemory,
 }: SettingsMemoryTabProps) {
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>增量 Checkpoint</CardTitle>
+          <CardTitle>检查点</CardTitle>
           <CardDescription>按步骤自动压缩与恢复记忆</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -149,7 +149,7 @@ export function SettingsMemoryTab({
       <Card>
         <CardHeader>
           <CardTitle>目标验证器</CardTitle>
-          <CardDescription>/goal 完成后的独立验证，判断目标是否真正达成</CardDescription>
+          <CardDescription>目标完成后的独立验证</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
@@ -186,12 +186,12 @@ export function SettingsMemoryTab({
               value={draft.goalVerifier.maxTokensPerVerification}
               onChange={(e) => updateGoalVerifier({ maxTokensPerVerification: Number(e.target.value) })}
             />
-            <p className="text-xs text-rd-textMuted">每次验证消耗的最大 Token 数。</p>
+            <p className="text-xs text-rd-textMuted">每次验证消耗的最大用量。</p>
           </div>
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="gv-auto">完成后自动验证</Label>
-              <p className="text-xs text-rd-textMuted">/goal 完成后自动触发验证，关闭则需手动调用验证。</p>
+              <p className="text-xs text-rd-textMuted">目标完成后自动触发验证，关闭则需手动调用验证。</p>
             </div>
             <Switch
               id="gv-auto"

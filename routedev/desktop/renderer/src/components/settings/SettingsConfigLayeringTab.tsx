@@ -21,12 +21,12 @@ export function SettingsConfigLayeringTab({ draft, updateDraft }: SettingsConfig
   };
 
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>配置分层</CardTitle>
           <CardDescription>
-            支持项目级配置覆盖全局配置。启用后按 mergeStrategy 合并两层配置。
+            支持项目级配置覆盖全局配置，启用后按合并策略合并两层配置。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -50,20 +50,22 @@ export function SettingsConfigLayeringTab({ draft, updateDraft }: SettingsConfig
               value={cfg.projectConfigPath ?? '.routedev/config.json'}
               onChange={(e) => update({ projectConfigPath: e.target.value })}
               placeholder=".routedev/config.json"
+              disabled
             />
-            <p className="text-xs text-rd-textMuted">项目级配置文件的相对路径。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现</p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="cl-global-path">全局配置路径（可选）</Label>
+            <Label htmlFor="cl-global-path">全局配置路径</Label>
             <Input
               id="cl-global-path"
               type="text"
               value={cfg.globalConfigPath ?? ''}
               onChange={(e) => update({ globalConfigPath: e.target.value })}
               placeholder="留空使用默认全局路径"
+              disabled
             />
-            <p className="text-xs text-rd-textMuted">覆盖默认全局配置文件位置。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现</p>
           </div>
 
           <div className="space-y-2">
@@ -72,11 +74,12 @@ export function SettingsConfigLayeringTab({ draft, updateDraft }: SettingsConfig
               id="cl-merge"
               value={cfg.mergeStrategy ?? 'deep'}
               onChange={(e) => update({ mergeStrategy: e.target.value as 'deep' | 'shallow' })}
+              disabled
             >
-              <SelectItem value="deep">deep（深层递归合并）</SelectItem>
-              <SelectItem value="shallow">shallow（浅层按字段覆盖）</SelectItem>
+              <SelectItem value="deep">深层递归合并</SelectItem>
+              <SelectItem value="shallow">浅层按字段覆盖</SelectItem>
             </Select>
-            <p className="text-xs text-rd-textMuted">deep 递归合并嵌套对象；shallow 仅按顶层字段覆盖。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现</p>
           </div>
         </CardContent>
       </Card>

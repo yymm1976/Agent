@@ -340,7 +340,7 @@ export type BudgetMonitorConfig = z.infer<typeof BudgetMonitorConfigSchema>;
  */
 export const DagEngineConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用 DAG 工作流（默认 false，向后兼容） */
-  enabled: z.boolean().default(true),
+  enabled: z.boolean().default(false),
   /** 最大并行度（1-10） */
   maxParallel: z.number().int().min(1).max(10).default(3),
   /** 重试上限（0-5） */
@@ -356,7 +356,7 @@ export type DagEngineConfig = z.infer<typeof DagEngineConfigSchema>;
  */
 export const CircuitBreakerConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** 是否启用熔断器（默认 false，向后兼容） */
-  enabled: z.boolean().default(true),
+  enabled: z.boolean().default(false),
   /** 连续失败 N 次后熔断 */
   failureThreshold: z.number().int().min(1).default(5),
   /** 熔断后多久尝试恢复（毫秒） */

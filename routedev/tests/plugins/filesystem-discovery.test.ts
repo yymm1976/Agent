@@ -182,7 +182,8 @@ describe('FilesystemDiscovery', () => {
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(
       path.join(skillDir, 'SKILL.md'),
-      '---\ndescription: My custom skill\nkeywords: test, demo\n---\n# My Skill\nBody content',
+      // SkillMdParser 读取 tags 字段（非旧 keywords），格式需为 YAML 数组
+      '---\ndescription: My custom skill\ntags: [test, demo]\n---\n# My Skill\nBody content',
     );
 
     const skills = await discovery.discoverSkills();
@@ -280,8 +281,8 @@ executor:
     expect(agent.executor?.harness).toBe('claude-sdk');
   });
 
-  it('空字符串应返回空对象', () => {
-    const agent = parseAgentYAML('');
-    expect(agent).toEqual({});
+  // parseAgentYAML 要求 name 必填，空字符串应抛错
+  it('空字符串应抛错（name 必填）', () => {
+    expect(() => parseAgentYAML('')).toThrow(/name/);
   });
 });

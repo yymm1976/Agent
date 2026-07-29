@@ -152,9 +152,10 @@ export const DEFAULT_CONFIG: AppConfig = {
       persistSession: true,
       outputDir: '.routedev/token-logs',
     },
-    conciseThinking: { enabled: false },
-    // Phase 72 Task B2：ContentRouter 默认关闭（零回归，需用户显式启用）
-    contentRouting: { enabled: false },
+    // 工具输出裁剪：>2000 字符时保留 800 首 + 800 尾，显著降低 token 占用
+    conciseThinking: { enabled: true },
+    // ContentRouter：JSON/代码/散文分派压缩（fail-open，失败降级后续裁剪）
+      contentRouting: { enabled: true },
     workflow: {
       unifiedPipeline: true,
       autoRequirements: true,
@@ -165,7 +166,8 @@ export const DEFAULT_CONFIG: AppConfig = {
     },
     safety: {
       readBeforeWrite: true,
-      maxToolOutputChars: 16000,
+      // 硬上限从 16000 调到 8000，避免单条工具结果独占过多上下文
+      maxToolOutputChars: 8000,
       completionGate: true,
       gateTimeout: 180000,
       gateRetry: 1,
@@ -565,11 +567,16 @@ export const DEFAULT_CONFIG: AppConfig = {
   // 依据：Phase 53 写了安全治理却默认关，等于没写。安全能力应默认启用。
   //       装配失败时 app-init.ts 中 try-catch fail-open 守卫保证不阻塞主流程
   phase53Integration: {
-    // Task 3：策略引擎接入（动作级 fail-closed）
+    // Task 3：策略引擎接入
     // Phase 59：默认 true——Intent Guard + Playbook 是安全核心
+    // 修正：defaultPolicy 从 'deny' 改为 'allow'。
+    //   原因：内置只注册了 git_op-guide / intent-guard（生产环境/force push/递归删除）
+    //   等少量策略，绝大多数工具（file_read/list_directory/spawn_agent/...）都没有匹配规则。
+    //   defaultPolicy='deny' 会让这些工具全部 fail-closed 被拒，导致 Agent 无法工作。
+    //   改为 'allow' 后：未匹配规则的工具放行；已注册的 block 策略仍然生效（deny-overrides）。
     policyEngine: {
       enabled: true,
-      defaultPolicy: 'deny',
+      defaultPolicy: 'allow',
       conflictResolution: 'deny-overrides',
       rulesFile: '.routedev/policies.yaml',
     },
@@ -685,31 +692,14 @@ export const DEFAULT_CONFIG: AppConfig = {
       renderEveryTurn: true,
     },
   },
-  // Phase 65：记忆系统四模块重构（v4.6.4）
-  // Phase 71 Task D5：embeddingProvider 从 'hash' 升级为 'bi-encoder'（真实语义 provider）
-  // 消费链：app-init.ts L2638 读 msCfg.store.embeddingProvider → 传入 MemoryStore 构造
-  // → memory-store.ts L61 按 provider 值分支处理（bi-encoder 模式由 setEmbedder 注入外部 embedder）
+  // TD-26：Phase 65 记忆系统已退役（MemoryStore/HybridRetriever/LocalMaintenance）
+  // 决策：保留 Core KnowledgeGraph，移除 HybridRetriever 接线
+  // 接线已移除，此配置块仅为满足 AppConfig 类型（schema 保留向后兼容）
   memorySystem: {
     enabled: false,
-    store: {
-      enabled: true,
-      dbPath: '.routedev/memory.db',
-      backend: 'sqlite' as const,
-      embeddingProvider: 'bi-encoder' as const,
-    },
-    hybridRetriever: {
-      enabled: true,
-      bm25Weight: 0.4,
-      embeddingWeight: 0.6,
-      timeDecayHalfLifeDays: 30,
-      topK: 10,
-    },
-    localMaintenance: {
-      enabled: true,
-      triggerThreshold: 500,
-      reorganizeRatio: 0.2,
-      minAccessCount: 2,
-    },
+    store: { enabled: false, dbPath: '.routedev/memory.db', backend: 'sqlite' as const, embeddingProvider: 'hash' as const },
+    hybridRetriever: { enabled: false, bm25Weight: 0.4, embeddingWeight: 0.6, timeDecayHalfLifeDays: 30, topK: 10 },
+    localMaintenance: { enabled: false, triggerThreshold: 500, reorganizeRatio: 0.2, minAccessCount: 2 },
   },
   // Phase 66：策略管道编号分段与治理——已删除（ExecutionOrchestrator 死代码清理）
   // Phase 67：推理质量诊断与SNR过滤——已删除（ExecutionOrchestrator 死代码清理）
@@ -741,29 +731,34 @@ export const DEFAULT_CONFIG: AppConfig = {
   // Phase 70：上下文压缩技术深度优化（v4.7.1）
   phase70Integration: {
     toolOutputBudget: {
-      enabled: false, // P2: 启用 offload 机制
+      // 实时/压缩路径 offload：超长工具输出落盘 + preview，降低上下文体积
+      enabled: true,
       maxCharsPerOutput: 2000,
       previewHeadChars: 500,
       previewTailChars: 500,
       offloadDir: '.routedev/offloaded',
     },
     microCompact: {
-      enabled: false, // P2: 启用微压缩清理
+      // 装配 MessageGrouper，保护完整 user-assistant 对话轮
+      enabled: true,
       cleanBeforeRounds: 5,
       keepRecentRounds: 3,
     },
     contextCollapse: {
-      enabled: false, // P2: 启用上下文折叠
+      // 装配 ActionChainDetector，折叠重复工具调用链
+      enabled: true,
       minToolCallsForChain: 3,
     },
     autoCompactGuardian: {
       // Phase 71 Task C2：启用（原 false）——Phase 70 已实现但默认关闭，造成配置僵尸
       enabled: true,
+      // contextWindow 运行时会被当前模型窗口覆盖；此处仅作 fallback
       contextWindow: 200000,
-      reservedTokensForSummary: 20000,
-      autoCompactBuffer: 13000,
-      warningBuffer: 20000,
-      errorBuffer: 20000,
+      // 更早触发：接近上限前主动压，避免 552k/500k 才发现没压
+      reservedTokensForSummary: 8000,
+      autoCompactBuffer: 40000,
+      warningBuffer: 60000,
+      errorBuffer: 30000,
       maxConsecutiveFailures: 3,
     },
     compactPrompt: {
@@ -793,20 +788,21 @@ export const DEFAULT_CONFIG: AppConfig = {
   packs: {
     // Extended Pack
     goalAdvanced: { enabled: false },     // extended-pack
-    multiAgent: { enabled: false },       // extended-pack
+    // ReviewChain：开启 spawn_agent 工具装配，否则 subagentType=planner/coder/reviewer 无法调度
+    multiAgent: { enabled: true },        // extended-pack（已启用）
     adversarial: { enabled: false },      // extended-pack
     skillLifecycle: { enabled: false },   // extended-pack
     // Standard Pack
-    browserWeb: { enabled: false },       // standard-pack
+    // Phase 96 M-1：删除 browserWeb / vfsPlan 死开关（全库零引用，工具注册由 tools.profile 控制）
     codeMap: { enabled: false },          // standard-pack
     ccrCompression: { enabled: false },   // standard-pack
-    vfsPlan: { enabled: false },          // standard-pack
     harness: { enabled: false },          // standard-pack
     integrity: { enabled: false },        // standard-pack
     compose: { enabled: false },          // standard-pack
     // Freeze
     trustGradient: { enabled: false },    // freeze
     kgAdvanced: { enabled: false },       // freeze
-    acRouter: { enabled: false },         // freeze
+    // TD-25 解冻：ACRouter 从 freeze 提升为 standard-pack（默认装配，功能由 closedLoopRouting.enabled 控制）
+    acRouter: { enabled: true },          // standard-pack（原 freeze，TD-25 解冻）
   },
 };

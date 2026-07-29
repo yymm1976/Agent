@@ -94,6 +94,11 @@ interface CompressEnhancedOptions {
   preserveLast?: number;
   /** 触发 offload 的工具输出 token 阈值（默认 2000） */
   offloadThreshold?: number;
+  /**
+   * 强制压缩：当 API 真实 usage 已超阈但本地 estimate 偏低时，
+   * 跳过 tokensBefore <= maxTokens 的 no-op，仍执行 offload + 摘要
+   */
+  force?: boolean;
 }
 
 export class ContextManager {
@@ -139,6 +144,29 @@ export class ContextManager {
   /** 设置上下文压缩器 */
   setCompactor(compactor: ContextCompactor): void {
     this.compactor = compactor;
+  }
+
+  /**
+   * Phase 70 修复：运行时更新 contextWindow（ContextManager + Guardian）
+   * 用户切换模型时调用，避免用旧模型窗口判断新模型的压缩时机
+   * 无 Guardian 或无 compactor 时安全降级（仍更新本实例 config）
+   */
+  updateAutoCompactContextWindow(contextWindow: number): void {
+    if (typeof contextWindow !== 'number' || contextWindow < 10000) return;
+    if (this.config.contextWindow !== contextWindow) {
+      logger.info('ContextManager: contextWindow updated', {
+        from: this.config.contextWindow,
+        to: contextWindow,
+      });
+      this.config = { ...this.config, contextWindow };
+    }
+    try {
+      this.compactor?.getAutoCompactGuardian()?.updateContextWindow(contextWindow);
+    } catch (err) {
+      logger.warn('ContextManager: updateAutoCompactContextWindow failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /**
@@ -236,12 +264,14 @@ export class ContextManager {
 
   /**
    * 检查是否需要压缩上下文
+   * 注意：压缩触发与 checkpoint 开关解耦——checkpoint 关闭时仍可按 token 阈值压缩
    * @param _messageCount 当前对话历史条数（未使用，保留用于扩展）
    * @param estimatedTokens 估算的 token 数（简单按字符数 / 4 估算）
    */
   shouldCompress(_messageCount: number, estimatedTokens: number): boolean {
-    if (!this.config.checkpointEnabled) return false;
-    const threshold = this.config.contextWindow * this.config.compressionThreshold;
+    const window = this.config.contextWindow > 0 ? this.config.contextWindow : 128000;
+    const ratio = this.config.compressionThreshold > 0 ? this.config.compressionThreshold : 0.8;
+    const threshold = window * ratio;
     return estimatedTokens >= threshold;
   }
 
@@ -250,6 +280,7 @@ export class ContextManager {
    *
    * 通过 compactor 的 shouldCompressEnhanced 方法获取更精细的压缩建议。
    * 当 compactor 未配置 AutoCompactGuardian 时，降级到 shouldCompress 的简单阈值判断。
+   * 与 checkpoint.enabled 无关：自动压缩是独立能力。
    */
   shouldCompressEnhanced(
     _messageCount: number,
@@ -399,7 +430,8 @@ export class ContextManager {
     const tokensBefore = this.estimateTotalTokens(messages);
 
     // 未超阈值 → 不压缩，返回 no-op 事件
-    if (tokensBefore <= maxTokens) {
+    // force=true 时跳过：真实 API usage 已超阈但本地 estimate 严重偏低的场景
+    if (!options?.force && tokensBefore <= maxTokens) {
       const noOpEvent: CompressionEvent = {
         tokensBefore,
         tokensAfter: tokensBefore,
@@ -442,10 +474,11 @@ export class ContextManager {
       const tokenCount = this.estimateTokens(content);
 
       if (tokenCount > offloadThreshold && this.isToolMessage(msg)) {
-        // offload 到文件（如果提供了 offloadDir）
+        // offload 到文件（如果提供了 offloadDir），占位符带路径便于回读
+        let offloadPath: string | undefined;
         if (offloadDir) {
           try {
-            await this.offloadToFile(content, offloadDir, i);
+            offloadPath = await this.offloadToFile(content, offloadDir, i);
           } catch (error) {
             logger.warn('Failed to offload tool output', {
               index: i,
@@ -453,11 +486,13 @@ export class ContextManager {
             });
           }
         }
-        // 替换为摘要占位符
         const preview = content.slice(0, 200);
+        const placeholder = offloadPath
+          ? `[offloaded file="${offloadPath}" size="${content.length}"] ${preview}...`
+          : `[offloaded size="${content.length}"] ${preview}...`;
         result[i] = {
           ...msg,
-          content: this.replaceTextContent(msg, `[offloaded] ${preview}...`),
+          content: this.replaceTextContent(msg, placeholder),
         };
         offloadedOutputs++;
       }
@@ -465,18 +500,20 @@ export class ContextManager {
 
     // 第二轮：从最老消息开始摘要替换，保留 system prompt (i=0) 和最后 preserveLast 条
     // system prompt 永不压缩
-    for (
-      let i = 1;
-      i < result.length - preserveLast && this.estimateTotalTokens(result) > maxTokens;
-      i++
-    ) {
+    // force 时：本地 estimate 不可信，强制压缩所有可压缩旧消息（保留最近 preserveLast）
+    const targetTokens = options?.force ? Math.floor(maxTokens * 0.5) : maxTokens;
+    for (let i = 1; i < result.length - preserveLast; i++) {
+      if (!options?.force && this.estimateTotalTokens(result) <= targetTokens) break;
+
       const msg = result[i];
       // system 消息不压缩（虽然 i=0 已跳过，但中间也可能有 system 消息）
       if (msg.role === 'system') continue;
 
       const content = this.extractTextContent(msg);
-      // 已被 offload 的消息不再摘要
-      if (content.startsWith('[offloaded]')) continue;
+      // 已被 offload 的消息不再摘要（兼容旧 `[offloaded]` 与新 `[offloaded file=...]`）
+      if (content.startsWith('[offloaded')) continue;
+      // 已经很短的消息跳过
+      if (content.length < 120 || content.startsWith('[已压缩]')) continue;
 
       const preview = content.slice(0, 100);
       result[i] = {
@@ -620,17 +657,18 @@ export class ContextManager {
     return false;
   }
 
-  /** 将大工具输出 offload 到文件 */
+  /** 将大工具输出 offload 到文件，返回落盘路径 */
   private async offloadToFile(
     content: string,
     offloadDir: string,
     index: number,
-  ): Promise<void> {
+  ): Promise<string> {
     await mkdir(offloadDir, { recursive: true });
     const filename = `output-${index}-${Date.now()}.txt`;
     const filepath = join(offloadDir, filename);
     await writeFile(filepath, content, 'utf-8');
     logger.debug('Tool output offloaded', { filepath, size: content.length });
+    return filepath;
   }
 
   /** 获取当前 checkpoint 数据 */
@@ -763,6 +801,8 @@ export class ContextManager {
         this.saveGraphToDisk();
       }
     }, ContextManager.GRAPH_SAVE_DEBOUNCE_MS);
+    // throttle 定时器不阻止进程退出
+    this.graphSaveTimer.unref?.();
   }
 
   /** 立即同步保存（跳过 throttle，用于会话结束等必须落地的场景） */

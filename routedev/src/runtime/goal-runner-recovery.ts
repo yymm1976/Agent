@@ -180,7 +180,7 @@ export function createRecoveryFunctions(ctx: GoalRunnerCtx) {
    * 运行独立代码验证门（typecheck/lint/tests）
    * 提取为独立函数，供迭代闭环复用
    */
-  async function runCompletionGate(plan: GoalPlan): Promise<void> {
+  async function runCompletionGate(plan: GoalPlan): Promise<import('../agent/completion-gate.js').GateResult | undefined> {
     // Phase 32 Task 1.4：CompletionGate 独立代码验证门
     // 在 GoalVerifier（LLM 验证）之后运行，通过实际执行 typecheck/lint/tests 验证代码状态
     // 不信任 LLM 的"已完成"判断——只有代码编译通过、测试通过才算真正完成
@@ -216,7 +216,9 @@ export function createRecoveryFunctions(ctx: GoalRunnerCtx) {
         const passedChecks = gateResult.checks.filter(c => c.ok);
 
         if (gateResult.passed) {
-          addSystemMessage(`✅ 代码验证通过（${passedChecks.length} 项通过${skippedChecks.length > 0 ? `，${skippedChecks.length} 项跳过` : ''}）`);
+          addSystemMessage(
+            `✅ 代码验证通过（${passedChecks.length} 项通过${skippedChecks.length > 0 ? `，${skippedChecks.length} 项跳过` : ''}）`,
+          );
         } else {
           // 验证未通过——将失败信息展示给用户，但不自动回滚（让用户决定）
           const failedDetails = failedChecks.map(c => `  • ${c.name}: ${c.output.slice(0, MAX_CONTEXT_ITEMS)}`).join('\n');
@@ -228,12 +230,15 @@ export function createRecoveryFunctions(ctx: GoalRunnerCtx) {
             skippedChecks: skippedChecks.map(c => c.name),
           });
         }
+        return gateResult;
       } catch (error) {
         // 验证门自身异常不阻断任务完成（已通过 LLM 验证）
         logger.error('CompletionGate verification threw (non-blocking)', { error: String(error) });
         addSystemMessage(`⚠️ 代码验证门异常（不影响任务完成）: ${error instanceof Error ? error.message : String(error)}`);
+        return { passed: true, checks: [], warnings: [error instanceof Error ? error.message : String(error)] };
       }
     }
+    return undefined;
   }
 
   /**
@@ -268,6 +273,8 @@ export function createRecoveryFunctions(ctx: GoalRunnerCtx) {
         conversationHistory: conversationHistoryRef.current,
         systemPrompt: systemPromptRef.current,
         signal: stepAbort.signal,
+        // 传递当前自主度模式给权限中间件
+        autonomyMode: (config.autonomy?.defaultMode ?? 'semi') as 'manual' | 'semi' | 'auto',
         onModelSuccess: modelId => modelRouter.recordModelSuccess(modelId),
         onModelFailure: modelId => modelRouter.recordModelFailure(modelId),
         onConfirmTool: async (toolName, args) => {
@@ -296,7 +303,7 @@ export function createRecoveryFunctions(ctx: GoalRunnerCtx) {
             stepId: `remediation-${step.id}`,
           });
           // 任务级 Token 预算追踪
-          const taskStatus = tracker.recordTaskUsage(event.usage);
+          const taskStatus = tracker.recordTaskUsage();
           if (taskStatus === 'exceeded') {
             addSystemMessage('⏹ 任务级 Token 预算已耗尽，补救步骤中止');
             step.status = 'failed';

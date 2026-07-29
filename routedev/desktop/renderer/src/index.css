@@ -12,7 +12,8 @@
    ============================================================ */
 
 :root {
-  --rd-font-size: 14px;
+  /* Phase 96：字号 14 → 15px，用户反馈偏小 */
+  --rd-font-size: 15px;
   --rd-background: #0b0d10;
   --rd-surface: #111418;
   --rd-surface-hover: #181c22;

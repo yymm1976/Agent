@@ -3,13 +3,14 @@
 // 防止写入过程中崩溃导致文件损坏
 //
 // 设计：
-//   - 临时文件使用 `.tmp` 后缀
+//   - 临时文件名包含 pid + 时间戳 + 随机数，防止多进程并发写同一目标文件时 EEXIST 冲突
 //   - 使用 'wx' 模式打开临时文件，避免覆盖已存在的临时文件
-//   - 残留临时文件先尝试 unlink 再 open（防止上次崩溃残留）
+//   - 向后兼容：仍尝试清理旧版固定名 `.tmp` 残留（旧版本崩溃可能留下）
 //   - rename 失败时清理临时文件，避免污染目录
 //   - rename 在同一文件系统内是原子操作
 
 import * as fs from 'node:fs';
+import * as crypto from 'node:crypto';
 
 export interface SafeWriteOptions {
   /** JSON 缩进空格数，默认 2 */
@@ -35,8 +36,19 @@ function cleanupStaleTmp(tmpPath: string): void {
 }
 
 /**
+ * 生成唯一的临时文件路径
+ * 格式：`<filePath>.<pid>.<timestamp>.<random>.tmp`
+ * 防止多个进程同时写同一目标文件时 EEXIST 冲突
+ */
+function makeTmpPath(filePath: string): string {
+  const ts = Date.now();
+  const rand = crypto.randomBytes(6).toString('hex');
+  return `${filePath}.${process.pid}.${ts}.${rand}.tmp`;
+}
+
+/**
  * 底层原子写入：写入临时文件 → 可选 fsync → rename
- * 临时文件残留时先清理再打开
+ * 临时文件名唯一，并发安全；同时清理旧版固定名 `.tmp` 残留
  */
 function atomicWrite(
   filePath: string,
@@ -44,12 +56,13 @@ function atomicWrite(
   options: SafeWriteOptions,
 ): void {
   const { fsync = false } = options;
-  const tmpPath = filePath + '.tmp';
+  // 向后兼容：清理旧版本可能残留的固定名 `.tmp` 文件
+  cleanupStaleTmp(filePath + '.tmp');
 
-  // 清理残留临时文件（上次崩溃可能留下）
-  cleanupStaleTmp(tmpPath);
+  // 唯一临时文件名：pid + 时间戳 + 随机数
+  const tmpPath = makeTmpPath(filePath);
 
-  // 使用 'wx' 模式打开临时文件，避免覆盖已存在的临时文件
+  // 使用 'wx' 模式打开临时文件，名字唯一，不会冲突
   const fd = fs.openSync(tmpPath, 'wx');
   try {
     fs.writeSync(fd, buf, 0, buf.length, 0);

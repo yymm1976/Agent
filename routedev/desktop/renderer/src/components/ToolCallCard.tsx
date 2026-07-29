@@ -26,6 +26,8 @@ export interface ToolCallItem {
   args?: Record<string, unknown>;
   result?: unknown;
   timestamp?: number;
+  /** Phase 96 P1-1：运行态实时增量输出（shell_exec 等长任务的 stdout/stderr） */
+  deltaBuffer?: string;
 }
 
 /** 工具名中文标签映射 */
@@ -467,7 +469,7 @@ function CommandOutput({ command, result, status }: CommandOutputProps) {
 }
 
 /** 单个工具调用详情：深色浮层块 */
-export function ToolCallDetail({ toolName, status, args, result }: Omit<ToolCallItem, 'id' | 'timestamp'>) {
+export function ToolCallDetail({ toolName, status, args, result, deltaBuffer }: Omit<ToolCallItem, 'id' | 'timestamp'>) {
   const resultStr = getResultText(result);
   const MAX_RESULT_LEN = 2000;
   const truncatedResult = resultStr.length > MAX_RESULT_LEN
@@ -477,6 +479,8 @@ export function ToolCallDetail({ toolName, status, args, result }: Omit<ToolCall
   const command = typeof args?.command === 'string' ? args.command : '';
   const query = String(args?.query || args?.pattern || '');
   const url = String(args?.url || '');
+  // Phase 96 P1-1：运行态优先展示实时增量输出，完成态展示最终结果
+  const showLiveStream = status === 'running' && !!deltaBuffer;
 
   return (
     <div className="space-y-3 text-xs">
@@ -498,7 +502,20 @@ export function ToolCallDetail({ toolName, status, args, result }: Omit<ToolCall
         <div className="text-rd-textMuted">待办详情请查看右侧任务监控。</div>
       )}
 
-      {toolName === 'shell_exec' && command && (
+      {/* Phase 96 P1-1：运行态实时流式输出（shell_exec 等长任务） */}
+      {showLiveStream && (
+        <div>
+          <div className="mb-1 flex items-center gap-1.5 text-rd-textSubtle">
+            <Loader2 size={11} className="animate-spin" />
+            <span>实时输出</span>
+          </div>
+          <pre className="max-h-80 overflow-auto rounded-md border border-rd-primary/30 bg-rd-background p-2 font-mono text-xs text-rd-textMuted">
+            {deltaBuffer}
+          </pre>
+        </div>
+      )}
+
+      {toolName === 'shell_exec' && command && !showLiveStream && (
         <CommandOutput command={command} result={truncatedResult} status={status} />
       )}
 
@@ -591,6 +608,88 @@ function ToolCallSummary({ toolName, status, args, onClick }: ToolCallSummaryPro
 }
 
 // ============================================================
+// 工具详情文本框：替代旧 ToolCallDetail，竖向滚动，风格与思考过程一致
+// ============================================================
+
+function formatToolInfo(toolName: string, args?: Record<string, unknown>, result?: unknown): string {
+  const lines: string[] = [];
+  if (args) {
+    switch (toolName) {
+      case 'file_read':
+      case 'file_write':
+      case 'list_directory': {
+        const p = getPathFromArgs(args);
+        if (p) lines.push(p);
+        break;
+      }
+      case 'file_edit': {
+        const p = getPathFromArgs(args);
+        if (p) lines.push(p);
+        const old = String((args.oldString ?? args.old_string) ?? '');
+        const nw  = String((args.newString ?? args.new_string) ?? '');
+        if (old) lines.push(`- ${old.slice(0, 120)}${old.length > 120 ? '…' : ''}`);
+        if (nw)  lines.push(`+ ${nw.slice(0, 120)}${nw.length > 120 ? '…' : ''}`);
+        break;
+      }
+      case 'shell_exec': {
+        const cmd = String(args.command ?? '');
+        if (cmd) lines.push(`$ ${cmd}`);
+        break;
+      }
+      case 'code_search':
+      case 'file_search':
+      case 'web_search': {
+        const q = String(args.query ?? args.pattern ?? '');
+        if (q) lines.push(q);
+        break;
+      }
+      case 'web_fetch': {
+        const u = String(args.url ?? '');
+        if (u) lines.push(u);
+        break;
+      }
+      case 'spawn_agent': {
+        const desc = String(args.description ?? args.task ?? '');
+        if (desc) lines.push(desc);
+        break;
+      }
+      default: {
+        for (const [k, v] of Object.entries(args).slice(0, 3)) {
+          if (typeof v === 'string' || typeof v === 'number') {
+            lines.push(`${k}: ${String(v).slice(0, 100)}`);
+          }
+        }
+      }
+    }
+  }
+  const resultText = getResultText(result);
+  if (resultText) {
+    if (lines.length > 0) lines.push('');
+    lines.push(resultText.slice(0, 3000));
+  }
+  return lines.join('\n');
+}
+
+function ToolTextBox({ toolName, args, result, isError }: {
+  toolName: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
+  isError?: boolean;
+}) {
+  const content = formatToolInfo(toolName, args, result);
+  if (!content) return null;
+  return (
+    <div className={`max-h-48 overflow-y-auto rounded-md p-3 text-xs leading-relaxed whitespace-pre-wrap font-mono ${
+      isError
+        ? 'bg-rd-danger/10 text-rd-danger'
+        : 'bg-rd-surfaceHighlight text-rd-textMuted'
+    }`}>
+      {content}
+    </div>
+  );
+}
+
+// ============================================================
 // 聚合动作摘要行：用于第二层"动作"层，按工具名聚合
 // ============================================================
 
@@ -607,11 +706,8 @@ export function ActionSummaryRow({
   const toolType = getToolType(toolName);
   const runningCount = items.filter((i) => i.status === 'running').length;
   const errorCount = items.filter((i) => i.status === 'error').length;
-  const completedCount = items.filter((i) => i.status === 'completed').length;
-  const overallStatus: ToolCallStatus = runningCount > 0 ? 'running' : errorCount > 0 ? 'error' : 'completed';
   const hasRunning = runningCount > 0;
 
-  // 聚合摘要
   const paths = items.map((i) => getPathFromArgs(i.args)).filter(Boolean);
   const uniquePaths = [...new Set(paths)];
   const pathPreview = uniquePaths.slice(0, 2).join(', ') + (uniquePaths.length > 2 ? ` 等 ${uniquePaths.length} 个` : '');
@@ -628,12 +724,10 @@ export function ActionSummaryRow({
     summary = `${getToolLabel(toolName)} ${items.length} 次`;
   }
 
-  // 74-A5：聚合状态徽章文案
-  const badgeText = hasRunning
-    ? `${runningCount}/${items.length}`
-    : errorCount > 0
-    ? `✗ ${errorCount}`
-    : `✓ ${completedCount}`;
+  const showBadge = hasRunning || errorCount > 0;
+  const badgeVariant = hasRunning ? 'running' : 'error';
+  // 失败时只显示数量，靠红色徽章 + XCircle 图标传递失败语义（避免 ✗ 字符冗余）
+  const badgeText = hasRunning ? `${runningCount}/${items.length}` : `${errorCount}`;
 
   return (
     <div>
@@ -652,24 +746,19 @@ export function ActionSummaryRow({
           {getToolLabel(toolName)}
         </span>
         <span className="min-w-0 flex-1 truncate text-xs text-rd-textMuted">{summary}</span>
-        <StatusBadge variant={statusToBadgeVariant(overallStatus)} size="sm" showIcon>
-          {badgeText}
-        </StatusBadge>
+        {showBadge && (
+          <StatusBadge variant={badgeVariant as 'running' | 'error'} size="sm" showIcon>
+            {badgeText}
+          </StatusBadge>
+        )}
         {expanded
           ? <ChevronDown size={12} className="shrink-0 text-rd-textSubtle" />
           : <ChevronRight size={12} className="shrink-0 text-rd-textSubtle" />}
       </button>
       {expanded && (
-        <div className="mt-1.5 space-y-2 rounded-md bg-rd-surfaceHighlight p-3 shadow-rd">
-          {items.map((item) => (
-            <div key={item.id} className="border-b border-rd-border/30 pb-2 last:border-0 last:pb-0">
-              <ToolCallDetail
-                toolName={item.toolName}
-                status={item.status}
-                args={item.args}
-                result={item.result}
-              />
-            </div>
+        <div className="mt-1.5 space-y-1.5">
+          {(errorCount > 0 ? items.filter(i => i.status === 'error') : items).map((item) => (
+            <ToolTextBox key={item.id} toolName={item.toolName} args={item.args} result={item.result} isError={item.status === 'error'} />
           ))}
         </div>
       )}
@@ -689,6 +778,7 @@ export function SubAgentRow({
   const [expanded, setExpanded] = useState(false);
   const desc = (item.args?.description as string) || (item.args?.task as string) || '子 Agent';
   const name = desc.length > 40 ? `${desc.slice(0, 40)}...` : desc;
+  const resultText = getResultText(item.result);
 
   return (
     <div>
@@ -704,21 +794,25 @@ export function SubAgentRow({
       >
         <ToolIcon toolType="spawn_agent" size="sm" />
         <span className="min-w-0 flex-1 truncate text-xs text-rd-text">{name}</span>
-        <StatusBadge variant={statusToBadgeVariant(item.status)} size="sm" showIcon>
-          {getToolStatusText(item.toolName, item.status)}
-        </StatusBadge>
+        {item.status === 'running' && (
+          <StatusBadge variant="running" size="sm" showIcon>
+            {getToolStatusText(item.toolName, item.status)}
+          </StatusBadge>
+        )}
+        {item.status === 'error' && (
+          <StatusBadge variant="error" size="sm" showIcon>
+            {getToolStatusText(item.toolName, item.status)}
+          </StatusBadge>
+        )}
         {expanded
           ? <ChevronDown size={12} className="shrink-0 text-rd-textSubtle" />
           : <ChevronRight size={12} className="shrink-0 text-rd-textSubtle" />}
       </button>
-      {expanded && (
-        <div className="mt-1.5 rounded-md bg-rd-surfaceHighlight p-3 shadow-rd">
-          <ToolCallDetail
-            toolName={item.toolName}
-            status={item.status}
-            args={item.args}
-            result={item.result}
-          />
+      {expanded && resultText && (
+        <div className="ml-4 mt-1 border-l border-rd-tree-line pl-3">
+          <div className="py-1 text-xs leading-relaxed text-rd-textMuted whitespace-pre-wrap">
+            {resultText.slice(0, 4000)}
+          </div>
         </div>
       )}
     </div>
@@ -734,13 +828,23 @@ const ToolCallCard = memo(function ToolCallCard({
   status,
   args,
   result,
+  deltaBuffer,
 }: {
   toolName: string;
   status: ToolCallStatus;
   args?: Record<string, unknown>;
   result?: unknown;
+  deltaBuffer?: string;
 }) {
+  // Phase 96 P1-1：运行态有流式输出时自动展开，让用户看到实时进度
+  const hasLiveStream = status === 'running' && !!deltaBuffer;
   const [expanded, setExpanded] = useState(false);
+  const [autoExpanded, setAutoExpanded] = useState(false);
+  // 首次检测到 deltaBuffer 时自动展开（仅一次，用户手动折叠后不再自动展开）
+  if (hasLiveStream && !autoExpanded) {
+    setAutoExpanded(true);
+    if (!expanded) setExpanded(true);
+  }
 
   return (
     <div>
@@ -752,7 +856,7 @@ const ToolCallCard = memo(function ToolCallCard({
       />
       {expanded && (
         <div className="mt-1.5 rounded-md bg-rd-surfaceHighlight p-3 shadow-rd">
-          <ToolCallDetail toolName={toolName} status={status} args={args} result={result} />
+          <ToolCallDetail toolName={toolName} status={status} args={args} result={result} deltaBuffer={deltaBuffer} />
         </div>
       )}
     </div>

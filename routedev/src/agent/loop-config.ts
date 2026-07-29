@@ -70,10 +70,14 @@ export type ReActEvent =
   | { type: 'tool_call_start'; toolName: string; toolCallId: string; args?: Record<string, unknown> }
   /** 工具调用结果 */
   | { type: 'tool_call_result'; toolName: string; toolCallId: string; result: string; isError: boolean }
+  /** Phase 96 P1-1：工具执行增量输出（shell_exec 等长任务流式推送） */
+  | { type: 'tool_call_delta'; toolName: string; toolCallId: string; chunk: string }
   /** 工具调用需要用户确认（Phase 9 自主模式） */
   | { type: 'approval_required'; toolName: string; toolCallId: string; args: Record<string, unknown>; reason: string }
   /** 错误（循环可能还在继续重试） */
   | { type: 'error'; error: string; usage?: TokenUsageInfo }
+  /** Phase 94：升级人工介入（达到迭代上限/审查上限等，需用户决策） */
+  | { type: 'escalation'; reason: string; iterations?: number; usage?: TokenUsageInfo }
   /** 循环结束 */
   | { type: 'done'; content: string; usage: TokenUsageInfo }
   /** Phase 30：Token Profile 快照（每次 LLM 调用前） */
@@ -89,9 +93,29 @@ export type ConfirmToolCallback = (
   args: Record<string, unknown>,
 ) => Promise<boolean | { approved: boolean; payload?: unknown }>;
 
+/**
+ * Phase 96 P1-1：工具执行 per-call 选项
+ *
+ * loop 在每次调用 executeTool / executeToolStructured 时传入：
+ *   - signal：取消信号，shell_exec 等长任务工具监听后终止子进程
+ *   - onUpdate：增量输出回调，工具收到 stdout/stderr 增量时推送，loop 转发为 tool_call_delta 事件
+ *
+ * 适配器应把这些字段合并到 ToolExecutionContext 中传给 executor。
+ * 未传入时使用适配器构造时的默认 context，保持向后兼容。
+ */
+export interface ToolExecCallOptions {
+  /** 取消信号 */
+  signal?: AbortSignal;
+  /** 增量输出回调 */
+  onUpdate?: (chunk: string) => void;
+  /** 当前循环的自主度，透传给底层安全检查。 */
+  autonomyMode?: 'auto' | 'semi' | 'manual';
+}
+
 /** 工具执行适配器接口
  *  Phase 5 使用最小桩实现，Phase 6 替换为完整的 ToolRegistry + ToolExecutor
  *  P1-5 修复：新增 executeToolStructured 方法，返回结构化结果（isError 由工具声明）
+ *  Phase 96 P1-1：新增 callOptions 参数支持流式输出与取消
  */
 export interface ToolExecutorAdapter {
   /** 获取当前可用的工具定义（给 LLM 的 function calling schema） */
@@ -99,15 +123,29 @@ export interface ToolExecutorAdapter {
 
   /** 执行一个工具调用，返回结果文本
    *  如果工具不存在或执行失败，返回错误描述（不抛异常）
+   *
+   *  Phase 96 P1-1：可选 callOptions 透传 signal/onUpdate 给底层工具
    */
-  executeTool(toolName: string, toolCallId: string, args: Record<string, unknown>): Promise<string>;
+  executeTool(
+    toolName: string,
+    toolCallId: string,
+    args: Record<string, unknown>,
+    callOptions?: ToolExecCallOptions,
+  ): Promise<string>;
 
   /**
    * 结构化执行（P1-5 修复）
    * 返回 { output, isError }，isError 由工具的 success 字段决定
    * 替代正则匹配字符串判断 isError 的方式
+   *
+   * Phase 96 P1-1：可选 callOptions 透传 signal/onUpdate 给底层工具
    */
-  executeToolStructured?(toolName: string, toolCallId: string, args: Record<string, unknown>): Promise<{ output: string; isError: boolean }>;
+  executeToolStructured?(
+    toolName: string,
+    toolCallId: string,
+    args: Record<string, unknown>,
+    callOptions?: ToolExecCallOptions,
+  ): Promise<{ output: string; isError: boolean; images?: Array<{ mediaType: string; data: string }> }>;
 
   /** 检查指定工具是否存在 */
   hasTool(toolName: string): boolean;

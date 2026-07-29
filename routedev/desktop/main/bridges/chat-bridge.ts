@@ -4,6 +4,7 @@
 // generateTitle / followUp / clearAllQueues / setFollowUpMode / getQueueStatus / getFollowUpQueue /
 // removeFollowUp / syncConversationHistory 全部委托至此。
 
+import path from 'node:path';
 import type { LLMMessage, RoutingResult } from '../../../src/router/types.js';
 import { buildRouterConfig } from '../../../src/router/config.js';
 import { VisionAssistant, type ImageInput } from '../../../src/agent/vision.js';
@@ -11,20 +12,18 @@ import { notifyRoutingFallback } from '../../../src/runtime/notification.js';
 import { estimateTokens } from '../../../src/utils/token-estimate.js';
 import type { TrajectorySummary } from '../../../src/harness/trace-types.js';
 import { generateMicroSummary } from '../../../src/agent/micro-summary.js';
+import { toCompletionStatus, type GateResult } from '../../../src/agent/completion-gate.js';
 import { logger } from '../../../src/utils/logger.js';
 import { SessionTree } from '../../../src/session/session-tree.js';
 import { handleTreeCommand, handleForkCommand, handleCloneCommand } from '../../../src/session/session-commands.js';
+import { ConversationPersistence } from '../../../src/session/conversation-persistence.js';
+import type { SystemBlock } from '../../../src/agent/loop.js';
 import type { EngineContext, EngineBridges } from './engine-context.js';
 import type { PlanEditRequestPayload } from '../../shared/ipc-types.js';
 
-// TD-09：auto 模式下仍需用户确认的高风险工具集合
-// 即使自主度模式为 auto（全自动），这些具备破坏性或副作用的工具仍强制弹出确认框，
-// 防止 LLM 在无监督下执行危险操作（删库/覆盖文件/推送代码/派生子 Agent 等）。
-// 与 engine-bridge.ts 的 HIGH_RISK_TOOLS 保持一致语义，但此处用于 Agent Loop 内的确认决策，
-// HIGH_RISK_TOOLS 用于 IPC 直调拒绝（两道独立防线）。
-const AUTO_MODE_CONFIRM_TOOLS = new Set([
-  'shell_exec', 'git_op', 'file_write', 'spawn_agent',
-]);
+// auto 模式已由用户明确授权：除 ask_user 外不在桥接层重复确认。
+// 真正危险的操作仍由 PermissionEngine 与 SecurityChecker 的 allowed=false 硬拒绝。
+const VERIFY_REQUEST_PATTERN = /验证|测试|检查构建|运行构建|类型检查|\b(?:verify|test|typecheck|lint|build)\b/i;
 
 /**
  * Chat 领域桥接器
@@ -36,8 +35,47 @@ const AUTO_MODE_CONFIRM_TOOLS = new Set([
 export class ChatBridge {
   /** Phase 84：会话树实例（懒初始化，首次使用 /tree /fork /clone 命令时创建） */
   private sessionTree: SessionTree | null = null;
+  /** Phase 96 P0-1：对话历史持久化（重启恢复） */
+  private readonly persistence: ConversationPersistence;
 
-  constructor(private ctx: EngineContext) {}
+  constructor(private ctx: EngineContext) {
+    this.persistence = new ConversationPersistence(ctx.options.cwd);
+  }
+
+  /**
+   * Phase 96 P0-1：应用启动时加载历史对话
+   * 由 engine-bridge.initialize() 调用，fail-open（加载失败返回空数组）
+   */
+  async loadHistoryOnStart(): Promise<void> {
+    try {
+      const history = await this.persistence.load();
+      if (history.length > 0) {
+        this.ctx.conversationHistory = history;
+        logger.info('ConversationPersistence: history restored', {
+          messages: history.length,
+        });
+      }
+    } catch (err) {
+      logger.warn('ConversationPersistence: loadHistoryOnStart failed (fail-open)', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Phase 96 P0-1：应用退出前强制持久化
+   * 由 engine-bridge.destroy() 调用，跳过防抖立即写盘
+   * fail-open，写入失败不阻塞退出
+   */
+  async flushOnShutdown(): Promise<void> {
+    try {
+      await this.persistence.flush(this.ctx.conversationHistory);
+    } catch (err) {
+      logger.warn('ConversationPersistence: flushOnShutdown failed (fail-open)', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
   async sendChat(text: string): Promise<void> {
     // G-004 修复：每次 sendChat 生成唯一 requestId，用于隔离 abortController 和 pendingConfirm，
@@ -67,6 +105,8 @@ export class ChatBridge {
     let actualUserMessage = text;
     let routeDecision: RoutingResult | null = null;
     let trajectorySummary: TrajectorySummary | null = null;
+    const modifiedFiles = new Set<string>();
+    const pendingWrites = new Map<string, string>();
 
     try {
       const classifyResult = await classifier.classify({ query: text });
@@ -81,6 +121,11 @@ export class ChatBridge {
       }
       this.ctx.currentModel = routeDecision.model.id;
       this.ctx.isDegraded = routeDecision.degraded;
+      // Phase 70 修复：模型切换时同步更新 AutoCompactGuardian 的 contextWindow
+      // 避免 Guardian 用旧模型窗口判断新模型的压缩时机
+      if (typeof routeDecision.model.contextWindow === 'number') {
+        deps.contextManager.updateAutoCompactContextWindow(routeDecision.model.contextWindow);
+      }
 
       // 启动 Trace 会话
       deps.trace.startSession(text, routeDecision);
@@ -161,15 +206,36 @@ export class ChatBridge {
         llmClient: client,
         routeDecision,
         conversationHistory: this.ctx.conversationHistory,
-        systemPrompt: (await deps.prompts.render('main.system', {
-          language: config.general.language === 'zh-CN' ? '中文' : 'English',
-          autonomyMode: config.autonomy.defaultMode,
-          routeDecision: `${routeDecision.model.id} (${routeDecision.originalTier})`,
-          availableTools: deps.registry.list().map(t => t.definition.name).join(', '),
-          cwd: options.cwd,
-        })) + skillPromptSuffix,
+        // Phase 96+ B4：前缀缓存优化——拆分固定前缀与可变后缀为 systemBlocks
+        // 固定前缀块（baseSystemPrompt）：会话内不变的内容（identity/core_principles/tool_protocol/...）
+        //   → 打 cache_control: ephemeral，让 Anthropic/OpenAI 跨请求复用前缀缓存
+        // 可变后缀块（routeDecision + skillPromptSuffix）：每轮可能变化
+        //   → 不打 cache_control，作为独立 block 追加
+        // 收益：避免 routeDecision 变化导致整个 system prompt 缓存失效
+        systemBlocks: [
+          {
+            type: 'text',
+            text: await deps.prompts.render('main.system', {
+              language: config.general.language === 'zh-CN' ? '中文' : 'English',
+              autonomyMode: config.autonomy.defaultMode,
+              availableTools: deps.registry.list().map(t => t.definition.name).join(', '),
+              cwd: options.cwd,
+              // C3：传入 taskShape 让 <task_shape_guidance> 提示生效
+              // taskShape 仅 4 种值（single-step/multi-step-impl/investigation/qa），
+              // 相比 routeDecision 稳定；Anthropic ephemeral cache 5 分钟窗口内 4 种值都会被缓存
+              taskShape: classifyResult.taskShape ?? 'single-step',
+            }),
+            cache_control: { type: 'ephemeral' },
+          },
+          {
+            type: 'text',
+            text: `当前路由决策：${routeDecision.model.id} (${routeDecision.originalTier})${skillPromptSuffix}`,
+          },
+        ] as SystemBlock[],
         // G-004：从 Map 取该 requestId 对应的 signal，避免读到其他并发请求的 controller
         signal: this.ctx.getAbortController(requestId)?.signal,
+        // 传递当前自主度模式给权限中间件
+        autonomyMode: config.autonomy.defaultMode,
         onConfirmTool: async (toolName, args) => {
           // 根据当前自主度模式决定是否需要用户确认
           // auto（全自动）：所有工具调用直接批准，不弹确认框
@@ -178,11 +244,6 @@ export class ChatBridge {
           // 确保 sendChat 期间 updateConfig 修改的自主度对后续工具确认立即生效
           const currentMode = this.ctx.config.autonomy.defaultMode;
           if (currentMode === 'auto' && toolName !== 'ask_user') {
-            // TD-09：auto 模式下高风险工具仍需用户确认
-            // 防止 LLM 在无监督下执行 shell_exec/git_op/file_write/spawn_agent 等危险操作
-            if (AUTO_MODE_CONFIRM_TOOLS.has(toolName)) {
-              return this.requestUserConfirmation(requestId, toolName, args);
-            }
             return true;
           }
           return this.requestUserConfirmation(requestId, toolName, args);
@@ -198,16 +259,55 @@ export class ChatBridge {
           // 转发推理过程增量，供前端显示模型思考过程
           options.onStream({ type: 'reasoning_delta', reasoning: event.text });
           break;
-          case 'tool_call_start':
-            options.onStream({ type: 'tool_start', toolName: event.toolName, toolArgs: event.args });
+        case 'thinking':
+          // 转发思考阶段提示，供前端显示"模型思考中..."状态
+          options.onStream({ type: 'thinking', message: event.message });
+          break;
+        case 'escalation':
+          // 达到 maxIterations 等情况下的升级事件：转发给前端显示中断原因
+          // 不标记 hasTaskError（这不是错误，是预算耗尽）
+          options.onStream({
+            type: 'escalation',
+            reason: event.reason,
+            iterations: event.iterations,
+          });
+          break;
+          case 'tool_call_start': {
+            const filePath = event.args?.path;
+            if ((event.toolName === 'file_write' || event.toolName === 'file_edit') && typeof filePath === 'string') {
+              pendingWrites.set(event.toolCallId, filePath);
+            }
+            options.onStream({
+              type: 'tool_start',
+              toolName: event.toolName,
+              toolArgs: event.args,
+              toolCallId: event.toolCallId,
+            });
             break;
-          case 'tool_call_result':
+          }
+          case 'tool_call_delta': {
+            // Phase 96 P1-1：工具执行增量输出（shell_exec 等长任务的实时 stdout/stderr）
+            options.onStream({
+              type: 'tool_call_delta',
+              toolName: event.toolName,
+              toolCallId: event.toolCallId,
+              chunk: event.chunk,
+            });
+            break;
+          }
+          case 'tool_call_result': {
+            const filePath = pendingWrites.get(event.toolCallId);
+            if (filePath && !event.isError) modifiedFiles.add(filePath);
+            pendingWrites.delete(event.toolCallId);
             options.onStream({
               type: 'tool_done',
               toolName: event.toolName,
               toolResult: event.result,
+              isError: event.isError,
+              toolCallId: event.toolCallId,
             });
             break;
+          }
           case 'error':
             // 标记任务错误状态，用于 finally 块生成 trajectory summary 和微摘要时判定 success/failure
             hasTaskError = true;
@@ -223,11 +323,36 @@ export class ChatBridge {
       }
 
       tracker.record(finalUsage, { modelId: routeDecision.model.id, agentId: 'default', stepId: 'chat' });
+      // Phase 96+ A3.3：缓存命中统计——在 tracker.record 之后同步更新 cacheStatsTracker
+      // provider 取自 routeDecision.providerId（DeepSeek/OpenAI/Anthropic 等），归一化多 Provider 缓存字段
+      const cacheHit = finalUsage.cacheReadInputTokens ?? 0;
+      const cacheMiss = Math.max(0, finalUsage.inputTokens - cacheHit);
+      this.ctx.cacheStatsTracker?.record(cacheHit, cacheMiss, routeDecision.providerId ?? 'unknown');
       // CONCERN 修复：CircuitBreaker 接入——Agent Loop 成功完成时重置模型失败计数
       // 与 chat-runner.ts 内层 try 末尾的 recordModelSuccess 对齐
       modelRouter.recordModelSuccess(routeDecision.model.id);
+
+      let gateResult: GateResult | undefined;
+      if (!hasTaskError && modifiedFiles.size > 0 && VERIFY_REQUEST_PATTERN.test(text)) {
+        options.onStream({ type: 'progress', progress: { label: '正在验证代码', current: 2, total: 3 } });
+        try {
+          gateResult = await deps.completionGate.verify({
+            modifiedFiles: [...modifiedFiles],
+            projectPath: options.cwd,
+            planDescription: text,
+          });
+          if (!gateResult.passed) {
+            const failed = gateResult.checks.filter((check) => !check.ok && !check.skipped)
+              .map((check) => check.name).join('、');
+            options.onStream({ type: 'progress', progress: { label: `代码验证未通过${failed ? `：${failed}` : ''}`, current: 3, total: 3 } });
+          }
+        } catch (error) {
+          gateResult = { passed: true, checks: [], warnings: [error instanceof Error ? error.message : String(error)] };
+        }
+      }
+
       options.onStream({ type: 'progress', progress: { label: '完成', current: 3, total: 3 } });
-      options.onStream({ type: 'done' });
+      options.onStream({ type: 'done', completionStatus: toCompletionStatus(gateResult, !hasTaskError) });
 
       this.ctx.conversationHistory.push({ role: 'user', content: actualUserMessage });
       this.ctx.conversationHistory.push({ role: 'assistant', content: accumulatedContent });
@@ -235,6 +360,7 @@ export class ChatBridge {
         this.ctx.conversationHistory = this.ctx.conversationHistory.slice(-20);
       }
 
+      // Checkpoint 与自动压缩解耦：checkpoint 仅在开关开启时写盘
       if (config.checkpoint.enabled) {
         const usagePercent = tracker.getUsagePercent();
         const triggers = config.checkpoint.triggers.map((t) => ({
@@ -256,17 +382,58 @@ export class ChatBridge {
             });
           }
         }
-        const estimatedTokensCount = this.ctx.conversationHistory.reduce((acc, msg) => {
-          const t = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-          return acc + estimateTokens(t);
-        }, 0);
-        if (deps.contextManager.shouldCompress(this.ctx.conversationHistory.length, estimatedTokensCount)) {
-          const { compressed, result } = deps.contextManager.compress(this.ctx.conversationHistory);
-          this.ctx.conversationHistory = compressed;
-          options.onStream({
-            type: 'progress',
-            progress: { label: `上下文已压缩: ${result.originalCount} → ${result.compressedCount} 条`, current: 3, total: 3 },
-          });
+      }
+
+      // 自动上下文压缩：不依赖 checkpoint 开关；优先 compressEnhanced，失败降级 compress
+      const estimatedTokensCount = this.ctx.conversationHistory.reduce((acc, msg) => {
+        const t = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+        return acc + estimateTokens(t);
+      }, 0);
+      const compressDecision = deps.contextManager.shouldCompressEnhanced(
+        this.ctx.conversationHistory.length,
+        estimatedTokensCount,
+      );
+      if (compressDecision.should) {
+        try {
+          const { compressed, result } = await deps.contextManager.compressEnhanced(
+            this.ctx.conversationHistory,
+            { offloadDir: path.join(options.cwd, '.routedev', 'offloaded') },
+          );
+          if (
+            result.messagesCompressed > 0 ||
+            result.offloadedOutputs > 0 ||
+            result.tokensAfter < result.tokensBefore
+          ) {
+            this.ctx.conversationHistory = compressed;
+            options.onStream({
+              type: 'progress',
+              progress: {
+                label: `上下文已压缩: ${result.tokensBefore} → ${result.tokensAfter} tokens`,
+                current: 3,
+                total: 3,
+              },
+            });
+          }
+        } catch {
+          try {
+            const { compressed, result } = deps.contextManager.compress(this.ctx.conversationHistory);
+            this.ctx.conversationHistory = compressed;
+            options.onStream({
+              type: 'progress',
+              progress: {
+                label: `上下文已压缩: ${result.originalCount} → ${result.compressedCount} 条`,
+                current: 3,
+                total: 3,
+              },
+            });
+          } catch (innerErr) {
+            // Phase 96 M-2 修复：双重压缩都失败时记日志，避免无任何诊断信息
+            // 不阻塞主流程，对话继续以未压缩历史进行
+            logger.warn('chat-bridge: compressEnhanced + compress 双重压缩均失败，跳过压缩', {
+              error: innerErr instanceof Error ? innerErr.message : String(innerErr),
+              historyLength: this.ctx.conversationHistory.length,
+            });
+          }
         }
       }
     } catch (err) {
@@ -332,6 +499,11 @@ export class ChatBridge {
           console.warn('[Engine] trace endSession failed:', err);
         }
       }
+
+      // Phase 96 P0-1：持久化最新对话历史（防抖写入）
+      // 无论成功/失败/压缩与否，都保存当前 ctx.conversationHistory 的最新快照
+      // 错误分支下 history 可能未更新，保存的是上一次状态（符合预期）
+      this.persistence.save(this.ctx.conversationHistory);
     }
   }
 
@@ -519,6 +691,12 @@ export class ChatBridge {
       this.ctx.conversationHistory = [];
       // Phase 84：清空对话时同步重置会话树，下次 /tree 重新从空历史懒初始化
       this.sessionTree = null;
+      // Phase 96 P0-1：清空持久化文件，避免重启后恢复已清空的对话
+      this.persistence.clear().catch((err) => {
+        logger.warn('ConversationPersistence: clear failed on /clear', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
       return { ok: true, message: '对话历史已清空' };
     }
     if (cmd === '/status') {
@@ -532,9 +710,23 @@ export class ChatBridge {
     }
     if (cmd === '/compact' || cmd === '/compress') {
       if (deps && this.ctx.conversationHistory.length > 4) {
-        const { compressed, result } = deps.contextManager.compress(this.ctx.conversationHistory);
-        this.ctx.conversationHistory = compressed;
-        return { ok: true, message: `上下文已压缩: ${result.originalCount} → ${result.compressedCount} 条` };
+        try {
+          const { compressed, result } = await deps.contextManager.compressEnhanced(
+            this.ctx.conversationHistory,
+            { offloadDir: path.join(options.cwd, '.routedev', 'offloaded') },
+          );
+          this.ctx.conversationHistory = compressed;
+          return {
+            ok: true,
+            message: `上下文已压缩: ${result.tokensBefore} → ${result.tokensAfter} tokens` +
+              (result.messagesCompressed > 0 ? `（摘要 ${result.messagesCompressed} 条）` : '') +
+              (result.offloadedOutputs > 0 ? `，offload ${result.offloadedOutputs} 条` : ''),
+          };
+        } catch {
+          const { compressed, result } = deps.contextManager.compress(this.ctx.conversationHistory);
+          this.ctx.conversationHistory = compressed;
+          return { ok: true, message: `上下文已压缩: ${result.originalCount} → ${result.compressedCount} 条` };
+        }
       }
       return { ok: true, message: '对话历史较短，无需压缩' };
     }
@@ -611,6 +803,8 @@ export class ChatBridge {
   syncConversationHistory(messages: LLMMessage[]): void {
     this.ctx.conversationHistory = messages.slice(-20);
     console.log(`[Engine] 对话历史已同步: ${this.ctx.conversationHistory.length} 条`);
+    // Phase 96 P0-1：外部同步后立即持久化，避免重启丢失
+    this.persistence.save(this.ctx.conversationHistory);
   }
 
   // ============================================================

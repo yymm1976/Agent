@@ -86,4 +86,53 @@ export class ConfigBridge {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
+
+  /**
+   * Phase 96 P1-4：拉取指定 provider 的可用模型列表
+   *
+   * 用传入的 baseUrl/apiKey 临时构造 LLM 客户端，调用 getModels() 拉取远端模型 ID 列表。
+   * protocol 从当前已保存配置中按 providerId 查找（用户测试草稿值时仍用已保存的 protocol）。
+   * provider 未保存时（用户正在新建未保存）回退到 args.protocol（可选）。
+   *
+   * @returns { success: boolean; models?: string[]; error?: string }
+   */
+  async handleListModels(
+    args: Record<string, unknown>,
+  ): Promise<{ success: boolean; models?: string[]; error?: string }> {
+    const providerId = String(args.providerId ?? '');
+    const baseUrl = String(args.baseUrl ?? '');
+    const apiKey = String(args.apiKey ?? '');
+    if (!providerId || !baseUrl || !apiKey) {
+      return { success: false, error: '缺少 providerId / baseUrl / apiKey 参数' };
+    }
+
+    // 从当前已保存配置中查找 protocol（用户编辑未保存时仍用旧 protocol）
+    const provider = this.ctx.config.providers.find((p) => p.id === providerId);
+    const protocol = provider?.protocol ?? (args.protocol as AppConfig['providers'][number]['protocol'] | undefined);
+    if (!protocol) {
+      return { success: false, error: `未找到 provider: ${providerId}（请先保存配置或传入 protocol 参数）` };
+    }
+
+    // G-006 修复：baseUrl SSRF 防护——拒绝指向内网/私有 IP 的请求
+    const ssrfResult = await checkSSRF(baseUrl);
+    if (!ssrfResult.allowed) {
+      return { success: false, error: `baseUrl 被安全策略拒绝：${ssrfResult.reason}` };
+    }
+
+    try {
+      const client = createLLMClient({
+        id: providerId,
+        protocol,
+        baseUrl,
+        apiKey,
+        timeoutMs: 15000,
+      });
+      // Phase 96 P1-4：调用 BaseLLMClient.getModels() 拉取远端模型列表
+      // 失败时 getModels 内部已 fail-open 返回空数组，此处不再二次捕获
+      const models = await client.getModels();
+      return { success: true, models };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
 }

@@ -207,11 +207,12 @@ describe('Phase 48 Task 4 - 自定义 profile 工具白名单覆盖硬编码白�
 
     const child = createChildRegistry(parent, 'reviewer', profileManager);
 
-    // 硬编码 reviewer 白名单应生效：['file_read', 'code_search', 'list_directory']
+    // 硬编码 reviewer 白名单应生效：['file_read', 'code_search', 'list_directory', 'file_write']
     expect(child.has('file_read')).toBe(true);
     expect(child.has('code_search')).toBe(true);
     expect(child.has('list_directory')).toBe(true);
-    expect(child.has('file_write')).toBe(false);
+    // ReviewChain：reviewer 需要 file_write 写审查报告
+    expect(child.has('file_write')).toBe(true);
   });
 });
 
@@ -229,12 +230,13 @@ describe('Phase 48 Task 4 - 向后兼容：不传 profileManager', () => {
     // 不传 profileManager（仅两个参数）
     const child = createChildRegistry(parent, 'reviewer');
 
-    // 硬编码 reviewer 白名单：['file_read', 'code_search', 'list_directory']
+    // 硬编码 reviewer 白名单：['file_read', 'code_search', 'list_directory', 'file_write']
     expect(child.has('file_read')).toBe(true);
     expect(child.has('code_search')).toBe(true);
     expect(child.has('list_directory')).toBe(true);
+    // ReviewChain：reviewer 需要 file_write 写审查报告
+    expect(child.has('file_write')).toBe(true);
     // 非白名单工具被移除
-    expect(child.has('file_write')).toBe(false);
     expect(child.has('shell_exec')).toBe(false);
     expect(child.has('web_fetch')).toBe(false);
     expect(child.has('git_op')).toBe(false);

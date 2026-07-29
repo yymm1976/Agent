@@ -206,4 +206,5 @@ export type GoalEvent =
       success: boolean;
       totalDurationMs: number;
       summary: string;
+      completionStatus?: import('./completion-gate.js').CompletionStatus;
     };

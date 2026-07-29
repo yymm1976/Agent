@@ -112,6 +112,30 @@ export class MemoryIntegration {
     return { systemPrompt: (systemPrompt ?? '') + memoryPrompt, systemBlocks };
   }
 
+  /**
+   * Session 结束时反馈 useful（Phase 96 I-2 修复）
+   *
+   * 把本次 run() 期间召回命中的节点标记为 useful（validatedCount += 1）。
+   * 调用时机：ReActAgentLoop.run() 的 finally 块。
+   * fail-open：recallInjector 为 null 或 improve 抛错时仅记日志。
+   */
+  commitMemoryFeedback(): void {
+    if (!this.recallInjector) return;
+    try {
+      // commitUsefulFeedback 是 Phase 96 新增方法；做 typeof 守卫兼容旧版
+      const injector = this.recallInjector as unknown as {
+        commitUsefulFeedback?: () => void;
+      };
+      if (typeof injector.commitUsefulFeedback === 'function') {
+        injector.commitUsefulFeedback();
+      }
+    } catch (err) {
+      logger.debug('commitMemoryFeedback failed (fail-open)', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   // ===== 引用解析 =====
 
   /**

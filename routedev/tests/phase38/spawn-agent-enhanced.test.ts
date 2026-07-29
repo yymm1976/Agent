@@ -264,7 +264,7 @@ describe('Phase 38 Task 2: SpawnAgentTool 增强', () => {
       expect(child.size).toBe(allowedTools.size);
     });
 
-    it('reviewer 类型只保留 file_read/code_search/list_directory', () => {
+    it('reviewer 类型保留 file_read/code_search/list_directory/file_write（写审查报告）', () => {
       const parent = createFullRegistry();
       parent.register(new SpawnAgentTool(createMockSpawnFn()));
 
@@ -274,7 +274,8 @@ describe('Phase 38 Task 2: SpawnAgentTool 增强', () => {
       for (const name of allowedTools) {
         expect(child.has(name)).toBe(true);
       }
-      expect(child.has('file_write')).toBe(false);
+      // ReviewChain：reviewer 需要 file_write 写 context/review-report.md
+      expect(child.has('file_write')).toBe(true);
       expect(child.has('shell_exec')).toBe(false);
       expect(child.has('spawn_agent')).toBe(false);
       expect(child.size).toBe(allowedTools.size);

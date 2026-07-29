@@ -12,9 +12,10 @@ export type ScenarioTier = z.infer<typeof ScenarioTierSchema>;
 
 // LLM 协议：决定调用哪种客户端实现
 // - openai: OpenAI 兼容协议（OpenAI / DeepSeek / Qwen / Ollama 等共享）
+// - openai-responses: OpenAI Responses API（input/output items + instructions）
 // - anthropic: Anthropic 原生协议
 // - gemini: Google Gemini 原生协议（contents/parts/candidates）
-export const ProtocolSchema = z.enum(['openai', 'anthropic', 'gemini']);
+export const ProtocolSchema = z.enum(['openai', 'openai-responses', 'anthropic', 'gemini']);
 export type Protocol = z.infer<typeof ProtocolSchema>;
 
 // Token 预算执行模式：仅追踪 vs 强制执行
@@ -44,6 +45,14 @@ export const ModelConfigSchema = z.object({
   latencyMs: z.number().nonnegative().default(0),            // 历史平均延迟
   available: z.boolean().default(true),       // 是否可用（可被人工关闭）
   fallbackModelId: z.string().optional(),     // 失败时的降级模型
+  /**
+   * Phase 96 P1-4：模型定价（美元/百万 token）
+   * 缺省时从 ModelCatalog 查找，仍无则视为 0（不计费）
+   */
+  inputCostPerMillion: z.number().nonnegative().optional(),
+  outputCostPerMillion: z.number().nonnegative().optional(),
+  /** 缓存读取价格（美元/百万 token），Anthropic/OpenAI 等支持 prompt cache 的 provider 适用 */
+  cacheReadCostPerMillion: z.number().nonnegative().optional(),
 });
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 

@@ -17,6 +17,7 @@ const AUDIT_MODES = [
   { value: 'completion_gate_first', label: '验证门优先' },
   { value: 'reviewer_first', label: '审查器优先' },
   { value: 'all_must_pass', label: '全部通过' },
+  { value: 'none', label: '不审计' },
 ] as const;
 
 export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
@@ -51,10 +52,10 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
   };
 
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>/goal 流程</CardTitle>
+          <CardTitle>目标流程</CardTitle>
           <CardDescription>控制目标分解、确认与审计的行为</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -85,7 +86,7 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="goal-token-budget">Token 预算</Label>
+            <Label htmlFor="goal-token-budget">用量预算</Label>
             <Input
               id="goal-token-budget"
               type="number"
@@ -93,7 +94,7 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
               value={goal.tokenBudget}
               onChange={(e) => updateGoal({ tokenBudget: Number(e.target.value) })}
             />
-            <p className="text-xs text-rd-textMuted">单次 /goal 任务的 token 上限。</p>
+            <p className="text-xs text-rd-textMuted">单次目标任务的用量上限。</p>
           </div>
 
           <div className="space-y-2">
@@ -117,7 +118,7 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
         <CardHeader>
           <CardTitle>执行路径与编排</CardTitle>
           <CardDescription>
-            Phase 55 新增的执行路径判定、DAG 引擎、双循环编排等高级开关。
+            执行路径判定、DAG 引擎与双循环编排的开关。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -128,17 +129,18 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
             <Select
               id="execution-router-mode"
               value={goal.executionRouter?.mode ?? 'auto'}
-              onChange={(e) => updateExecutionRouter({ mode: e.target.value as 'auto' | 'explicit' })}
+              onChange={(e) => updateExecutionRouter({ mode: e.target.value as 'auto' | 'explicit' | 'single' })}
             >
-              <SelectItem value="auto">auto（自动判定）</SelectItem>
-              <SelectItem value="explicit">explicit（显式指定）</SelectItem>
+              <SelectItem value="single">单 Agent</SelectItem>
+              <SelectItem value="auto">自动判定</SelectItem>
+              <SelectItem value="explicit">显式指定</SelectItem>
             </Select>
-            <p className="text-xs text-rd-textMuted">控制 /goal 执行路径的判定策略。</p>
+            <p className="text-xs text-rd-textMuted">控制执行路径的判定策略。</p>
           </div>
 
-          {/* 2. 单 Agent 最大步数（Stepper 1-5） */}
+          {/* 2. 单 Agent 最大步数 */}
           <div className="space-y-2">
-            <Label htmlFor="single-agent-max-steps">单 Agent 最大步数（1-5）</Label>
+            <Label htmlFor="single-agent-max-steps">单 Agent 最大步数</Label>
             <Input
               id="single-agent-max-steps"
               type="number"
@@ -147,12 +149,12 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
               value={goal.executionRouter?.singleAgentMaxSteps ?? 2}
               onChange={(e) => updateExecutionRouter({ singleAgentMaxSteps: Number(e.target.value) })}
             />
-            <p className="text-xs text-rd-textMuted">步数 ≤ 此值且单领域时走单 Agent 路径。</p>
+            <p className="text-xs text-rd-textMuted">步数不超过此值且单领域时走单 Agent 路径。</p>
           </div>
 
-          {/* 3. DAG 最大领域数（Stepper 1-5） */}
+          {/* 3. DAG 最大领域数 */}
           <div className="space-y-2">
-            <Label htmlFor="dag-max-domains">DAG 最大领域数（1-5）</Label>
+            <Label htmlFor="dag-max-domains">DAG 最大领域数</Label>
             <Input
               id="dag-max-domains"
               type="number"
@@ -168,7 +170,7 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="dag-engine-enabled">DAG 引擎</Label>
-              <p className="text-xs text-rd-textMuted">启用 DAG 工作流引擎,支持拓扑排序与并行执行。</p>
+              <p className="text-xs text-rd-textMuted">启用 DAG 工作流引擎，支持拓扑排序与并行执行。需同时启用对应的能力 Pack。</p>
             </div>
             <Switch
               id="dag-engine-enabled"
@@ -181,7 +183,7 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="compositional-routing-enabled">组合路由</Label>
-              <p className="text-xs text-rd-textMuted">跨领域任务走 SAD 分解 + Skill 检索 + DAG 组合。</p>
+              <p className="text-xs text-rd-textMuted">跨领域任务走 SAD 分解、技能检索与 DAG 组合。需同时启用对应的能力 Pack。</p>
             </div>
             <Switch
               id="compositional-routing-enabled"
@@ -194,7 +196,7 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="strategy-enabled">策略选择器</Label>
-              <p className="text-xs text-rd-textMuted">按复杂度选择单 Agent 或多 Agent 策略。</p>
+              <p className="text-xs text-rd-textMuted">按复杂度选择单 Agent 或多 Agent 策略。需同时启用对应的能力 Pack。</p>
             </div>
             <Switch
               id="strategy-enabled"
@@ -207,7 +209,7 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="state-graph-enabled">步骤状态图</Label>
-              <p className="text-xs text-rd-textMuted">ExecutionStateGraph 步骤状态管理与追踪。</p>
+              <p className="text-xs text-rd-textMuted">步骤状态管理与追踪。需同时启用对应的能力 Pack。</p>
             </div>
             <Switch
               id="state-graph-enabled"
@@ -220,7 +222,7 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="circuit-breaker-enabled">熔断器</Label>
-              <p className="text-xs text-rd-textMuted">连续失败时熔断,防止雪崩。</p>
+              <p className="text-xs text-rd-textMuted">连续失败时熔断，防止雪崩。需同时启用对应的能力 Pack。</p>
             </div>
             <Switch
               id="circuit-breaker-enabled"
@@ -233,7 +235,7 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="dual-loop-enabled">双循环编排</Label>
-              <p className="text-xs text-rd-textMuted">内循环执行 + 外循环验证,失败时局部重跑。</p>
+              <p className="text-xs text-rd-textMuted">内循环执行、外循环验证，失败时局部重跑。需同时启用对应的能力 Pack。</p>
             </div>
             <Switch
               id="dual-loop-enabled"
@@ -246,7 +248,7 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="bounded-recovery-enabled">有界恢复</Label>
-              <p className="text-xs text-rd-textMuted">失败时回退到最近 checkpoint,只重跑失败步骤及其依赖闭包。</p>
+              <p className="text-xs text-rd-textMuted">失败时回退到最近检查点，只重跑失败步骤及其依赖闭包。需同时启用对应的能力 Pack。</p>
             </div>
             <Switch
               id="bounded-recovery-enabled"
@@ -272,7 +274,7 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="tiered-review">Reviewer 分级</Label>
-              <p className="text-xs text-rd-textMuted">按任务规模分级（tiny/mid/big）,tiny 跳过外循环。</p>
+              <p className="text-xs text-rd-textMuted">按任务规模分级，小任务跳过外循环。</p>
             </div>
             <Switch
               id="tiered-review"
@@ -287,9 +289,9 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
       {/* Phase 50 Task 1：Goal 流程模块接入 */}
       <Card>
         <CardHeader>
-          <CardTitle>Goal 流程模块接入</CardTitle>
+          <CardTitle>模块接入开关</CardTitle>
           <CardDescription>
-            /goal 流程四个核心模块的渐进式接入开关。
+            目标流程核心模块的接入开关。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -299,7 +301,7 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
             <div>
               <Label htmlFor="goal-integration-audit">三层独立审计</Label>
               <p className="text-xs text-rd-textMuted">
-                GoalAuditor 三层独立审计（completion_gate + verifier_llm + reviewer_agent）。
+                三层独立审计：完成门、验证模型与审查 Agent。需同时启用对应的能力 Pack。
               </p>
             </div>
             <Switch
@@ -314,7 +316,7 @@ export function SettingsGoalTab({ draft, updateDraft }: SettingsGoalTabProps) {
             <div>
               <Label htmlFor="goal-integration-persistence">持久化与崩溃恢复</Label>
               <p className="text-xs text-rd-textMuted">
-                写入 .routedev/goals/&lt;id&gt;.json，崩溃后可恢复继续执行。
+                写入 .routedev/goals/&lt;id&gt;.json，崩溃后可恢复继续执行。需同时启用对应的能力 Pack。
               </p>
             </div>
             <Switch

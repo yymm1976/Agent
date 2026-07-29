@@ -7,6 +7,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui
 import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';
 import { Input } from '../ui/input.js';
+import { Select, SelectItem } from '../ui/select.js';
 
 interface SettingsPhase53IntegrationTabProps {
   draft: AppConfig;
@@ -94,32 +95,35 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
       {/* 策略引擎 */}
       <Card>
         <CardHeader>
-          <CardTitle>策略引擎</CardTitle>
-          <CardDescription>deny/allow 默认策略 + deny-overrides 冲突解决 + 规则文件路径。</CardDescription>
+          <CardTitle>安全策略</CardTitle>
+          <CardDescription>默认策略与冲突解决规则</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="p53-policy-enabled">启用策略引擎</Label>
-              <p className="text-xs text-rd-textMuted">开启后路由前先经过策略评估。</p>
+              <p className="text-xs text-rd-textMuted">暂未实现，策略引擎始终装配。</p>
             </div>
             <Switch
               id="p53-policy-enabled"
               checked={policyEngine.enabled ?? false}
               onCheckedChange={(checked) => updatePolicyEngine({ enabled: checked })}
+              disabled
             />
           </div>
           <div className="space-y-2">
             <Label htmlFor="p53-policy-default">默认策略（deny / allow）</Label>
-            <Input
+            <Select
               id="p53-policy-default"
-              type="text"
               value={policyEngine.defaultPolicy ?? 'deny'}
               onChange={(e) => {
                 const v = e.target.value === 'allow' ? 'allow' : 'deny';
                 updatePolicyEngine({ defaultPolicy: v });
               }}
-            />
+            >
+              <SelectItem value="deny">deny（拒绝）</SelectItem>
+              <SelectItem value="allow">allow（允许）</SelectItem>
+            </Select>
             <p className="text-xs text-rd-textMuted">无匹配规则时的兜底策略。</p>
           </div>
           <div className="space-y-2">
@@ -138,8 +142,8 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
       {/* 哈希链审计 */}
       <Card>
         <CardHeader>
-          <CardTitle>哈希链审计</CardTitle>
-          <CardDescription>AuditLogger 写入 SHA-256 链式哈希，溢出时保留接缝哈希。</CardDescription>
+          <CardTitle>操作审计</CardTitle>
+          <CardDescription>记录操作日志，确保不可篡改</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
@@ -181,7 +185,7 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
       <Card>
         <CardHeader>
           <CardTitle>MCP 安全扫描</CardTitle>
-          <CardDescription>MCP 工具注册前扫描 4 类威胁，按阈值阻断；可配置已知工具名用于仿冒检测。</CardDescription>
+          <CardDescription>注册前扫描 MCP 工具的安全威胁</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
@@ -197,12 +201,16 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
           </div>
           <div className="space-y-2">
             <Label htmlFor="p53-mcp-threshold">阻断阈值（low / medium / high / critical）</Label>
-            <Input
+            <Select
               id="p53-mcp-threshold"
-              type="text"
               value={mcpSecurityScan.blockThreshold ?? 'high'}
               onChange={(e) => updateMcpSecurityScan({ blockThreshold: e.target.value as 'low' | 'medium' | 'high' | 'critical' })}
-            />
+            >
+              <SelectItem value="low">low</SelectItem>
+              <SelectItem value="medium">medium</SelectItem>
+              <SelectItem value="high">high</SelectItem>
+              <SelectItem value="critical">critical</SelectItem>
+            </Select>
             <p className="text-xs text-rd-textMuted">severity ≥ 此级别的发现会阻止注册。</p>
           </div>
           <div className="space-y-2">
@@ -228,7 +236,7 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="p53-skill-enabled">启用技能安全门控</Label>
-              <p className="text-xs text-rd-textMuted">开启后第三方技能安装前必须通过扫描。</p>
+              <p className="text-xs text-rd-textMuted">开启后第三方技能安装前必须通过扫描。需同时启用 skillLifecycle Pack。</p>
             </div>
             <Switch
               id="p53-skill-enabled"
@@ -411,7 +419,7 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="p53-dag-enabled">启用 DAG 工作流引擎</Label>
-              <p className="text-xs text-rd-textMuted">开启后工作流按 DAG 调度执行。</p>
+              <p className="text-xs text-rd-textMuted">开启后工作流按 DAG 调度执行。需同时启用对应的能力 Pack。</p>
             </div>
             <Switch
               id="p53-dag-enabled"
@@ -465,7 +473,7 @@ export function SettingsPhase53IntegrationTab({ draft, updateDraft }: SettingsPh
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="p53-cb-enabled">启用熔断器</Label>
-              <p className="text-xs text-rd-textMuted">开启后失败累计达到阈值时熔断。</p>
+              <p className="text-xs text-rd-textMuted">开启后失败累计达到阈值时熔断。需同时启用对应的能力 Pack。</p>
             </div>
             <Switch
               id="p53-cb-enabled"

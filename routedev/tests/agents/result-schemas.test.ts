@@ -102,7 +102,8 @@ describe('Phase 51 Task 10: result-schemas 单元测试', () => {
   });
 
   it('1.6 RESULT_SCHEMAS: 包含四种角色映射', () => {
-    expect(Object.keys(RESULT_SCHEMAS).sort()).toEqual(['custom', 'executor', 'researcher', 'reviewer']);
+    // RESULT_SCHEMAS 现在包含 8 种角色（planner/verifier/synthesizer/review-planner 已加入）
+    expect(Object.keys(RESULT_SCHEMAS).sort()).toEqual(['custom', 'executor', 'planner', 'researcher', 'review-planner', 'reviewer', 'synthesizer', 'verifier']);
     expect(RESULT_SCHEMAS.researcher).toBe(ResearcherResultSchema);
     expect(RESULT_SCHEMAS.executor).toBe(ExecutorResultSchema);
     expect(RESULT_SCHEMAS.reviewer).toBe(ReviewerResultSchema);

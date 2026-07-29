@@ -1,9 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import { AutoCompactGuardian, AutoCompactConfig, DEFAULT_GUARDIAN_CONFIG } from '../../../src/agent/memory/auto-compact-guardian.js';
 
+/** 固定阈值 fixture：与生产默认解耦，避免默认 buffer 调整打断语义断言 */
+const FIXTURE_THRESHOLDS: Partial<AutoCompactConfig> = {
+  contextWindow: 200000,
+  reservedTokensForSummary: 20000, // effective = 180000
+  autoCompactBuffer: 13000, // compact @ 167000
+  warningBuffer: 20000, // warn @ 160000
+  errorBuffer: 20000,
+  maxConsecutiveFailures: 3,
+};
+
 const createGuardian = (overrides?: Partial<AutoCompactConfig>) => {
   const config: AutoCompactConfig = {
     ...DEFAULT_GUARDIAN_CONFIG,
+    ...FIXTURE_THRESHOLDS,
     enabled: true,
     ...overrides,
   };

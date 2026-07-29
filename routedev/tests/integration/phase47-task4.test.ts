@@ -168,13 +168,14 @@ describe('Phase 47 Task 4 - headless 模式陷阱 #135', () => {
     expect(result.decision).toBe('deny');
   });
 
-  it('非 headless 模式下 always-ask 工具正常 confirm', () => {
+  it('非 headless 模式下 always-ask 工具在 auto 模式降级为 auto（Phase 94）', () => {
+    // Phase 94：auto 模式下 confirm 规则降级为 auto（用户已授权自动执行）
     const engine = createDefaultEngine();
     engine.setSandboxLevel('full-access');
     engine.setHeadlessMode(false);
 
     const result = engine.check('shell_exec', { command: 'ls' }, 'auto');
-    expect(result.decision).toBe('confirm');
+    expect(result.decision).toBe('auto');
   });
 
   it('headless 模式下 never-ask 工具不受影响', () => {
@@ -218,9 +219,15 @@ describe('Phase 47 Task 4 - 向后兼容', () => {
     expect(result.decision).toBe('confirm');
   });
 
-  it('createDefaultEngine() 下 git_op 仍为 confirm（行为不变）', () => {
+  it('createDefaultEngine() 下 git_op 读操作为 auto（Phase 95 修复：读类不再被沙箱 deny/confirm）', () => {
     const engine = createDefaultEngine();
     const result = engine.check('git_op', { operation: 'status' }, 'semi');
+    expect(result.decision).toBe('auto');
+  });
+
+  it('createDefaultEngine() 下 git_op 写操作仍为 confirm', () => {
+    const engine = createDefaultEngine();
+    const result = engine.check('git_op', { operation: 'commit' }, 'semi');
     expect(result.decision).toBe('confirm');
   });
 });

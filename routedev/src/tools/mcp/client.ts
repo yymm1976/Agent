@@ -442,6 +442,8 @@ export class MCPClientManager {
           this.scheduleReconnect(entry);
         });
     }, delay);
+    // 重连定时器不阻止进程退出
+    timer.unref?.();
 
     this.reconnectTimers.set(entry.id, timer);
   }

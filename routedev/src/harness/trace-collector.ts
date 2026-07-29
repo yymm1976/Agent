@@ -775,6 +775,8 @@ export class TraceCollector {
     // 启动定时 flush（如果尚未启动）
     if (!this.flushTimer) {
       this.flushTimer = setTimeout(() => this.flushWriteQueue(), FLUSH_INTERVAL_MS);
+      // flush 定时器不阻止进程退出
+      this.flushTimer.unref?.();
     }
   }
 

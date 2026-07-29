@@ -55,35 +55,35 @@ describe('TokenTracker 单任务预算 (Phase 31 Task 6.3)', () => {
 
   describe('recordTaskUsage', () => {
     it('任务未激活时返回 ok', () => {
-      const status = tracker.recordTaskUsage(makeUsage(1000));
+      const status = tracker.recordTaskUsage();
       expect(status).toBe('ok');
     });
 
     it('使用率 < 80% 返回 ok', () => {
       tracker.startTask(10000);
       tracker.record(makeUsage(5000), { modelId: 'm', agentId: 'a', stepId: 's' });
-      const status = tracker.recordTaskUsage(makeUsage(0));
+      const status = tracker.recordTaskUsage();
       expect(status).toBe('ok');
     });
 
     it('使用率 ≥ 80% 返回 warning', () => {
       tracker.startTask(10000);
       tracker.record(makeUsage(8000), { modelId: 'm', agentId: 'a', stepId: 's' });
-      const status = tracker.recordTaskUsage(makeUsage(0));
+      const status = tracker.recordTaskUsage();
       expect(status).toBe('warning');
     });
 
     it('使用率 ≥ 100% 返回 exceeded', () => {
       tracker.startTask(10000);
       tracker.record(makeUsage(10000), { modelId: 'm', agentId: 'a', stepId: 's' });
-      const status = tracker.recordTaskUsage(makeUsage(0));
+      const status = tracker.recordTaskUsage();
       expect(status).toBe('exceeded');
     });
 
     it('使用率远超 100% 返回 exceeded', () => {
       tracker.startTask(10000);
       tracker.record(makeUsage(15000), { modelId: 'm', agentId: 'a', stepId: 's' });
-      const status = tracker.recordTaskUsage(makeUsage(0));
+      const status = tracker.recordTaskUsage();
       expect(status).toBe('exceeded');
     });
 
@@ -93,7 +93,7 @@ describe('TokenTracker 单任务预算 (Phase 31 Task 6.3)', () => {
       tracker.record(makeUsage(3000), { modelId: 'm', agentId: 'a', stepId: 's2' });
       tracker.record(makeUsage(3000), { modelId: 'm', agentId: 'a', stepId: 's3' });
       // 累计 9000，使用率 90% → warning
-      const status = tracker.recordTaskUsage(makeUsage(0));
+      const status = tracker.recordTaskUsage();
       expect(status).toBe('warning');
     });
   });
@@ -141,7 +141,7 @@ describe('TokenTracker 单任务预算 (Phase 31 Task 6.3)', () => {
     it('endTask 后 recordTaskUsage 返回 ok', () => {
       tracker.startTask(50000);
       tracker.endTask();
-      const status = tracker.recordTaskUsage(makeUsage(1000));
+      const status = tracker.recordTaskUsage();
       expect(status).toBe('ok');
     });
   });
@@ -192,7 +192,7 @@ describe('TokenTracker 单任务预算 (Phase 31 Task 6.3)', () => {
       tracker.record(makeUsage(15000), { modelId: 'm', agentId: 'a', stepId: 's' });
 
       // 任务超限
-      expect(tracker.recordTaskUsage(makeUsage(0))).toBe('exceeded');
+      expect(tracker.recordTaskUsage()).toBe('exceeded');
       // 但日限额仍在范围内
       expect(tracker.checkBudget()).toBe(true);
     });

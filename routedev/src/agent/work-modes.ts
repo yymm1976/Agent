@@ -6,7 +6,7 @@
 // Phase 32 Task 1.3：GuardedToolExecutorAdapter 接入 ReadTracker
 // 先读后写强制——file_write/file_edit 前必须 file_read 过（新建文件例外）
 
-import type { ToolExecutorAdapter } from './loop-config.js';
+import type { ToolExecutorAdapter, ToolExecCallOptions } from './loop-config.js';
 import type { ReadTracker } from '../tools/read-tracker.js';
 import { logger } from '../utils/logger.js';
 // 任务1：接入 ComposePipeline，让 Compose 模式具备自动编排能力
@@ -265,38 +265,83 @@ export class GuardedToolExecutorAdapter implements ToolExecutorAdapter {
     toolName: string,
     toolCallId: string,
     args: Record<string, unknown>,
+    callOptions?: ToolExecCallOptions,
   ): Promise<string> {
     // P2-5 修复：增加 try-catch，防止 checkOperation 抛异常导致 Promise.all 全部丢失
     try {
-      const check = this.controller.checkOperation(toolName, args);
-      if (!check.allowed) {
-        return `[${check.reason}] 操作被拦截。`;
+      const gate = await this.preflight(toolName, args);
+      if (!gate.allowed) {
+        // 统一前缀，保证 loop 回退正则与 UI 都能识别为失败
+        return `[被拦截] ${gate.reason}`;
       }
 
-      // Phase 32 Task 1.3：先读后写强制
-      // file_write / file_edit 执行前检查文件是否已读过（新建文件例外）
-      if (this.readTracker && this.readBeforeWriteEnabled) {
-        const writeCheck = await this.checkReadBeforeWrite(toolName, args);
-        if (!writeCheck.allowed) {
-          return writeCheck.reason ?? '[安全] 先读后写检查未通过';
-        }
-      }
-
-      const result = await this.inner.executeTool(toolName, toolCallId, args);
-
-      // Phase 32 Task 1.3：file_read 执行后标记文件为已读
-      // 这样后续的 file_write/file_edit 才能通过检查
-      if (this.readTracker && toolName === 'file_read') {
-        const filePath = this.extractFilePath(args);
-        if (filePath) {
-          this.readTracker.markRead(filePath);
-        }
-      }
-
+      const result = await this.inner.executeTool(toolName, toolCallId, args, callOptions);
+      this.markReadIfNeeded(toolName, args);
       return result;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      return `[工具执行异常] ${toolName}: ${msg}`;
+      return `[工具错误] ${toolName}: ${msg}`;
+    }
+  }
+
+  /**
+   * 透传结构化执行：生产路径被 Guarded 包装后，若无此方法，
+   * loop 会回退到文本正则判断 isError，导致先读后写/门控拦截误判为成功。
+   *
+   * Phase 96 P1-1：透传 callOptions（signal/onUpdate）给内部适配器
+   */
+  async executeToolStructured(
+    toolName: string,
+    toolCallId: string,
+    args: Record<string, unknown>,
+    callOptions?: ToolExecCallOptions,
+  ): Promise<{ output: string; isError: boolean }> {
+    try {
+      const gate = await this.preflight(toolName, args);
+      if (!gate.allowed) {
+        return { output: `[被拦截] ${gate.reason}`, isError: true };
+      }
+
+      if (typeof this.inner.executeToolStructured === 'function') {
+        const structured = await this.inner.executeToolStructured(toolName, toolCallId, args, callOptions);
+        this.markReadIfNeeded(toolName, args);
+        return structured;
+      }
+
+      const output = await this.inner.executeTool(toolName, toolCallId, args, callOptions);
+      this.markReadIfNeeded(toolName, args);
+      const isError = /\[工具错误\]|\[被拦截\]|\[工具异常\]/.test(output);
+      return { output, isError };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return { output: `[工具错误] ${toolName}: ${msg}`, isError: true };
+    }
+  }
+
+  private async preflight(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<{ allowed: boolean; reason: string }> {
+    const check = this.controller.checkOperation(toolName, args);
+    if (!check.allowed) {
+      return { allowed: false, reason: check.reason ?? '操作被工作模式拦截' };
+    }
+    if (this.readTracker && this.readBeforeWriteEnabled) {
+      const writeCheck = await this.checkReadBeforeWrite(toolName, args);
+      if (!writeCheck.allowed) {
+        return {
+          allowed: false,
+          reason: writeCheck.reason ?? '先读后写检查未通过',
+        };
+      }
+    }
+    return { allowed: true, reason: '' };
+  }
+
+  private markReadIfNeeded(toolName: string, args: Record<string, unknown>): void {
+    if (this.readTracker && toolName === 'file_read') {
+      const filePath = this.extractFilePath(args);
+      if (filePath) this.readTracker.markRead(filePath);
     }
   }
 

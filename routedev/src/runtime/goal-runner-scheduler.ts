@@ -28,6 +28,7 @@ import { logger } from '../utils/logger.js';
 import { estimateTokens } from '../utils/token-estimate.js';
 import { renderGoalProgressText, renderGoalCompletionSummary, formatDuration } from './components/goal-progress.js';
 import { notifyRoutingFallback } from './notification.js';
+import { toCompletionStatus, type GateResult } from '../agent/completion-gate.js';
 import { MAX_CONTEXT_ITEMS } from './goal-runner-core.js';
 import * as path from 'node:path';
 
@@ -88,7 +89,6 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
     onToolConfirmRequest,
     hookRunner,
     routingHistory, routingMemory, executionVerifier, routingRegretTracker, routingOrchestrator,
-    memoryStore, hybridRetriever, localMaintenance,
     provenanceGraph, kanObstacleChecker, quantitativeGate, classifyOperation,
   } = ctx.deps;
   const { emit, gid, gateManager, goalCfg, goalIntegration } = ctx;
@@ -238,21 +238,22 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       addSystemMessage('❌ 存在失败步骤，目标标记为失败');
     }
     const auditMode = goalCfg?.auditMode ?? 'completion_gate_first';
+    let gateResult: GateResult | undefined;
     if ((plan.status as GoalPlanStatus) === 'failed') {
       addSystemMessage('⏭ 已跳过目标验证（存在失败步骤）');
     } else if (auditMode === 'none') {
       plan.status = 'completed';
       addSystemMessage('⏭ 已跳过目标验证（auditMode=none）');
     } else if (auditMode === 'completion_gate_first') {
-      await ctx.runCompletionGate(plan);
+      gateResult = await ctx.runCompletionGate(plan);
       await ctx.verifyPlan(plan);
     } else if (auditMode === 'reviewer_first') {
       await ctx.verifyPlan(plan);
-      await ctx.runCompletionGate(plan);
+      gateResult = await ctx.runCompletionGate(plan);
     } else {
       // 'full' 或默认值：两者都执行，先 LLM 验证后代码验证门
       await ctx.verifyPlan(plan);
-      await ctx.runCompletionGate(plan);
+      gateResult = await ctx.runCompletionGate(plan);
     }
 
     // Phase 55 Task 9：用 DualLoop + BoundedRecovery 替代迭代闭环
@@ -301,6 +302,7 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       success: plan.status === 'completed',
       totalDurationMs,
       summary: `${completedCount}/${plan.steps.length} 步骤完成${verifyText} · ${formatDuration(totalDurationMs)}`,
+      completionStatus: toCompletionStatus(gateResult, plan.status === 'completed'),
     });
 
     currentPlanRef.current = null;
@@ -376,20 +378,8 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
     const softStopRatio = goalCfg?.softStopRatio ?? 0.9;
     const classifyResult = await classifier.classify({ query: step.description });
 
+    // TD-26：HybridRetriever 已退役，记忆检索由 Core KG recallV2 覆盖
     let relevantMemories: string | null = null;
-    if (hybridRetriever) {
-      try {
-        const scored = await hybridRetriever.retrieve(step.description);
-        if (scored.length > 0) {
-          relevantMemories = scored.map(m => `[${m.type}] ${m.content}`).join('\n');
-          logger.info('Phase 65: 检索到相关记忆', { count: scored.length });
-        }
-      } catch (err) {
-        logger.warn('Phase 65: HybridRetriever.retrieve 失败（fail-open）', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
 
     let operationClassification: import('../skills/operation-classifier.js').OperationClassification | null = null;
     if (classifyOperation) {
@@ -455,6 +445,8 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       conversationHistory: conversationHistoryRef.current,
       systemPrompt: systemPromptRef.current,
       signal: stepAbort.signal,
+      // 传递当前自主度模式给权限中间件
+      autonomyMode: (config.autonomy?.defaultMode ?? 'semi') as 'manual' | 'semi' | 'auto',
       onModelSuccess: modelId => modelRouter.recordModelSuccess(modelId),
       onModelFailure: modelId => modelRouter.recordModelFailure(modelId),
       onConfirmTool: async (toolName, args) => {
@@ -484,7 +476,7 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
         });
         // Phase 31/32 P0 接线：任务级 Token 预算追踪
         // record() 同时累加日预算和 taskSpent，recordTaskUsage() 只查询状态（不累加，避免双计数）
-        const taskStatus = tracker.recordTaskUsage(event.usage);
+        const taskStatus = tracker.recordTaskUsage();
         const taskUsagePercent = tracker.getTaskUsagePercent();
         if (taskStatus === 'exceeded' || taskUsagePercent >= 1) {
           addSystemMessage('⏹ 任务级 Token 预算已耗尽，goal 执行中止');
@@ -594,40 +586,7 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       }
     }
 
-    if (memoryStore?.isEnabled()) {
-      try {
-        await memoryStore.write({
-          content: stepContent.slice(0, 2000),
-          type: 'fact',
-          source: `goal-step-${step.id}`,
-          validFrom: Date.now(),
-          topics: [step.description.slice(0, 100)],
-          metadata: { stepId: String(step.id), goalId: gid },
-        });
-        logger.info('Phase 65: 步骤结果已存储到 MemoryStore', { stepId: step.id });
-      } catch (err) {
-        logger.warn('Phase 65: MemoryStore.write 失败（fail-open）', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    if (localMaintenance) {
-      try {
-        const maintStatus = localMaintenance.shouldMaintain();
-        if (maintStatus.needed) {
-          const maintResult = await localMaintenance.maintain();
-          logger.info('Phase 65: 记忆维护完成', {
-            reorganized: maintResult.reorganized,
-            merged: maintResult.merged,
-          });
-        }
-      } catch (err) {
-        logger.warn('Phase 65: LocalMaintenancePolicy 维护失败（fail-open）', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
+    // TD-26：MemoryStore/LocalMaintenance 已退役，步骤结果由 Core KG checkpoint 覆盖
 
     if (provenanceGraph) {
       try {
@@ -669,6 +628,14 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
           error: err instanceof Error ? err.message : String(err),
         });
       }
+    }
+
+    // 步骤正常完成，清理 abortControllerRef：仅当仍指向当前 stepAbort 时置 null，
+    // 避免持有已完成 controller 的引用、误判"仍有进行中步骤"。
+    // 注意：抛 PlanAbortError 路径（预算耗尽/用户中断）不清理——
+    // 用户中断时 stepAbort.signal.aborted=true，line 645 据此让后续步骤正确跳过。
+    if (abortControllerRef.current === stepAbort) {
+      abortControllerRef.current = null;
     }
 
     return stepContent;
@@ -744,7 +711,12 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
 
           // Phase 21 Task 5：使用 compressEnhanced 替代 compress（两轮压缩 + offload）
           if (contextManager.shouldCompress(conversationHistoryRef.current.length, estimatedTokens)) {
-            const { compressed } = await contextManager.compressEnhanced(conversationHistoryRef.current);
+            const { compressed } = await contextManager.compressEnhanced(
+              conversationHistoryRef.current,
+              {
+                offloadDir: path.join(process.cwd(), '.routedev', 'offloaded'),
+              },
+            );
             conversationHistoryRef.current = compressed;
             addSystemMessage('📦 上下文已压缩（步骤间）');
           }

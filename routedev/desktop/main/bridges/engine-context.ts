@@ -8,6 +8,7 @@ import type { AppConfig } from '../../shared/config-types.js';
 import type { LLMMessage, ScenarioTier } from '../../../src/router/types.js';
 import type { LLMClientManager } from '../../../src/router/llm/index.js';
 import type { TokenTracker } from '../../../src/router/tracker.js';
+import type { CacheStatsTracker } from '../../../src/router/cache-optimizer.js';
 import type { ScenarioClassifier } from '../../../src/router/classifier.js';
 import type { ModelRouter } from '../../../src/router/router.js';
 import type { AppDependencies } from '../../../src/runtime/app-init.js';
@@ -105,6 +106,12 @@ export class EngineContext {
   classifier: ScenarioClassifier | null = null;
   modelRouter: ModelRouter | null = null;
   tracker: TokenTracker | null = null;
+  /**
+   * Phase 96+ A3.3：缓存命中统计追踪器（与 tracker 同生命周期）
+   * 在 initialize() 中创建，chat-bridge 在 tracker.record 之后调用 record
+   * 通过 getStats() 暴露给 IPC stats:get-snapshot
+   */
+  cacheStatsTracker: CacheStatsTracker | null = null;
   // Phase 48 Task 4：AgentProfileManager 实例（在 initialize() 中创建，懒加载避免阻塞启动）
   profileManager: AgentProfileManager | null = null;
 

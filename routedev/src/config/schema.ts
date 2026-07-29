@@ -103,7 +103,6 @@ export * from './schema-observability.js';
 // PacksConfigSchema 和 PacksConfig 类型定义在 schema-observability.ts 中
 // 此处仅保留注释说明分组归属（详见 schema-observability.ts 的 PacksConfigSchema）
 // 分组归属：
-//   browserWeb   → standard-pack（browser/web_search/web_fetch 装配层）
 //   codeMap      → standard-pack（code-map / code_graph_query 装配层）
 //   harness      → standard-pack（trace-replayer / scorecard）
 //   integrity    → standard-pack（cite / import / macros / mcpBridge / IntegrityManifest）

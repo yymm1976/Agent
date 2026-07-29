@@ -19,6 +19,7 @@ import type {
   LLMMessage,
   ToolCallRequest,
   TokenUsageInfo,
+  LLMToolDefinition,
 } from '../types.js';
 import { LLMError } from '../types.js';
 import { logger } from '../../utils/logger.js';
@@ -225,7 +226,14 @@ export class OpenAIClient extends BaseLLMClient {
     options: LLMRequestOptions,
     stream: boolean,
   ): ChatCompletionCreateParams {
-    const messages = this.convertMessages(options.messages, options.systemPrompt);
+    // B4：优先使用 systemBlocks（拼接为字符串），未传时回退到 systemPrompt
+    // OpenAI 协议不支持 per-block cache_control，但 prompt_cache_key 会让 API 自动识别稳定前缀
+    // 通过固定前缀在前 + 可变后缀在后，最大化前缀缓存命中
+    let effectiveSystemPrompt = options.systemPrompt;
+    if (options.systemBlocks && options.systemBlocks.length > 0) {
+      effectiveSystemPrompt = options.systemBlocks.map(b => b.text).join('\n\n');
+    }
+    const messages = this.convertMessages(options.messages, effectiveSystemPrompt);
     const tools = options.tools ? this.convertTools(options.tools) : undefined;
 
     // 交集 Record<string, unknown> 允许写入 SDK 未声明的厂商扩展字段（prompt_cache_key 等），
@@ -365,15 +373,28 @@ export class OpenAIClient extends BaseLLMClient {
   /**
    * 转换工具定义
    */
-  private convertTools(tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>): ChatCompletionTool[] {
-    return tools.map((tool) => ({
-      type: 'function' as const,
-      function: {
+  private convertTools(tools: LLMToolDefinition[]): ChatCompletionTool[] {
+    return tools.map((tool) => {
+      const fn: {
+        name: string;
+        description: string;
+        parameters: Record<string, unknown>;
+        strict?: boolean;
+      } = {
         name: tool.name,
         description: tool.description,
         parameters: tool.parameters,
-      },
-    }));
+      };
+      // Phase 96 P1-6：透传 strict 字段（OpenAI Structured Outputs）
+      // strict=true 时模型输出严格遵循 parameters 的 JSON Schema
+      if (tool.strict !== undefined) {
+        fn.strict = tool.strict;
+      }
+      return {
+        type: 'function' as const,
+        function: fn,
+      };
+    });
   }
 
   /**

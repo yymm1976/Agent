@@ -16,6 +16,9 @@ interface DirEntry {
   size: number;
 }
 
+/** 输出条目硬上限：超过此数即截断并附提示，避免目录列表 token 失控 */
+const MAX_ENTRIES = 500;
+
 export class ListDirectoryTool implements ITool {
   readonly definition: ToolDefinition = {
     name: 'list_directory',
@@ -78,25 +81,38 @@ export class ListDirectoryTool implements ITool {
     try {
       if (recursive) {
         const tree = await this.listRecursive(dirPath, 0, maxDepth);
-        const formatted = this.formatTree(tree, '');
+        const { text, truncated, total } = this.limitOutput(
+          this.formatTree(tree, ''),
+          tree.length,
+        );
         return {
           success: true,
-          output: formatted,
+          output: text,
           durationMs: 0,
-          metadata: { path: args.path ?? '.', recursive: true, maxDepth },
+          metadata: {
+            path: args.path ?? '.',
+            recursive: true,
+            maxDepth,
+            entryCount: total,
+            truncated,
+          },
         };
       }
 
       const entries = await this.listDir(dirPath);
-      const formatted = entries
-        .map((e, i) => `${i + 1}. [${e.type}] ${e.name} (${e.size} 字节)`)
-        .join('\n');
+      const lines = entries.map(
+        (e, i) => `${i + 1}. [${e.type}] ${e.name} (${e.size} 字节)`,
+      );
+      const { text, truncated, total } = this.limitOutput(
+        lines.join('\n') || '目录为空',
+        entries.length,
+      );
 
       return {
         success: true,
-        output: formatted || '目录为空',
+        output: text,
         durationMs: 0,
-        metadata: { path: args.path ?? '.', entryCount: entries.length },
+        metadata: { path: args.path ?? '.', entryCount: total, truncated },
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -177,5 +193,22 @@ export class ListDirectoryTool implements ITool {
         return `${prefix}${marker}[${e.type}] ${e.name} (${e.size} 字节)`;
       })
       .join('\n');
+  }
+
+  /** 限制输出条目数，超限时截断并附提示 */
+  private limitOutput(
+    text: string,
+    total: number,
+  ): { text: string; truncated: boolean; total: number } {
+    if (total <= MAX_ENTRIES) {
+      return { text, truncated: false, total };
+    }
+    const lines = text.split('\n');
+    const kept = lines.slice(0, MAX_ENTRIES).join('\n');
+    return {
+      text: `${kept}\n\n[...目录列表已截断：共 ${total} 条，仅显示前 ${MAX_ENTRIES} 条]`,
+      truncated: true,
+      total,
+    };
   }
 }

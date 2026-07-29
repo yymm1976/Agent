@@ -7,6 +7,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui
 import { Input } from '../ui/input.js';
 import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';
+import { SettingsAdvancedSection } from './SettingsAdvancedSection.js';
 
 interface SettingsExecutionTabProps {
   /** 当前配置草稿 */
@@ -27,7 +28,7 @@ export function SettingsExecutionTab({
   updateQuality,
 }: SettingsExecutionTabProps) {
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>并发与熔断</CardTitle>
@@ -97,6 +98,7 @@ export function SettingsExecutionTab({
         </CardContent>
       </Card>
 
+      <SettingsAdvancedSection title="检查点与质量监测" description="检查点提示规则、质量隐式反馈监测（已有默认值）">
       <Card>
         <CardHeader>
           <CardTitle>检查点提示</CardTitle>
@@ -184,6 +186,7 @@ export function SettingsExecutionTab({
           </div>
         </CardContent>
       </Card>
+      </SettingsAdvancedSection>
     </div>
   );
 }

@@ -21,6 +21,28 @@ import {
 } from '../hooks/hook-events.js';
 
 // ============================================================
+// P2-7：observe/on/emit 三段式模型
+// ============================================================
+
+/**
+ * P2-7：基于 HookPayload 的同步监听器（可影响事件流）
+ *
+ * 与 NewHookDefinition.handler 同签名，但通过 on() 注册时返回 unsubscribe 函数。
+ * 语义：注册到某事件，按 priority 升序执行，任一返回 cancel 时短路。
+ */
+export type HookEventListener = (payload: HookPayload) => Promise<NewHookResult> | NewHookResult;
+
+/**
+ * P2-7：纯观察者（fire-and-forget，不影响事件流）
+ *
+ * 语义：
+ *   - 在所有 on() 监听器执行完毕后并行触发，返回值被忽略
+ *   - 单个 observer 抛错不影响其他 observer 和主流程（fail-open）
+ *   - 适用于日志、遥测、UI 通知等只读场景
+ */
+export type HookObserver = (payload: HookPayload) => void | Promise<void>;
+
+// ============================================================
 // 类型定义
 // ============================================================
 
@@ -178,6 +200,8 @@ export class HookRunner {
   private hooks: Map<HookEvent, HookDefinition[]> = new Map();
   /** P0-15：新事件分类法的钩子列表（按 HookEventType 分组） */
   private newHooks: Map<HookEventType, NewHookDefinition[]> = new Map();
+  /** P2-7：纯观察者列表（按 HookEventType 分组，不参与结果合并） */
+  private observers: Map<HookEventType, Array<{ name: string; handler: HookObserver }>> = new Map();
   /** 可选的 TraceCollector，用于记录钩子执行 span */
   private trace: TraceCollector | null = null;
 
@@ -490,11 +514,12 @@ export class HookRunner {
   }
 
   /**
-   * 清除所有钩子（含 P0-15 新事件钩子）
+   * 清除所有钩子（含 P0-15 新事件钩子和 P2-7 观察者）
    */
   clear(): void {
     this.hooks.clear();
     this.newHooks.clear();
+    this.observers.clear();
   }
 
   /**
@@ -509,6 +534,194 @@ export class HookRunner {
    */
   countNew(event: HookEventType): number {
     return this.newHooks.get(event)?.length ?? 0;
+  }
+
+  // ============================================================
+  // P2-7：observe/on/emit 三段式模型
+  // ============================================================
+
+  /**
+   * P2-7：注册同步监听器（可影响事件流）
+   *
+   * 与 registerNew 区别：
+   *   - 返回 unsubscribe 函数，便于局部订阅的清理
+   *   - 自动生成 name（用于注销），便于调试
+   *   - 优先级默认 100，与 registerNew 一致
+   *
+   * 语义：
+   *   - 按 priority 升序执行
+   *   - 任一监听器返回 cancel 时短路（不执行后续监听器，但 observe 仍执行）
+   *   - 监听器抛错不阻塞其他监听器（fail-open）
+   *
+   * @param event 新事件类型（27 种之一）
+   * @param listener 监听器（接收 HookPayload，返回 HookResult）
+   * @param priority 优先级（数值越小越先执行，默认 100）
+   * @returns unsubscribe 函数，调用后注销此监听器
+   */
+  on(
+    event: HookEventType,
+    listener: HookEventListener,
+    priority: number = 100,
+  ): () => void {
+    const name = `on:${event}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+    this.registerNew({ event, handler: listener, priority, name });
+    return () => {
+      this.unregister(name);
+    };
+  }
+
+  /**
+   * P2-7：注册纯观察者（fire-and-forget，不影响事件流）
+   *
+   * 与 on 区别：
+   *   - 返回值被忽略
+   *   - 在所有 on 监听器执行完毕后并行触发
+   *   - 单个 observer 抛错不影响其他 observer 和主流程
+   *   - 无 priority 概念，全部并行执行
+   *
+   * 适用场景：日志、遥测、UI 通知、性能监控等只读副作用
+   *
+   * @param event 新事件类型
+   * @param observer 观察者（返回值被忽略）
+   * @returns unsubscribe 函数
+   */
+  observe(event: HookEventType, observer: HookObserver): () => void {
+    if (!this.observers.has(event)) {
+      this.observers.set(event, []);
+    }
+    const name = `observe:${event}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+    const list = this.observers.get(event)!;
+    list.push({ name, handler: observer });
+    return () => {
+      const current = this.observers.get(event);
+      if (!current) return;
+      this.observers.set(
+        event,
+        current.filter((o) => o.name !== name),
+      );
+    };
+  }
+
+  /**
+   * P2-7：发射事件（三段式入口）
+   *
+   * 执行顺序：
+   *   1. 构建 HookPayload（含 type/timestamp/data/agentId/sessionId）
+   *   2. 按 priority 升序执行 on() 注册的监听器（任一 cancel 短路）
+   *   3. 并行触发 observe() 注册的所有观察者（返回值忽略，fail-open）
+   *
+   * 与 fire 区别：
+   *   - fire 接收旧 HookEvent + HookContext，向后兼容
+   *   - emit 接收新 HookEventType + payload data，推荐新代码使用
+   *   - emit 同时触发 on 监听器和 observe 观察者
+   *   - emit 不触发旧 hooks（如需桥接，调用方自行调用 fire）
+   *
+   * @param event 新事件类型
+   * @param data 事件数据（结构因事件类型而异）
+   * @param agentId 可选 Agent ID
+   * @param sessionId 可选会话 ID
+   * @returns 合并后的最终 HookResult（cancel 优先于 continue/modify）
+   */
+  async emit(
+    event: HookEventType,
+    data: Record<string, unknown>,
+    agentId?: string,
+    sessionId?: string,
+  ): Promise<NewHookResult> {
+    const payload: HookPayload = {
+      type: event,
+      timestamp: Date.now(),
+      data,
+      agentId,
+      sessionId,
+    };
+
+    // 阶段 1：按 priority 升序执行 on() 监听器
+    const list = this.newHooks.get(event) ?? [];
+    let finalResult: NewHookResult = { action: 'continue' };
+
+    for (const hook of list) {
+      const hookName = hook.name ?? '(anonymous)';
+      const spanId = this.trace?.startSpan({
+        name: `emit:${event}:${hookName}`,
+        type: 'hook',
+      }) ?? -1;
+
+      try {
+        const result = await hook.handler(payload);
+        if (spanId >= 0) {
+          this.trace?.endSpan(spanId);
+        }
+
+        // cancel 短路：不再执行后续 on 监听器
+        if (result.action === 'cancel') {
+          logger.info('emit: listener cancelled, skipping remaining listeners', {
+            event,
+            hookName,
+            reason: result.reason,
+          });
+          finalResult = result;
+          break;
+        }
+
+        // modify：合并修改到 payload，让后续监听器看到更新后的数据
+        if (result.action === 'modify') {
+          payload.data = { ...payload.data, ...result.newData };
+          logger.debug('emit: listener modified event data', {
+            event,
+            hookName,
+            modifiedKeys: Object.keys(result.newData),
+          });
+        }
+      } catch (err) {
+        if (spanId >= 0) {
+          this.trace?.endSpan(spanId);
+        }
+        // fail-open：监听器崩溃不阻塞其他监听器
+        logger.warn('emit: listener threw error, continuing', {
+          event,
+          hookName,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // 阶段 2：并行触发 observe() 观察者（fail-open，返回值忽略）
+    const observerList = this.observers.get(event) ?? [];
+    if (observerList.length > 0) {
+      // 使用修改后的 payload 副本，避免 observer 误改
+      const observedPayload: HookPayload = { ...payload, data: { ...payload.data } };
+      await Promise.allSettled(
+        observerList.map(async (o) => {
+          const spanId = this.trace?.startSpan({
+            name: `emit-observe:${event}:${o.name}`,
+            type: 'hook',
+          }) ?? -1;
+          try {
+            await o.handler(observedPayload);
+          } catch (err) {
+            logger.warn('emit: observer threw error, continuing', {
+              event,
+              observerName: o.name,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          } finally {
+            if (spanId >= 0) {
+              this.trace?.endSpan(spanId);
+            }
+          }
+        }),
+      );
+    }
+
+    return finalResult;
+  }
+
+  /**
+   * P2-7：获取某事件的观察者数量
+   */
+  countObservers(event: HookEventType): number {
+    return this.observers.get(event)?.length ?? 0;
   }
 }
 

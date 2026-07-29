@@ -2,12 +2,14 @@
 // 应用整体布局：左侧项目侧边栏（可缩进、宽度可调）+ 分隔条 + 主内容区 + 分隔条 + 右侧任务监控面板（可缩进）
 // 移除旧顶部标题栏，设置入口集成到侧边栏顶部
 
-import { useState, useEffect, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, type ReactNode } from 'react';
 import { PanelLeftOpen, PanelRightOpen, Activity } from 'lucide-react';
 import { ProjectSidebar } from './ProjectSidebar.js';
 import { ResizableSplitter } from './ResizableSplitter.js';
 import { TaskMonitorPanel, hasTaskContent } from './TaskMonitorPanel.js';
+import { StatsBar } from './StatsBar.js';
 import type { ChatMessage } from '../store/useRouteDevStore.js';
+import { useRouteDevStore } from '../store/useRouteDevStore.js';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts.js';
 
 interface LayoutProps {
@@ -21,10 +23,13 @@ interface LayoutProps {
   messages?: ChatMessage[];
 }
 
+/** 找不到模型配置时的默认上下文窗口（与 TaskMonitorPanel 历史默认一致） */
+const DEFAULT_CONTEXT_WINDOW = 128000;
+
 const SIDEBAR_WIDTH_KEY = 'routedev-sidebar-width';
-const DEFAULT_SIDEBAR_WIDTH = 240;
+const DEFAULT_SIDEBAR_WIDTH = 224;
 const RIGHT_PANEL_WIDTH_KEY = 'routedev-right-panel-width';
-const DEFAULT_RIGHT_PANEL_WIDTH = 280;
+const DEFAULT_RIGHT_PANEL_WIDTH = 264;
 const SIDEBAR_COLLAPSED_KEY = 'routedev-sidebar-collapsed';
 const RIGHT_PANEL_COLLAPSED_KEY = 'routedev-right-panel-collapsed';
 /** 右侧面板手动开关状态（用户主动打开/关闭，独立于自动呼出） */
@@ -52,6 +57,26 @@ export function Layout({ children, onOpenSettings, onOpenNewTask, onNavigateToCh
     const saved = localStorage.getItem(RIGHT_PANEL_MANUAL_KEY);
     return saved === null ? null : saved === 'true';
   });
+
+  // 从当前模型配置读取 contextWindow，驱动右侧任务监控面板 token 上限
+  const config = useRouteDevStore((s) => s.config);
+  const currentModel = useRouteDevStore((s) => s.currentModel);
+  // Phase 96+ A3.4：StatsBar 需要 isProcessing 切换轮询频率
+  const isProcessing = useRouteDevStore((s) => s.isProcessing);
+  const contextWindow = useMemo(() => {
+    const providers = config?.providers ?? [];
+    if (currentModel) {
+      for (const p of providers) {
+        const m = p.models?.find((x) => x.id === currentModel);
+        if (m?.contextWindow && m.contextWindow > 0) return m.contextWindow;
+      }
+    }
+    for (const p of providers) {
+      const m = p.models?.find((x) => x.contextWindow && x.contextWindow > 0);
+      if (m?.contextWindow) return m.contextWindow;
+    }
+    return DEFAULT_CONTEXT_WINDOW;
+  }, [config, currentModel]);
 
   // 根据消息流判断是否有任务监控内容
   const [hasContent, setHasContent] = useState(false);
@@ -107,11 +132,11 @@ export function Layout({ children, onOpenSettings, onOpenNewTask, onNavigateToCh
   });
 
   return (
-    <div className="flex h-full w-full bg-rd-background px-3 pb-3 pt-0 text-rd-text">
+    <div className="flex h-full w-full bg-rd-background px-2 pb-2 pt-0 text-rd-text">
       {/* 左侧项目侧边栏（固定渲染，用宽度/透明度过渡，避免条件卸载导致无动画） */}
       <div
         style={{ width: sidebarCollapsed ? 48 : sidebarWidth }}
-        className="mr-3 shrink-0 overflow-hidden rounded-2xl bg-rd-surface transition-[width,transform,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+        className="shrink-0 overflow-hidden rounded-xl bg-rd-surface transition-[width,transform,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
       >
         {sidebarCollapsed ? (
         <div className="flex h-full w-12 flex-col items-center py-3">
@@ -146,8 +171,9 @@ export function Layout({ children, onOpenSettings, onOpenNewTask, onNavigateToCh
       )}
 
       {/* 主内容区（浮动面板） */}
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl bg-rd-surface transition-all duration-200 ease-out">
-        {children}
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-rd-surface transition-all duration-200 ease-out">
+        <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+        <StatsBar isProcessing={isProcessing} />
       </main>
 
       {/* 右侧任务监控面板手动开关按钮（仅当面板完全隐藏时显示，让用户主动打开） */}
@@ -158,7 +184,7 @@ export function Layout({ children, onOpenSettings, onOpenNewTask, onNavigateToCh
             setRightPanelCollapsed(false);
           }}
           title="打开任务监控面板"
-          className="ml-3 flex w-12 shrink-0 flex-col items-center justify-start rounded-2xl bg-rd-surface py-3 text-rd-textMuted transition-all duration-200 ease-out hover:bg-rd-surfaceHover hover:text-rd-primary"
+          className="ml-2 flex w-12 shrink-0 flex-col items-center justify-start rounded-xl bg-rd-surface py-3 text-rd-textMuted transition-all duration-200 ease-out hover:bg-rd-surfaceHover hover:text-rd-primary"
         >
           <Activity size={18} />
           <span className="mt-1 text-[10px] writing-vertical-rl">监控</span>
@@ -179,7 +205,7 @@ export function Layout({ children, onOpenSettings, onOpenNewTask, onNavigateToCh
           )}
           <div
             style={{ width: rightPanelCollapsed ? 48 : rightPanelWidth }}
-            className="ml-3 shrink-0 overflow-hidden rounded-2xl bg-rd-surface transition-[width,transform,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+            className="shrink-0 overflow-hidden rounded-xl bg-rd-surface transition-[width,transform,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
           >
           {rightPanelCollapsed ? (
           <div className="flex h-full w-12 flex-col items-center py-3">
@@ -196,6 +222,7 @@ export function Layout({ children, onOpenSettings, onOpenNewTask, onNavigateToCh
               <TaskMonitorPanel
                 messages={messages ?? []}
                 onCollapse={() => setRightPanelCollapsed(true)}
+                maxTokens={contextWindow}
               />
             </div>
           )}

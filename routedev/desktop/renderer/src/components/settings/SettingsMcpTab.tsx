@@ -16,6 +16,7 @@ import { Select, SelectItem } from '../ui/select.js';
 import { Badge } from '../ui/badge.js';
 import { Switch } from '../ui/switch.js';
 import { Alert, AlertDescription } from '../ui/alert.js';
+import { SettingsAdvancedSection } from './SettingsAdvancedSection.js';
 
 /** MCP 安装结果 */
 interface InstallResultState {
@@ -163,7 +164,7 @@ export function SettingsMcpTab({
   );
 
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       <Card>
         <CardContent className="space-y-4 py-6">
           <div className="flex items-center justify-between">
@@ -330,10 +331,13 @@ export function SettingsMcpTab({
                 <Select
                   id="mcp-form-transport"
                   value={mcpForm.transport}
-                  onChange={(e) => setMcpForm({ ...mcpForm, transport: e.target.value as 'stdio' | 'http' })}
+                  onChange={(e) => setMcpForm({ ...mcpForm, transport: e.target.value as McpFormState['transport'] })}
                 >
                   <SelectItem value="stdio">stdio</SelectItem>
                   <SelectItem value="http">http</SelectItem>
+                  <SelectItem value="sse">sse</SelectItem>
+                  <SelectItem value="streamable_http">streamable_http</SelectItem>
+                  <SelectItem value="websocket">websocket</SelectItem>
                 </Select>
               </div>
               {mcpForm.transport === 'stdio' ? (
@@ -396,8 +400,8 @@ export function SettingsMcpTab({
               </div>
             )}
 
-            {/* http 专属字段：headers */}
-            {mcpForm.transport === 'http' && (
+            {/* 非 stdio 传输通用字段：headers（http / sse / streamable_http / websocket 均使用 url + headers） */}
+            {mcpForm.transport !== 'stdio' && (
               <div className="space-y-2">
                 <Label htmlFor="mcp-form-headers">HTTP 请求头（每行一个 KEY=value）</Label>
                 <textarea
@@ -411,6 +415,22 @@ export function SettingsMcpTab({
                 <p className="text-xs text-rd-textMuted">每行一个请求头，用于认证。支持 $&#123;ENV_VAR&#125; 引用。</p>
               </div>
             )}
+
+            {/* 通用高级选项：lifecyclePolicy（会话生命周期策略） */}
+            <div className="space-y-2">
+              <Label htmlFor="mcp-form-lifecycle">生命周期策略</Label>
+              <Select
+                id="mcp-form-lifecycle"
+                value={mcpForm.lifecyclePolicy}
+                onChange={(e) => setMcpForm({ ...mcpForm, lifecyclePolicy: e.target.value as McpFormState['lifecyclePolicy'] })}
+              >
+                <SelectItem value="">（使用全局默认）</SelectItem>
+                <SelectItem value="per-call">per-call</SelectItem>
+                <SelectItem value="per-session">per-session</SelectItem>
+                <SelectItem value="persistent">persistent</SelectItem>
+              </Select>
+              <p className="text-xs text-rd-textMuted">控制 MCP 会话/连接的生命周期；未指定时使用全局默认策略。</p>
+            </div>
 
             {/* 通用高级选项：connectTimeout */}
             <div className="space-y-2">
@@ -444,6 +464,7 @@ export function SettingsMcpTab({
         </Button>
       )}
 
+      <SettingsAdvancedSection title="MCP 插件市场" description="从市场安装 MCP 服务器（已有默认值）">
       {/* ===== MCP 插件市场 ===== */}
       <Card>
         <CardHeader>
@@ -544,6 +565,7 @@ export function SettingsMcpTab({
           </div>
         </CardContent>
       </Card>
+      </SettingsAdvancedSection>
 
       {/* ===== 安装模态框 ===== */}
       {installModal && (

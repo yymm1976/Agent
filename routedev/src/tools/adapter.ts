@@ -1,8 +1,9 @@
 // src/tools/adapter.ts
 // 桥梁适配器：连接 ReActAgentLoop 的 ToolExecutorAdapter 和工具框架的 IToolRegistry + IToolExecutor
 // P1-5 修复：executeTool 返回结构化结果，避免正则匹配字符串判断 isError
+// Phase 96 P1-1：executeTool/executeToolStructured 接收 callOptions，把 signal/onUpdate 合并到 context
 
-import type { ToolExecutorAdapter } from '../agent/loop-config.js';
+import type { ToolExecutorAdapter, ToolExecCallOptions } from '../agent/loop-config.js';
 import type { LLMToolDefinition } from '../router/types.js';
 import type { IToolRegistry, IToolExecutor, ToolExecutionContext } from './types.js';
 import type { TraceCollector } from '../harness/trace-collector.js';
@@ -53,18 +54,37 @@ export class ToolRegistryAdapter implements ToolExecutorAdapter {
       // 保留双断言：ToolParameterSchema 含字面量 type:'object'，与 Record<string, unknown>
       // 不充分重叠；LLMToolDefinition 在 router/types.ts（EXCLUDED），无法改 parameters 类型
       parameters: tool.definition.parameters as unknown as Record<string, unknown>,
+      // Phase 96 P1-6：透传 strict 字段（仅在工具显式声明时才赋值，避免 undefined 覆盖 client 默认）
+      ...(tool.definition.strict !== undefined ? { strict: tool.definition.strict } : {}),
     }));
+  }
+
+  /**
+   * Phase 96 P1-1：合并 per-call options 到 context
+   *
+   * - signal/onUpdate 仅作用于本次调用，不污染共享 context
+   * - 未传入 callOptions 时返回原 context（无拷贝开销）
+   */
+  private mergeCallOptions(callOptions?: ToolExecCallOptions): ToolExecutionContext {
+    if (!callOptions) return this.context;
+    const merged: ToolExecutionContext = { ...this.context };
+    if (callOptions.signal) merged.signal = callOptions.signal;
+    if (callOptions.onUpdate) merged.onUpdate = callOptions.onUpdate;
+    if (callOptions.autonomyMode) merged.autonomyMode = callOptions.autonomyMode;
+    return merged;
   }
 
   async executeTool(
     toolName: string,
     toolCallId: string,
     args: Record<string, unknown>,
+    callOptions?: ToolExecCallOptions,
   ): Promise<string> {
     logger.debug('ToolRegistryAdapter.executeTool', { toolName, toolCallId, args });
 
     const span = this.trace?.recordToolCall(toolName, args, toolCallId, false);
-    const result = await this.executor.execute(toolName, args, this.context);
+    const ctx = this.mergeCallOptions(callOptions);
+    const result = await this.executor.execute(toolName, args, ctx);
     const isError = !result.success;
     const output = result.success ? result.output : `[工具错误] ${toolName}: ${result.error ?? '未知错误'}`;
     if (span && this.trace) {
@@ -79,23 +99,27 @@ export class ToolRegistryAdapter implements ToolExecutorAdapter {
    *
    * 返回 { output, isError }，isError 由工具的 success 字段决定
    * 替代 loop.ts 中用正则匹配字符串判断 isError 的方式
+   *
+   * Phase 96 P1-1：新增 callOptions 参数
    */
   async executeToolStructured(
     toolName: string,
     toolCallId: string,
     args: Record<string, unknown>,
-  ): Promise<StructuredToolResult> {
+    callOptions?: ToolExecCallOptions,
+  ): Promise<{ output: string; isError: boolean; images?: Array<{ mediaType: string; data: string }> }> {
     logger.debug('ToolRegistryAdapter.executeToolStructured', { toolName, toolCallId, args });
 
     const span = this.trace?.recordToolCall(toolName, args, toolCallId, false);
-    const result = await this.executor.execute(toolName, args, this.context);
+    const ctx = this.mergeCallOptions(callOptions);
+    const result = await this.executor.execute(toolName, args, ctx);
     const isError = !result.success;
     const output = result.success ? result.output : `[工具错误] ${toolName}: ${result.error ?? '未知错误'}`;
     if (span && this.trace) {
       this.trace.recordToolResult(toolName, toolCallId, output, isError, true);
     }
 
-    return { output, isError };
+    return { output, isError, images: result.images };
   }
 
   hasTool(toolName: string): boolean {

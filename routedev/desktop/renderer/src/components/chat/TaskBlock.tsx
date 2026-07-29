@@ -7,10 +7,36 @@
 // C-V1：虚拟滚动兼容——onVisible 回调 + 固定可测量高度结构，为 @tanstack/virtual 预留
 
 import { useMemo, useRef, useEffect, memo } from 'react';
+import { CheckCircle2, AlertCircle, XCircle, HelpCircle } from 'lucide-react';
 import type { ChatMessage } from '../../store/useRouteDevStore.js';
+import type { CompletionStatus } from '../../../../shared/ipc-types.js';
 import type { OutputStyle, ToolCallItem } from '../ToolCallCard.js';
 import { ExecutionProcess, parseReasoningSteps } from './ExecutionProcess.js';
 import { MessageBubble } from './MessageBubble.js';
+
+// Phase 91：完成状态标签——仅本轮发生代码修改时显示，避免普通问答噪音
+const COMPLETION_STATUS_META: Record<CompletionStatus, { label: string; icon: typeof CheckCircle2; cls: string }> = {
+  completed_verified: { label: '已验证', icon: CheckCircle2, cls: 'text-rd-success' },
+  completed_with_warnings: { label: '验证有警告', icon: AlertCircle, cls: 'text-rd-warning' },
+  completed_unverified: { label: '未验证', icon: HelpCircle, cls: 'text-rd-textSubtle' },
+  verification_failed: { label: '验证失败', icon: XCircle, cls: 'text-rd-danger' },
+  execution_failed: { label: '执行失败', icon: XCircle, cls: 'text-rd-danger' },
+  cancelled: { label: '已取消', icon: XCircle, cls: 'text-rd-textSubtle' },
+  blocked: { label: '阻塞', icon: AlertCircle, cls: 'text-rd-warning' },
+  recovery_available: { label: '可恢复', icon: AlertCircle, cls: 'text-rd-warning' },
+};
+
+function CompletionStatusBadge({ status }: { status: CompletionStatus }) {
+  const meta = COMPLETION_STATUS_META[status];
+  if (!meta) return null;
+  const Icon = meta.icon;
+  return (
+    <div className={`flex items-center gap-1 px-1 py-0.5 text-xs ${meta.cls}`}>
+      <Icon size={12} />
+      <span>{meta.label}</span>
+    </div>
+  );
+}
 
 export const TaskBlock = memo(function TaskBlock({
   taskMessages,
@@ -79,6 +105,8 @@ export const TaskBlock = memo(function TaskBlock({
         args: m.toolArgs,
         result: m.toolResult,
         timestamp: m.timestamp,
+        // Phase 96 P1-1：透传流式增量输出缓冲
+        deltaBuffer: m.toolDeltaBuffer,
       });
     }
     return groups;
@@ -89,6 +117,16 @@ export const TaskBlock = memo(function TaskBlock({
   const hasAssistantContent = latestAssistant && (latestAssistant.content || latestAssistant.isStreaming);
   const reasoningText = assistantMsgs.map((m) => m.reasoning).filter(Boolean).join('\n\n');
 
+  // 中间自言自语：从 latestAssistant 读取（_addToolStart 时封存的文本块）
+  const intermediateThoughts = latestAssistant?.intermediateThoughts ?? [];
+  const progressEvents = latestAssistant?.progressEvents ?? [];
+
+  // Phase 91：本轮发生代码修改时显示完成状态——避免普通问答噪音
+  const hasFileEdit = toolMsgs.some(m => m.toolName === 'file_write' || m.toolName === 'file_edit');
+  const completionStatus = hasFileEdit && isCompleted && latestAssistant?.completionStatus
+    ? latestAssistant.completionStatus
+    : null;
+
   // 思考步骤：从 reasoningText 解析
   const thinkingSteps = useMemo(
     () => parseReasoningSteps(reasoningText, isRunning),
@@ -96,7 +134,8 @@ export const TaskBlock = memo(function TaskBlock({
   );
   // 始终显示：用户消息 → 执行过程 → assistant 回复
   return (
-    <div ref={containerRef} className="space-y-2">
+    // Phase 96：space-y-2 → space-y-3 拉开任务块内部子元素间距
+    <div ref={containerRef} className="space-y-3">
       {/* 用户消息（始终显示） */}
       {userMsg && (
         <MessageBubble
@@ -126,6 +165,8 @@ export const TaskBlock = memo(function TaskBlock({
       <ExecutionProcess
         toolGroups={toolGroups}
         thinkingSteps={thinkingSteps}
+        intermediateThoughts={intermediateThoughts}
+        progressEvents={progressEvents}
         isRunning={isRunning}
         isCompleted={isCompleted}
         duration={duration}
@@ -144,6 +185,7 @@ export const TaskBlock = memo(function TaskBlock({
             onRetry={() => onRetry?.(latestAssistant)}
             onFork={() => onFork?.(latestAssistant)}
           />
+          {completionStatus && <CompletionStatusBadge status={completionStatus} />}
         </>
       )}
     </div>

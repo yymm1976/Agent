@@ -9,7 +9,7 @@
 //
 // 设计要点：
 //   1. 纯函数模块，不依赖外部服务，零副作用
-//   2. 配置开关 optimization.conciseThinking.enabled 默认 false（实验性）
+//   2. 配置开关 optimization.conciseThinking.enabled 默认 true
 //   3. 用户明确请求"详细/完整"时，临时跳过约束（安全降级）
 //   4. 与 ContextCompactor L1 不冲突：本模块仅在 conciseThinking 启用时生效，
 //      L1 始终生效；上层集成时取两者较小裁剪结果（不重复裁剪）

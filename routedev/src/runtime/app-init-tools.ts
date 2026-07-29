@@ -212,6 +212,8 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   const securityChecker = new SecurityChecker(cwd, config.security, config.permissionProfile);
   const toolExecutor = new ToolExecutor(registry);
   toolExecutor.setSecurityChecker(securityChecker);
+  // Phase 89：注入安全配置，启用工具黑白名单检查（在 SecurityChecker 之前的额外拦截）
+  toolExecutor.setSecurityConfig(config.security);
   // Phase 80 Task 2：注入使用计数器到 ToolExecutor（observability 子系统已写入 ctx.usageCounter）
   if (ctx.usageCounter) {
     toolExecutor.setUsageCounter(ctx.usageCounter);
@@ -263,6 +265,11 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   // 把 KnowledgeGraph 中相关记忆格式化为【相关记忆】片段追加到 systemPrompt
   // setRecallInjector 接受 null 不接受 undefined，用 ?? null 转换
   agentLoop.setRecallInjector(recallInjector ?? null);
+
+  // 注入压缩器到 agentLoop：ReAct 循环每轮迭代前检查 messages 的 token 数，
+  // 超过阈值时调用 compressEnhanced 压缩，防止工具调用/结果持续累积导致超出模型窗口
+  // ContextManager 结构化兼容 CompactorLike（shouldCompressEnhanced + compressEnhanced）
+  agentLoop.setCompactor(ctx.contextManager ?? null);
 
   // Phase 71 Task E1：注入 VirtualFS 到 agentLoop
   // loop 持有同一 VFS 实例（与上方注册的 4 个 VFS 工具共享），保证工具层与 loop 状态一致
@@ -386,6 +393,9 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   const skillStatePath = path.join(homedir(), '.qoderwork', 'routedev', 'skill-state.json');
   const skillsRouter = new SkillsRouter(skillStatePath);
   const filesystemDiscovery = new FilesystemDiscovery(cwd);
+  // P2-5：注册内置 skills 目录（src/skills/builtin/），随软件分发
+  // 内置 skills 优先级低于用户 .routedev/skills（同名时用户覆盖内置）
+  filesystemDiscovery.addSkillsRoot(path.join(__dirname, '..', 'skills', 'builtin'));
   // 异步发现并注册 Skill（不阻塞 App 初始化）
   filesystemDiscovery.discoverSkills().then((skills) => {
     for (const skill of skills) {
@@ -398,8 +408,8 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
 
   // ===== Phase 32 Task 1：工具结果净化 + ToolOutputPipeline =====
   // 2. ToolResultSanitizer——工具结果净化（注入检测 + 智能截断）
-  //    maxOutputChars 来自配置 optimization.safety.maxToolOutputChars（默认 16000）
-  const maxOutputChars = config.optimization?.safety?.maxToolOutputChars ?? 16000;
+  //    maxOutputChars 来自配置 optimization.safety.maxToolOutputChars（默认 8000）
+  const maxOutputChars = config.optimization?.safety?.maxToolOutputChars ?? 8000;
   const resultSanitizer = createToolResultSanitizer(maxOutputChars);
   // Phase 32 Task 1.2：将 sanitizer 注入 agentLoop，所有工具结果在注入 LLM 上下文前都会经过净化
   agentLoop.setSanitizer(resultSanitizer);

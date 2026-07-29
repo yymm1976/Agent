@@ -156,11 +156,7 @@ export class GoalBridge {
         routingMemory: deps.routingMemory,
         executionVerifier: deps.executionVerifier,
         routingRegretTracker: deps.routingRegretTracker,
-        // Phase 65：记忆系统（可选，未启用 config.memorySystem 时为 undefined）
-        // goal-runner 内部以 if 守卫消费：memoryStore.write、hybridRetriever.retrieve、localMaintenance.shouldMaintain/maintain
-        memoryStore: deps.memoryStore,
-        hybridRetriever: deps.hybridRetriever,
-        localMaintenance: deps.localMaintenance,
+        // TD-26：Phase 65 记忆系统已退役（memoryStore/hybridRetriever/localMaintenance 移除）
         // Phase 68：知识图谱（可选，未启用 config.phase68Integration 时为 undefined）
         // goal-runner 内部以 if 守卫消费：provenanceGraph.addArtifact、kanObstacleChecker.check、
         // quantitativeGate.evaluate、classifyOperation(signal, gid)
@@ -302,9 +298,6 @@ export class GoalBridge {
         routingMemory: deps.routingMemory,
         executionVerifier: deps.executionVerifier,
         routingRegretTracker: deps.routingRegretTracker,
-        memoryStore: deps.memoryStore,
-        hybridRetriever: deps.hybridRetriever,
-        localMaintenance: deps.localMaintenance,
         provenanceGraph: deps.provenanceGraph,
         kanObstacleChecker: deps.kanObstacleChecker,
         quantitativeGate: deps.quantitativeGate,

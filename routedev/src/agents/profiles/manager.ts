@@ -24,6 +24,8 @@ import {
   type AgentRole,
   validateProfile,
 } from './types.js';
+import { VersionManager } from './version-manager.js';
+import type { VersionSource } from './version-types.js';
 
 // ============================================================
 // 常量
@@ -34,18 +36,29 @@ const BUILTIN_TIMESTAMP = 0;
 
 // ============================================================
 // AgentProfileManager
-// ============================================================
-
 export class AgentProfileManager {
+  /** 项目根目录 */
+  private rootDir: string;
   /** Profile 存储根目录：${rootDir}/.routedev/skills/agents/ */
   private profilesDir: string;
   /** 内存缓存：id -> Profile */
   private profiles: Map<string, AgentProfile> = new Map();
   /** 是否已加载 */
   private loaded = false;
+  /** 版本管理器 */
+  private versionManager: VersionManager;
 
   constructor(rootDir: string) {
+    this.rootDir = rootDir;
     this.profilesDir = path.join(rootDir, '.routedev', 'skills', 'agents');
+    this.versionManager = new VersionManager(rootDir);
+  }
+
+  /**
+   * 获取版本管理器实例
+   */
+  getVersionManager(): VersionManager {
+    return this.versionManager;
   }
 
   // ----------------------------------------------------------
@@ -219,9 +232,8 @@ export class AgentProfileManager {
    *
    * - 自定义 Profile：写盘到 ${profilesDir}/<id>/SKILL.md
    * - 内置 Profile：允许写盘（用于重置后再次自定义），但 isBuiltin 字段保留
-   * - 保存前校验，校验失败抛错
    */
-  async saveProfile(profile: AgentProfile): Promise<void> {
+  async saveProfile(profile: AgentProfile, source: VersionSource = 'programmatic_write'): Promise<void> {
     const errors = validateProfile(profile);
     if (errors.length > 0) {
       const msg = errors.map((e) => `${e.field}: ${e.message}`).join('; ');
@@ -232,6 +244,9 @@ export class AgentProfileManager {
     this.validateProfileId(profile.id);
 
     await this.ensureLoaded();
+
+    // 保存前获取前一个版本快照（用于 diff）
+    const previousSnapshot = this.profiles.get(profile.id) ?? undefined;
 
     const toSave: AgentProfile = {
       ...profile,
@@ -248,8 +263,25 @@ export class AgentProfileManager {
     const content = this.serializeToSkillMd(toSave);
     await fs.writeFile(skillMdPath, content, 'utf-8');
 
+    // 保存版本快照
+    await this.versionManager.saveVersion(toSave, source, previousSnapshot);
+
     // 更新缓存
     this.profiles.set(toSave.id, toSave);
+  }
+
+  /**
+   * 回滚 Profile 到指定版本
+   *
+   * - 读取目标版本快照
+   * - 用快照数据覆盖当前 Profile 并保存（source = 'rollback'）
+   * - 返回回滚后的 Profile
+   */
+  async rollback(profileId: string, targetVersionId: string): Promise<AgentProfile> {
+    await this.ensureLoaded();
+    const profile = await this.versionManager.rollbackTo(profileId, targetVersionId);
+    await this.saveProfile(profile, 'rollback');
+    return profile;
   }
 
   /**

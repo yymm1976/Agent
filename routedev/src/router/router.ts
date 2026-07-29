@@ -335,6 +335,9 @@ export class ModelRouter {
   /**
    * 启发式推断 provider ID（后备方案）
    * 仅当配置中找不到 modelId 时使用
+   *
+   * Phase 96 I-5 修复：补齐 Gemini / Ollama / Cohere / Mistral / Groq / OpenRouter 识别
+   * 之前这些模型会被标为 'unknown' 并静默跳过，用户配了却看不到错误
    */
   private heuristicInferProviderId(modelId: string): string {
     const lower = modelId.toLowerCase();
@@ -343,6 +346,12 @@ export class ModelRouter {
     }
     if (lower.includes('claude')) {
       return 'anthropic';
+    }
+    // Phase 96 R-3 修复：qwen2 → ollama 的判断必须早于 qwen → dashscope
+    // 原因：'qwen2' 字符串包含 'qwen'，若 qwen 判断在前，qwen2-7b 等本地部署模型会被误判为 dashscope
+    if (lower.includes('qwen2')) {
+      // qwen2 系列开源模型（qwen2-7b / qwen2-72b 等）通常通过 Ollama 本地部署
+      return 'ollama';
     }
     if (lower.includes('qwen') || lower.includes('tongyi')) {
       return 'dashscope';
@@ -355,6 +364,23 @@ export class ModelRouter {
     }
     if (lower.includes('glm') || lower.includes('chatglm')) {
       return 'zhipu';
+    }
+    // Phase 96 I-5：补齐常见模型识别
+    if (lower.includes('gemini')) {
+      return 'gemini';
+    }
+    if (lower.includes('ollama') || lower.includes('llama') || lower.includes('mistral') || lower.includes('phi')) {
+      // Ollama 本地模型通常以 llama/mistral/phi 等开源模型名命名
+      return 'ollama';
+    }
+    if (lower.includes('cohere') || lower.includes('command-r')) {
+      return 'cohere';
+    }
+    if (lower.includes('groq')) {
+      return 'groq';
+    }
+    if (lower.includes('openrouter')) {
+      return 'openrouter';
     }
     return 'unknown';
   }

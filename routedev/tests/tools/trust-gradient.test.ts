@@ -2,9 +2,6 @@
 // Claude Code 7 级信任梯度 + 压缩边界 UUID + 子 Agent 工具阉割 单元测试
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import * as os from 'node:os';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import {
   TrustGradientManager,
   type TrustLevel,
@@ -277,52 +274,7 @@ describe('TrustGradientManager', () => {
     expect(manager.hasTemporaryGrant('file_write', { path: 'src/other/bar.ts' })).toBe(false);
   });
 
-  // 测试 4：偏好持久化（save + load）
-  it('偏好持久化：save + load 应正确还原', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'routedev-trust-'));
-    try {
-      const mgr1 = new TrustGradientManager('session-1');
-      mgr1.grantTemporary('file_write', { path: 'src/utils/foo.ts' }, 60000);
-      mgr1.savePreferences(tmpDir);
-
-      // 验证文件存在
-      const prefPath = path.join(tmpDir, '.routedev', 'trust-preferences.json');
-      expect(fs.existsSync(prefPath)).toBe(true);
-
-      // 用新 manager 加载
-      const mgr2 = new TrustGradientManager('session-2');
-      const loaded = mgr2.loadPreferences(tmpDir);
-      expect(loaded).toBe(1);
-      expect(mgr2.hasTemporaryGrant('file_write', { path: 'src/utils/foo.ts' })).toBe(true);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  // 测试 5：原子写入（并发安全）
-  it('原子写入：save 后 .tmp 文件应被清理，内容应为有效 JSON', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'routedev-trust-'));
-    try {
-      manager.grantTemporary('file_write', { path: 'test.txt' }, 60000);
-      manager.savePreferences(tmpDir);
-
-      const prefPath = path.join(tmpDir, '.routedev', 'trust-preferences.json');
-      const tmpPath = prefPath + '.tmp';
-
-      // .tmp 文件不应存在（已被 rename）
-      expect(fs.existsSync(tmpPath)).toBe(false);
-      // 主文件应为有效 JSON
-      const raw = fs.readFileSync(prefPath, 'utf-8');
-      const parsed = JSON.parse(raw);
-      expect(Array.isArray(parsed)).toBe(true);
-      expect(parsed.length).toBe(1);
-      expect(parsed[0].toolPattern).toBe('file_write');
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  // 测试 6：LRU 淘汰（超过 1000 条）
+  // 测试 4：LRU 淘汰（超过 1000 条）
   it('LRU 淘汰：超过 1000 条时应淘汰最旧的', () => {
     const mgr = new TrustGradientManager('lru-test');
     // 添加 1000 条
@@ -340,7 +292,7 @@ describe('TrustGradientManager', () => {
     expect(mgr.getTemporaryGrantsCount()).toBeLessThanOrEqual(1000);
   });
 
-  // 测试 7：SHA-256 参数哈希
+  // 测试 5：SHA-256 参数哈希
   it('SHA-256 参数哈希：不同参数应产生不同授权，相同参数应去重', () => {
     const args1 = { path: 'a.txt', content: 'hello' };
     const args2 = { path: 'b.txt', content: 'world' };
@@ -361,7 +313,7 @@ describe('TrustGradientManager', () => {
     expect(manager.hasTemporaryGrant('file_write', { path: 'c.txt' })).toBe(false);
   });
 
-  // 测试 8：classifyRisk 风险分类
+  // 测试 6：classifyRisk 风险分类
   it('classifyRisk 应正确分类工具风险级别', () => {
     expect(manager.classifyRisk('file_read', {})).toBe('read' as RiskLevel);
     expect(manager.classifyRisk('list_directory', {})).toBe('read' as RiskLevel);

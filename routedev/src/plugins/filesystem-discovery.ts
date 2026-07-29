@@ -315,25 +315,100 @@ export class SkillsRouter {
  */
 export class FilesystemDiscovery {
   private basePath: string;
+  /**
+   * P2-3：多目录加载的额外搜索路径
+   * 默认仅扫描 .routedev/skills；可通过 addSkillsRoot 追加用户自定义目录
+   * 后追加的目录优先级更高（同名 skill 后者覆盖前者）
+   */
+  private extraSkillsRoots: string[] = [];
 
   constructor(basePath: string) {
     this.basePath = basePath;
   }
 
   /**
-   * 发现所有 Skills
-   *
-   * 约定：.routedev/skills/<name>/SKILL.md
-   * 身份来自目录名，不来自文件内容
+   * P2-3：追加一个 skills 搜索根目录
+   * @param root 绝对路径或相对 basePath 的路径
    */
-  async discoverSkills(): Promise<SkillDefinition[]> {
-    const skillsDir = path.join(this.basePath, '.routedev', 'skills');
+  addSkillsRoot(root: string): void {
+    const abs = path.isAbsolute(root) ? root : path.resolve(this.basePath, root);
+    if (!this.extraSkillsRoots.includes(abs)) {
+      this.extraSkillsRoots.push(abs);
+    }
+  }
+
+  /**
+   * P2-4：解析指定目录链路上的 .gitignore，返回需要被忽略的目录基名集合
+   *
+   * 仅做轻量解析：按行读取 .gitignore，匹配简单模式（不含高级 gitignore 特性如 negation/charset）。
+   * 用于过滤 node_modules / dist / build / .git 等明显应忽略的目录，避免扫描污染。
+   *
+   * @param dir 要扫描的目录（.gitignore 从该目录向上查找，取最近的一级）
+   * @returns 需要忽略的目录名/文件名 patterns
+   */
+  private async loadGitignorePatterns(dir: string): Promise<Set<string>> {
+    const patterns = new Set<string>();
+    // 内置默认忽略（即使没有 .gitignore 也排除这些）
+    const BUILTIN_IGNORE = new Set([
+      'node_modules', 'dist', 'build', '.git', '.next', '.nuxt',
+      'out', 'coverage', '.cache', '.turbo', '.parcel-cache',
+    ]);
+    for (const p of BUILTIN_IGNORE) patterns.add(p);
+
+    // 从当前目录向上查找 .gitignore（最多 5 级，避免无限向上）
+    let current = dir;
+    for (let i = 0; i < 5; i++) {
+      const gitignorePath = path.join(current, '.gitignore');
+      try {
+        const content = await fs.readFile(gitignorePath, 'utf-8');
+        for (const line of content.split('\n')) {
+          const trimmed = line.trim();
+          // 跳过空行和注释
+          if (!trimmed || trimmed.startsWith('#')) continue;
+          // 只处理简单的目录名/文件名模式，跳过复杂 glob（**、*、?）
+          if (/[/?*]/.test(trimmed)) continue;
+          // 跳过 negation 模式（!xxx）
+          if (trimmed.startsWith('!')) continue;
+          patterns.add(trimmed);
+        }
+        break; // 只取最近的 .gitignore
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+          // 非 ENOENT 错误忽略（不影响主流程）
+        }
+      }
+      const parent = path.dirname(current);
+      if (parent === current) break; // 到达根目录
+      current = parent;
+    }
+    return patterns;
+  }
+
+  /**
+   * P2-4：检查目录名是否被 gitignore patterns 命中
+   */
+  private isIgnored(name: string, patterns: Set<string>): boolean {
+    return patterns.has(name);
+  }
+
+  /**
+   * 扫描单个 skills 根目录，返回发现的 skills
+   *
+   * P2-4：扫描时应用 .gitignore 过滤，避免 node_modules/dist 等目录污染
+   */
+  private async scanSkillsRoot(skillsDir: string): Promise<SkillDefinition[]> {
     const skills: SkillDefinition[] = [];
+    const ignorePatterns = await this.loadGitignorePatterns(path.dirname(skillsDir));
 
     try {
       const entries = await fs.readdir(skillsDir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
+        // P2-4：跳过 .gitignore 中列出的目录
+        if (this.isIgnored(entry.name, ignorePatterns)) {
+          logger.debug('[skill-discovery] 跳过 gitignore 目录', { name: entry.name, dir: skillsDir });
+          continue;
+        }
 
         const skillFile = path.join(skillsDir, entry.name, 'SKILL.md');
         try {
@@ -350,13 +425,36 @@ export class FilesystemDiscovery {
       }
     } catch (e) {
       // F-N005 修复：readdir 失败时区分 ENOENT（目录不存在，正常情况）与其他错误
-      // ENOENT 静默处理；其他错误（如权限不足、磁盘故障）记录 warn 日志
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-        logger.warn('[skill-discovery] skills 目录读取失败', { error: e });
+        logger.warn('[skill-discovery] skills 目录读取失败', { dir: skillsDir, error: e });
       }
     }
-
     return skills;
+  }
+
+  /**
+   * 发现所有 Skills
+   *
+   * 约定：.routedev/skills/<name>/SKILL.md
+   * 身份来自目录名，不来自文件内容
+   *
+   * P2-3：支持多目录加载——除默认 .routedev/skills 外，还扫描 addSkillsRoot() 注册的额外目录。
+   * P2-4：扫描时应用 .gitignore 过滤，避免 node_modules/dist 等目录污染。
+   */
+  async discoverSkills(): Promise<SkillDefinition[]> {
+    const primaryDir = path.join(this.basePath, '.routedev', 'skills');
+    // 优先扫描默认目录，再扫描额外目录（后者优先级高，同名覆盖）
+    const allDirs = [primaryDir, ...this.extraSkillsRoots];
+    const skillsMap = new Map<string, SkillDefinition>();
+
+    for (const dir of allDirs) {
+      const skills = await this.scanSkillsRoot(dir);
+      for (const skill of skills) {
+        // 后扫描的覆盖先扫描的（多目录场景下用户自定义优先于内置）
+        skillsMap.set(skill.name, skill);
+      }
+    }
+    return Array.from(skillsMap.values());
   }
 
   /**

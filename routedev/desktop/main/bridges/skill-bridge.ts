@@ -94,6 +94,8 @@ export class SkillBridge {
         this.ctx.options.cwd,
         securityGate,
         integrityManifest,
+        // Phase 89：注入完整性校验严格模式（未配置时默认 false，与 SkillMarketManager 默认值一致）
+        this.ctx.config?.security?.integrityStrict ?? false,
       );
       await marketManager.install(payload.name, payload.version);
 

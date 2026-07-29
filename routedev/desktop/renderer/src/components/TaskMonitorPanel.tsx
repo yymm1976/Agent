@@ -5,9 +5,9 @@
 import { useMemo, useState, memo } from 'react';
 import {
   PanelRightClose, CheckSquare, FileOutput, Database, Check, Loader2,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Archive,
 } from 'lucide-react';
-import type { ChatMessage } from '../store/useRouteDevStore.js';
+import { useRouteDevStore, type ChatMessage } from '../store/useRouteDevStore.js';
 
 interface TaskMonitorPanelProps {
   messages: ChatMessage[];
@@ -65,8 +65,11 @@ function rebuildTodosFromToolCalls(messages: ChatMessage[]): { id?: string; text
     const result = msg.toolResult as Record<string, unknown> | undefined;
 
     const arrayTodos = args.todos as Array<Record<string, unknown>> | undefined;
-    if (Array.isArray(arrayTodos)) {
-      for (const item of arrayTodos) {
+    const replaceItems = (result?.metadata as Record<string, unknown> | undefined)?.items as Array<Record<string, unknown>> | undefined;
+    const snapshotItems = action === 'replace' && Array.isArray(replaceItems) ? replaceItems : arrayTodos;
+    if (Array.isArray(snapshotItems)) {
+      if (action === 'replace') items.clear();
+      for (const item of snapshotItems) {
         const id = String(item.id ?? item.content ?? items.size);
         const content = String(item.content ?? '');
         if (!content) continue;
@@ -278,7 +281,7 @@ export const TaskMonitorPanel = memo(function TaskMonitorPanel({ messages, onCol
   }, [messages]);
 
   const tabs: { key: TabKey; label: string; icon: React.ReactNode; count: number }[] = [
-    { key: 'tasks', label: '任务', icon: <CheckSquare size={14} />, count: data.todos.length + data.artifacts.length },
+    { key: 'tasks', label: '任务', icon: <CheckSquare size={14} />, count: data.todos.length },
     { key: 'artifacts', label: '产物', icon: <FileOutput size={14} />, count: data.artifacts.length },
     { key: 'context', label: '上下文', icon: <Database size={14} />, count: 0 },
   ];
@@ -333,7 +336,7 @@ export const TaskMonitorPanel = memo(function TaskMonitorPanel({ messages, onCol
       {/* 内容区 */}
       <div className="flex-1 overflow-hidden px-3 pb-3">
         <div className="h-full overflow-y-auto pr-1">
-        {/* 任务 Tab：待办 + 产物 */}
+        {/* 任务 Tab：只展示本次对话的待办；产物在专属页展示。 */}
         {activeTab === 'tasks' && (
           <div className="space-y-3">
             <div className="rounded-xl border border-rd-border bg-rd-surfaceHover p-2.5">
@@ -386,29 +389,6 @@ export const TaskMonitorPanel = memo(function TaskMonitorPanel({ messages, onCol
                 </ul>
               )}
             </div>
-
-            {data.artifacts.length > 0 && (
-              <div className="rounded-xl border border-rd-border bg-rd-surfaceHover p-2.5">
-                <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-rd-text">
-                  <FileOutput size={13} className="text-rd-primary" />
-                  <span>产物</span>
-                </div>
-                <ul className="space-y-1">
-                  {data.artifacts.map((path, idx) => (
-                    <li key={idx}>
-                      <button
-                        type="button"
-                        onClick={() => window.routedev.fs.openFolder(path)}
-                        className="w-full truncate rounded-md bg-rd-surface px-2 py-1.5 text-left text-xs font-mono text-rd-textMuted transition hover:bg-rd-surfaceHover hover:text-rd-primary"
-                        title={path}
-                      >
-                        {path}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </div>
         )}
 
@@ -452,6 +432,12 @@ function ContextTab({ breakdown, maxTokens }: {
   maxTokens: number;
 }) {
   const { system, user, assistant, toolCalls, toolResults, total } = breakdown;
+  // 从 store 取处理状态和发送方法，用于手动压缩按钮
+  const isProcessing = useRouteDevStore((s) => s.isProcessing);
+  const sendMessage = useRouteDevStore((s) => s.sendMessage);
+  // chat-bridge 要求 conversationHistory.length > 4 才压缩，前端按消息数对齐
+  const tooShort = total === 0 || total < 2000;
+  const disabled = isProcessing || tooShort;
 
   if (total === 0) {
     return <p className="py-2 text-xs text-rd-textSubtle">暂无上下文数据</p>;
@@ -521,6 +507,27 @@ function ContextTab({ breakdown, maxTokens }: {
           <span className="font-medium text-rd-text">{formatNum(maxTokens)}</span>
         </div>
       </div>
+
+      {/* 手动压缩按钮：复用 /compact 斜杠命令路径，主进程走 compressEnhanced 两轮压缩 */}
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => sendMessage('/compact')}
+        title={tooShort ? '对话过短，无需压缩' : '压缩上下文（offload 大输出 + 摘要老消息）'}
+        className={[
+          'flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-medium transition',
+          disabled
+            ? 'cursor-not-allowed bg-rd-surfaceHover/50 text-rd-textSubtle'
+            : 'bg-rd-primary text-white hover:bg-rd-primary/90',
+        ].join(' ')}
+      >
+        {isProcessing ? (
+          <Loader2 size={14} className="animate-spin" />
+        ) : (
+          <Archive size={14} />
+        )}
+        <span>压缩上下文</span>
+      </button>
     </div>
   );
 }

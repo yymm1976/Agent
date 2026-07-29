@@ -43,7 +43,6 @@ import { SettingsPhase52IntegrationTab } from '../components/settings/SettingsPh
 import { SettingsPhase53IntegrationTab } from '../components/settings/SettingsPhase53IntegrationTab.js';
 import { SettingsResultSchemaTab } from '../components/settings/SettingsResultSchemaTab.js';
 import { SettingsConfigLayeringTab } from '../components/settings/SettingsConfigLayeringTab.js';
-import { SettingsPacksTab } from '../components/settings/SettingsPacksTab.js';
 import { SettingsArchivedTab } from '../components/settings/SettingsArchivedTab.js';
 import { SettingsSubAgentsTab } from '../components/settings/SettingsSubAgentsTab.js';
 import { SettingsSecurityTab } from '../components/settings/SettingsSecurityTab.js';
@@ -63,6 +62,7 @@ import { SettingsExpertiseTab, SettingsAboutTab, SettingsMarketTab } from '../co
 import { SettingsHeader } from '../components/settings/SettingsHeader.js';
 import { SettingsNav, type TabId } from '../components/settings/SettingsNav.js';
 import { SaveToast } from '../components/settings/SaveToast.js';
+import { SettingsAdvancedSection } from '../components/settings/SettingsAdvancedSection.js';
 
 interface SettingsPageProps {
   config: AppConfig | null;
@@ -82,9 +82,7 @@ interface SettingsPageProps {
 // Phase 74-G：APP_VERSION 已迁移到 SettingsMiscTabs.tsx（关于 Tab 内部使用）
 
 export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: SettingsPageProps) {
-  const [activeTab, setActiveTab] = useState<TabId>('providers');
-  // 高级设置折叠状态（默认折叠，包含不常用的安全/渠道/归档/关于）
-  const [advancedExpanded, setAdvancedExpanded] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabId>('models');
   // 注：saving 已迁移到 useAutoSave hook（Phase 74-G）
   const [saveResult, setSaveResult] = useState<SaveResult>(null);
 
@@ -99,7 +97,7 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
 
   // --- Phase 74-G：draft 状态 + 50 个 update* 函数迁移到 useSettingsDraft hook ---
   const {
-    draft, setDraft, dirtyRef, skipSyncRef,
+    draft, setDraft, dirtyRef,
     selectedSearchEngine, setSelectedSearchEngine,
     showApiKeys, testingProvider, testResults,
     modelEditor, setModelEditor,
@@ -121,13 +119,13 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
     updateGeneral, updateBackgroundBehavior, updateUi,
     updateTrust, updateQuality, updateExpertise,
     updateSubAgents, updateSubAgentsGateRules,
-    updatePacks,
     toggleApiKey, handleTestConnection,
+    handleRefreshModels, refreshingModels, remoteModels,
   } = useSettingsDraft({ config, onClearSaveResult: () => setSaveResult(null) });
 
   // --- Phase 74-G：自动保存 + 实时预览 + 卸载恢复 + 保存提示已迁移到 useAutoSave hook ---
   const { saving, handleSave } = useAutoSave({
-    draft, setDraft, dirtyRef, skipSyncRef,
+    draft, setDraft, dirtyRef,
     config, saveConfig, reloadConfig,
     saveResult, setSaveResult,
   });
@@ -174,14 +172,9 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
     handleCatalogSearch,
     openInstallModal,
     handleInstall,
-  } = useMcpCatalog({ activeTab, updateDraft });
+  } = useMcpCatalog({ activeTab, updateDraft, draft });
 
-  // 当 activeTab 属于高级设置时，自动展开折叠组，避免用户在导航栏"丢失"当前页面
-  useEffect(() => {
-    if (['security', 'archived', 'about'].includes(activeTab)) {
-      setAdvancedExpanded(true);
-    }
-  }, [activeTab]);
+  // Phase 88 重构：移除 advancedExpanded 折叠组，改为四层分组扁平展示
 
   // --- Phase 74-G：以下 useEffect 已迁移到对应 hook ---
   // - config→draft 同步（useSettingsDraft）
@@ -220,6 +213,9 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
       try {
         const parsed = JSON.parse(ev.target?.result as string) as AppConfig;
         setDraft(parsed);
+        // Bug #7 修复：导入后标记 dirtyRef=true，触发 700ms 自动保存
+        // 否则导入的配置只在 draft 中，不会写入磁盘，用户以为已保存但实际未保存
+        dirtyRef.current = true;
         setSaveResult(null);
       } catch {
         setSaveResult({ success: false, message: '导入失败：JSON 解析错误' });
@@ -235,7 +231,7 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
 
   return (
     <>
-    <div className="flex h-full min-h-0 flex-col gap-6 overflow-hidden p-6">
+    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden p-4">
       {/* 顶部：标题 + 标签栏 + 导入导出 + 保存（Phase 74-G：迁移到 SettingsHeader） */}
       <SettingsHeader
         onBack={onBack}
@@ -249,190 +245,253 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
       <SaveToast saveResult={saveResult} />
 
       {/* 下方 flex 布局：左侧标签导航 + 右侧内容区 */}
-      <div className="flex flex-1 min-h-0 gap-6 overflow-hidden">
-        {/* 左侧标签导航栏（Phase 74-G：迁移到 SettingsNav） */}
+      <div className="flex flex-1 min-h-0 gap-4 overflow-hidden">
+        {/* 左侧标签导航栏（Phase 88 重构：四层分组） */}
         <SettingsNav
           activeTab={activeTab}
           setActiveTab={setActiveTab}
-          advancedExpanded={advancedExpanded}
-          setAdvancedExpanded={setAdvancedExpanded}
         />
 
         {/* 右侧内容区（relative 定位，子 tab 内容用 absolute inset-0 填充，避免 flexbox 高度抖动） */}
         <div className="relative min-w-0 flex-1 overflow-hidden">
-      {/* ===== Provider & 模型 ===== */}
-      {activeTab === 'providers' && (
-        <SettingsProvidersTab
-          draft={draft}
-          updateDraft={updateDraft}
-          addProvider={addProvider}
-          removeProvider={removeProvider}
-          updateProvider={updateProvider}
-          showApiKeys={showApiKeys}
-          toggleApiKey={toggleApiKey}
-          handleTestConnection={handleTestConnection}
-          testingProvider={testingProvider}
-          testResults={testResults}
-          openAddModel={openAddModel}
-          openEditModel={openEditModel}
-          removeModel={removeModel}
-          modelEditor={modelEditor}
-          setModelEditor={setModelEditor}
-          confirmModelEditor={confirmModelEditor}
-        />
+      {/* ===== 模型与路由（providers + router） ===== */}
+      {activeTab === 'models' && (
+        <div className="absolute inset-0 space-y-4 overflow-y-auto pr-2">
+          <SettingsProvidersTab
+            draft={draft}
+            updateDraft={updateDraft}
+            addProvider={addProvider}
+            removeProvider={removeProvider}
+            updateProvider={updateProvider}
+            showApiKeys={showApiKeys}
+            toggleApiKey={toggleApiKey}
+            handleTestConnection={handleTestConnection}
+            testingProvider={testingProvider}
+            testResults={testResults}
+            handleRefreshModels={handleRefreshModels}
+            refreshingModels={refreshingModels}
+            remoteModels={remoteModels}
+            openAddModel={openAddModel}
+            openEditModel={openEditModel}
+            removeModel={removeModel}
+            modelEditor={modelEditor}
+            setModelEditor={setModelEditor}
+            confirmModelEditor={confirmModelEditor}
+          />
+          <SettingsAdvancedSection
+            title="高级路由"
+            description="什么时候切换模型；通常保持默认即可"
+          >
+            <SettingsRouterTab
+              draft={draft}
+              updateDraft={updateDraft}
+              updateBudget={updateBudget}
+              updateRule={updateRule}
+              addRule={addRule}
+              removeRule={removeRule}
+            />
+          </SettingsAdvancedSection>
+        </div>
       )}
 
-      {/* ===== 路由规则 ===== */}
-      {activeTab === 'router' && (
-        <SettingsRouterTab
-          draft={draft}
-          updateDraft={updateDraft}
-          updateBudget={updateBudget}
-          updateRule={updateRule}
-          addRule={addRule}
-          removeRule={removeRule}
-        />
-      )}
-
-      {/* ===== 安全设置 ===== */}
-      {activeTab === 'security' && (
-        <SettingsSecurityTab
-          draft={draft}
-          updateSecurity={updateSecurity}
-          updateSecurityApproval={updateSecurityApproval}
-          updateFsRule={updateFsRule}
-          addFsRule={addFsRule}
-          removeFsRule={removeFsRule}
-          updateNetworkAllow={updateNetworkAllow}
-          updateNetworkDeny={updateNetworkDeny}
-          updateWebSearch={updateWebSearch}
-          updateAdversarial={updateAdversarial}
-          updateTrust={updateTrust}
-          selectedSearchEngine={selectedSearchEngine}
-          setSelectedSearchEngine={setSelectedSearchEngine}
-        />
-      )}
-
-      {/* ===== 命令与工具黑白名单 ===== */}
-      {activeTab === 'commands' && (
-        <SettingsCommandsTab
-          draft={draft}
-          updateSecurity={updateSecurity}
-          updateAutonomy={updateAutonomy}
-          updatePhase48Integration={updatePhase48Integration}
-        />
-      )}
-
-      {/* ===== 可观测性 ===== */}
-      {activeTab === 'optimization' && (
-        <SettingsOptimizationTab
-          draft={draft}
-          updateTokenTracking={updateTokenTracking}
-          updateSafety={updateSafety}
-          updateConciseThinking={updateConciseThinking}
-          updatePrompts={updatePrompts}
-        />
-      )}
-
-      {/* ===== 执行配置（并发 / 熔断 / 检查点提示） ===== */}
-      {activeTab === 'execution' && (
-        <SettingsExecutionTab
-          draft={draft}
-          updateExecution={updateExecution}
-          updateQuality={updateQuality}
-        />
-      )}
-
-      {/* ===== 记忆与检查点 ===== */}
-      {activeTab === 'memory' && (
-        <SettingsMemoryTab
-          draft={draft}
-          updateCheckpoint={updateCheckpoint}
-          updateCheckpointTrigger={updateCheckpointTrigger}
-          addCheckpointTrigger={addCheckpointTrigger}
-          removeCheckpointTrigger={removeCheckpointTrigger}
-          updateGoalVerifier={updateGoalVerifier}
-          updateProjectMemory={updateProjectMemory}
-          updateMemory={updateMemory}
-        />
-      )}
-
-      {/* ===== 插件与 MCP ===== */}
-      {activeTab === 'mcp' && (
-        <SettingsMcpTab
-          draft={draft}
-          updateMcp={updateMcp}
-          updateMcpServer={updateMcpServer}
-          removeMcpServer={removeMcpServer}
-          submitMcpForm={submitMcpForm}
-          openAddMcp={openAddMcp}
-          openEditMcp={openEditMcp}
-          mcpForm={mcpForm}
-          setMcpForm={setMcpForm}
-          mcpEditingId={mcpEditingId}
-          setMcpEditingId={setMcpEditingId}
-          catalogEntries={catalogEntries}
-          catalogCategory={catalogCategory}
-          catalogSearch={catalogSearch}
-          handleCatalogCategoryChange={handleCatalogCategoryChange}
-          handleCatalogSearch={handleCatalogSearch}
-          installingId={installingId}
-          installResult={installResult}
-          setInstallResult={setInstallResult}
-          installModal={installModal}
-          setInstallModal={setInstallModal}
-          envInputs={envInputs}
-          setEnvInputs={setEnvInputs}
-          headerInputs={headerInputs}
-          setHeaderInputs={setHeaderInputs}
-          openInstallModal={openInstallModal}
-          handleInstall={handleInstall}
-        />
-      )}
-
-      {/* ===== Phase 37：Skill 技能管理 ===== */}
-      {activeTab === 'skills' && (
-        <SettingsSkillsTab
-          skills={skills}
-          skillLoading={skillLoading}
-          skillPreview={skillPreview}
-          setSkillPreview={setSkillPreview}
-          skillForm={skillForm}
-          setSkillForm={setSkillForm}
-          skillRouteTest={skillRouteTest}
-          setSkillRouteTest={setSkillRouteTest}
-          skillAiForm={skillAiForm}
-          setSkillAiForm={setSkillAiForm}
-          handleSkillReload={handleSkillReload}
-          handleSkillToggle={handleSkillToggle}
-          handleSkillPreview={handleSkillPreview}
-          handleSkillDelete={handleSkillDelete}
-          handleSkillRouteTest={handleSkillRouteTest}
-          handleSkillCreate={handleSkillCreate}
-          handleSkillAiGenerate={handleSkillAiGenerate}
-          setAlertMsg={setAlertMsg}
-        />
-      )}
-
-      {/* ===== 外观 ===== */}
+      {/* ===== 外观与交互（基本=appearance，高级=conversation/persona/voice） ===== */}
       {activeTab === 'appearance' && (
-        <SettingsAppearanceTab
-          draft={draft}
-          updateGeneral={updateGeneral}
-          updateUi={updateUi}
-          updateBackgroundBehavior={updateBackgroundBehavior}
-          updateUpdates={updateUpdates}
-        />
+        <div className="absolute inset-0 space-y-4 overflow-y-auto pr-2">
+          <SettingsAppearanceTab
+            draft={draft}
+            updateGeneral={updateGeneral}
+            updateUi={updateUi}
+            updateBackgroundBehavior={updateBackgroundBehavior}
+            updateUpdates={updateUpdates}
+          />
+          <SettingsAdvancedSection
+            title="更多对话选项"
+            description="需要时调整对话显示、回复风格或语音"
+          >
+            <SettingsConversationTab draft={draft} updateDraft={updateDraft} />
+            <SettingsPersonaTab draft={draft} updateDraft={updateDraft} />
+            <SettingsVoiceTab draft={draft} updateDraft={updateDraft} />
+          </SettingsAdvancedSection>
+        </div>
       )}
 
-      {/* ===== Phase 40：用户体验 ===== */}
-      {activeTab === 'expertise' && (
-        <SettingsExpertiseTab draft={draft} updateExpertise={updateExpertise} />
+      {/* ===== 安全与治理（基本=security，高级=policies/phase52-53/expertise/分层/packs） ===== */}
+      {activeTab === 'security' && (
+        <div className="absolute inset-0 space-y-4 overflow-y-auto pr-2">
+          <SettingsSecurityTab
+            draft={draft}
+            updateSecurity={updateSecurity}
+            updateSecurityApproval={updateSecurityApproval}
+            updateFsRule={updateFsRule}
+            addFsRule={addFsRule}
+            removeFsRule={removeFsRule}
+            updateNetworkAllow={updateNetworkAllow}
+            updateNetworkDeny={updateNetworkDeny}
+            updateWebSearch={updateWebSearch}
+            updateAdversarial={updateAdversarial}
+            updateTrust={updateTrust}
+            selectedSearchEngine={selectedSearchEngine}
+            setSelectedSearchEngine={setSelectedSearchEngine}
+          />
+          <SettingsAdvancedSection
+            title="高级安全选项"
+            description="一般保持默认；只在需要自定义规则时修改"
+          >
+            <SettingsPoliciesTab draft={draft} updateDraft={updateDraft} />
+            <SettingsPhase52IntegrationTab draft={draft} updateDraft={updateDraft} />
+            <SettingsPhase53IntegrationTab draft={draft} updateDraft={updateDraft} />
+            <SettingsExpertiseTab draft={draft} updateExpertise={updateExpertise} />
+            <SettingsConfigLayeringTab draft={draft} updateDraft={updateDraft} />
+            <SettingsResultSchemaTab draft={draft} updateDraft={updateDraft} />
+          </SettingsAdvancedSection>
+        </div>
       )}
 
-      {/* ===== 归档对话 ===== */}
-      {activeTab === 'archived' && (
-        <SettingsArchivedTab />
+      {/* ===== 执行与记忆（基本=execution，高级=memory/checkpoint） ===== */}
+      {activeTab === 'execution' && (
+        <div className="absolute inset-0 space-y-4 overflow-y-auto pr-2">
+          <SettingsExecutionTab
+            draft={draft}
+            updateExecution={updateExecution}
+            updateQuality={updateQuality}
+          />
+          <SettingsAdvancedSection
+            title="恢复与记忆"
+            description="保存进度，方便中断后继续"
+          >
+            <SettingsMemoryTab
+              draft={draft}
+              updateCheckpoint={updateCheckpoint}
+              updateCheckpointTrigger={updateCheckpointTrigger}
+              addCheckpointTrigger={addCheckpointTrigger}
+              removeCheckpointTrigger={removeCheckpointTrigger}
+              updateGoalVerifier={updateGoalVerifier}
+              updateProjectMemory={updateProjectMemory}
+              updateMemory={updateMemory}
+            />
+          </SettingsAdvancedSection>
+        </div>
+      )}
+
+      {/* ===== Agent 编排（基本=subagents+commands，高级=goal/experiment/reviewer/delegation） ===== */}
+      {activeTab === 'orchestration' && (
+        <div className="absolute inset-0 space-y-4 overflow-y-auto pr-2">
+          <SettingsSubAgentsTab
+            draft={draft}
+            updateSubAgents={updateSubAgents}
+            updateSubAgentsGateRules={updateSubAgentsGateRules}
+            agentProfiles={agentProfiles}
+            setAgentProfiles={setAgentProfiles}
+            expandedAgentId={expandedAgentId}
+            setExpandedAgentId={setExpandedAgentId}
+          />
+          <SettingsCommandsTab
+            draft={draft}
+            updateSecurity={updateSecurity}
+            updateAutonomy={updateAutonomy}
+            updatePhase48Integration={updatePhase48Integration}
+          />
+          <SettingsAdvancedSection
+            title="高级自动化"
+            description="目标、实验和审查流程；一般不需要调整"
+          >
+            <SettingsGoalTab draft={draft} updateDraft={updateDraft} />
+            <SettingsExperimentTab draft={draft} updateDraft={updateDraft} />
+            <SettingsReviewerTab draft={draft} updateDraft={updateDraft} />
+            <SettingsDelegationTab draft={draft} updateDraft={updateDraft} />
+          </SettingsAdvancedSection>
+        </div>
+      )}
+
+      {/* ===== 插件生态（基本=mcp，高级=skills/hooks/codemap/market） ===== */}
+      {activeTab === 'plugins' && (
+        <div className="absolute inset-0 space-y-4 overflow-y-auto pr-2">
+          <SettingsMcpTab
+            draft={draft}
+            updateMcp={updateMcp}
+            updateMcpServer={updateMcpServer}
+            removeMcpServer={removeMcpServer}
+            submitMcpForm={submitMcpForm}
+            openAddMcp={openAddMcp}
+            openEditMcp={openEditMcp}
+            mcpForm={mcpForm}
+            setMcpForm={setMcpForm}
+            mcpEditingId={mcpEditingId}
+            setMcpEditingId={setMcpEditingId}
+            catalogEntries={catalogEntries}
+            catalogCategory={catalogCategory}
+            catalogSearch={catalogSearch}
+            handleCatalogCategoryChange={handleCatalogCategoryChange}
+            handleCatalogSearch={handleCatalogSearch}
+            installingId={installingId}
+            installResult={installResult}
+            setInstallResult={setInstallResult}
+            installModal={installModal}
+            setInstallModal={setInstallModal}
+            envInputs={envInputs}
+            setEnvInputs={setEnvInputs}
+            headerInputs={headerInputs}
+            setHeaderInputs={setHeaderInputs}
+            openInstallModal={openInstallModal}
+            handleInstall={handleInstall}
+          />
+          <SettingsSkillsTab
+            skills={skills}
+            skillLoading={skillLoading}
+            skillPreview={skillPreview}
+            setSkillPreview={setSkillPreview}
+            skillForm={skillForm}
+            setSkillForm={setSkillForm}
+            skillRouteTest={skillRouteTest}
+            setSkillRouteTest={setSkillRouteTest}
+            skillAiForm={skillAiForm}
+            setSkillAiForm={setSkillAiForm}
+            handleSkillReload={handleSkillReload}
+            handleSkillToggle={handleSkillToggle}
+            handleSkillPreview={handleSkillPreview}
+            handleSkillDelete={handleSkillDelete}
+            handleSkillRouteTest={handleSkillRouteTest}
+            handleSkillCreate={handleSkillCreate}
+            handleSkillAiGenerate={handleSkillAiGenerate}
+            setAlertMsg={setAlertMsg}
+          />
+          <SettingsAdvancedSection
+            title="更多扩展"
+            description="钩子、代码地图和市场；按需启用"
+          >
+            <SettingsHooksTab
+              hooks={hooks}
+              hookLoading={hookLoading}
+              hookCreateForm={hookCreateForm}
+              setHookCreateForm={setHookCreateForm}
+              refreshHooks={refreshHooks}
+              handleHookToggle={handleHookToggle}
+              handleHookDelete={handleHookDelete}
+              handleHookAiGenerate={handleHookAiGenerate}
+            />
+            <SettingsCodemapTab draft={draft} updateDraft={updateDraft} />
+            <SettingsMarketTab draft={draft} updateDraft={updateDraft} />
+          </SettingsAdvancedSection>
+        </div>
+      )}
+
+      {/* ===== 统计与归档（基本=archived，高级=optimization） ===== */}
+      {activeTab === 'misc' && (
+        <div className="absolute inset-0 space-y-4 overflow-y-auto pr-2">
+          <SettingsArchivedTab />
+          <SettingsAdvancedSection
+            title="用量与缓存"
+            description="查看用量；其余选项通常保持默认"
+          >
+            <SettingsOptimizationTab
+              draft={draft}
+              updateTokenTracking={updateTokenTracking}
+              updateSafety={updateSafety}
+              updateConciseThinking={updateConciseThinking}
+              updatePrompts={updatePrompts}
+            />
+          </SettingsAdvancedSection>
+        </div>
       )}
 
       {/* ===== 关于 ===== */}
@@ -440,226 +499,10 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
         <SettingsAboutTab />
       )}
 
-      {/* ===== 代码地图（Phase 39） ===== */}
-      {activeTab === 'codemap' && (
-        <SettingsCodemapTab draft={draft} updateDraft={updateDraft} />
-      )}
-
-      {/* ===== 策略引擎（Phase 42） ===== */}
-      {activeTab === 'policies' && (
-        <SettingsPoliciesTab draft={draft} updateDraft={updateDraft} />
-      )}
-
-      {/* ===== 市场（Phase 42） ===== */}
-      {activeTab === 'market' && (
-        <SettingsMarketTab draft={draft} updateDraft={updateDraft} />
-      )}
-
-      {/* ===== 人格（Phase 45） ===== */}
-      {activeTab === 'persona' && (
-        <SettingsPersonaTab draft={draft} updateDraft={updateDraft} />
-      )}
-
-      {/* ===== 语音（Phase 45） ===== */}
-      {activeTab === 'voice' && (
-        <SettingsVoiceTab draft={draft} updateDraft={updateDraft} />
-      )}
-
-      {/* ===== 对话持久化（Phase 44） ===== */}
-      {activeTab === 'conversation' && (
-        <SettingsConversationTab draft={draft} updateDraft={updateDraft} />
-      )}
-
-      {/* ===== 并行实验（Phase 44） ===== */}
-      {activeTab === 'experiment' && (
-        <SettingsExperimentTab draft={draft} updateDraft={updateDraft} />
-      )}
-
-      {/* ===== /goal 流程（Phase 43） ===== */}
-      {activeTab === 'goal' && (
-        <SettingsGoalTab draft={draft} updateDraft={updateDraft} />
-      )}
-
-      {/* ===== 审查分级（Phase 51 Task 1/7） ===== */}
-      {activeTab === 'reviewer' && (
-        <SettingsReviewerTab draft={draft} updateDraft={updateDraft} />
-      )}
-
-      {/* ===== 委托策略（Phase 51 Task 2/3/4） ===== */}
-      {activeTab === 'delegation' && (
-        <SettingsDelegationTab draft={draft} updateDraft={updateDraft} />
-      )}
-
-      {/* ===== 安全与治理（合并 Phase 52 + Phase 53） ===== */}
-      {activeTab === 'phase53Integration' && (
-        <>
-          <SettingsPhase52IntegrationTab draft={draft} updateDraft={updateDraft} />
-          <SettingsPhase53IntegrationTab draft={draft} updateDraft={updateDraft} />
-        </>
-      )}
-
-      {/* ===== 子 Agent 结果 Schema（Phase 51 Task 10，I-1） ===== */}
-      {activeTab === 'resultSchema' && (
-        <SettingsResultSchemaTab draft={draft} updateDraft={updateDraft} />
-      )}
-
-      {/* ===== 配置分层（Phase 51 Task 8，I-1） ===== */}
-      {activeTab === 'configLayering' && (
-        <SettingsConfigLayeringTab draft={draft} updateDraft={updateDraft} />
-      )}
-
-      {/* ===== 能力分层（Phase 81 Task 5）：Core / Extended / Standard / Freeze ===== */}
-      {activeTab === 'packs' && (
-        <SettingsPacksTab
-          draft={draft}
-          updatePacks={updatePacks}
-          onNavigate={setActiveTab}
-        />
-      )}
-
-      {/* ===== Hooks（Phase 39） ===== */}
-      {activeTab === 'hooks' && (
-        <SettingsHooksTab
-          hooks={hooks}
-          hookLoading={hookLoading}
-          hookCreateForm={hookCreateForm}
-          setHookCreateForm={setHookCreateForm}
-          refreshHooks={refreshHooks}
-          handleHookToggle={handleHookToggle}
-          handleHookDelete={handleHookDelete}
-          handleHookAiGenerate={handleHookAiGenerate}
-        />
-      )}
-
-      {/* ===== 子 Agent 配置 ===== */}
-      {activeTab === 'subagents' && (
-        <SettingsSubAgentsTab
-          draft={draft}
-          updateSubAgents={updateSubAgents}
-          updateSubAgentsGateRules={updateSubAgentsGateRules}
-          agentProfiles={agentProfiles}
-          setAgentProfiles={setAgentProfiles}
-          expandedAgentId={expandedAgentId}
-          setExpandedAgentId={setExpandedAgentId}
-        />
-      )}
-
         </div>
       </div>
     </div>
     <AlertBanner message={alertMsg} onDismiss={() => setAlertMsg(null)} />
     </>
-  );
-}
-
-// ===== 归档对话面板 =====
-// 从 useProjectsStore 读取归档列表，支持还原与永久删除
-function ArchivedConversationsPanel() {
-  const archivedConversations = useProjectsStore((s) => s.archivedConversations);
-  const restoreConversation = useProjectsStore((s) => s.restoreConversation);
-  const deleteArchivedConversation = useProjectsStore((s) => s.deleteArchivedConversation);
-  const projects = useProjectsStore((s) => s.projects);
-  // 替代原生 confirm 的状态
-  const [confirmDialog, setConfirmDialog] = useState<{
-    message: string;
-    variant?: 'default' | 'danger';
-    onConfirm: () => void;
-  } | null>(null);
-
-  // 格式化时间戳
-  const formatTime = (ts: number): string => {
-    const d = new Date(ts);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  };
-
-  if (archivedConversations.length === 0) {
-    return (
-      <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
-        <Card className="flex flex-col items-center justify-center py-12 text-center">
-          <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-rd-primary/10 text-rd-primary">
-            <Archive size={32} />
-          </div>
-          <h3 className="mb-2 text-lg font-semibold text-rd-text">没有归档对话</h3>
-          <p className="max-w-md text-sm text-rd-textMuted">
-            在左侧项目侧边栏中右键对话选择"归档"，对话会移到此页面。归档后可随时还原到原项目。
-          </p>
-        </Card>
-      </div>
-    );
-  }
-
-  return (
-    <div className="absolute inset-0 space-y-3 overflow-y-auto pr-2">
-      <Card>
-        <CardHeader>
-          <CardTitle>归档对话</CardTitle>
-          <CardDescription>
-            共 {archivedConversations.length} 条归档对话。可还原到原项目或永久删除。
-          </CardDescription>
-        </CardHeader>
-      </Card>
-
-      {archivedConversations.map((conv) => {
-        // 检查原项目是否还存在
-        const projectExists = projects.some((p) => p.id === conv.projectId);
-        return (
-          <Card key={conv.id}>
-            <CardContent className="py-4">
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <Folder size={16} className="shrink-0 text-rd-textMuted" />
-                    <span className="truncate font-medium text-rd-text">{conv.title}</span>
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-rd-textMuted">
-                    <span>原项目: {conv.projectName}</span>
-                    <span>归档于: {formatTime(conv.archivedAt)}</span>
-                    <span>消息数: {conv.messages?.length ?? 0}</span>
-                    {!projectExists && (
-                      <Badge variant="outline" className="text-rd-warning">原项目已删除</Badge>
-                    )}
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => restoreConversation(conv.id)}
-                    disabled={!projectExists}
-                    title={projectExists ? '还原到原项目' : '原项目已被删除，无法还原'}
-                  >
-                    <RotateCcw size={14} /> 还原
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-rd-danger hover:bg-rd-danger/10 hover:text-rd-danger"
-                    onClick={() => {
-                      setConfirmDialog({
-                        message: `确认永久删除归档对话"${conv.title}"？此操作不可恢复。`,
-                        variant: 'danger',
-                        onConfirm: () => {
-                          setConfirmDialog(null);
-                          deleteArchivedConversation(conv.id);
-                        },
-                      });
-                    }}
-                  >
-                    <Trash2 size={14} /> 永久删除
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        );
-      })}
-      <ConfirmDialog
-        open={confirmDialog !== null}
-        message={confirmDialog?.message ?? ''}
-        variant={confirmDialog?.variant}
-        onConfirm={() => confirmDialog?.onConfirm()}
-        onCancel={() => setConfirmDialog(null)}
-      />
-    </div>
   );
 }

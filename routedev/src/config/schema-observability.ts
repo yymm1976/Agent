@@ -236,28 +236,28 @@ export type Phase68IntegrationConfig = z.infer<typeof Phase68IntegrationConfigSc
 // 原 AppConfigSchema 中的内联 schema，抽出到此文件并命名
 export const Phase70IntegrationConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   toolOutputBudget: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     maxCharsPerOutput: z.number().int().min(500).default(2000),
     previewHeadChars: z.number().int().min(100).default(500),
     previewTailChars: z.number().int().min(100).default(500),
     offloadDir: z.string().default('.routedev/offloaded'),
   })),
   microCompact: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     cleanBeforeRounds: z.number().int().min(1).default(5),
     keepRecentRounds: z.number().int().min(1).default(3),
   })),
   contextCollapse: z.preprocess((v) => v ?? {}, z.object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     minToolCallsForChain: z.number().int().min(2).default(3),
   })),
   autoCompactGuardian: z.preprocess((v) => v ?? {}, z.object({
     enabled: z.boolean().default(true),
     contextWindow: z.number().int().min(10000).default(200000),
-    reservedTokensForSummary: z.number().int().min(1000).default(20000),
-    autoCompactBuffer: z.number().int().min(1000).default(13000),
-    warningBuffer: z.number().int().min(1000).default(20000),
-    errorBuffer: z.number().int().min(1000).default(20000),
+    reservedTokensForSummary: z.number().int().min(1000).default(8000),
+    autoCompactBuffer: z.number().int().min(1000).default(40000),
+    warningBuffer: z.number().int().min(1000).default(60000),
+    errorBuffer: z.number().int().min(1000).default(30000),
     maxConsecutiveFailures: z.number().int().min(1).default(3),
   })),
   compactPrompt: z.preprocess((v) => v ?? {}, z.object({
@@ -293,14 +293,11 @@ export const PacksConfigSchema = z.preprocess((v) => v ?? {}, z.object({
   /** Skill 生命周期（SkillLifecycleManager 自动提炼/精炼） */
   skillLifecycle: PackToggleSchema.default({ enabled: false }),
   // --- Standard Pack（扩展区，默认关，冷处理仅修崩溃） ---
-  /** 浏览器/Web（web-search + web-fetch + browser + vision） */
-  browserWeb: PackToggleSchema.default({ enabled: false }),
+  // Phase 96 M-1：删除 browserWeb / vfsPlan 死开关（全库零引用，工具注册由 tools.profile 控制）
   /** 代码地图（code-graph-query + repo-map + CodeMapEngine + Watcher） */
   codeMap: PackToggleSchema.default({ enabled: false }),
   /** CCR 可逆压缩（ccr-retrieve + ComposePipeline） */
   ccrCompression: PackToggleSchema.default({ enabled: false }),
-  /** VFS/Plan 工具（虚拟文件系统 + 计划状态显式管理） */
-  vfsPlan: PackToggleSchema.default({ enabled: false }),
   /** Harness（Trace 回放 + 评分卡 + 并行实验） */
   harness: PackToggleSchema.default({ enabled: false }),
   /** 完整性校验（cite / import / macros / mcpBridge / IntegrityManifest） */

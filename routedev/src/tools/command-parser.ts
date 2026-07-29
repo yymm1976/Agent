@@ -30,6 +30,12 @@ export interface ParsedCommand {
   /** 原始命令字符串 */
   raw: string;
   /**
+   * Phase 96 修复：是否包含命令链分隔符（&&、||、;）
+   * 命令链本身不是注入向量——子命令已独立经过白/黑名单与危险模式检查
+   * 与 hasPipe 语义分离，避免 && 被误判为管道触发强制确认
+   */
+  hasCommandChain?: boolean;
+  /**
    * I1 修复：命令链中的所有子命令（含本条）
    * 单条命令时长度为 1；命令链（&&、||、;）时长度 > 1
    * 安全检查应遍历所有子命令
@@ -135,6 +141,7 @@ export function parseCommand(command: string): ParsedCommand {
       hasPipe: false,
       hasSubstitution: false,
       hasRedirect: false,
+      hasCommandChain: false,
       raw,
     };
   }
@@ -151,12 +158,22 @@ export function parseCommand(command: string): ParsedCommand {
   const subCommands = chainParts.map(part => parseSingleCommand(part, part));
   const first = subCommands[0];
 
+  // Phase 96 修复：splitCommandChain 把 | 也当分隔符，导致子命令都不含 |
+  // 子命令的 hasPipe 永远 false，必须直接检测 raw 才能识别管道
+  // 排除引号内容与 || 命令链分隔符后，再检测裸露的 |
+  const rawWithoutQuotes = raw.replace(/'[^']*'/g, '').replace(/"[^"]*"/g, '');
+  const rawWithoutOrChain = rawWithoutQuotes.replace(/\|\|/g, '');
+  const hasPipeInRaw = /\|/.test(rawWithoutOrChain);
+
   return {
     command: first.command,
     args: first.args,
-    hasPipe: subCommands.some(sc => sc.hasPipe) || chainParts.length > 1,
+    // Phase 96 修复：hasPipe 只表示真正的管道 |，不再把命令链（&&/||/;）算进来
+    // 命令链通过 hasCommandChain 字段单独标识
+    hasPipe: subCommands.some(sc => sc.hasPipe) || hasPipeInRaw,
     hasSubstitution: subCommands.some(sc => sc.hasSubstitution),
     hasRedirect: subCommands.some(sc => sc.hasRedirect),
+    hasCommandChain: true,
     raw,
     subCommands,
   };
@@ -199,6 +216,8 @@ function parseSingleCommand(command: string, raw: string): ParsedCommand {
     hasPipe,
     hasSubstitution,
     hasRedirect,
+    // Phase 96：单条命令不含命令链分隔符
+    hasCommandChain: false,
     raw,
   };
 }

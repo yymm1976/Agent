@@ -38,12 +38,14 @@ export function SettingsExpertiseTab({ draft, updateExpertise }: SettingsExperti
   const [showExpertiseGuide, setShowExpertiseGuide] = useState(false);
 
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       {/* G-F036: Freeze 警告徽章 */}
       <div className="flex items-center gap-2 rounded-md border border-rd-warning/30 bg-rd-warning/10 px-3 py-2 text-xs text-rd-warning">
         <Snowflake size={14} />
         <span>此模块已冻结，配置可能不会生效</span>
       </div>
+      {/* Phase 89：明确告知配置不会生效 */}
+      <p className="text-xs font-medium text-rd-danger">配置不会生效</p>
       <Card>
         <CardHeader>
           <CardTitle>经验等级</CardTitle>
@@ -61,7 +63,7 @@ export function SettingsExpertiseTab({ draft, updateExpertise }: SettingsExperti
                 <button
                   key={opt.value}
                   onClick={() => updateExpertise({ level: opt.value })}
-                  className={`flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-colors ${
+                  className={`flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-colors pointer-events-none opacity-60 ${
                     active
                       ? 'border-rd-primary bg-rd-primary/10 text-rd-text'
                       : 'border-rd-border bg-rd-surface text-rd-textMuted hover:border-rd-primary/40 hover:text-rd-text'
@@ -77,12 +79,13 @@ export function SettingsExpertiseTab({ draft, updateExpertise }: SettingsExperti
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="expertise-auto-suggest">启用自动建议</Label>
-              <p className="text-xs text-rd-textMuted">根据经验等级自动提供操作建议和提示。</p>
+              <p className="text-xs text-rd-textMuted">暂未实现</p>
             </div>
             <Switch
               id="expertise-auto-suggest"
               checked={draft.expertise.enableAutoSuggestion}
               onCheckedChange={(checked) => updateExpertise({ enableAutoSuggestion: checked })}
+              disabled
             />
           </div>
           <div className="space-y-2">
@@ -91,13 +94,14 @@ export function SettingsExpertiseTab({ draft, updateExpertise }: SettingsExperti
               id="expertise-output-style"
               value={draft.expertise.outputStyleOverride ?? ''}
               onChange={(e) => updateExpertise({ outputStyleOverride: e.target.value || null })}
+              disabled
             >
               <SelectItem value="">不覆盖（跟随全局设置）</SelectItem>
               <SelectItem value="minimal">简洁</SelectItem>
               <SelectItem value="standard">详细</SelectItem>
               <SelectItem value="structured">结构化</SelectItem>
             </Select>
-            <p className="text-xs text-rd-textMuted">覆盖全局输出样式，null 表示跟随 UI 输出样式设置。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现</p>
           </div>
           <div className="space-y-2">
             <Button
@@ -147,6 +151,7 @@ export function SettingsExpertiseTab({ draft, updateExpertise }: SettingsExperti
 export function SettingsAboutTab() {
   return (
     <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+      {/* about tab 是独立 tab，保留 absolute inset-0 自行滚动 */}
       <Card>
         <CardContent className="space-y-6 py-6">
           <div className="flex items-center gap-4">
@@ -211,7 +216,7 @@ interface SettingsMarketTabProps {
  */
 export function SettingsMarketTab({ draft, updateDraft }: SettingsMarketTabProps) {
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       {/* 说明卡片 */}
       <Card>
         <CardContent className="flex items-start justify-between gap-4 py-6">

@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import * as path from 'node:path';
 import { logger } from '../../utils/logger.js';
 
 export interface ToolOutputBudgetConfig {
@@ -13,7 +15,7 @@ export const DEFAULT_BUDGET_CONFIG: ToolOutputBudgetConfig = {
   previewHeadChars: 500,
   previewTailChars: 500,
   offloadDir: '.routedev/offloaded',
-  enabled: false,
+  enabled: true,
 };
 
 interface OffloadRecord {
@@ -47,7 +49,7 @@ export class ToolOutputBudgetManager {
         continue;
       }
       try {
-        const filePath = this.buildFilePath(i);
+        const filePath = this.writeOffload(i, text);
         const preview = this.buildPreview(text, filePath);
         const record: OffloadRecord = { hash, filePath, preview, originalSize: text.length };
         this.processedHashes.set(hash, record);
@@ -77,9 +79,12 @@ export class ToolOutputBudgetManager {
     return this.config.enabled;
   }
 
-  private buildFilePath(index: number): string {
+  private writeOffload(index: number, content: string): string {
+    mkdirSync(this.config.offloadDir, { recursive: true });
     const filename = `output-${index}-${Date.now()}.txt`;
-    return `${this.config.offloadDir}/${filename}`;
+    const filePath = path.join(this.config.offloadDir, filename);
+    writeFileSync(filePath, content, 'utf8');
+    return filePath;
   }
 
   private buildPreview(content: string, filePath: string): string {

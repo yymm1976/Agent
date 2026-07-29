@@ -23,7 +23,7 @@ export class TodoWriteTool implements ITool {
       properties: {
         action: {
           type: 'string',
-          enum: ['add', 'update', 'delete', 'list', 'clear'],
+          enum: ['add', 'update', 'delete', 'list', 'clear', 'replace'],
           description: '操作类型',
         },
         id: {
@@ -44,6 +44,19 @@ export class TodoWriteTool implements ITool {
           enum: ['high', 'medium', 'low'],
           description: '优先级（add/update 时可选，默认 medium）',
         },
+        todos: {
+          type: 'array',
+          description: '完整待办快照（replace 时必填）；提交新计划时会替换本次对话之前的待办。',
+          items: {
+            type: 'object',
+            properties: {
+              content: { type: 'string' },
+              status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] },
+              priority: { type: 'string', enum: ['high', 'medium', 'low'] },
+            },
+            required: ['content'],
+          },
+        },
       },
       required: ['action'],
     },
@@ -59,7 +72,7 @@ export class TodoWriteTool implements ITool {
 
   validateArgs(args: Record<string, unknown>): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
-    const validActions = ['add', 'update', 'delete', 'list', 'clear'];
+    const validActions = ['add', 'update', 'delete', 'list', 'clear', 'replace'];
 
     if (!args.action || typeof args.action !== 'string') {
       errors.push('缺少必需参数: action');
@@ -71,6 +84,14 @@ export class TodoWriteTool implements ITool {
 
     if (action === 'add' && (!args.content || typeof args.content !== 'string')) {
       errors.push('add 操作需要 content 参数');
+    }
+
+    if (action === 'replace') {
+      if (!Array.isArray(args.todos) || args.todos.some((item) =>
+        !item || typeof item !== 'object' || typeof (item as Record<string, unknown>).content !== 'string',
+      )) {
+        errors.push('replace 操作需要 todos 数组，且每项必须包含 content');
+      }
     }
 
     if ((action === 'update' || action === 'delete') && (!args.id || typeof args.id !== 'string')) {
@@ -199,6 +220,27 @@ export class TodoWriteTool implements ITool {
             success: true,
             output: '已清空所有待办项',
             durationMs: 0,
+          };
+        }
+
+        case 'replace': {
+          const todos = args.todos as Array<Record<string, unknown>>;
+          this.store.clear();
+          const items = todos.map((todo) => {
+            const item = this.store.add(
+              String(todo.content),
+              (todo.priority as 'high' | 'medium' | 'low') ?? 'medium',
+            );
+            if (todo.status === 'in_progress' || todo.status === 'completed') {
+              this.store.update(item.id, { status: todo.status });
+            }
+            return this.store.get(item.id)!;
+          });
+          return {
+            success: true,
+            output: `已替换待办列表，共 ${items.length} 项`,
+            durationMs: 0,
+            metadata: { items },
           };
         }
 

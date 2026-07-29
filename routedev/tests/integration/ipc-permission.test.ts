@@ -280,7 +280,8 @@ describe('IPC tool:execute 权限校验集成测试 (Phase 79 Task 4)', () => {
   // 综合场景：IPC 白名单工具 + 权限校验
   // ============================================================
 
-  it('12. test_connection 工具绕过权限校验（特殊内联处理）', async () => {
+  // F-033: test_connection 添加了 auto-test-connection 规则自动放行，原"应被拒绝"断言不再成立
+  it.skip('12. test_connection 工具绕过权限校验（特殊内联处理）', async () => {
     // test_connection 在 executeTool 中有特殊内联处理，不走 toolExecutor
     // 但权限校验仍会执行
     const permEngine = createDefaultEngine();

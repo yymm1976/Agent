@@ -9,6 +9,8 @@ import type {
   RouterRule,
   MCPServerEntryConfig,
 } from '../../../shared/config-types.js';
+// 导入 AgentRole / AgentOutputFormat，使 AgentProfileUI 与持久层类型同源
+import type { AgentRole, AgentOutputFormat } from '../../../../src/agents/profiles/types.js';
 // V2-006 修复：ESM 环境下 require() 失效，改用 ESM import 读取 package.json
 // 路径：desktop/renderer/src/pages/ → ../../../../ = routedev/（package.json 所在）
 // resolveJsonModule 已在 desktop/tsconfig.desktop.json 中启用
@@ -77,7 +79,8 @@ export function keyValueToText(obj: Record<string, string> | undefined): string 
 export interface McpFormState {
   id: string;
   name: string;
-  transport: 'stdio' | 'http';
+  // 支持全部 5 种传输类型（与 MCPTransportSchema 对齐）
+  transport: 'stdio' | 'http' | 'sse' | 'streamable_http' | 'websocket';
   command: string;
   url: string;
   /** 逗号分隔的参数字符串 */
@@ -90,6 +93,10 @@ export interface McpFormState {
   headers: string;
   /** 连接超时毫秒，空字符串表示不设置 */
   connectTimeout: string;
+  /** 会话生命周期策略（空字符串表示使用全局默认） */
+  lifecyclePolicy: '' | 'per-call' | 'per-session' | 'persistent';
+  /** 来源标注（导入时填写，编辑时保留原值） */
+  origin: string;
 }
 
 /** 空白 MCP 表单 */
@@ -104,27 +111,38 @@ export const EMPTY_MCP_FORM: McpFormState = {
   cwd: '',
   headers: '',
   connectTimeout: '',
+  lifecyclePolicy: '',
+  origin: '',
 };
 
 /**
  * 从表单状态构造 MCPServerEntryConfig
  * 根据 transport 类型组装正确的 config 对象
+ *
+ * 修复要点：
+ * - 不再强制把非 stdio 的 transport 改成 'http'，保留表单原始 transport
+ *   （支持 http / sse / streamable_http / websocket 四种非 stdio 传输）
+ * - 保留 lifecyclePolicy 和 origin 字段，避免编辑后丢失
  */
 export function constructMcpServer(form: McpFormState): MCPServerEntryConfig {
-  const config: MCPServerEntryConfig['config'] =
-    form.transport === 'stdio'
-      ? {
-          transport: 'stdio',
-          command: form.command,
-          args: parseStringList(form.args),
-          ...(form.env.trim() ? { env: parseKeyValuePairs(form.env) } : {}),
-          ...(form.cwd.trim() ? { cwd: form.cwd.trim() } : {}),
-        }
-      : {
-          transport: 'http',
-          url: form.url,
-          ...(form.headers.trim() ? { headers: parseKeyValuePairs(form.headers) } : {}),
-        };
+  let config: MCPServerEntryConfig['config'];
+  if (form.transport === 'stdio') {
+    config = {
+      transport: 'stdio',
+      command: form.command,
+      args: parseStringList(form.args),
+      ...(form.env.trim() ? { env: parseKeyValuePairs(form.env) } : {}),
+      ...(form.cwd.trim() ? { cwd: form.cwd.trim() } : {}),
+    };
+  } else {
+    // 非 stdio 传输（http / sse / streamable_http / websocket）：保留原始 transport
+    // 四种传输在 schema 中结构相同（url + headers），但 transport 字面量必须保留
+    config = {
+      transport: form.transport,
+      url: form.url,
+      ...(form.headers.trim() ? { headers: parseKeyValuePairs(form.headers) } : {}),
+    } as MCPServerEntryConfig['config'];
+  }
 
   const entry: MCPServerEntryConfig = {
     id: form.id,
@@ -141,40 +159,58 @@ export function constructMcpServer(form: McpFormState): MCPServerEntryConfig {
     }
   }
 
+  // 保留 lifecyclePolicy（空字符串表示使用全局默认，不写入）
+  if (form.lifecyclePolicy) {
+    entry.lifecyclePolicy = form.lifecyclePolicy;
+  }
+  // 保留 origin（来源标注，编辑时不应丢失）
+  if (form.origin) {
+    entry.origin = form.origin;
+  }
+
   return entry;
 }
 
 /**
  * 从已有的 MCPServerEntryConfig 回填表单状态
  * 用于编辑已有服务器时预填表单
+ *
+ * 修复要点：
+ * - 非 stdio 传输保留原始 transport 字面量（不再统一改写为 'http'）
+ * - 回填 lifecyclePolicy 和 origin，避免编辑保存后这两个字段丢失
  */
 export function mcpServerToForm(server: MCPServerEntryConfig): McpFormState {
   const config = server.config;
-  if (config.transport === 'stdio') {
-    return {
-      id: server.id,
-      name: server.name,
-      transport: 'stdio',
-      command: config.command,
-      url: '',
-      args: config.args.join(', '),
-      env: keyValueToText(config.env),
-      cwd: config.cwd ?? '',
-      headers: '',
-      connectTimeout: server.connectTimeout ? String(server.connectTimeout) : '',
-    };
-  }
-  return {
+  // 公共字段：lifecyclePolicy / origin / connectTimeout 在所有传输类型下都需回填
+  const common = {
     id: server.id,
     name: server.name,
-    transport: 'http',
     command: '',
-    url: config.url,
+    url: '',
     args: '',
     env: '',
     cwd: '',
-    headers: keyValueToText(config.headers),
+    headers: '',
     connectTimeout: server.connectTimeout ? String(server.connectTimeout) : '',
+    lifecyclePolicy: (server.lifecyclePolicy ?? '') as McpFormState['lifecyclePolicy'],
+    origin: server.origin ?? '',
+  };
+  if (config.transport === 'stdio') {
+    return {
+      ...common,
+      transport: 'stdio',
+      command: config.command,
+      args: config.args.join(', '),
+      env: keyValueToText(config.env),
+      cwd: config.cwd ?? '',
+    };
+  }
+  // 非 stdio 传输（http / sse / streamable_http / websocket）：保留原始 transport
+  return {
+    ...common,
+    transport: config.transport,
+    url: config.url,
+    headers: keyValueToText(config.headers),
   };
 }
 
@@ -228,7 +264,8 @@ export const EMPTY_RULE: RouterRule = {
 export interface AgentProfileUI {
   id: string;
   name: string;
-  role: 'researcher' | 'executor' | 'reviewer' | 'custom';
+  // 与持久层 AgentRole 同源，支持 planner/verifier/synthesizer/review-planner 等全部角色
+  role: AgentRole;
   modelId: string;
   description: string;
   systemPrompt: string;
@@ -236,7 +273,8 @@ export interface AgentProfileUI {
   forbiddenTools: string[];
   canChallenge: boolean;
   challengeSeverity: 'blocking' | 'warning';
-  outputFormat: 'research_report' | 'code_change' | 'review_report' | 'custom';
+  // 与持久层 AgentOutputFormat 同源，支持 task_plan/verification_report/synthesis_report 等
+  outputFormat: AgentOutputFormat;
   maxTokens: number;
   maxSteps: number;
   isBuiltin: boolean;
@@ -258,15 +296,6 @@ export const SEARCH_ENGINES = [
 // ===== 保存前清理 =====
 
 /**
- * 检测掩码 API Key（maskApiKey 产生的格式为 "首4****尾4" 或 "****"）
- * G-001：渲染层在保存前过滤掩码 key，避免掩码值覆盖磁盘真实密钥
- * 掩码 key 的 provider 不应被包含在 cleanedDraft 中，让主进程保留磁盘真实值
- */
-function isMaskedApiKey(key: string): boolean {
-  return key.includes('****');
-}
-
-/**
  * 保存前清理 draft：过滤空 provider/model、修复路由规则 modelId、过滤 fallbackChain
  * Phase 74-G：从 SettingsPage.handleSave 抽离的纯函数（原 L1048-1103）
  *
@@ -281,11 +310,11 @@ function isMaskedApiKey(key: string): boolean {
  */
 export function cleanDraftForSave(draft: AppConfig): AppConfig {
   // 保存前清理：过滤掉 apiKey 为空的 provider（apiKey 是最关键字段）
-  // G-001：同时过滤掩码 apiKey（含 **** 模式），掩码 provider 不传入 saveConfig，
-  // 让主进程保留磁盘真实值，避免掩码字符串覆盖真实密钥
+  // Bug 修复：不再过滤掩码 apiKey（含 **** 模式），掩码 provider 传入主进程，
+  // 由主进程的掩码回填逻辑用磁盘真实值替换，避免渲染层过滤导致 providers 清空
   // name 为空时自动用 id 作为 name，避免用户只填了部分字段导致被过滤
   const validProviders: ProviderConfig[] = draft.providers
-    .filter((p) => p.apiKey.trim() && !isMaskedApiKey(p.apiKey.trim()))
+    .filter((p) => p.apiKey.trim())
     .map((p) => ({
       ...p,
       id: p.id.trim(),
@@ -334,9 +363,12 @@ export function cleanDraftForSave(draft: AppConfig): AppConfig {
     return { ...rule, modelId, fallbackModelId };
   });
   // 保存到磁盘时过滤空字符串；但 UI draft 保留空项，避免刚点击“添加降级模型”就被自动保存清掉
-  const cleanedFallbackChain = (draft.router.fallbackChain ?? [])
-    .map((id) => id.trim())
-    .filter((id) => id && configuredModelIds.has(id));
+  // Bug 修复：providers 为空时保留原 fallbackChain，避免因 providers 被过滤导致降级链丢失
+  const cleanedFallbackChain = cleanedProviders.length === 0
+    ? (draft.router.fallbackChain ?? [])
+    : (draft.router.fallbackChain ?? [])
+        .map((id) => id.trim())
+        .filter((id) => id && configuredModelIds.has(id));
   return {
     ...draft,
     providers: cleanedProviders,

@@ -124,6 +124,12 @@ export class CodeSearchTool implements ITool {
         '--glob', '!**/node_modules/**',
         '--glob', '!**/.git/**',
         '--glob', '!**/dist/**',
+        // Phase 96 修复：排除构建产物与仓库大目录，避免命中 out/release/archive/refs
+        '--glob', '!**/out/**',
+        '--glob', '!**/build/**',
+        '--glob', '!**/release*/**',
+        '--glob', '!**/archive/**',
+        '--glob', '!**/refs/**',
         pattern,
       ];
 
@@ -166,7 +172,34 @@ export class CodeSearchTool implements ITool {
   ): Promise<string> {
     const regex = new RegExp(pattern);
     const results: string[] = [];
-    const files = await walkDir(searchPath, maxResults * 5);
+
+    // Phase 95 修复：searchPath 是文件时直接读，避免 walkDir 抛 ENOTDIR 返回空
+    let isFile = false;
+    try {
+      const stat = await fs.stat(searchPath);
+      isFile = stat.isFile();
+    } catch {
+      // 路径不存在，走 walkDir 会被 catch 兜底
+    }
+    if (isFile) {
+      try {
+        const content = await fs.readFile(searchPath, 'utf-8');
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          if (regex.test(lines[i])) {
+            results.push(`${searchPath}:${i + 1}:${lines[i].trim()}`);
+            if (results.length >= maxResults) break;
+          }
+        }
+      } catch (e) {
+        console.warn(`[code-search] 读取文件失败: ${searchPath}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      return results.join('\n');
+    }
+
+    // Phase 96 修复：上限从 500 提高到 2000，与 file-search 一致
+    // 配合 search-utils.ts 的 IGNORED_DIRS 跳过 out/release/archive/refs 等大目录
+    const files = await walkDir(searchPath, 2000);
 
     for (const filePath of files) {
       if (results.length >= maxResults) break;

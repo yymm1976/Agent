@@ -22,7 +22,7 @@ export function SettingsReviewerTab({ draft, updateDraft }: SettingsReviewerTabP
   };
 
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>审查分级策略</CardTitle>
@@ -39,7 +39,7 @@ export function SettingsReviewerTab({ draft, updateDraft }: SettingsReviewerTabP
             </div>
             <Switch
               id="reviewer-tiered"
-              checked={policy.tieredReviewEnabled ?? false}
+              checked={policy.tieredReviewEnabled ?? true}
               onCheckedChange={(checked) => updatePolicy({ tieredReviewEnabled: checked })}
             />
           </div>
@@ -91,7 +91,7 @@ export function SettingsReviewerTab({ draft, updateDraft }: SettingsReviewerTabP
             </div>
             <Switch
               id="reviewer-cross-model"
-              checked={policy.autoCrossModelForHighRisk ?? false}
+              checked={policy.autoCrossModelForHighRisk ?? true}
               onCheckedChange={(checked) => updatePolicy({ autoCrossModelForHighRisk: checked })}
             />
           </div>
@@ -115,7 +115,7 @@ export function SettingsReviewerTab({ draft, updateDraft }: SettingsReviewerTabP
             </div>
             <Switch
               id="reviewer-evidence"
-              checked={policy.enforceEvidenceProtocol ?? false}
+              checked={policy.enforceEvidenceProtocol ?? true}
               onCheckedChange={(checked) => updatePolicy({ enforceEvidenceProtocol: checked })}
             />
           </div>

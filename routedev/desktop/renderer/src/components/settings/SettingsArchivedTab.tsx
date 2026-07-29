@@ -30,7 +30,7 @@ export function SettingsArchivedTab() {
 
   if (archivedConversations.length === 0) {
     return (
-      <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+      <div className="space-y-6">
         <Card className="flex flex-col items-center justify-center py-12 text-center">
           <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-rd-primary/10 text-rd-primary">
             <Archive size={32} />
@@ -45,7 +45,7 @@ export function SettingsArchivedTab() {
   }
 
   return (
-    <div className="absolute inset-0 space-y-3 overflow-y-auto pr-2">
+    <div className="space-y-3">
       <Card>
         <CardHeader>
           <CardTitle>归档对话</CardTitle>

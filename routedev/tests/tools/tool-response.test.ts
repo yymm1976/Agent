@@ -27,6 +27,20 @@ const context = (dir: string): ToolExecutionContext => ({
   timeoutMs: 30000,
 });
 
+// F-001 后 ToolExecutor 在 securityChecker 未注入时 fail-closed，
+// 测试需注入 always-allow mock 才能走真实工具路径
+const alwaysAllowChecker = {
+  checkFilePath: () => ({ allowed: true, requiresConfirmation: false }),
+  checkCommand: () => ({ allowed: true, requiresConfirmation: false }),
+  checkNetworkRequest: async () => ({ allowed: true, requiresConfirmation: false }),
+} as unknown as import('../../src/tools/types.js').ISecurityChecker;
+
+function makeExecutor(registry: ToolRegistry): ToolExecutor {
+  const executor = new ToolExecutor(registry);
+  executor.setSecurityChecker(alwaysAllowChecker);
+  return executor;
+}
+
 /** 造一个永远抛出异常的工具，用于测试 executeSafe 的容错 */
 class ThrowingTool implements ITool {
   readonly definition: ToolDefinition = {
@@ -84,7 +98,7 @@ describe('executeSafe', () => {
   it('工具正常返回时 isError 为 false', async () => {
     const registry = new ToolRegistry();
     registry.register(new OkTool());
-    const executor = new ToolExecutor(registry);
+    const executor = makeExecutor(registry);
 
     const resp = await executor.executeSafe('ok_tool', {}, context(tempDir));
 
@@ -96,7 +110,7 @@ describe('executeSafe', () => {
   it('工具抛出异常时返回 isError: true', async () => {
     const registry = new ToolRegistry();
     registry.register(new ThrowingTool());
-    const executor = new ToolExecutor(registry);
+    const executor = makeExecutor(registry);
 
     const resp = await executor.executeSafe('throwing_tool', {}, context(tempDir));
 
@@ -107,7 +121,7 @@ describe('executeSafe', () => {
 
   it('工具未注册时返回 isError: true', async () => {
     const registry = new ToolRegistry();
-    const executor = new ToolExecutor(registry);
+    const executor = makeExecutor(registry);
 
     const resp = await executor.executeSafe('nonexistent', {}, context(tempDir));
 
@@ -118,7 +132,7 @@ describe('executeSafe', () => {
   it('真实工具成功时返回 isError: false', async () => {
     const registry = new ToolRegistry();
     registry.register(new FileReadTool());
-    const executor = new ToolExecutor(registry);
+    const executor = makeExecutor(registry);
 
     await fs.writeFile(path.join(tempDir, 'hello.txt'), 'hello world', 'utf-8');
 
@@ -131,7 +145,7 @@ describe('executeSafe', () => {
   it('真实工具失败时（读取不存在文件）返回 isError: true', async () => {
     const registry = new ToolRegistry();
     registry.register(new FileReadTool());
-    const executor = new ToolExecutor(registry);
+    const executor = makeExecutor(registry);
 
     const resp = await executor.executeSafe(
       'file_read',
@@ -146,7 +160,7 @@ describe('executeSafe', () => {
   it('executeSafe 永不抛出异常（即使 execute 抛出）', async () => {
     const registry = new ToolRegistry();
     registry.register(new ThrowingTool());
-    const executor = new ToolExecutor(registry);
+    const executor = makeExecutor(registry);
 
     // executeSafe 应该 resolve 而不是 reject
     await expect(executor.executeSafe('throwing_tool', {}, context(tempDir))).resolves.toBeDefined();
@@ -167,7 +181,7 @@ describe('ToolResponse 类型', () => {
   it('ToolResponse 字段完整（content + isError + 可选 metadata）', async () => {
     const registry = new ToolRegistry();
     registry.register(new OkTool());
-    const executor = new ToolExecutor(registry);
+    const executor = makeExecutor(registry);
 
     const resp: ToolResponse = await executor.executeSafe('ok_tool', {}, context(tempDir));
 
@@ -179,7 +193,7 @@ describe('ToolResponse 类型', () => {
 
   it('失败响应也包含 content 和 isError 字段', async () => {
     const registry = new ToolRegistry();
-    const executor = new ToolExecutor(registry);
+    const executor = makeExecutor(registry);
 
     const resp: ToolResponse = await executor.executeSafe('nope', {}, context(tempDir));
 
@@ -206,7 +220,7 @@ describe('Phase 0c: ToolExecutor 不再做权限检查', () => {
 
   it('ToolExecutor 无 setPermissionChecker 方法', () => {
     const registry = new ToolRegistry();
-    const executor = new ToolExecutor(registry);
+    const executor = makeExecutor(registry);
     // setPermissionChecker 已被移除
     expect((executor as unknown as { setPermissionChecker?: unknown }).setPermissionChecker).toBeUndefined();
   });
@@ -216,7 +230,7 @@ describe('Phase 0c: ToolExecutor 不再做权限检查', () => {
     // 拦截发生在 AgentMiddlewarePipeline.onActing 中间件层
     const registry = new ToolRegistry();
     registry.register(new OkTool());
-    const executor = new ToolExecutor(registry);
+    const executor = makeExecutor(registry);
 
     const result = await executor.execute('ok_tool', {}, context(tempDir));
     expect(result.success).toBe(true);
@@ -226,7 +240,7 @@ describe('Phase 0c: ToolExecutor 不再做权限检查', () => {
   it('ToolExecutor 仍保留 setSecurityChecker 方法', () => {
     // 安全检查 ≠ 权限检查，SecurityChecker 保留
     const registry = new ToolRegistry();
-    const executor = new ToolExecutor(registry);
+    const executor = makeExecutor(registry);
     expect(typeof (executor as unknown as { setSecurityChecker?: unknown }).setSecurityChecker).toBe('function');
   });
 });

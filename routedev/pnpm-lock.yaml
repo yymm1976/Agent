@@ -29,9 +29,6 @@ importers:
       simple-git:
         specifier: ^3.36.0
         version: 3.36.0
-      tiktoken:
-        specifier: ^1.0.22
-        version: 1.0.22
       winston:
         specifier: ^3.19.0
         version: 3.19.0
@@ -139,6 +136,9 @@ importers:
       puppeteer:
         specifier: ^22.0.0
         version: 22.15.0(typescript@6.0.3)
+      tiktoken:
+        specifier: ^1.0.22
+        version: 1.0.22
       tree-sitter-wasms:
         specifier: ^0.1.13
         version: 0.1.13
@@ -8902,7 +8902,8 @@ snapshots:
 
   through@2.3.8: {}
 
-  tiktoken@1.0.22: {}
+  tiktoken@1.0.22:
+    optional: true
 
   tiny-typed-emitter@2.1.0: {}
 

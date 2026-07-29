@@ -181,6 +181,8 @@ export class SessionMemoryStore {
         });
       }
     }, this.flushDebounceMs);
+    // 防抖定时器不阻止进程退出
+    this.flushTimer.unref?.();
   }
 
   private keywordMatch(keyword: string, text: string): number {

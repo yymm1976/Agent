@@ -306,17 +306,24 @@ describe('Phase 50 Task 3: 子 Agent 委托体系模块接入', () => {
 
   it('3.3 delegationGateEnabled=true 且 gate 拒绝时，spawn 返回 error 且不调用 innerFn', async () => {
     const innerFn = makeInnerSpawnFn();
-    // DelegationGate 默认要求 executor 角色提供 design_doc + write_file_list
-    // coder → executor 角色，不提供 designDoc/writeFiles → gate 拒绝
+    // Phase 94：门控规则放宽后，用"并行超限"触发拒绝
+    // researcher maxParallel=3，预填 3 个 active → 第 4 个被拒绝
     const gate = new DelegationGate();
     const deps: DelegationIntegrationDeps = {
       delegationGateEnabled: true,
       delegationGate: gate,
-      parentAgent: { id: 'parent', activeSubAgents: [] },
+      parentAgent: {
+        id: 'parent',
+        activeSubAgents: [
+          { id: 'a1', role: 'researcher', taskId: 't', status: 'running' },
+          { id: 'a2', role: 'researcher', taskId: 't', status: 'running' },
+          { id: 'a3', role: 'researcher', taskId: 't', status: 'running' },
+        ],
+      },
     };
     const wrapped = wrapSpawnAgentWithDelegation(innerFn, deps);
 
-    const result = await wrapped({ description: 'task', prompt: 'do something', model: 'inherit', subagentType: 'coder' });
+    const result = await wrapped({ description: 'task', prompt: 'do something', model: 'inherit', subagentType: 'researcher' });
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('委托门控拒绝');

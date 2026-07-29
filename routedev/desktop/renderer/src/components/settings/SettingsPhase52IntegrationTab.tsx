@@ -1,6 +1,5 @@
 // desktop/renderer/src/components/settings/SettingsPhase52IntegrationTab.tsx
-// Phase 52 MUSE-Autoskill 集成总开关（含 10 个子任务）
-// 本 Tab 聚合关键子任务的核心字段，便于快速启用 / 调参。
+// Phase 52 Skill 生命周期子任务
 // Phase 59：processEvaluation/archAwareMetrics/saturationMonitor 已删除（批次1 无价值 Integration）
 // Phase 59：mcpSecurity 已删除（批次3，与 phase53Integration.mcpSecurityScan 重复，保留 53 的）
 // Phase 60：合并到 '安全与治理' tab，删除 Task N 编号
@@ -29,19 +28,31 @@ export function SettingsPhase52IntegrationTab({ draft, updateDraft }: SettingsPh
     update({ skillLifecycle: { ...skillLifecycle, ...patch } });
   };
 
+  // 有界恢复（暂未实现，预留门控）
+  const boundedRecovery = cfg.boundedRecovery ?? {};
+  const updateBoundedRecovery = (patch: Partial<typeof boundedRecovery>) => {
+    update({ boundedRecovery: { ...boundedRecovery, ...patch } });
+  };
+
+  // 组合式路由（暂未实现，预留门控）
+  const compositionalRouting = cfg.compositionalRouting ?? {};
+  const updateCompositionalRouting = (patch: Partial<typeof compositionalRouting>) => {
+    update({ compositionalRouting: { ...compositionalRouting, ...patch } });
+  };
+
   return (
     <div className="space-y-6">
       {/* Skill 生命周期 */}
       <Card>
         <CardHeader>
-          <CardTitle>Skill 生命周期</CardTitle>
-          <CardDescription>五阶段生命周期：创建 / 记忆 / 管理 / 评估 / 优化。</CardDescription>
+          <CardTitle>技能生命周期</CardTitle>
+          <CardDescription>技能的创建、记忆、管理与优化</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="p52-skill-enabled">启用 Skill 生命周期管理</Label>
-              <p className="text-xs text-rd-textMuted">开启后自动触发 Skill 创建与优化。</p>
+              <p className="text-xs text-rd-textMuted">开启后自动触发 Skill 创建与优化。需同时启用对应的能力 Pack。</p>
             </div>
             <Switch
               id="p52-skill-enabled"
@@ -72,6 +83,50 @@ export function SettingsPhase52IntegrationTab({ draft, updateDraft }: SettingsPh
               onChange={(e) => updateSkillLifecycle({ memoryRetentionDays: Number(e.target.value) })}
             />
             <p className="text-xs text-rd-textMuted">超过此天数的记忆立即清理（隐患 #171）。</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 有界恢复（暂未实现） */}
+      <Card>
+        <CardHeader>
+          <CardTitle>有界恢复</CardTitle>
+          <CardDescription>失败时回退到最近 checkpoint 只重跑失败步骤</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="p52-bounded-enabled">启用有界恢复</Label>
+              <p className="text-xs text-rd-textMuted">暂未实现，需启用 goalAdvanced Pack。</p>
+            </div>
+            <Switch
+              id="p52-bounded-enabled"
+              checked={boundedRecovery.enabled ?? false}
+              onCheckedChange={(checked) => updateBoundedRecovery({ enabled: checked })}
+              disabled
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 组合式路由（暂未实现） */}
+      <Card>
+        <CardHeader>
+          <CardTitle>组合式路由</CardTitle>
+          <CardDescription>将复杂任务分解为子技能并行执行</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="p52-comp-enabled">启用组合式路由</Label>
+              <p className="text-xs text-rd-textMuted">暂未实现，需启用 goalAdvanced Pack。</p>
+            </div>
+            <Switch
+              id="p52-comp-enabled"
+              checked={compositionalRouting.enabled ?? false}
+              onCheckedChange={(checked) => updateCompositionalRouting({ enabled: checked })}
+              disabled
+            />
           </div>
         </CardContent>
       </Card>

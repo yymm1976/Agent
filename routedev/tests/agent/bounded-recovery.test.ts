@@ -340,9 +340,10 @@ describe('BoundedRecoveryManager 有界局部恢复 (Phase 52 Task 3)', () => {
       const config = AppConfigSchema.safeParse({});
       expect(config.success).toBe(true);
       if (config.success) {
-        expect(config.data.boundedRecovery).toBeDefined();
-        expect(config.data.boundedRecovery.enabled).toBe(false);
-        expect(config.data.boundedRecovery.maxBacktrack).toBe(3);
+        // boundedRecovery 在 phase52Integration 聚合下（Phase 52 集成配置）
+        expect(config.data.phase52Integration.boundedRecovery).toBeDefined();
+        expect(config.data.phase52Integration.boundedRecovery.enabled).toBe(false);
+        expect(config.data.phase52Integration.boundedRecovery.maxBacktrack).toBe(3);
       }
     });
 

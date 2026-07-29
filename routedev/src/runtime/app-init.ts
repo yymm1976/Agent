@@ -58,9 +58,7 @@ import type { RoutingMemory } from '../router/routing-memory.js';
 import type { RoutingOrchestrator } from '../router/orchestrator.js';
 import type { ExecutionVerifier } from '../router/execution-verifier.js';
 import type { RoutingRegretTracker } from '../router/regret-tracker.js';
-import type { MemoryStore } from '../memory/memory-store.js';
-import type { HybridRetriever } from '../memory/hybrid-retriever.js';
-import type { LocalMaintenancePolicy } from '../memory/local-maintenance.js';
+// TD-26：Phase 65 记忆系统类型已退役（MemoryStore/HybridRetriever/LocalMaintenance）
 import type { ProvenanceGraph } from '../memory/provenance-graph.js';
 import type { KanObstacleChecker } from '../skills/kan-obstacle-checker.js';
 import type { QuantitativeGate } from '../agent/quantitative-gate.js';
@@ -181,10 +179,7 @@ export interface AppDependencies {
   routingOrchestrator?: RoutingOrchestrator;
   executionVerifier?: ExecutionVerifier;
   routingRegretTracker?: RoutingRegretTracker;
-  // Phase 65：记忆系统重构
-  memoryStore?: MemoryStore;
-  hybridRetriever?: HybridRetriever;
-  localMaintenance?: LocalMaintenancePolicy;
+  // TD-26：Phase 65 记忆系统已退役（memoryStore/hybridRetriever/localMaintenance 移除）
   // Phase 68：知识图谱
   provenanceGraph?: ProvenanceGraph;
   kanObstacleChecker?: KanObstacleChecker;

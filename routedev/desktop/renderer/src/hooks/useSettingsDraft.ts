@@ -7,7 +7,7 @@ import type {
   AppConfig, ProviderConfig, ModelConfig, RouterRule, SecurityConfig,
   MCPServerEntryConfig,
   PermissionProfile, FilesystemPermissionRule, ExecutionConfig,
-  ApprovalLevel, ToolCategory, PacksConfig,
+  ApprovalLevel, ToolCategory,
 } from '../../../shared/config-types.js';
 import {
   constructMcpServer, mcpServerToForm, EMPTY_MCP_FORM,
@@ -36,8 +36,7 @@ interface UseSettingsDraftOptions {
  */
 export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraftOptions) {
   const [draft, setDraft] = useState<AppConfig | null>(null);
-  // 保存成功后跳过一次 config→draft 同步，避免用户正在编辑的 Provider 被清空
-  const skipSyncRef = useRef(false);
+  // 用户有未保存改动时为 true，用于 config→draft 同步守卫（避免覆盖用户编辑）
   const dirtyRef = useRef(false);
 
   // 网络搜索引擎下拉选择（默认 'glm'，draft 加载后推断第一个有 key 的引擎）
@@ -49,6 +48,9 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
   // 测试连接状态
   const [testingProvider, setTestingProvider] = useState<number | null>(null);
   const [testResults, setTestResults] = useState<Record<number, { success: boolean; message: string } | null>>({});
+  // Phase 96 P1-4：远程模型列表拉取状态（按 provider index）
+  const [refreshingModels, setRefreshingModels] = useState<number | null>(null);
+  const [remoteModels, setRemoteModels] = useState<Record<number, { success: boolean; models?: string[]; message: string } | null>>({});
   // MCP 添加/编辑表单：null=关闭，McpFormState=打开（添加或编辑）
   const [mcpForm, setMcpForm] = useState<McpFormState | null>(null);
   // MCP 编辑模式标记：null=添加模式，非 null=编辑模式（存储原始 server id）
@@ -59,15 +61,14 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
   // 模型编辑模态：null=关闭，{pIdx, mIdx?, model}=打开（mIdx 不存在=新增，存在=编辑）
   const [modelEditor, setModelEditor] = useState<{ pIdx: number; mIdx?: number; model: ModelConfig } | null>(null);
 
-  // 当 config 变化时同步到 draft（保存成功后跳过一次）
+  // 当 config 变化时同步到 draft
   useEffect(() => {
-    // 保存成功后跳过一次同步，保留用户正在编辑的 draft
-    if (skipSyncRef.current) {
-      skipSyncRef.current = false;
-      return;
-    }
     if (config) {
-      dirtyRef.current = false;
+      // Bug 修复：用户有未保存改动时跳过强制覆盖，避免编辑丢失
+      // 场景：用户修改 URL → 自动保存触发 → config:reloaded 事件延迟到达
+      // 若用户在保存完成与事件到达之间又开始编辑，dirtyRef=true，
+      // 此时不应覆盖 draft，否则用户编辑会丢失
+      if (dirtyRef.current) return;
       setDraft(deepClone(config));
     }
   }, [config]);
@@ -461,14 +462,6 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
     });
   };
 
-  // --- Phase 81 Task 5：能力 Pack 开关（四层分层） ---
-  // packs 为 optional 字段，未配置时用空对象兜底；合并 patch 后回写
-  const updatePacks = (patch: Partial<PacksConfig>) => {
-    if (!draft) return;
-    const current = draft.packs ?? ({} as PacksConfig);
-    updateDraft({ packs: { ...current, ...patch } });
-  };
-
   // --- API Key 显示/隐藏切换 ---
   const toggleApiKey = (index: number) => {
     setShowApiKeys((prev) => ({ ...prev, [index]: !prev[index] }));
@@ -499,12 +492,41 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
     }
   };
 
+  // Phase 96 P1-4：拉取指定 provider 的可用模型列表
+  // 调用 list_models 内联工具（ConfigBridge.handleListModels），返回模型 ID 数组供 UI 展示
+  const handleRefreshModels = async (index: number) => {
+    if (!draft) return;
+    const provider = draft.providers[index];
+    setRefreshingModels(index);
+    setRemoteModels((prev) => ({ ...prev, [index]: null }));
+    try {
+      const res = await window.routedev.tool.execute({
+        name: 'list_models',
+        args: { providerId: provider.id, baseUrl: provider.baseUrl, apiKey: provider.apiKey, protocol: provider.protocol },
+      }) as { success?: boolean; models?: string[]; error?: string };
+      if (!res?.success) {
+        throw new Error(res?.error ?? '拉取失败：工具未注册或返回错误');
+      }
+      const models = res.models ?? [];
+      setRemoteModels((prev) => ({
+        ...prev,
+        [index]: { success: true, models, message: `拉取成功，共 ${models.length} 个模型` },
+      }));
+    } catch (err) {
+      setRemoteModels((prev) => ({
+        ...prev,
+        [index]: { success: false, message: err instanceof Error ? err.message : '拉取失败' },
+      }));
+    } finally {
+      setRefreshingModels(null);
+    }
+  };
+
   return {
     // 核心状态
     draft,
     setDraft,
     dirtyRef,
-    skipSyncRef,
     // 搜索引擎
     selectedSearchEngine,
     setSelectedSearchEngine,
@@ -512,6 +534,9 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
     showApiKeys,
     testingProvider,
     testResults,
+    // Phase 96 P1-4：远程模型列表
+    refreshingModels,
+    remoteModels,
     modelEditor,
     setModelEditor,
     // MCP 表单
@@ -576,8 +601,8 @@ export function useSettingsDraft({ config, onClearSaveResult }: UseSettingsDraft
     updateTrust, updateQuality, updateExpertise,
     updateSubAgents,
     updateSubAgentsGateRules,
-    updatePacks,
     toggleApiKey,
     handleTestConnection,
+    handleRefreshModels,
   };
 }

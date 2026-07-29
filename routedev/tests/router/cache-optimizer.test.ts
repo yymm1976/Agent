@@ -124,4 +124,75 @@ describe('CacheStatsTracker', () => {
     expect(tracker.getTurnHitRate()).toBe(0);
     expect(tracker.getSessionHitRate()).toBe(0);
   });
+
+  // ===== Phase 96+ A3.2：getStats 统一聚合 =====
+  describe('getStats (Phase 96+ A3.2)', () => {
+    it('空统计应返回 session/turn 全 0', () => {
+      const tracker = new CacheStatsTracker();
+      const stats = tracker.getStats();
+      expect(stats.session.hit).toBe(0);
+      expect(stats.session.miss).toBe(0);
+      expect(stats.session.total).toBe(0);
+      expect(stats.session.hitRate).toBe(0);
+      expect(stats.turn.hit).toBe(0);
+      expect(stats.turn.miss).toBe(0);
+      expect(stats.turn.total).toBe(0);
+      expect(stats.turn.hitRate).toBe(0);
+    });
+
+    it('单轮未 reset 时 session 与 turn 相同', () => {
+      const tracker = new CacheStatsTracker();
+      tracker.record(800, 200, 'deepseek');
+      const stats = tracker.getStats();
+      expect(stats.session.hit).toBe(800);
+      expect(stats.session.miss).toBe(200);
+      expect(stats.session.total).toBe(1000);
+      expect(stats.session.hitRate).toBeCloseTo(0.8, 5);
+      expect(stats.turn).toEqual(stats.session);
+    });
+
+    it('resetTurn 后 turn 归零但 session 保留', () => {
+      const tracker = new CacheStatsTracker();
+      tracker.record(800, 200, 'deepseek');
+      tracker.resetTurn();
+      const stats = tracker.getStats();
+      expect(stats.session.hit).toBe(800);
+      expect(stats.session.miss).toBe(200);
+      expect(stats.session.hitRate).toBeCloseTo(0.8, 5);
+      expect(stats.turn.hit).toBe(0);
+      expect(stats.turn.miss).toBe(0);
+      expect(stats.turn.hitRate).toBe(0);
+    });
+
+    it('跨多轮累计时 session 反映总和，turn 反映当前轮', () => {
+      const tracker = new CacheStatsTracker();
+      tracker.record(800, 200, 'deepseek');
+      tracker.resetTurn();
+      tracker.record(600, 400, 'deepseek');
+      const stats = tracker.getStats();
+      // session = 800+600=1400 hit, 200+400=600 miss, 总 2000, hitRate 0.7
+      expect(stats.session.hit).toBe(1400);
+      expect(stats.session.miss).toBe(600);
+      expect(stats.session.total).toBe(2000);
+      expect(stats.session.hitRate).toBeCloseTo(0.7, 5);
+      // turn = 600 hit, 400 miss, 总 1000, hitRate 0.6
+      expect(stats.turn.hit).toBe(600);
+      expect(stats.turn.miss).toBe(400);
+      expect(stats.turn.total).toBe(1000);
+      expect(stats.turn.hitRate).toBeCloseTo(0.6, 5);
+    });
+
+    it('与 getSessionStats / getTurnHitRate 数据一致', () => {
+      const tracker = new CacheStatsTracker();
+      tracker.record(800, 200, 'deepseek');
+      tracker.resetTurn();
+      tracker.record(900, 100, 'deepseek');
+      const stats = tracker.getStats();
+      const sessStats = tracker.getSessionStats();
+      expect(stats.session.hit).toBe(sessStats.hit);
+      expect(stats.session.miss).toBe(sessStats.miss);
+      expect(stats.session.total).toBe(sessStats.total);
+      expect(stats.turn.hitRate).toBeCloseTo(tracker.getTurnHitRate(), 5);
+    });
+  });
 });

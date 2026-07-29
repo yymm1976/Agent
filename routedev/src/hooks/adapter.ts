@@ -112,7 +112,7 @@ export function executeShellCommand(
     // 命令注入风险由 replaceVariables() 中的 shellEscape 消除：所有
     // {{filePath}}/{{toolName}}/{{stepId}} 替换值在插入命令前已转义。
     // 命令模板本身来自可信开发者配置（HookConfigRegistry），非用户输入。
-    const child = spawn(command, { shell: true, timeout, cwd });
+    const child = spawn(command, { shell: true, timeout, cwd, windowsHide: true });
     let stdout = '';
     child.stdout.on('data', (d) => {
       stdout += d;

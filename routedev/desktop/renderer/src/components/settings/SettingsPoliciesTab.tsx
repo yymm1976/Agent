@@ -22,7 +22,7 @@ interface SettingsPoliciesTabProps {
  */
 export function SettingsPoliciesTab({ draft, updateDraft }: SettingsPoliciesTabProps) {
   return (
-    <div className="absolute inset-0 space-y-6 overflow-y-auto pr-2">
+    <div className="space-y-6">
       {/* 说明卡片 */}
       <Card>
         <CardContent className="flex items-start justify-between gap-4 py-6">
@@ -91,7 +91,7 @@ export function SettingsPoliciesTab({ draft, updateDraft }: SettingsPoliciesTabP
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1">
               <p className="text-sm text-rd-text">工具审批（Tool Approval）</p>
-              <p className="text-xs text-rd-textMuted mt-1">工具调用前需审批。</p>
+              <p className="text-xs text-rd-textMuted mt-1">默认关闭，开启后高危工具需审批。</p>
             </div>
             <Switch
               checked={draft.policies?.toolApproval === true}

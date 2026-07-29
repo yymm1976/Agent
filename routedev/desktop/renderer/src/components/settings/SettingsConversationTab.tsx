@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui
 import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';
 import { Input } from '../ui/input.js';
+import { Alert, AlertTitle, AlertDescription } from '../ui/alert.js';
 import { SettingsTabContainer } from './SettingsTabContainer.js';
 
 interface SettingsConversationTabProps {
@@ -22,6 +23,12 @@ export function SettingsConversationTab({ draft, updateDraft }: SettingsConversa
 
   return (
     <SettingsTabContainer>
+      {/* 部分字段为预留占位：maxNodes/maxBranches/undoStackSize 由内置默认值控制，暂未开放配置 */}
+      <Alert variant="destructive">
+        <AlertTitle>部分功能暂未实现</AlertTitle>
+        <AlertDescription>下方节点数 / 分支数 / 撤销栈大小为预留字段，配置不会生效</AlertDescription>
+      </Alert>
+
       <Card>
         <CardHeader>
           <CardTitle>对话持久化</CardTitle>
@@ -48,8 +55,9 @@ export function SettingsConversationTab({ draft, updateDraft }: SettingsConversa
               min={100}
               value={conversation.maxNodes}
               onChange={(e) => updateConversation({ maxNodes: Number(e.target.value) })}
+              disabled
             />
-            <p className="text-xs text-rd-textMuted">单棵消息树最多保留的节点数。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现，当前由内置默认值控制</p>
           </div>
 
           <div className="space-y-2">
@@ -60,8 +68,9 @@ export function SettingsConversationTab({ draft, updateDraft }: SettingsConversa
               min={5}
               value={conversation.maxBranches}
               onChange={(e) => updateConversation({ maxBranches: Number(e.target.value) })}
+              disabled
             />
-            <p className="text-xs text-rd-textMuted">单棵树最多保留的并行分支数。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现，当前由内置默认值控制</p>
           </div>
 
           <div className="space-y-2">
@@ -72,8 +81,9 @@ export function SettingsConversationTab({ draft, updateDraft }: SettingsConversa
               min={0}
               value={conversation.undoStackSize}
               onChange={(e) => updateConversation({ undoStackSize: Number(e.target.value) })}
+              disabled
             />
-            <p className="text-xs text-rd-textMuted">0 表示禁用撤销。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现，当前由内置默认值控制</p>
           </div>
         </CardContent>
       </Card>

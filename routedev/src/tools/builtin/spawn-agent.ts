@@ -40,7 +40,7 @@ import type { SkillLifecycleManager } from '../../skills/skill-lifecycle.js';
 import { logger } from '../../utils/logger.js';
 
 /** 子 Agent 类型：决定可用工具集（白名单在 app-init.ts 中维护） */
-export type SubagentType = 'general' | 'researcher' | 'coder' | 'reviewer' | 'advisor' | 'review-plan';
+export type SubagentType = 'general' | 'researcher' | 'coder' | 'reviewer' | 'advisor' | 'review-plan' | 'planner';
 
 /**
  * SubagentType → AgentRole 映射
@@ -51,6 +51,7 @@ export type SubagentType = 'general' | 'researcher' | 'coder' | 'reviewer' | 'ad
  *   - 'coder' → 'executor'（coder 在 Agent 体系中对应 executor 角色）
  *   - 'reviewer' → 'reviewer'
  *   - 'review-plan' → 'review-planner'（Phase 75-A4：Pre-flight plan review，扫 plan 内部冲突）
+ *   - 'planner' → 'planner'（ReviewChain：PM/架构师，拆需求 + 出设计方案，可写 context/ 文件）
  *   - 'general' / 'advisor'：无对应 role，不使用 profile
  */
 const SUBAGENT_TYPE_TO_ROLE: Partial<Record<SubagentType, AgentRole>> = {
@@ -58,6 +59,7 @@ const SUBAGENT_TYPE_TO_ROLE: Partial<Record<SubagentType, AgentRole>> = {
   coder: 'executor',
   reviewer: 'reviewer',
   'review-plan': 'review-planner',
+  planner: 'planner',
 };
 
 /**
@@ -74,10 +76,55 @@ export const SUBAGENT_TOOL_WHITELIST: Record<SubagentType, Set<string>> = {
   general: new Set<string>(),  // 空集 = 全部工具（除 spawn_agent）
   researcher: new Set(['file_read', 'code_search', 'web_search', 'web_fetch', 'list_directory']),
   coder: new Set(['file_read', 'file_write', 'file_edit', 'shell_exec', 'git_op']),
-  reviewer: new Set(['file_read', 'code_search', 'list_directory']),
+  reviewer: new Set(['file_read', 'code_search', 'list_directory', 'file_write']),
   advisor: new Set<string>(),  // 空集 = 无工具权限（createChildRegistry 中特殊处理）
   'review-plan': new Set(['file_read', 'code_search', 'list_directory']),
+  planner: new Set(['file_read', 'file_write', 'list_directory']),
 };
+
+/**
+ * 历史/文档遗留工具名 → 运行时真实工具名
+ * 防止 profile.allowedTools 写 read_file 却对不上 registry 的 file_read
+ */
+const TOOL_NAME_ALIASES: Record<string, string> = {
+  read_file: 'file_read',
+  execute_command: 'shell_exec',
+  run_tests: 'shell_exec',
+  diff_view: 'git_op',
+  code_map_explore: 'code_graph_query',
+  find_callers: 'code_graph_query',
+  find_callees: 'code_graph_query',
+  analyze_impact: 'code_graph_query',
+  search_code: 'code_search',
+  bash: 'shell_exec',
+  Read: 'file_read',
+  Write: 'file_write',
+  Edit: 'file_edit',
+  Bash: 'shell_exec',
+  Grep: 'code_search',
+  Glob: 'list_directory',
+};
+
+/** 将工具名归一化为运行时注册名 */
+export function normalizeToolName(name: string): string {
+  if (typeof name !== 'string' || name.length === 0) return name;
+  return TOOL_NAME_ALIASES[name] ?? name;
+}
+
+/** 批量归一化工具名（去重） */
+export function normalizeToolNames(names: string[]): string[] {
+  if (!Array.isArray(names)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of names) {
+    if (typeof raw !== 'string' || raw.length === 0) continue;
+    const n = normalizeToolName(raw);
+    if (seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out;
+}
 
 // ============================================================
 // 安全加固常量（V3-026 / spawn-agent 安全加固）
@@ -188,16 +235,29 @@ export function createChildRegistry(
     return child;
   }
   // Phase 48 Task 4：优先使用 profileManager 提供的 profile 工具白名单
+  // 修复：profile.allowedTools 可能含历史别名（read_file/execute_command），必须归一化后再过滤
   const profile = resolveProfileForSubagent(profileManager, subagentType);
   const hardcodedWhitelist = SUBAGENT_TOOL_WHITELIST[subagentType];
-  const whitelist = (profile && profile.allowedTools.length > 0)
-    ? new Set(profile.allowedTools)
+  const profileAllowed = profile && profile.allowedTools.length > 0
+    ? normalizeToolNames(profile.allowedTools)
+    : [];
+  const profileForbidden = profile && profile.forbiddenTools.length > 0
+    ? new Set(normalizeToolNames(profile.forbiddenTools))
+    : new Set<string>();
+  const whitelist = profileAllowed.length > 0
+    ? new Set(profileAllowed)
     : hardcodedWhitelist;
   if (whitelist && whitelist.size > 0) {
     const namesToRemove: string[] = [];
     for (const tool of child.list()) {
-      if (!whitelist.has(tool.definition.name)) {
-        namesToRemove.push(tool.definition.name);
+      const toolName = tool.definition.name;
+      // 黑名单优先：显式禁止的工具始终移除
+      if (profileForbidden.has(toolName)) {
+        namesToRemove.push(toolName);
+        continue;
+      }
+      if (!whitelist.has(toolName)) {
+        namesToRemove.push(toolName);
       }
     }
     for (const name of namesToRemove) {
@@ -459,6 +519,8 @@ function subagentTypeToPackerRole(subagentType: SubagentType): AgentRole {
     case 'reviewer': return 'reviewer';
     // Phase 75-A4：review-plan 复用 reviewer 的上下文打包策略（只读审查类）
     case 'review-plan': return 'reviewer';
+    // ReviewChain：planner 复用 planner 角色的上下文打包策略
+    case 'planner': return 'planner';
     default: return 'custom';
   }
 }
@@ -590,7 +652,7 @@ export function wrapSpawnAgentWithDelegation(
           profileId,
           grant: {
             readFiles: [],
-            allowedTools: ['file_read', 'file_write', 'file_edit', 'shell_exec'],
+            allowedTools: ['file_read', 'file_write', 'file_edit', 'shell_exec', 'spawn_agent'],
             maxTokens: 10000,
             maxSteps: normalizedParams.maxIterations ?? 20,
             canChallenge: true,
@@ -838,8 +900,8 @@ export class SpawnAgentTool implements ITool {
         },
         subagentType: {
           type: 'string',
-          enum: ['general', 'researcher', 'coder', 'reviewer', 'advisor', 'review-plan'],
-          description: '子 Agent 类型，决定可用工具集。general=全部工具（除 spawn_agent），researcher=只读检索，coder=读写执行，reviewer=只读审查，advisor=无工具（仅单次 LLM 调用，用于 /BTW 临时问答），review-plan=Pre-flight plan review（执行 Task 1 前扫 plan 内部冲突，Phase 75-A4）。默认 general。',
+          enum: ['general', 'researcher', 'coder', 'reviewer', 'advisor', 'review-plan', 'planner'],
+          description: '子 Agent 类型，决定可用工具集。general=全部工具（除 spawn_agent），researcher=只读检索，coder=读写执行，reviewer=只读审查+写审查报告，advisor=无工具（仅单次 LLM 调用，用于 /BTW 临时问答），review-plan=Pre-flight plan review，planner=PM/架构师（拆需求+出设计方案，可写 context/ 文件）。默认 general。',
         },
         maxIterations: {
           type: 'number',
@@ -906,8 +968,8 @@ export class SpawnAgentTool implements ITool {
         errors.push('maxIterations 必须是 1 到 100 之间的整数');
       }
     }
-    if (args.subagentType !== undefined && !['general', 'researcher', 'coder', 'reviewer', 'advisor', 'review-plan'].includes(args.subagentType as string)) {
-      errors.push('subagentType 必须是 general/researcher/coder/reviewer/advisor/review-plan 之一');
+    if (args.subagentType !== undefined && !['general', 'researcher', 'coder', 'reviewer', 'advisor', 'review-plan', 'planner'].includes(args.subagentType as string)) {
+      errors.push('subagentType 必须是 general/researcher/coder/reviewer/advisor/review-plan/planner 之一');
     }
     if (args.isolated !== undefined && typeof args.isolated !== 'boolean') {
       errors.push('isolated 必须是布尔值');
@@ -998,12 +1060,18 @@ export class SpawnAgentTool implements ITool {
       const result = await this.spawnFn(params, options);
 
       if (!result.success) {
+        const errText = result.error ?? '未知错误';
+        // 从错误前缀提取 errorType（GATE_* / 其它）
+        const codeMatch = /^(GATE_[A-Z_]+|[A-Z_]+):/.exec(errText);
+        const errorType = codeMatch?.[1] ?? 'SPAWN_FAILED';
         return {
           success: false,
           output: '',
-          error: `子 Agent 执行失败: ${result.error ?? '未知错误'}`,
+          error: errText.startsWith('子 Agent') ? errText : `子 Agent 执行失败: ${errText}`,
           durationMs: 0,
           metadata: {
+            errorType,
+            reason: errText,
             tokenUsage: result.tokenUsage,
             modifiedFiles: result.modifiedFiles,
           },

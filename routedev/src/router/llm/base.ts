@@ -80,6 +80,59 @@ export abstract class BaseLLMClient implements ILLMClient {
       && this.apiKey !== 'placeholder';
   }
 
+  /**
+   * Phase 96 P1-4：从 provider API 拉取可用模型列表
+   *
+   * 默认实现调用 GET {baseUrl}/models，子类可覆盖以适配不同协议端点。
+   * 返回模型 ID 数组；API 不可用或请求失败时返回空数组（fail-open）。
+   *
+   * 子类覆盖示例：
+   * - OpenAI: GET /v1/models，header Authorization: Bearer
+   * - Anthropic: GET /v1/models，header x-api-key + anthropic-version
+   * - Gemini: GET /v1beta/models?key=
+   */
+  async getModels(): Promise<string[]> {
+    if (!this.isReady()) return [];
+    try {
+      const url = `${this.baseUrl.replace(/\/$/, '')}/models`;
+      const headers = this.buildListModelsHeaders();
+      const response = await this.fetchWithTimeout(url, { headers }, 10_000);
+      if (!response.ok) {
+        logger.warn('BaseLLMClient.getModels: non-ok response', {
+          providerId: this.providerId,
+          status: response.status,
+        });
+        return [];
+      }
+      const data = await response.json() as { data?: Array<{ id: string }>; models?: Array<{ name: string }> };
+      // OpenAI 风格：{ data: [{ id: "..." }] }
+      if (Array.isArray(data.data)) {
+        return data.data.map((m) => m.id).filter(Boolean);
+      }
+      // Gemini 风格：{ models: [{ name: "models/gemini-1.5-pro" }] }
+      if (Array.isArray(data.models)) {
+        return data.models
+          .map((m) => m.name?.replace(/^models\//, '') ?? '')
+          .filter(Boolean);
+      }
+      return [];
+    } catch (err) {
+      logger.warn('BaseLLMClient.getModels failed (fail-open)', {
+        providerId: this.providerId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }
+  }
+
+  /**
+   * Phase 96 P1-4：构造 list models 请求的 headers
+   * 子类覆盖以适配不同协议的鉴权方式
+   */
+  protected buildListModelsHeaders(): Record<string, string> {
+    return { 'Authorization': `Bearer ${this.apiKey}` };
+  }
+
   /** 非流式调用（子类实现） */
   abstract complete(options: LLMRequestOptions): Promise<LLMResponse>;
 

@@ -39,6 +39,12 @@ export interface LLMStreamResult {
   content: string;
   toolCalls: ToolCallRequest[];
   usage: TokenUsageInfo;
+  /**
+   * Phase 96+：本轮 LLM 的推理内容（DeepSeek R1 类模型的 reasoning_content）
+   * 工具调用修复 pipeline 的 scavenge 工序会从中捞回被吃掉的 tool-call JSON
+   * 无推理能力的模型为空字符串
+   */
+  reasoning?: string;
 }
 
 /**
@@ -405,6 +411,7 @@ export class LoopContextManager {
     signal: AbortSignal | undefined,
   ): AsyncGenerator<ReActEvent, LLMStreamResult> {
     let fullContent = '';
+    let fullReasoning = '';
     const toolCalls: ToolCallRequest[] = [];
     let usage: TokenUsageInfo = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
@@ -425,6 +432,7 @@ export class LoopContextManager {
           break;
 
         case 'reasoning_delta':
+          fullReasoning += event.text;
           yield { type: 'reasoning_delta', text: event.text };
           break;
 
@@ -490,7 +498,7 @@ export class LoopContextManager {
     }
 
     // 返回（AsyncGenerator return value）
-    return { content: fullContent, toolCalls, usage };
+    return { content: fullContent, toolCalls, usage, reasoning: fullReasoning };
   }
 
   /**

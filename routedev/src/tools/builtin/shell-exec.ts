@@ -10,12 +10,116 @@ import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '..
 import { RetryPolicy, CircuitBreaker, resilientExecute } from '../../utils/retry.js';
 import { logger } from '../../utils/logger.js';
 import type { CommandSandbox } from '../../security/sandbox.js';
+// Phase 96 P1-5：ANSI 去除 + 二进制净化 + 截断元数据
+import { stripAnsi, sanitizeBinaryOutput, computeTruncationMetadata, type TruncationResult } from '../../utils/ansi-stripper.js';
 
 const MAX_STDOUT = 100 * 1024;
 const MAX_STDERR = 50 * 1024;
 
 // V3-021 修复：timeoutMs 上限（10 分钟），防止 LLM 传入超大值导致进程长时间挂起
 const MAX_TIMEOUT_MS = 600_000;
+
+/**
+ * Phase 96 修复：把命令链（&& / ||）翻译为 Windows PowerShell 5.x 兼容形式
+ *
+ * 背景：Windows 自带 powershell.exe 是 5.x，不支持 && 和 || 运算符（PS 7+ 才支持）。
+ * 直接执行 `cd x && cmd` 会触发语法错误，stderr 可能为空，shell_exec 上游显示「未知错误」。
+ *
+ * 翻译规则（保留短路语义）：
+ *   cmd1 && cmd2  →  cmd1; if ($?) { cmd2 }
+ *   cmd1 || cmd2  →  cmd1; if (-not $?) { cmd2 }
+ *
+ * 嵌套命令链会递归翻译：
+ *   cmd1 && cmd2 && cmd3  →  cmd1; if ($?) { cmd2; if ($?) { cmd3 } }
+ *
+ * 引号内的 && / || 不替换（避免破坏 echo "a && b" 这类字面量）。
+ *
+ * @internal 导出仅为单元测试使用，外部不应直接调用
+ */
+export function translateChainForPowerShell5(command: string): string {
+  // 引号感知分割：避免替换引号内的 && / ||
+  // 简化实现：逐字符扫描，遇到引号时跳过
+  // operator 字段表示「该段前面的运算符」（第一段为 null）
+  const parts: { cmd: string; operator: '&&' | '||' | null }[] = [];
+  let current = '';
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let pendingOperator: '&&' | '||' | null = null;
+  let i = 0;
+
+  while (i < command.length) {
+    const ch = command[i];
+    const next = command[i + 1];
+
+    if (ch === '\'' && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      current += ch;
+      i++;
+      continue;
+    }
+    if (ch === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      current += ch;
+      i++;
+      continue;
+    }
+
+    // 仅在引号外检测 && 或 ||
+    if (!inSingleQuote && !inDoubleQuote) {
+      if (ch === '&' && next === '&') {
+        if (current.trim()) {
+          parts.push({ cmd: current.trim(), operator: pendingOperator });
+          pendingOperator = '&&';
+        }
+        current = '';
+        i += 2;
+        continue;
+      }
+      if (ch === '|' && next === '|') {
+        if (current.trim()) {
+          parts.push({ cmd: current.trim(), operator: pendingOperator });
+          pendingOperator = '||';
+        }
+        current = '';
+        i += 2;
+        continue;
+      }
+    }
+
+    current += ch;
+    i++;
+  }
+
+  if (current.trim()) {
+    parts.push({ cmd: current.trim(), operator: pendingOperator });
+  }
+
+  // 单条命令无需翻译
+  if (parts.length <= 1) return command;
+
+  // 嵌套重组：cmd1; if ($?) { cmd2; if ($?) { cmd3 } }
+  // 嵌套形式保证短路语义正确传递：c 的执行依赖 b 的结果，而非 a 的结果
+  // 末尾统一闭合所有打开的 {
+  let result = parts[0].cmd;
+  let openBraces = 0;
+  for (let j = 1; j < parts.length; j++) {
+    const op = parts[j].operator;
+    if (op === '&&') {
+      result += `; if ($?) { ${parts[j].cmd}`;
+      openBraces++;
+    } else if (op === '||') {
+      result += `; if (-not $?) { ${parts[j].cmd}`;
+      openBraces++;
+    } else {
+      // 防御性 fallback：不应该走到这里（pendingOperator 已设置）
+      result += `; ${parts[j].cmd}`;
+    }
+  }
+  for (let k = 0; k < openBraces; k++) {
+    result += ' }';
+  }
+  return result;
+}
 
 /**
  * V3-020 修复：Windows PowerShell 参数转义
@@ -54,7 +158,11 @@ const ALLOWED_ENV_KEYS = new Set([
  */
 const INHERITED_ENV_KEYS = new Set([
   'PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'TERM', 'SHELL',
-  'SYSTEMROOT', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA',
+  // Windows 必需：缺任一都可能导致 spawn/cmd 闪窗或命令异常
+  'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'COMSPEC', 'ComSpec',
+  'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP',
+  'PATHEXT', 'SystemDrive', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramData',
+  'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'OS',
   'NODE_ENV', 'EDITOR', 'PAGER',
   'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL',
 ]);
@@ -169,8 +277,9 @@ export class ShellExecTool implements ITool {
       return {
         success: false,
         output: '',
-        error: `命令执行被熔断器阻止或重试耗尽: ${msg}`,
+        error: `INFRA_FAILURE: 命令执行被熔断器阻止或重试耗尽: ${msg}`,
         durationMs: 0,
+        metadata: { errorType: 'INFRA_FAILURE', reason: msg },
       };
     }
   }
@@ -192,7 +301,18 @@ export class ShellExecTool implements ITool {
       // 避免 LLM 生成 PowerShell 命令时在 cmd.exe 中乱码或报错
       const isWin = process.platform === 'win32';
       const shell = isWin ? 'powershell.exe' : '/bin/sh';
-      const shellArgs = isWin ? ['-NoProfile', '-NonInteractive', '-Command', command] : ['-c', command];
+      // Phase 95 修复：Windows PowerShell 5.x 默认输出编码是 CP936/GBK，
+      // 含中文路径的输出（如 git status / dir）转 utf-8 解码会乱码。
+      // 在命令前注入 [Console]::OutputEncoding 设置，让 PowerShell 用 UTF-8 输出。
+      // 注意：必须同时设 OutputEncoding 和 [Console]::OutputEncoding，前者影响管道字节，
+      // 后者影响 PowerShell 内部的 Console 输出编码。
+      // Phase 96 修复：PowerShell 5.x 不支持 && 和 ||（PS 7+ 才支持），直接执行会语法错误。
+      // 在送入 PowerShell 前先翻译为 ; if ($?) { ... } / ; if (-not $?) { ... } 兼容形式。
+      const translatedCommand = isWin ? translateChainForPowerShell5(command) : command;
+      const winCommand = isWin
+        ? `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $OutputEncoding=[System.Text.Encoding]::UTF8; ${translatedCommand}`
+        : command;
+      const shellArgs = isWin ? ['-NoProfile', '-NonInteractive', '-Command', winCommand] : ['-c', command];
 
       // Phase 29 Task 3：环境变量白名单过滤
       // 仅允许白名单内的变量被子进程覆盖，防止 env 注入攻击
@@ -225,6 +345,14 @@ export class ShellExecTool implements ITool {
       });
 
       let sigkillTimer: NodeJS.Timeout | undefined;
+      // Phase 96 P1-5：保留原始 stdout/stderr（未经截断），用于 TruncationResult 元数据计算
+      let rawStdout = '';
+      let rawStderr = '';
+      let stdoutTruncated = false;
+      let stderrTruncated = false;
+      // Phase 96 P1-1：标记是否因 AbortSignal 触发的取消
+      let aborted = false;
+
       const timeout = setTimeout(() => {
         killed = true;
         child.kill('SIGTERM');
@@ -232,27 +360,51 @@ export class ShellExecTool implements ITool {
         sigkillTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
       }, timeoutMs);
 
+      // Phase 96 P1-1：监听 AbortSignal，用户取消时终止子进程
+      // 与 timeout 共用 killed 标志和 SIGKILL 兜底逻辑
+      const onAbort = () => {
+        if (!killed) {
+          killed = true;
+          aborted = true;
+          child.kill('SIGTERM');
+          sigkillTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
+        }
+      };
+      context.signal?.addEventListener('abort', onAbort);
+
       child.stdout?.on('data', (data: Buffer) => {
+        const chunk = data.toString('utf-8');
+        rawStdout += chunk;
         if (stdout.length < MAX_STDOUT) {
-          stdout += data.toString('utf-8');
+          stdout += chunk;
           if (stdout.length > MAX_STDOUT) {
-            stdout = stdout.slice(0, MAX_STDOUT) + '\n[输出已截断]';
+            stdout = stdout.slice(0, MAX_STDOUT);
+            stdoutTruncated = true;
           }
+          // Phase 96 P1-1：推送增量输出给上层（loop → IPC → 渲染层）
+          // 仅推送未截断的部分，避免超长输出刷屏
+          context.onUpdate?.(chunk);
         }
       });
 
       child.stderr?.on('data', (data: Buffer) => {
+        const chunk = data.toString('utf-8');
+        rawStderr += chunk;
         if (stderr.length < MAX_STDERR) {
-          stderr += data.toString('utf-8');
+          stderr += chunk;
           if (stderr.length > MAX_STDERR) {
-            stderr = stderr.slice(0, MAX_STDERR) + '\n[错误输出已截断]';
+            stderr = stderr.slice(0, MAX_STDERR);
+            stderrTruncated = true;
           }
+          // Phase 96 P1-1：stderr 也推送增量输出（标记为错误流）
+          context.onUpdate?.(`[stderr] ${chunk}`);
         }
       });
 
       child.on('error', (error) => {
         clearTimeout(timeout);
         if (sigkillTimer) clearTimeout(sigkillTimer);
+        context.signal?.removeEventListener('abort', onAbort);
         resolve({
           success: false,
           output: '',
@@ -264,29 +416,64 @@ export class ShellExecTool implements ITool {
       child.on('close', (code, signal) => {
         clearTimeout(timeout);
         if (sigkillTimer) clearTimeout(sigkillTimer);
+        // Phase 96 P1-1：清理 AbortSignal 监听器，避免内存泄漏
+        context.signal?.removeEventListener('abort', onAbort);
 
         if (killed) {
+          // Phase 96 P1-1：区分超时和用户取消，给出不同的错误信息
+          const errorMsg = aborted
+            ? '命令被用户取消'
+            : `命令执行超时（>${timeoutMs}ms）`;
           resolve({
             success: false,
             output: stdout,
-            error: `命令执行超时（>${timeoutMs}ms）`,
+            error: errorMsg,
             durationMs: Date.now() - startTime,
           });
           return;
         }
 
+        // Phase 96 P1-5：ANSI 去除 + 二进制净化
+        // 之前直接把 stdout/stderr 拼接给 LLM，导致 pnpm test / vitest 等带颜色输出
+        // 在 LLM 上下文里变成乱码（\u001b[32m 等），既浪费 token 又干扰注入检测正则
+        const cleanStdout = sanitizeBinaryOutput(stripAnsi(stdout));
+        const cleanStderr = sanitizeBinaryOutput(stripAnsi(stderr));
+
+        // 截断标记改为 in-band 注释（仍保留，便于 LLM 阅读时感知截断）
+        const stdoutDisplay = cleanStdout + (stdoutTruncated ? '\n[输出已截断]' : '');
+        const stderrDisplay = cleanStderr + (stderrTruncated ? '\n[错误输出已截断]' : '');
+
         const output = [
-          stdout ? `stdout:\n${stdout}` : '',
-          stderr ? `stderr:\n${stderr}` : '',
+          stdoutDisplay ? `stdout:\n${stdoutDisplay}` : '',
+          stderrDisplay ? `stderr:\n${stderrDisplay}` : '',
           code !== null ? `[退出码: ${code}]` : `[信号: ${signal}]`,
         ].filter(Boolean).join('\n\n');
+
+        // Phase 96 P1-5：附加 TruncationResult 结构化元数据
+        // 之前 metadata 仅 { exitCode, signal }，下游只能正则匹配 in-band 文本判断截断
+        // 现在 stdoutTruncation / stderrTruncation 让调用方直接读字段
+        const stdoutTruncation: TruncationResult = computeTruncationMetadata(rawStdout, cleanStdout);
+        const stderrTruncation: TruncationResult = computeTruncationMetadata(rawStderr, cleanStderr);
 
         resolve({
           success: code === 0,
           output,
-          error: code !== 0 && !stderr ? `命令退出码非零: ${code}` : undefined,
+          // Phase 96 修复：stderr 非空时也明确给出错误信息，避免上游显示「未知错误」
+          // - stderr 非空：直接用 stderr 作为错误（截断避免过长）
+          // - stderr 为空但 exitCode 非零：给出明确退出码错误
+          error: code !== 0
+            ? (cleanStderr.trim() ? `命令执行失败（退出码 ${code}）: ${cleanStderr.trim().slice(0, 200)}` : `命令退出码非零: ${code}`)
+            : undefined,
           durationMs: Date.now() - startTime,
-          metadata: { exitCode: code, signal },
+          metadata: {
+            exitCode: code,
+            signal,
+            // P1-5 新增：结构化截断元数据（替代 in-band 文本标记解析）
+            stdoutTruncated: stdoutTruncated || stdoutTruncation.truncatedBy !== null,
+            stderrTruncated: stderrTruncated || stderrTruncation.truncatedBy !== null,
+            stdoutTruncation,
+            stderrTruncation,
+          },
         });
       });
     });

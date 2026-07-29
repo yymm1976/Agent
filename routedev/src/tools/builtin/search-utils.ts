@@ -12,8 +12,18 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ToolExecutionContext } from '../types.js';
 
-/** 忽略的目录列表（通用开发环境） */
-const IGNORED_DIRS = ['node_modules', '.git', 'dist', '.next', 'coverage', '__pycache__'];
+/**
+ * 忽略的目录列表（通用开发环境）
+ * Phase 96 修复：扩大忽略列表，加入 out/release/build/archive/refs 等
+ * 大目录或构建产物目录，避免 walkDir 配额被耗尽导致目标文件扫不到
+ */
+const IGNORED_DIRS = [
+  'node_modules', '.git', 'dist', '.next', 'coverage', '__pycache__',
+  // 构建产物
+  'out', 'build', 'release', 'release-v25', '.cache', '.turbo',
+  // 仓库级大目录（非产品代码）
+  'archive', 'refs',
+];
 
 /**
  * 递归遍历目录，返回所有文件路径
@@ -35,12 +45,15 @@ export async function walkDir(dir: string, maxFiles: number): Promise<string[]> 
 
     for (const entry of entries) {
       if (files.length >= maxFiles) return;
+      // 跳过隐藏文件/目录（.git/.vscode 等），减少噪声
       if (entry.name.startsWith('.')) continue;
 
       const fullPath = path.join(currentDir, entry.name);
 
       if (entry.isDirectory()) {
-        if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === 'coverage') continue;
+        // Phase 96 修复：使用统一的 IGNORED_DIRS 列表跳过大目录
+        // 避免 walkDir 配额被 archive/refs/out/release 等耗尽
+        if (IGNORED_DIRS.includes(entry.name)) continue;
         await walk(fullPath);
       } else if (entry.isFile()) {
         files.push(fullPath);
@@ -57,25 +70,30 @@ export async function walkDir(dir: string, maxFiles: number): Promise<string[]> 
  * @param relativePath 相对于搜索根目录的路径
  */
 export function isIgnoredPath(relativePath: string): boolean {
+  // Phase 96 修复：归一化路径分隔符，Windows 下 \ 和 / 都要识别
+  const normalized = relativePath.replace(/\\/g, '/');
   return IGNORED_DIRS.some(dir =>
-    relativePath.startsWith(dir + path.sep) ||
-    relativePath.includes(path.sep + dir + path.sep),
+    normalized.startsWith(dir + '/') ||
+    normalized.includes('/' + dir + '/'),
   );
 }
 
 /**
  * 简单的 glob 模式匹配
  * 支持 *（任意字符）和 ?（单字符）通配符
- * @param pattern glob 模式，如 "*.ts"、"test?.js"
- * @param filePath 待匹配的文件名
+ * @param pattern glob 模式（如 .ts 后缀、跨目录匹配等）
+ * @param filePath 待匹配的文件名或相对路径
  */
 export function matchGlob(pattern: string, filePath: string): boolean {
   // I5 修复：转义所有 regex 特殊字符，仅保留 * 和 ? 作为通配符
   // 先转义所有特殊字符，再还原 * 和 ? 为通配符语义
+  // Phase 96 修复：归一化路径分隔符，Windows 下 \ 和 / 都要识别
+  // 否则 **/version-manager.ts 在 Windows 上匹配 relativePath（含 \）会全 fail
+  const normalizedFilePath = filePath.replace(/\\/g, '/');
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
   const regexStr = escaped.replace(/\*/g, '.*').replace(/\?/g, '.');
   const regex = new RegExp('^' + regexStr + '$');
-  return regex.test(filePath);
+  return regex.test(normalizedFilePath);
 }
 
 /**

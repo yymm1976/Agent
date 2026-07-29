@@ -29,10 +29,9 @@ import { ActionChainDetector } from '../agent/memory/action-chain-detector.js';
 import { AutoCompactGuardian, DEFAULT_GUARDIAN_CONFIG } from '../agent/memory/auto-compact-guardian.js';
 import { CompactPromptEngine } from '../agent/memory/compact-prompt-engine.js';
 import { SessionMemoryStore } from '../agent/memory/session-memory-store.js';
-// Phase 65：记忆系统重构
-import { MemoryStore } from '../memory/memory-store.js';
-import { HybridRetriever } from '../memory/hybrid-retriever.js';
-import { LocalMaintenancePolicy } from '../memory/local-maintenance.js';
+// TD-26：Phase 65 记忆系统（MemoryStore/HybridRetriever/LocalMaintenance）已退役
+// 决策：保留 Core KnowledgeGraph（recallV2 混合策略覆盖相同用例），移除 HybridRetriever 接线
+// 源文件保留于 src/memory/ 但不再装配（freeze 归档）
 // Phase 68：检索/搜索/发现三分与知识图谱
 import { ProvenanceGraph } from '../memory/provenance-graph.js';
 import { KanObstacleChecker } from '../skills/kan-obstacle-checker.js';
@@ -109,6 +108,10 @@ export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies
     MAX_RECALL_MEMORIES,
   );
   contextManager.setRecallInjector(recallInjector);
+  // Phase 96 R-2 修复：注入图谱持久化回调
+  // 让 commitUsefulFeedback() 末尾立即 flush，避免进程崩溃丢失整个 session 的反馈数据
+  // 之前仅通过 shutdown hook（见本文件下方 registerShutdownHook）落盘，崩溃时会丢失
+  recallInjector.setGraphFlusher(() => contextManager.flushGraphToDisk());
 
   // A3：激活 ContextCompactor——消除双引擎不统一，让上下文压缩在生产路径生效
   // L5 summarize 回调使用 checkpointClient（已配置的辅助模型），失败时由 B12 的 try/catch 降级
@@ -127,7 +130,10 @@ export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies
         maxCharsPerOutput: p70Cfg.toolOutputBudget.maxCharsPerOutput,
         previewHeadChars: p70Cfg.toolOutputBudget.previewHeadChars,
         previewTailChars: p70Cfg.toolOutputBudget.previewTailChars,
-        offloadDir: p70Cfg.toolOutputBudget.offloadDir,
+        // 解析为绝对路径，避免相对路径随 cwd 漂移导致假 offload
+        offloadDir: path.isAbsolute(p70Cfg.toolOutputBudget.offloadDir)
+          ? p70Cfg.toolOutputBudget.offloadDir
+          : path.resolve(cwd, p70Cfg.toolOutputBudget.offloadDir),
       })
     : undefined;
   const p70MessageGrouper = p70Cfg?.microCompact?.enabled
@@ -143,7 +149,9 @@ export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies
     ? new AutoCompactGuardian({
         ...DEFAULT_GUARDIAN_CONFIG,
         enabled: p70Cfg.autoCompactGuardian.enabled,
-        contextWindow: p70Cfg.autoCompactGuardian.contextWindow,
+        // 优先用当前模型的实际 contextWindow，使 Guardian 阈值与模型窗口匹配
+        contextWindow: currentModelConfig?.contextWindow
+          ?? p70Cfg.autoCompactGuardian.contextWindow,
         reservedTokensForSummary: p70Cfg.autoCompactGuardian.reservedTokensForSummary,
         autoCompactBuffer: p70Cfg.autoCompactGuardian.autoCompactBuffer,
         warningBuffer: p70Cfg.autoCompactGuardian.warningBuffer,
@@ -285,40 +293,8 @@ export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies
     });
   }
 
-  // ===== Phase 65：记忆系统重构（可选，由 memorySystem.enabled 时注入） =====
-  // 原为返回语句中的 IIFE，现迁移到记忆子系统
-  let memoryStore: MemoryStore | undefined;
-  let hybridRetriever: HybridRetriever | undefined;
-  let localMaintenance: LocalMaintenancePolicy | undefined;
-
-  const msCfg = config.memorySystem;
-  if (msCfg?.enabled && config.packs?.kgAdvanced?.enabled) {
-    memoryStore = new MemoryStore({
-      enabled: msCfg.store.enabled,
-      dbPath: msCfg.store.dbPath,
-      backend: msCfg.store.backend,
-      embeddingProvider: msCfg.store.embeddingProvider,
-    });
-    hybridRetriever = new HybridRetriever(memoryStore, null, {
-      enabled: msCfg.hybridRetriever.enabled,
-      bm25Weight: msCfg.hybridRetriever.bm25Weight,
-      embeddingWeight: msCfg.hybridRetriever.embeddingWeight,
-      timeDecayHalfLifeDays: msCfg.hybridRetriever.timeDecayHalfLifeDays,
-      topK: msCfg.hybridRetriever.topK,
-    });
-    localMaintenance = new LocalMaintenancePolicy(memoryStore, {
-      enabled: msCfg.localMaintenance.enabled,
-      triggerThreshold: msCfg.localMaintenance.triggerThreshold,
-      reorganizeRatio: msCfg.localMaintenance.reorganizeRatio,
-      minAccessCount: msCfg.localMaintenance.minAccessCount,
-    });
-    // F-020 删除死代码：UnifiedMemoryStoreImpl 创建块已移除（Phase 59 后无外部消费方）
-    logger.info('Phase 65: Memory system refactor enabled', {
-      store: msCfg.store.enabled,
-      hybridRetriever: msCfg.hybridRetriever.enabled,
-      localMaintenance: msCfg.localMaintenance.enabled,
-    });
-  }
+  // TD-26：Phase 65 记忆系统已退役（保留 KG，移除 HybridRetriever）
+  // MemoryStore/HybridRetriever/LocalMaintenance 不再装配，源文件冻结归档于 src/memory/
 
   // ===== Phase 68：检索/搜索/发现三分与知识图谱（可选，由 phase68Integration.enabled 时注入） =====
   // 原为返回语句中的 IIFE，现迁移到记忆子系统
@@ -383,9 +359,6 @@ export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies
     checkpointManager,
     contextManager,
     visionAssistant,
-    memoryStore,
-    hybridRetriever,
-    localMaintenance,
     provenanceGraph,
     kanObstacleChecker,
     quantitativeGate,

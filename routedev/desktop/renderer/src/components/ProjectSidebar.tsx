@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useProjectsStore } from '../store/useProjectsStore.js';
 import { Button } from './ui/button.js';
+import { ConfirmDialog } from './ui/dialog.js';
 import { SearchCommandPalette } from './SearchCommandPalette.js';
 
 interface ProjectSidebarProps {
@@ -55,6 +56,14 @@ export function ProjectSidebar({ onOpenSettings, onOpenNewTask, onNavigateToChat
   const renameInputRef = useRef<HTMLInputElement>(null);
   // Phase 74-H2：搜索命令面板开关状态
   const [searchOpen, setSearchOpen] = useState(false);
+  // 确认对话框状态（替代原生 confirm()，避免 frame:false 窗口失焦 bug）
+  const [confirmState, setConfirmState] = useState<{
+    open: boolean;
+    title: string;
+    message: string;
+    variant: 'default' | 'danger';
+    onConfirm: () => void;
+  }>({ open: false, title: '', message: '', variant: 'default', onConfirm: () => {} });
 
   // Phase 74-H2：全局 ⌘K/Ctrl+K 快捷键触发搜索命令面板
   useEffect(() => {
@@ -155,10 +164,18 @@ export function ProjectSidebar({ onOpenSettings, onOpenNewTask, onNavigateToChat
 
   const handleDeleteProject = () => {
     if (!contextMenu || contextMenu.type !== 'project') return;
-    if (confirm('确定删除该项目及其所有对话吗？')) {
-      deleteProject(contextMenu.projectId);
-    }
+    const projectId = contextMenu.projectId;
     setContextMenu(null);
+    setConfirmState({
+      open: true,
+      title: '删除项目',
+      message: '确定删除该项目及其所有对话吗？',
+      variant: 'danger',
+      onConfirm: () => {
+        deleteProject(projectId);
+        setConfirmState((s) => ({ ...s, open: false }));
+      },
+    });
   };
 
   // === 拖拽重排序 ===
@@ -472,10 +489,19 @@ export function ProjectSidebar({ onOpenSettings, onOpenNewTask, onNavigateToChat
               </button>
               <button
                 onClick={() => {
-                  if (confirm('永久删除该对话？此操作不可恢复。')) {
-                    deleteConversation(contextMenu.projectId, contextMenu.conversationId!);
-                  }
+                  const projectId = contextMenu.projectId;
+                  const convId = contextMenu.conversationId!;
                   setContextMenu(null);
+                  setConfirmState({
+                    open: true,
+                    title: '永久删除对话',
+                    message: '永久删除该对话？此操作不可恢复。',
+                    variant: 'danger',
+                    onConfirm: () => {
+                      deleteConversation(projectId, convId);
+                      setConfirmState((s) => ({ ...s, open: false }));
+                    },
+                  });
                 }}
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-rd-danger hover:bg-rd-danger/10"
               >
@@ -502,6 +528,18 @@ export function ProjectSidebar({ onOpenSettings, onOpenNewTask, onNavigateToChat
           selectConversation(projectId, convId);
           onNavigateToChat();
         }}
+      />
+
+      {/* 确认对话框（替代原生 confirm()，避免 frame:false 窗口失焦 bug） */}
+      <ConfirmDialog
+        open={confirmState.open}
+        title={confirmState.title}
+        message={confirmState.message}
+        variant={confirmState.variant}
+        confirmText="删除"
+        cancelText="取消"
+        onConfirm={confirmState.onConfirm}
+        onCancel={() => setConfirmState((s) => ({ ...s, open: false }))}
       />
     </div>
   );

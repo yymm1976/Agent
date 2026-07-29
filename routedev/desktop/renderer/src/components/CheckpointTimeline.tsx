@@ -54,7 +54,7 @@ export function CheckpointTimeline({ projectId, showHeader = true }: CheckpointT
       setError(null);
       const list = await window.routedev.checkpoint.list(projectId);
       // 按时间倒序排列（最新在上）
-      setCheckpoints([...list].sort((a, b) => b.timestamp - a.timestamp));
+      setCheckpoints([...list].sort((a, b) => (b.timestamp ?? b.createdAt) - (a.timestamp ?? a.createdAt)));
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载检查点失败');
       setCheckpoints([]);
@@ -135,7 +135,7 @@ export function CheckpointTimeline({ projectId, showHeader = true }: CheckpointT
             {/* 时间行 */}
             <div className="flex items-center gap-2 text-xs text-rd-textSubtle">
               <Clock size={11} />
-              <span>{formatTime(cp.timestamp)}</span>
+              <span>{formatTime(cp.timestamp ?? cp.createdAt)}</span>
               {cp.isAutoCreated && (
                 <Badge variant="default" className="px-1.5 py-0 text-[10px]">自动</Badge>
               )}
@@ -264,7 +264,7 @@ export function CheckpointTimeline({ projectId, showHeader = true }: CheckpointT
               <div className="rounded-lg bg-rd-surfaceHover px-3 py-2">
                 <div className="flex items-center gap-2 text-xs text-rd-textSubtle">
                   <Clock size={11} />
-                  <span>{formatTime(confirmCheckpoint.timestamp)}</span>
+                  <span>{formatTime(confirmCheckpoint.timestamp ?? confirmCheckpoint.createdAt)}</span>
                 </div>
                 <div className="mt-1 text-sm text-rd-text">
                   {confirmCheckpoint.summary || confirmCheckpoint.description}

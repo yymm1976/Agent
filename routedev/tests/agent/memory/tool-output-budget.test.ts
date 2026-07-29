@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   ToolOutputBudgetManager,
   DEFAULT_BUDGET_CONFIG,
@@ -20,9 +23,19 @@ function makeLongText(length: number): string {
 
 describe('ToolOutputBudgetManager', () => {
   let manager: ToolOutputBudgetManager;
+  let tempDir: string;
 
   beforeEach(() => {
-    manager = new ToolOutputBudgetManager(makeConfig());
+    tempDir = mkdtempSync(join(tmpdir(), 'tool-output-budget-'));
+    manager = new ToolOutputBudgetManager(makeConfig({ offloadDir: tempDir }));
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup errors
+    }
   });
 
   it('短输出不修改', async () => {
@@ -38,7 +51,7 @@ describe('ToolOutputBudgetManager', () => {
     expect(result.offloadedCount).toBe(0);
   });
 
-  it('长输出替换为 preview', async () => {
+  it('长输出替换为 preview 并真实写盘', async () => {
     const longText = makeLongText(3000);
     const messages: TestMessage[] = [
       { role: 'assistant', content: longText },
@@ -51,6 +64,11 @@ describe('ToolOutputBudgetManager', () => {
     expect(result.messages[0].content).toContain('<persisted-output');
     expect(result.messages[0].content).toContain('3000 chars total');
     expect(result.offloadedCount).toBe(1);
+    const match = result.messages[0].content.match(/file="([^"]+)"/);
+    expect(match).not.toBeNull();
+    const filePath = match![1];
+    expect(existsSync(filePath)).toBe(true);
+    expect(readFileSync(filePath, 'utf8')).toBe(longText);
   });
 
   it('相同内容哈希去重', async () => {
@@ -75,9 +93,8 @@ describe('ToolOutputBudgetManager', () => {
     const messages: TestMessage[] = [
       { role: 'assistant', content: longText },
     ];
-    const offloadDir = 'Z:\\nonexistent\\path\\that\\does\\not\\exist';
     const brokenManager = new ToolOutputBudgetManager(
-      makeConfig({ offloadDir }),
+      makeConfig({ offloadDir: tempDir }),
     );
     const originalDate = Date.now;
     let callCount = 0;
@@ -100,7 +117,7 @@ describe('ToolOutputBudgetManager', () => {
   });
 
   it('配置禁用时跳过所有处理', async () => {
-    const disabledManager = new ToolOutputBudgetManager(makeConfig({ enabled: false }));
+    const disabledManager = new ToolOutputBudgetManager(makeConfig({ enabled: false, offloadDir: tempDir }));
     const longText = makeLongText(3000);
     const messages: TestMessage[] = [
       { role: 'assistant', content: longText },
@@ -118,7 +135,7 @@ describe('ToolOutputBudgetManager', () => {
     const headChars = 100;
     const tailChars = 100;
     const manager = new ToolOutputBudgetManager(
-      makeConfig({ previewHeadChars: headChars, previewTailChars: tailChars }),
+      makeConfig({ previewHeadChars: headChars, previewTailChars: tailChars, offloadDir: tempDir }),
     );
     const content = 'H'.repeat(headChars) + 'M'.repeat(3000) + 'T'.repeat(tailChars);
     const messages: TestMessage[] = [

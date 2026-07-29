@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui
 import { Label } from '../ui/label.js';
 import { Switch } from '../ui/switch.js';
 import { Select, SelectItem } from '../ui/select.js';
+import { Alert, AlertTitle, AlertDescription } from '../ui/alert.js';
 import { SettingsTabContainer } from './SettingsTabContainer.js';
 
 interface SettingsVoiceTabProps {
@@ -39,11 +40,17 @@ export function SettingsVoiceTab({ draft, updateDraft }: SettingsVoiceTabProps) 
   };
 
   return (
-    <SettingsTabContainer>
+    <SettingsTabContainer className="space-y-6">
+      {/* 占位 UI：VoiceManager 尚未实现，所有控件已禁用 */}
+      <Alert variant="destructive">
+        <AlertTitle>此功能暂未实现</AlertTitle>
+        <AlertDescription>此功能暂未实现，配置不会生效</AlertDescription>
+      </Alert>
+
       <Card>
         <CardHeader>
           <CardTitle>语音</CardTitle>
-          <CardDescription>配置语音输入（STT）与语音输出（TTS）</CardDescription>
+          <CardDescription>配置语音输入与语音输出</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
@@ -52,12 +59,13 @@ export function SettingsVoiceTab({ draft, updateDraft }: SettingsVoiceTabProps) 
               id="voice-input-provider"
               value={voice.inputProvider}
               onChange={(e) => updateVoice({ inputProvider: e.target.value as typeof voice.inputProvider })}
+              disabled
             >
               {INPUT_PROVIDERS.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
               ))}
             </Select>
-            <p className="text-xs text-rd-textMuted">选择语音转文字引擎，关闭则禁用语音输入。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现</p>
           </div>
 
           <div className="space-y-2">
@@ -66,12 +74,13 @@ export function SettingsVoiceTab({ draft, updateDraft }: SettingsVoiceTabProps) 
               id="voice-output-provider"
               value={voice.outputProvider}
               onChange={(e) => updateVoice({ outputProvider: e.target.value as typeof voice.outputProvider })}
+              disabled
             >
               {OUTPUT_PROVIDERS.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
               ))}
             </Select>
-            <p className="text-xs text-rd-textMuted">选择文字转语音引擎，关闭则禁用语音朗读。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现</p>
           </div>
 
           <div className="space-y-2">
@@ -80,23 +89,25 @@ export function SettingsVoiceTab({ draft, updateDraft }: SettingsVoiceTabProps) 
               id="voice-language"
               value={voice.language}
               onChange={(e) => updateVoice({ language: e.target.value })}
+              disabled
             >
               {LANGUAGES.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
               ))}
             </Select>
-            <p className="text-xs text-rd-textMuted">语音输入输出的默认语言。</p>
+            <p className="text-xs text-rd-textMuted">暂未实现</p>
           </div>
 
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="voice-autoplay">自动朗读回复</Label>
-              <p className="text-xs text-rd-textMuted">助手生成最终回复后自动语音朗读。</p>
+              <p className="text-xs text-rd-textMuted">暂未实现</p>
             </div>
             <Switch
               id="voice-autoplay"
               checked={voice.autoPlay}
               onCheckedChange={(checked) => updateVoice({ autoPlay: checked })}
+              disabled
             />
           </div>
         </CardContent>

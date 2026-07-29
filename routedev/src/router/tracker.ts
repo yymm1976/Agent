@@ -3,13 +3,13 @@
 // 支持：全局、按模型、按 Agent、按步骤的 Token 使用追踪
 
 import type { TokenUsageInfo, TokenBudget } from './types.js';
+import type { ModelCostInfo } from './model-catalog.js';
+import { calculateCallCost } from './model-catalog.js';
 import { logger } from '../utils/logger.js';
 import { getAppDataDir, ensureDir } from '../utils/paths.js';
 import { dirname, join } from 'path';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { writeFile } from 'fs/promises';
-// Phase 32 Task 2.4：接入 CacheStatsTracker，记录缓存命中数据
-import { CacheStatsTracker } from './cache-optimizer.js';
 
 /** Token 使用记录 */
 export interface TokenUsageRecord {
@@ -71,30 +71,12 @@ export class TokenTracker {
   // M4 优化：累计已用 token 缓存，避免 checkBudget 每次遍历全部 records O(n)
   private totalUsedCache: number | null = null;
 
-  // Phase 32 Task 2.4：缓存统计追踪器（Layer 5/6：会话级累计计数器 + 绝对计数展示）
-  private cacheStatsTracker: CacheStatsTracker | null = null;
-
   constructor(budget: TokenBudget, options?: { persistPath?: string }) {
     this.budget = budget;
     this.currentDate = this.getTodayString();
     this.persistPath = options?.persistPath ?? join(getAppDataDir(), 'token-usage.json');
     this.loadFromDisk();
     this.startDailyCheck();
-  }
-
-  /**
-   * Phase 32 Task 2.4：注入 CacheStatsTracker
-   * 注入后，每次 record() 会自动记录缓存命中数据
-   */
-  setCacheStatsTracker(tracker: CacheStatsTracker | null): void {
-    this.cacheStatsTracker = tracker;
-  }
-
-  /**
-   * Phase 32 Task 2.4：获取缓存统计追踪器（供 UI 层展示缓存命中率）
-   */
-  getCacheStatsTracker(): CacheStatsTracker | null {
-    return this.cacheStatsTracker;
   }
 
   /**
@@ -120,14 +102,6 @@ export class TokenTracker {
     // Phase 31 Task 6.3：任务激活时累加 taskSpent（与日限额共用同一次 record 调用，避免双计数）
     if (this.taskActive) {
       this.taskSpent += usage.totalTokens;
-    }
-
-    // Phase 32 Task 2.4：记录缓存命中统计（Layer 5：会话级累计计数器）
-    // 多 Provider 缓存字段归一化：cacheReadInputTokens（Anthropic）/ cached_tokens（OpenAI）
-    if (this.cacheStatsTracker) {
-      const cacheHit = usage.cacheReadInputTokens ?? 0;
-      const cacheMiss = Math.max(0, usage.inputTokens - cacheHit);
-      this.cacheStatsTracker.record(cacheHit, cacheMiss, context.modelId);
     }
 
     // 异步持久化到磁盘（debounce 500ms，避免高频写入阻塞事件循环）
@@ -266,10 +240,9 @@ export class TokenTracker {
    * 查询当前任务预算状态（不累加，累加由 record() 完成）
    * @returns 'ok' | 'warning'(80%) | 'exceeded'(100%)
    */
-  recordTaskUsage(_usage?: TokenUsageInfo): TaskBudgetStatus {
+  recordTaskUsage(): TaskBudgetStatus {
     if (!this.taskActive) return 'ok';
     // Phase 31/32 P0 接线修正：taskSpent 由 record() 累加，此处只查询状态
-    // 参数 _usage 保留以向后兼容，但不使用（避免双计数）
     const percent = this.taskBudget > 0 ? this.taskSpent / this.taskBudget : 0;
     if (percent >= 1) {
       logger.warn('Task token budget exceeded', {
@@ -322,6 +295,59 @@ export class TokenTracker {
   }
 
   /**
+   * Phase 96+ A3.2：计算当前会话累计费用（美元）
+   *
+   * 单次调用费用由 model-catalog 的 calculateCallCost 计算：
+   *   - inputTokens × input 单价
+   *   - outputTokens × output 单价
+   *   - cacheReadInputTokens × cacheRead 单价（若模型支持）
+   *
+   * @param costResolver 模型 ID → ModelCostInfo 解析器（通常由 EngineBridge 从 AppConfig.providers 注入）
+   *                     未传入时返回 0
+   * @returns 会话级总费用 + 按模型聚合的费用（美元）
+   *
+   * 设计权衡：
+   *   - 不持久化费用字段（价格表会随 provider 调整变化，每次按当前价格重算更准确）
+   *   - 不缓存结果（records 在 record() 后立刻变化，缓存维护成本高于重算）
+   *   - O(n) 遍历 records，n 通常为 1k 量级，实测 < 1ms
+   */
+  getSessionCost(
+    costResolver?: (modelId: string) => ModelCostInfo | undefined,
+  ): { totalUsd: number; byModel: Record<string, number> } {
+    if (!costResolver) {
+      return { totalUsd: 0, byModel: {} };
+    }
+
+    const byModel: Record<string, number> = {};
+    let totalUsd = 0;
+
+    for (const record of this.records) {
+      // resolver 已经合并了 user-config 和 catalog 优先级，这里直接以其返回值为准
+      const cost = costResolver(record.modelId);
+      if (!cost) continue;
+
+      const cacheReadTokens = record.usage.cacheReadInputTokens ?? 0;
+      // 调用 model-catalog 的 calculateCallCost 保持计费逻辑单一真相源
+      const callCost = calculateCallCost(
+        {
+          id: record.modelId,
+          inputCostPerMillion: cost.input,
+          outputCostPerMillion: cost.output,
+          cacheReadCostPerMillion: cost.cacheRead,
+        },
+        record.usage.inputTokens,
+        record.usage.outputTokens,
+        cacheReadTokens,
+      );
+
+      totalUsd += callCost;
+      byModel[record.modelId] = (byModel[record.modelId] ?? 0) + callCost;
+    }
+
+    return { totalUsd, byModel };
+  }
+
+  /**
    * 重置统计（每日自动调用）
    */
   reset(): void {
@@ -368,6 +394,8 @@ export class TokenTracker {
         this.reset();
       }
     }, 60 * 60 * 1000); // 1 小时
+    // 每日检查定时器不阻止进程退出
+    this.checkInterval.unref?.();
   }
 
   /**
