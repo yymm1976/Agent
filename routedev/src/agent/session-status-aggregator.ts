@@ -13,6 +13,7 @@
 //   两者互补：状态卡提供"会话全局视角"，执行卡提供"步骤时序视角"
 
 import type { PersistedGoal } from './goal-persistence.js';
+import { logger } from '../utils/logger.js';
 
 // ============================================================
 // 类型定义
@@ -126,8 +127,7 @@ export async function aggregateSessionStatus(deps: AggregateSessionStatusDeps): 
     goal = await goalPersistence.load(currentGoalId);
   } catch (e) {
     // load 失败降级为 idle（持久化层错误不应阻塞 UI）
-    // eslint-disable-next-line no-console
-    console.warn(`[session-status-aggregator] goal 加载失败，降级为 idle: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('goal 加载失败，降级为 idle', { error: e instanceof Error ? e.message : String(e) });
     return buildIdleStatus();
   }
 
@@ -143,8 +143,7 @@ export async function aggregateSessionStatus(deps: AggregateSessionStatusDeps): 
       factsValues = snapshot.projectFacts.map((f) => `${f.key}: ${f.value}`);
     } catch (e) {
       // 黑板读取失败忽略，事实列表降级为空
-      // eslint-disable-next-line no-console
-      console.warn(`[session-status-aggregator] 黑板读取失败，事实列表降级为空: ${e instanceof Error ? e.message : String(e)}`);
+      logger.warn('黑板读取失败，事实列表降级为空', { error: e instanceof Error ? e.message : String(e) });
     }
   }
 

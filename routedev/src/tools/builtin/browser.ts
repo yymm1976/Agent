@@ -12,6 +12,7 @@
 import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '../types.js';
 // V3-019 修复：复用 web-fetch.ts 同款 SSRF DNS 级防护（避免重复造轮子）
 import { checkSSRF } from '../security-enhanced.js';
+import { logger } from '../../utils/logger.js';
 
 const USER_AGENT = 'RouteDev/1.0';
 
@@ -326,8 +327,7 @@ export class BrowserTool implements ITool {
       puppeteer = mod as unknown as PuppeteerModule;
     } catch (e) {
       // puppeteer 未安装（可选依赖），返回明确的错误提示
-      // eslint-disable-next-line no-console
-      console.warn(`[browser] puppeteer 未安装: ${e instanceof Error ? e.message : String(e)}`);
+      logger.warn('puppeteer 未安装', { error: e instanceof Error ? e.message : String(e) });
       return {
         success: false,
         output: '',
@@ -389,8 +389,7 @@ export class BrowserTool implements ITool {
           await browser.close();
         } catch (e) {
           // 关闭失败静默（不影响主流程）
-          // eslint-disable-next-line no-console
-          console.warn(`[browser] puppeteer 关闭失败: ${e instanceof Error ? e.message : String(e)}`);
+          logger.warn('puppeteer 关闭失败', { error: e instanceof Error ? e.message : String(e) });
         }
       }
     }

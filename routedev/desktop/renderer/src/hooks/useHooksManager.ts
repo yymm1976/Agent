@@ -38,6 +38,7 @@ export function useHooksManager({ activeTab, setAlertMsg, setConfirmDialog }: Us
       const list = await window.routedev.hook.list();
       setHooks(list);
     } catch (err) {
+      // eslint-disable-next-line no-console -- 渲染层日志，logger 为 Node-only 模块无法在浏览器导入
       console.error('加载 Hook 列表失败:', err);
     } finally {
       setHookLoading(false);

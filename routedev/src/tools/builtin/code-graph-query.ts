@@ -15,6 +15,7 @@ import {
   explore,
 } from '../../code-map/querier.js';
 import type { CodeMapNode } from '../../code-map/schema.js';
+import { logger } from '../../utils/logger.js';
 
 const VALID_ACTIONS = new Set([
   'find_callers',
@@ -191,8 +192,7 @@ export class CodeGraphQueryTool implements ITool {
         db.close();
       } catch (e) {
         // ignore close errors（db.close 失败不影响结果）
-        // eslint-disable-next-line no-console
-        console.warn(`[code-graph-query] db.close 失败: ${e instanceof Error ? e.message : String(e)}`);
+        logger.warn('db.close 失败', { error: e instanceof Error ? e.message : String(e) });
       }
     }
   }

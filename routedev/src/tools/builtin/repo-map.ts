@@ -15,6 +15,7 @@ import {
   type TopFileEntry,
   type TopSymbolEntry,
 } from '../../code-map/database.js';
+import { logger } from '../../utils/logger.js';
 
 /** 输出字符硬上限，防止大仓库 repo_map 撑爆上下文 */
 const MAX_OUTPUT_CHARS = 8000;
@@ -108,8 +109,7 @@ export class RepoMapTool implements ITool {
         }
       } catch (e) {
         // DB 查询失败 → 降级到 regex（fail-open）
-        // eslint-disable-next-line no-console
-        console.warn(`[repo-map] DB 查询失败，降级到 regex: ${e instanceof Error ? e.message : String(e)}`);
+        logger.warn('DB 查询失败，降级到 regex', { error: e instanceof Error ? e.message : String(e) });
       }
     }
 
@@ -184,8 +184,7 @@ export class RepoMapTool implements ITool {
       db = initDatabase(dbPath);
     } catch (e) {
       // 数据库初始化失败（node:sqlite 不可用或 DB 损坏），返回 null 触发 regex 降级
-      // eslint-disable-next-line no-console
-      console.warn(`[repo-map] initDatabase 失败，降级到 regex: ${e instanceof Error ? e.message : String(e)}`);
+      logger.warn('initDatabase 失败，降级到 regex', { error: e instanceof Error ? e.message : String(e) });
       return null;
     }
 
@@ -217,8 +216,7 @@ export class RepoMapTool implements ITool {
         db.close();
       } catch (e) {
         // ignore close errors（db.close 失败不影响结果）
-        // eslint-disable-next-line no-console
-        console.warn(`[repo-map] db.close 失败: ${e instanceof Error ? e.message : String(e)}`);
+        logger.warn('db.close 失败', { error: e instanceof Error ? e.message : String(e) });
       }
     }
   }

@@ -152,7 +152,9 @@ export function collectBuiltinToolFiles(): string[] {
     // 排除辅助文件（非工具实现）
     // Phase 53 Task 7：config-guard.ts 是守卫类（被 file-edit/file-write 调用），非独立工具
     // Phase 96 P1-3：bom-utils.ts 是 BOM 检测/保留工具函数模块（被 file-edit/file-write/file-read 调用），非独立工具
-    .filter((f) => !f.endsWith('search-utils.ts') && !f.endsWith('todo-store.ts') && !f.endsWith('config-guard.ts') && !f.endsWith('edit-history.ts') && !f.endsWith('bom-utils.ts'));
+    .filter((f) => !f.endsWith('search-utils.ts') && !f.endsWith('todo-store.ts') && !f.endsWith('config-guard.ts') && !f.endsWith('edit-history.ts') && !f.endsWith('bom-utils.ts')
+      // Phase 92 / TD-10：spawn-agent 拆分的子模块（类型/工具函数/委托包装器），非独立工具
+      && !f.endsWith('spawn-agent-types.ts') && !f.endsWith('spawn-agent-utils.ts') && !f.endsWith('spawn-agent-delegation.ts'));
 }
 
 /** 收集所有 SKILL.md 文件路径 */

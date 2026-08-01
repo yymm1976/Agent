@@ -98,7 +98,7 @@ export function createRouterSubsystem(ctx: InitContext): Partial<AppDependencies
   let executionVerifier: ExecutionVerifier | undefined;
   let routingRegretTracker: RoutingRegretTracker | undefined;
 
-  if (clrCfg?.enabled && config.packs?.acRouter?.enabled) {
+  if (clrCfg?.enabled && ctx.enabledPacks.acRouter) {
     routingHistory = new RoutingHistory({
       maxRecords: clrCfg.history.maxRecords,
       persistPath: path.resolve(cwd, clrCfg.history.persistPath),

@@ -15,6 +15,8 @@ import fsSync from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { logger } from '../utils/logger.js';
+import { parseIntegrityManifestFile, INTEGRITY_MANIFEST_SCHEMA_VERSION } from '../config/schemas/integrity-manifest.js';
+import { migrate, withSchemaVersion } from '../utils/migration.js';
 
 // ============================================================
 // 类型定义
@@ -33,7 +35,7 @@ export interface IntegrityRecord {
 }
 
 /** manifest 持久化结构 */
-interface IntegrityManifestFile {
+export interface IntegrityManifestFile {
   version: 1;
   records: Record<string, IntegrityRecord>;
 }
@@ -124,13 +126,16 @@ export class IntegrityManifest {
   /**
    * 持久化 manifest 到磁盘（JSON 格式）
    *
-   * 自动创建父目录；fail-open：写入失败仅 warn 不抛错
+   * 自动创建父目录；fail-open：写入失败仅 warn 不抛错。
+   * Phase 93 Task 8：写入 __schemaVersion 字段，供未来 migration 框架识别版本。
    */
   async save(): Promise<void> {
-    const data: IntegrityManifestFile = {
+    const base: IntegrityManifestFile = {
       version: 1,
       records: Object.fromEntries(this.records),
     };
+    // 标记当前 schema 版本，便于未来 load 时 migrate
+    const data = withSchemaVersion(base, INTEGRITY_MANIFEST_SCHEMA_VERSION);
     try {
       await fs.mkdir(path.dirname(this.manifestPath), { recursive: true });
       await fs.writeFile(this.manifestPath, JSON.stringify(data, null, 2), 'utf-8');
@@ -150,11 +155,20 @@ export class IntegrityManifest {
    *   - 文件不存在（ENOENT）→ 重置为空记录（首次启动）
    *   - 解析失败 → warn 并重置为空记录
    *   - 成功 → 填充 records
+   *
+   * Phase 93 Task 8：load 时先 migrate 升级到当前 schema 版本，再 parse 校验。
+   * 当前版本 1，无迁移函数；未来版本升级时在此处追加 migrations 数组。
    */
   async load(): Promise<void> {
     try {
       const raw = await fs.readFile(this.manifestPath, 'utf-8');
-      const data = JSON.parse(raw) as IntegrityManifestFile;
+      const migrated = migrate(JSON.parse(raw), {
+        currentVersion: INTEGRITY_MANIFEST_SCHEMA_VERSION,
+        migrations: [], // 当前版本 1，无历史版本需要迁移
+        fallback: { version: 1, records: {} },
+        caller: 'IntegrityManifest.load',
+      });
+      const data = parseIntegrityManifestFile(migrated);
       this.records = new Map(Object.entries(data.records || {}));
     } catch (err) {
       if (

@@ -35,7 +35,9 @@ const APP_INIT_PATH = path.join(PROJECT_ROOT, 'src', 'runtime', 'app-init.ts');
 // 源码静态分析需同时读取两文件，保证迁移后断言仍能命中
 const APP_INIT_TOOLS_PATH = path.join(PROJECT_ROOT, 'src', 'runtime', 'app-init-tools.ts');
 const PROJECT_MEMORY_PATH = path.join(PROJECT_ROOT, 'src', 'memory', 'project-memory.ts');
-const SPAWN_AGENT_PATH = path.join(PROJECT_ROOT, 'src', 'tools', 'builtin', 'spawn-agent.ts');
+// Phase 92 / TD-10：createChildRegistry / resolveProfileForSubagent 已从 spawn-agent.ts
+// 拆分到 spawn-agent-utils.ts，源码静态分析需读取新文件
+const SPAWN_AGENT_UTILS_PATH = path.join(PROJECT_ROOT, 'src', 'tools', 'builtin', 'spawn-agent-utils.ts');
 // Phase 74-G：SANDBOX_LEVEL_OPTIONS / 沙箱级 Select 控件已迁移至 SettingsSecurityTab.tsx
 const SETTINGS_SECURITY_TAB_PATH = path.join(
   PROJECT_ROOT,
@@ -176,12 +178,14 @@ describe('Phase 48 E2E - Task 4: spawn-agent.ts 接入 AgentProfileManager', () 
   it('createChildRegistry 支持传入 AgentProfileManager（第 3 个可选参数）', async () => {
     expect(typeof createChildRegistry).toBe('function');
     // 通过源代码验证 createChildRegistry 签名包含 profileManager 参数
-    const content = await readFile(SPAWN_AGENT_PATH);
+    // Phase 92：函数已迁移到 spawn-agent-utils.ts
+    const content = await readFile(SPAWN_AGENT_UTILS_PATH);
     expect(content).toMatch(/export function createChildRegistry\([\s\S]*?profileManager\?:\s*AgentProfileManager/);
   });
 
-  it('spawn-agent.ts 源代码包含 AgentProfileManager 引用', async () => {
-    const content = await readFile(SPAWN_AGENT_PATH);
+  it('spawn-agent-utils.ts 源代码包含 AgentProfileManager 引用', async () => {
+    // Phase 92：createChildRegistry / resolveProfileForSubagent 已迁移到 spawn-agent-utils.ts
+    const content = await readFile(SPAWN_AGENT_UTILS_PATH);
     expect(content).toContain('AgentProfileManager');
     expect(content).toContain('resolveProfileForSubagent');
     expect(content).toContain('profileManager');

@@ -10,6 +10,7 @@
 
 import type { MiddlewareContext, MiddlewareHandler } from '../middleware.js';
 import { getGlobalQualityAggregator } from '../quality-aggregator.js';
+import { logger } from '../../utils/logger.js';
 
 /**
  * 判断信号是否为负面（用于聚合器统计）
@@ -82,8 +83,7 @@ export class QualitySignalMiddleware {
         getGlobalQualityAggregator().recordSignal(signal.modelId, isNegativeSignal(signal));
       } catch (e) {
         // 聚合器失败不影响中间件主流程
-        // eslint-disable-next-line no-console
-        console.warn(`[quality-signal] 聚合器记录失败: ${e instanceof Error ? e.message : String(e)}`);
+        logger.warn('聚合器记录失败', { error: e instanceof Error ? e.message : String(e) });
       }
     }
   }

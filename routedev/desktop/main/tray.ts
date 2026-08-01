@@ -4,6 +4,7 @@
 import { app, BrowserWindow, Menu, Tray, nativeImage } from 'electron';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { logger } from '../../src/utils/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,7 +33,7 @@ export function createTray(getMainWindow: () => BrowserWindow | null): Tray {
   // 使用 nativeImage 加载图标，加载失败时回退到空图标（依赖系统默认）
   const icon = nativeImage.createFromPath(iconPath);
   if (icon.isEmpty()) {
-    console.warn('[tray] 图标加载失败，使用空图标占位:', iconPath);
+    logger.warn('[tray] 图标加载失败，使用空图标占位', { iconPath });
   }
   // 托盘图标缩放到 16x16（Windows 任务栏托盘标准尺寸）
   const trayIcon = icon.resize({ width: 16, height: 16 });

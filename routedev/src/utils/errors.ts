@@ -67,3 +67,33 @@ export class ConfigValidationError extends RouteDevError {
     this.field = field;
   }
 }
+
+/**
+ * 统一错误消息提取（TD-22）
+ *
+ * 替代散布全库的 `error instanceof Error ? error.message : String(error)` 模式。
+ * 安全处理任意 thrown 值（Error 对象 / 字符串 / 普通对象 / null / undefined）。
+ *
+ * @param error 任意 thrown 值
+ * @returns 字符串形式的错误消息
+ */
+export function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  if (error === null || error === undefined) {
+    return String(error);
+  }
+  // 普通对象：尝试 message 属性，否则 JSON 序列化
+  if (typeof error === 'object' && 'message' in error && typeof (error as { message: unknown }).message === 'string') {
+    return (error as { message: string }).message;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}

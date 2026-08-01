@@ -28,7 +28,7 @@ export class TodoWriteTool implements ITool {
         },
         id: {
           type: 'string',
-          description: '待办项 ID（update/delete 时必填）',
+          description: '待办项 ID 或从 1 开始的创建序号（update/delete 时必填）',
         },
         content: {
           type: 'string',
@@ -136,7 +136,8 @@ export class TodoWriteTool implements ITool {
           if (args.status !== undefined) updates.status = args.status;
           if (args.priority !== undefined) updates.priority = args.priority;
 
-          const item = this.store.update(args.id as string, updates as never);
+          const resolvedId = this.store.resolveId(args.id as string);
+          const item = resolvedId ? this.store.update(resolvedId, updates as never) : null;
           if (!item) {
             return {
               success: false,
@@ -167,7 +168,8 @@ export class TodoWriteTool implements ITool {
         }
 
         case 'delete': {
-          const deleted = this.store.delete(args.id as string);
+          const resolvedId = this.store.resolveId(args.id as string);
+          const deleted = resolvedId ? this.store.delete(resolvedId) : false;
           if (!deleted) {
             return {
               success: false,
@@ -178,8 +180,9 @@ export class TodoWriteTool implements ITool {
           }
           return {
             success: true,
-            output: `已删除待办项 ${args.id}`,
+            output: `已删除待办项 ${resolvedId}`,
             durationMs: 0,
+            metadata: { deletedId: resolvedId },
           };
         }
 

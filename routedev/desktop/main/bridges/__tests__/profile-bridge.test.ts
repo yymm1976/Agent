@@ -121,6 +121,8 @@ describe('ProfileBridge', () => {
       const r = await bridge.saveProfile({
         id: 'x',
         name: 'n',
+        type: 'agent-profile',
+        version: '1.0.0',
         role: 'custom',
         modelId: 'm',
         description: '',
@@ -134,6 +136,8 @@ describe('ProfileBridge', () => {
         isBuiltin: false,
         systemPrompt: '',
         boundSkills: [],
+        createdAt: 1000,
+        updatedAt: 1000,
       });
       expect(r.success).toBe(false);
       expect(r.error).toMatch(/not initialized/i);
@@ -182,11 +186,13 @@ describe('ProfileBridge', () => {
     });
 
     it('saveProfile calls mgr.saveProfile with user_edit source', async () => {
-      const saveProfile = vi.fn(async () => undefined);
+      const saveProfile = vi.fn(async (_p: AgentProfile, _source?: string) => undefined);
       const bridge = new ProfileBridge(makeCtx({ saveProfile }));
       const r = await bridge.saveProfile({
         id: 'p1',
         name: 'Executor',
+        type: 'agent-profile',
+        version: '1.0.0',
         role: 'executor',
         modelId: 'gpt-4o',
         description: 'exec',
@@ -200,7 +206,8 @@ describe('ProfileBridge', () => {
         isBuiltin: true,
         systemPrompt: 'You are executor',
         boundSkills: [],
-        version: '1.0.0',
+        createdAt: 1000,
+        updatedAt: 1000,
       });
       expect(r.success).toBe(true);
       expect(r.id).toBe('p1');
@@ -241,6 +248,8 @@ describe('ProfileBridge', () => {
       const r = await bridge.saveProfile({
         id: 'p1',
         name: 'x',
+        type: 'agent-profile',
+        version: '1.0.0',
         role: 'custom',
         modelId: 'm',
         description: '',
@@ -254,6 +263,8 @@ describe('ProfileBridge', () => {
         isBuiltin: false,
         systemPrompt: '',
         boundSkills: [],
+        createdAt: 1000,
+        updatedAt: 1000,
       });
       expect(r.success).toBe(false);
       expect(r.error).toBe('validation failed');

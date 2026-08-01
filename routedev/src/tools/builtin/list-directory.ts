@@ -8,6 +8,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '../types.js';
 import { checkPathBoundary } from './search-utils.js';
+import { logger } from '../../utils/logger.js';
 
 /** 单个目录条目 */
 interface DirEntry {
@@ -140,8 +141,7 @@ export class ListDirectoryTool implements ITool {
         entries.push({ name, type, size: lstat.size });
       } catch (e) {
         // lstat 失败（可能是 broken symlink），跳过
-        // eslint-disable-next-line no-console
-        console.warn(`[list-directory] lstat 失败，跳过 ${fullPath}: ${e instanceof Error ? e.message : String(e)}`);
+        logger.warn('lstat 失败，跳过', { filePath: fullPath, error: e instanceof Error ? e.message : String(e) });
       }
     }
 

@@ -24,13 +24,17 @@ import type { MCPBridge } from './mcp-bridge.js';
 import type { SkillBridge } from './skill-bridge.js';
 import type { ExperimentBridge } from './experiment-bridge.js';
 import type { GoalBridge } from './goal-bridge.js';
+import { EngineEventHub } from '../remote/engine-event-hub.js';
 
 /** GoalRunner 实例类型（goal-runner.ts 未导出类型，用 ReturnType 推导） */
 export type GoalRunner = ReturnType<typeof createGoalRunner>;
 
 /** 工具确认回调的 resolver 类型（与 sendChat / GoalRunner 共享 ref 的元素类型一致） */
 export type PendingConfirmEntry = {
-  resolve: (result: boolean | { approved: boolean; payload?: unknown }) => void;
+  resolve: (
+    result: boolean | { approved: boolean; payload?: unknown },
+    resolvedBy?: 'desktop' | 'android',
+  ) => void;
   toolName: string;
 };
 
@@ -98,6 +102,8 @@ export class EngineContext {
   config: AppConfig;
   // F-021：options 引用构造后不变（内部 cwd 等属性可变），加 readonly
   readonly options: EngineBridgeOptions;
+  /** Ordered engine timeline shared by renderer adapters and remote clients. */
+  readonly eventHub: EngineEventHub;
 
   // ===== 依赖（initialize 后赋值，destroy 后置 null） =====
   // F-021：以下字段在 initialize/destroy 中被重新赋值，不加 readonly
@@ -172,6 +178,7 @@ export class EngineContext {
   constructor(config: AppConfig, options: EngineBridgeOptions) {
     this.config = config;
     this.options = options;
+    this.eventHub = new EngineEventHub();
   }
 
   // ============================================================

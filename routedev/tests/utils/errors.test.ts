@@ -1,10 +1,12 @@
 // tests/utils/errors.test.ts
 // Phase 26 Task 7：自定义错误类体系测试
+// TD-22：toErrorMessage 工具函数测试
 
 import { describe, it, expect } from 'vitest';
 import {
   RouteDevError,
   ConfigValidationError,
+  toErrorMessage,
 } from '../../src/utils/errors.js';
 
 describe('自定义错误类体系', () => {
@@ -28,5 +30,36 @@ describe('自定义错误类体系', () => {
     expect(err instanceof ConfigValidationError).toBe(true);
     expect(err instanceof RouteDevError).toBe(true);
     expect(err instanceof Error).toBe(true);
+  });
+});
+
+describe('toErrorMessage（TD-22）', () => {
+  it('Error 对象提取 message', () => {
+    expect(toErrorMessage(new Error('boom'))).toBe('boom');
+  });
+
+  it('RouteDevError 提取 message', () => {
+    expect(toErrorMessage(new RouteDevError('custom', 'CODE'))).toBe('custom');
+  });
+
+  it('字符串直接返回', () => {
+    expect(toErrorMessage('string error')).toBe('string error');
+  });
+
+  it('null/undefined 返回字符串形式', () => {
+    expect(toErrorMessage(null)).toBe('null');
+    expect(toErrorMessage(undefined)).toBe('undefined');
+  });
+
+  it('普通对象尝试 message 属性', () => {
+    expect(toErrorMessage({ message: 'obj msg' })).toBe('obj msg');
+  });
+
+  it('无 message 属性的对象 JSON 序列化', () => {
+    expect(toErrorMessage({ code: 500 })).toBe('{"code":500}');
+  });
+
+  it('数字转字符串', () => {
+    expect(toErrorMessage(42)).toBe('42');
   });
 });

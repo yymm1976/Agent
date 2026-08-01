@@ -10,6 +10,7 @@ import type { Checkpoint } from '../../../src/harness/types.js';
 import type { TraceSession } from '../../../src/harness/trace-types.js';
 import { TraceReplayer, type TimelineEvent } from '../../../src/harness/trace-replayer.js';
 import { generateScorecard, type Scorecard } from '../../../src/harness/scorecard.js';
+import { logger } from '../../../src/utils/logger.js';
 import type { EngineContext } from './engine-context.js';
 
 /**
@@ -36,7 +37,7 @@ export class TraceBridge {
     try {
       return this.ctx.deps.checkpointManager.list();
     } catch (err) {
-      console.error('[Engine] listCheckpoints failed:', err);
+      logger.error('[Engine] listCheckpoints failed', { error: err instanceof Error ? err.message : String(err) });
       return [];
     }
   }
@@ -67,7 +68,7 @@ export class TraceBridge {
     try {
       return await this.ctx.deps.trace.listSessions(limit);
     } catch (err) {
-      console.error('[Engine] listTraceSessions failed:', err);
+      logger.error('[Engine] listTraceSessions failed', { error: err instanceof Error ? err.message : String(err) });
       return [];
     }
   }
@@ -82,7 +83,7 @@ export class TraceBridge {
       const replayer = new TraceReplayer(this.ctx.deps.trace);
       return await replayer.replay(sessionId, step !== undefined ? { step } : undefined);
     } catch (err) {
-      console.error('[Engine] replayTrace failed:', err);
+      logger.error('[Engine] replayTrace failed', { error: err instanceof Error ? err.message : String(err) });
       return [];
     }
   }
@@ -95,7 +96,7 @@ export class TraceBridge {
     try {
       return await generateScorecard(this.ctx.deps.trace, sessionId);
     } catch (err) {
-      console.error('[Engine] generateTraceScorecard failed:', err);
+      logger.error('[Engine] generateTraceScorecard failed', { error: err instanceof Error ? err.message : String(err) });
       return null;
     }
   }

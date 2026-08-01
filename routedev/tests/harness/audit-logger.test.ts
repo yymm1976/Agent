@@ -131,6 +131,7 @@ describe('AuditLogger', () => {
     it('logChannelMessage in/out', async () => {
       const al = new AuditLogger('sess-1', { storageDir: tempDir });
       al.logChannelMessage('in', 'wechat-work', 'user-1', 42);
+      await new Promise(r => setTimeout(r, 10));
       al.logChannelMessage('out', 'wechat-work', 'user-1', 100);
       await new Promise(r => setTimeout(r, 50));
       const records = await al.listToday();

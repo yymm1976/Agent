@@ -112,6 +112,7 @@ export function SettingsSubAgentsTab({
             .map(mapDetailToUI),
         );
       } catch (err) {
+        // eslint-disable-next-line no-console -- 渲染层日志，logger 为 Node-only 模块无法在浏览器导入
         console.error('[SettingsSubAgentsTab] 加载内置 Profile 失败:', err);
       }
     })();
@@ -133,6 +134,7 @@ export function SettingsSubAgentsTab({
       );
       setVersionRefreshKey((k) => k + 1);
     } catch (err) {
+      // eslint-disable-next-line no-console -- 渲染层日志，logger 为 Node-only 模块无法在浏览器导入
       console.error('[SettingsSubAgentsTab] 回滚后刷新 Profile 失败:', err);
     }
   };

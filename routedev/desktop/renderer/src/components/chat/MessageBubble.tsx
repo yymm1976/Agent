@@ -32,7 +32,10 @@ function GoalMessageBubble({ goalId }: { goalId: string }) {
       if (cancelled || !res?.ok || !Array.isArray(res.revisions)) return;
       // 服务端返回 JSON 解析结果，结构信任 + cast（fail-open：非法结构会被 GoalExecutionCard 忽略）
       setPlanRevisions(res.revisions as LocalPlanRevision[]);
-    }).catch((e: unknown) => console.warn('[MessageBubble] planRevisions 加载失败:', e));
+    }).catch((e: unknown) => {
+      // eslint-disable-next-line no-console -- 渲染层日志，logger 为 Node-only 模块无法在浏览器导入
+      console.warn('[MessageBubble] planRevisions 加载失败:', e);
+    });
     return () => { cancelled = true; };
   }, [goalId]);
 

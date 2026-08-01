@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import {
-  Activity, Brain, ChevronRight, ChevronDown, Loader2,
+  Brain, ChevronRight, ChevronDown, Loader2,
 } from 'lucide-react';
 import type { ToolCallItem } from '../ToolCallCard.js';
 import { ActionSummaryRow, SubAgentRow } from '../ToolCallCard.js';
@@ -70,7 +70,6 @@ function TreeBranch({
 }) {
   return (
     <div className={`relative ${className}`}>
-      <span className="absolute -left-3 top-[0.85rem] h-px w-3 bg-rd-tree-line" aria-hidden />
       {children}
     </div>
   );
@@ -91,7 +90,7 @@ function ProcessEntry({
     <button
       type="button"
       onClick={onToggle}
-      className="flex w-full items-center gap-2 py-1 text-left text-xs text-rd-textSubtle transition hover:text-rd-text"
+      className="flex w-full items-center gap-2 py-2 text-left text-xs text-rd-textSubtle transition hover:text-rd-text"
     >
       {expanded
         ? <ChevronDown size={14} className="shrink-0 text-rd-textSubtle" />
@@ -161,7 +160,6 @@ function FoldableSection({
 /** 时间线条目：思考块或工具组，按 timestamp 排序合并 */
 type TimelineEntry =
   | { kind: 'thought'; id: string; text: string; timestamp: number }
-  | { kind: 'progress'; id: string; text: string; timestamp: number }
   | { kind: 'tool-group'; toolName: string; items: ToolCallItem[]; timestamp: number };
 
 /**
@@ -171,12 +169,10 @@ type TimelineEntry =
  */
 export function buildTimeline(
   intermediateThoughts: { id: string; text: string; timestamp: number }[],
-  progressEvents: { id: string; text: string; timestamp: number }[],
   toolGroups: Record<string, ToolCallItem[]>,
 ): TimelineEntry[] {
   const entries: TimelineEntry[] = [
     ...intermediateThoughts.map((thought) => ({ kind: 'thought' as const, ...thought })),
-    ...progressEvents.map((progress) => ({ kind: 'progress' as const, ...progress })),
   ];
 
   for (const items of Object.values(toolGroups)) {
@@ -209,45 +205,10 @@ export function buildTimeline(
 
 /** 单条中间自言自语：可折叠展示完整文本 */
 function ThoughtEntry({ entry }: { entry: { id: string; text: string; timestamp: number } }) {
-  const [expanded, setExpanded] = useState(false);
-  // 折叠态显示首行预览，展开态显示完整文本
-  const firstLine = entry.text.split('\n')[0] ?? '';
-  const preview = firstLine.length > 60 ? firstLine.slice(0, 60) + '...' : firstLine;
   return (
-    <TreeBranch>
-      <button
-        type="button"
-        onClick={() => setExpanded(v => !v)}
-        className="flex w-full items-center gap-2 py-1 text-left text-xs transition hover:text-rd-text"
-      >
-        <Brain size={13} className="shrink-0 text-rd-textSubtle" />
-        <span className="shrink-0 font-medium text-rd-text">思考</span>
-        <span className="min-w-0 flex-1 truncate text-rd-textMuted">{preview}</span>
-        {expanded
-          ? <ChevronDown size={12} className="shrink-0 text-rd-textSubtle" />
-          : <ChevronRight size={12} className="shrink-0 text-rd-textSubtle" />}
-      </button>
-      {expanded && (
-        <div className="mt-1 rounded-md bg-rd-surfaceHighlight p-3 text-xs leading-relaxed text-rd-textMuted whitespace-pre-wrap">
-          {entry.text}
-        </div>
-      )}
-    </TreeBranch>
-  );
-}
-
-function ProgressEntry({ entry, isActive }: {
-  entry: { id: string; text: string; timestamp: number };
-  isActive: boolean;
-}) {
-  return (
-    <TreeBranch>
-      <div className="flex items-center gap-2 py-1 text-xs">
-        {isActive
-          ? <Loader2 size={13} className="shrink-0 animate-spin text-rd-primary" />
-          : <Activity size={13} className="shrink-0 text-rd-textSubtle" />}
-        <span className="shrink-0 font-medium text-rd-text">进度</span>
-        <span className="min-w-0 flex-1 truncate text-rd-textMuted" title={entry.text}>{entry.text}</span>
+    <TreeBranch className="py-1.5">
+      <div className="whitespace-pre-wrap text-sm leading-6 text-rd-text">
+        {entry.text}
       </div>
     </TreeBranch>
   );
@@ -291,8 +252,8 @@ export function ExecutionProcess({
 
   // 构建时间线：合并 intermediateThoughts + actionToolGroups
   const timeline = useMemo(
-    () => buildTimeline(intermediateThoughts, progressEvents, actionToolGroups),
-    [intermediateThoughts, progressEvents, actionToolGroups],
+    () => buildTimeline(intermediateThoughts, actionToolGroups),
+    [intermediateThoughts, actionToolGroups],
   );
 
   const totalActions = Object.values(actionToolGroups).reduce((sum, items) => sum + items.length, 0);
@@ -301,12 +262,15 @@ export function ExecutionProcess({
   // 过程摘要：思考 N 段 · M 次操作 · K 个子 Agent · 12 秒
   const parts: string[] = [];
   if (intermediateThoughts.length > 0) parts.push(`思考 ${intermediateThoughts.length} 段`);
-  if (progressEvents.length > 0) parts.push(`进度 ${progressEvents.length} 条`);
   if (thinkingSteps.length > 0) parts.push(`推理 ${thinkingSteps.length} 段`);
   if (totalActions > 0) parts.push(`${totalActions} 次操作`);
   if (spawnAgentItems.length > 0) parts.push(`${spawnAgentItems.length} 个子 Agent`);
   if (duration > 0) parts.push(formatDuration(duration));
-  const processSummary = parts.join(' · ') || '过程记录';
+  const processSummary = isRunning
+    ? (parts.join(' · ') || '正在处理')
+    : duration > 0
+      ? `已处理 ${formatDuration(duration)}`
+      : (parts.join(' · ') || '处理记录');
 
   if (timeline.length === 0 && thinkingSteps.length === 0 && spawnAgentItems.length === 0) return null;
 
@@ -320,18 +284,11 @@ export function ExecutionProcess({
       />
 
       {expanded && (
-        <div className="ml-3 mt-1.5 space-y-1 border-l border-rd-tree-line pl-3">
+        <div className="mt-2 space-y-1 pl-1">
           {/* 时间线：按真实发生顺序展示思考块 + 工具组 */}
           {timeline.map((entry) => {
             if (entry.kind === 'thought') {
               return <ThoughtEntry key={entry.id} entry={entry} />;
-            }
-            if (entry.kind === 'progress') {
-              return <ProgressEntry
-                key={entry.id}
-                entry={entry}
-                isActive={isRunning && entry.id === progressEvents[progressEvents.length - 1]?.id}
-              />;
             }
             return (
               <TreeBranch key={`tg-${entry.toolName}-${entry.timestamp}`}>

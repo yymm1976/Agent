@@ -46,6 +46,7 @@ export function useMcpCatalog({ activeTab, updateDraft, draft }: UseMcpCatalogOp
         : await window.routedev.mcp.catalog.list(cat === 'all' ? undefined : cat);
       setCatalogEntries(result.entries);
     } catch (err) {
+      // eslint-disable-next-line no-console -- 渲染层日志，logger 为 Node-only 模块无法在浏览器导入
       console.error('[MCP Market] 加载目录失败:', err);
       setCatalogEntries([]);
     }

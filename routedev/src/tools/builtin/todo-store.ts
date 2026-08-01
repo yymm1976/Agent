@@ -73,6 +73,17 @@ export class TodoStore {
     return item;
   }
 
+  /**
+   * 将工具参数里的引用解析为真实 ID。
+   * 模型通常会沿用 list 输出中的 1、2、3；数字引用固定按创建顺序解析，
+   * 不受完成状态导致的展示排序变化影响。
+   */
+  resolveId(reference: string): string | null {
+    if (this.items.has(reference)) return reference;
+    if (!/^[1-9]\d*$/.test(reference)) return null;
+    return Array.from(this.items.keys())[Number(reference) - 1] ?? null;
+  }
+
   /** 删除待办项 */
   delete(id: string): boolean {
     return this.items.delete(id);

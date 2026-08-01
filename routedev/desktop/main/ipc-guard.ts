@@ -115,3 +115,107 @@ export function createValidatedHandler<TArgs, TResult>(
     return handler(args as TArgs, event);
   };
 }
+
+/**
+ * Phase 95：创建带多参数校验的 IPC handler
+ *
+ * 用于接收多个 positional 参数的 handler（如 `(_event, id, data, cols)`）。
+ * Electron IPC 支持多参数传递，但 createValidatedHandler 仅校验第一个 args。
+ * 本函数对每个 positional 参数应用对应的校验器，任一失败即抛错。
+ *
+ * @param channel IPC 通道名（仅用于错误信息定位）
+ * @param validators 各参数的校验器数组（返回 null 表示通过，返回字符串表示错误消息）
+ * @param handler 实际处理函数（校验通过后调用，接收所有参数）
+ * @returns 可直接传给 ipcMain.handle 的包装函数
+ */
+export function createValidatedHandlerMulti<TResult>(
+  channel: string,
+  validators: Array<(arg: unknown) => string | null>,
+  handler: (...args: unknown[]) => Promise<TResult>,
+): (event: IpcMainInvokeEvent, ...args: unknown[]) => Promise<TResult> {
+  return async (event, ...args) => {
+    // 对每个 positional 参数应用对应的校验器
+    for (let i = 0; i < validators.length; i++) {
+      const validator = validators[i];
+      if (!validator) continue;
+      // args[i] 对应第 i+1 个 positional 参数（args[0] 是第一个参数，不含 event）
+      const validationError = validator(args[i]);
+      if (validationError !== null) {
+        throw new Error(`[IPC ${channel}] 参数 ${i + 1} 校验失败: ${validationError}`);
+      }
+    }
+    // 校验通过后调用 handler，第一个参数是 event，后续是 positional 参数
+    return handler(event, ...args);
+  };
+}
+
+/**
+ * Phase 95：通用校验器工厂
+ *
+ * 提供常用参数类型的校验函数，返回 null 表示通过，字符串表示错误消息。
+ * 用于 createValidatedHandler / createValidatedHandlerMulti 的 validator 参数。
+ */
+export const ipcValidate = {
+  /** 无参数 handler 的校验器（永远通过） */
+  none: () => null,
+
+  /** 字符串校验：非空 + 长度上限 */
+  string(maxLen: number = 4096): (arg: unknown) => string | null {
+    return (arg: unknown) => {
+      if (typeof arg !== 'string') return '参数必须是字符串';
+      if (arg.length === 0) return '参数不能为空';
+      if (arg.length > maxLen) return `字符串长度不能超过 ${maxLen}`;
+      return null;
+    };
+  },
+
+  /** 可选字符串校验：undefined/null 通过，否则按 string 校验 */
+  optionalString(maxLen: number = 4096): (arg: unknown) => string | null {
+    return (arg: unknown) => {
+      if (arg === undefined || arg === null) return null;
+      return ipcValidate.string(maxLen)(arg);
+    };
+  },
+
+  /** 数字校验：非 NaN + 范围 */
+  number(min: number = 0, max: number = Number.MAX_SAFE_INTEGER): (arg: unknown) => string | null {
+    return (arg: unknown) => {
+      if (typeof arg !== 'number' || Number.isNaN(arg)) return '参数必须是数字';
+      if (arg < min) return `数字不能小于 ${min}`;
+      if (arg > max) return `数字不能大于 ${max}`;
+      return null;
+    };
+  },
+
+  /** 可选数字校验 */
+  optionalNumber(min: number = 0, max: number = Number.MAX_SAFE_INTEGER): (arg: unknown) => string | null {
+    return (arg: unknown) => {
+      if (arg === undefined || arg === null) return null;
+      return ipcValidate.number(min, max)(arg);
+    };
+  },
+
+  /** 对象校验：非 null 对象 */
+  object(): (arg: unknown) => string | null {
+    return (arg: unknown) => {
+      if (typeof arg !== 'object' || arg === null) return '参数必须是对象';
+      return null;
+    };
+  },
+
+  /** 可选对象校验 */
+  optionalObject(): (arg: unknown) => string | null {
+    return (arg: unknown) => {
+      if (arg === undefined || arg === null) return null;
+      return ipcValidate.object()(arg);
+    };
+  },
+
+  /** 布尔校验 */
+  boolean(): (arg: unknown) => string | null {
+    return (arg: unknown) => {
+      if (typeof arg !== 'boolean') return '参数必须是布尔值';
+      return null;
+    };
+  },
+};

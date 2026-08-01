@@ -7,6 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '../types.js';
 import { walkDir, isIgnoredPath, matchGlob } from './search-utils.js';
+import { logger } from '../../utils/logger.js';
 
 export class FileSearchTool implements ITool {
   readonly definition: ToolDefinition = {
@@ -111,8 +112,7 @@ export class FileSearchTool implements ITool {
             }
           } catch (e) {
             // 二进制文件或权限不足，跳过
-            // eslint-disable-next-line no-console
-            console.warn(`[file-search] 读取文件失败，跳过 ${relativePath}: ${e instanceof Error ? e.message : String(e)}`);
+            logger.warn('读取文件失败，跳过', { filePath: relativePath, error: e instanceof Error ? e.message : String(e) });
           }
         } else {
           results.push(relativePath);

@@ -13,6 +13,7 @@
 import type { MemoryStore, MemoryEntry } from './memory-store.js';
 import type { Embedder } from '../skills/embedder.js';
 import { BM25Index } from './bm25-index.js';
+import { logger } from '../utils/logger.js';
 
 export interface HybridRetrieverConfig {
   enabled: boolean;
@@ -135,8 +136,7 @@ export class HybridRetriever {
       return topK;
     } catch (e) {
       // fail-open：检索失败返回空，避免影响主流程
-      // eslint-disable-next-line no-console
-      console.warn(`[hybrid-retriever] 检索失败，返回空结果: ${e instanceof Error ? e.message : String(e)}`);
+      logger.warn('检索失败，返回空结果', { error: e instanceof Error ? e.message : String(e) });
       return [];
     }
   }

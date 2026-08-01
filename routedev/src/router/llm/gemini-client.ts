@@ -14,6 +14,7 @@ import type {
   ToolCallRequest,
 } from '../types.js';
 import { LLMError } from '../types.js';
+import { logger } from '../../utils/logger.js';
 
 /** Gemini API 默认 base URL */
 const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
@@ -232,7 +233,7 @@ export class GeminiClient extends BaseLLMClient {
               lastFinishReason = this.mapFinishReason(fr);
             }
           } catch (e) {
-            console.warn(`[gemini-client] 跳过无法解析的 chunk: ${e instanceof Error ? e.message : String(e)}`);
+            logger.warn('跳过无法解析的 chunk', { error: e instanceof Error ? e.message : String(e) });
           }
         }
       }
@@ -257,7 +258,7 @@ export class GeminiClient extends BaseLLMClient {
             outputTokens = chunk.usageMetadata.candidatesTokenCount ?? outputTokens;
           }
         } catch (e) {
-          console.warn(`[gemini-client] 缓冲区剩余数据解析失败: ${e instanceof Error ? e.message : String(e)}`);
+          logger.warn('缓冲区剩余数据解析失败', { error: e instanceof Error ? e.message : String(e) });
         }
       }
 

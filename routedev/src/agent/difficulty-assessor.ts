@@ -1,5 +1,6 @@
 import type { ILLMClient } from '../router/types.js';
 import type { GoalPlan } from './goal-types.js';
+import { logger } from '../utils/logger.js';
 
 export type DifficultyLevel = 'L1' | 'L2' | 'L3' | 'L4' | 'L5';
 
@@ -45,8 +46,7 @@ export class DifficultyAssessor {
       return parsed;
     } catch (e) {
       // LLM 评估失败（API 异常或解析错误），降级到 fallback 评估
-      // eslint-disable-next-line no-console
-      console.warn(`[difficulty-assessor] LLM 评估失败，降级处理: ${e instanceof Error ? e.message : String(e)}`);
+      logger.warn('LLM 评估失败，降级处理', { error: e instanceof Error ? e.message : String(e) });
       return this.fallbackAssessment(requirement);
     }
   }

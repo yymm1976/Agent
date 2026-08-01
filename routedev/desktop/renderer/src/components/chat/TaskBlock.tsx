@@ -6,8 +6,17 @@
 // Phase 74-C：从 ChatPage.tsx 抽离，保持渲染结果完全一致
 // C-V1：虚拟滚动兼容——onVisible 回调 + 固定可测量高度结构，为 @tanstack/virtual 预留
 
-import { useMemo, useRef, useEffect, memo } from 'react';
-import { CheckCircle2, AlertCircle, XCircle, HelpCircle } from 'lucide-react';
+import { useMemo, useRef, useEffect, useState, memo } from 'react';
+import {
+  CheckCircle2,
+  AlertCircle,
+  XCircle,
+  HelpCircle,
+  ChevronDown,
+  ChevronRight,
+  FileCode2,
+  ExternalLink,
+} from 'lucide-react';
 import type { ChatMessage } from '../../store/useRouteDevStore.js';
 import type { CompletionStatus } from '../../../../shared/ipc-types.js';
 import type { OutputStyle, ToolCallItem } from '../ToolCallCard.js';
@@ -35,6 +44,88 @@ function CompletionStatusBadge({ status }: { status: CompletionStatus }) {
       <Icon size={12} />
       <span>{meta.label}</span>
     </div>
+  );
+}
+
+interface TaskArtifact {
+  path: string;
+  name: string;
+  version: number;
+}
+
+function extractTaskArtifacts(messages: ChatMessage[]): TaskArtifact[] {
+  const artifacts = new Map<string, TaskArtifact>();
+  for (const message of messages) {
+    if (
+      message.role !== 'system'
+      || message.toolStatus !== 'completed'
+      || !['file_write', 'file_edit'].includes(message.toolName ?? '')
+      || !message.toolArgs
+    ) {
+      continue;
+    }
+
+    const path = ['filePath', 'path', 'file', 'filename', 'outputPath']
+      .map((key) => message.toolArgs?.[key])
+      .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+    if (!path) continue;
+
+    const existing = artifacts.get(path);
+    artifacts.set(path, {
+      path,
+      name: path.split(/[\\/]/).pop() || path,
+      version: (existing?.version ?? 0) + 1,
+    });
+  }
+  return [...artifacts.values()];
+}
+
+function TaskArtifacts({ messages }: { messages: ChatMessage[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const artifacts = useMemo(() => extractTaskArtifacts(messages), [messages]);
+  if (artifacts.length === 0) return null;
+
+  return (
+    <section className="rounded-xl bg-rd-surface/55 px-3 py-2.5" aria-label="本轮产物">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 text-left text-sm text-rd-text transition-colors hover:text-rd-accent"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+      >
+        <FileCode2 size={15} className="text-rd-accent" />
+        <span className="font-medium">{artifacts.length} 个文件已更改</span>
+        <span className="ml-auto text-rd-text-muted">
+          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="mt-2 space-y-1">
+          {artifacts.map((artifact) => (
+            <button
+              key={artifact.path}
+              type="button"
+              className="group flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-rd-surface-hover"
+              onClick={() => window.routedev.fs.openFolder(artifact.path)}
+              title={artifact.path}
+            >
+              <FileCode2 size={14} className="shrink-0 text-rd-text-muted" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm text-rd-text">{artifact.name}</span>
+                <span className="block truncate text-xs text-rd-text-muted">{artifact.path}</span>
+              </span>
+              {artifact.version > 1 && (
+                <span className="rounded-md bg-rd-background/70 px-1.5 py-0.5 text-[11px] text-rd-text-muted">
+                  ×{artifact.version}
+                </span>
+              )}
+              <ExternalLink size={13} className="shrink-0 text-rd-text-muted opacity-0 transition-opacity group-hover:opacity-100" />
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -134,8 +225,7 @@ export const TaskBlock = memo(function TaskBlock({
   );
   // 始终显示：用户消息 → 执行过程 → assistant 回复
   return (
-    // Phase 96：space-y-2 → space-y-3 拉开任务块内部子元素间距
-    <div ref={containerRef} className="space-y-3">
+    <div ref={containerRef} className="space-y-4">
       {/* 用户消息（始终显示） */}
       {userMsg && (
         <MessageBubble
@@ -188,6 +278,8 @@ export const TaskBlock = memo(function TaskBlock({
           {completionStatus && <CompletionStatusBadge status={completionStatus} />}
         </>
       )}
+
+      {isCompleted && <TaskArtifacts messages={toolMsgs} />}
     </div>
   );
 }, (prevProps, nextProps) => {

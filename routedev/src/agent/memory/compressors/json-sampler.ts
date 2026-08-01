@@ -11,6 +11,8 @@
 //
 // 纯统计/AST 实现，禁止引入 LLM 重写（避免幻觉摘要被反复引用的坑）
 
+import { logger } from '../../../utils/logger.js';
+
 /** JSON 采样配置 */
 export interface JsonSamplerConfig {
   /** 数组采样：保留前 N 项 + 后 N 项（默认 3） */
@@ -55,8 +57,7 @@ export function sampleJson(content: string, config: Partial<JsonSamplerConfig> =
     parsed = JSON.parse(content);
   } catch (e) {
     // 不是合法 JSON，返回原文（让上层走 ksentence 路径）
-    // eslint-disable-next-line no-console
-    console.warn(`[json-sampler] JSON 解析失败，返回原文: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('JSON 解析失败，返回原文', { error: e instanceof Error ? e.message : String(e) });
     return {
       compressed: content,
       originalTokens,

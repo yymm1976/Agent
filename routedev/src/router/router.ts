@@ -183,12 +183,9 @@ export class ModelRouter {
   }
 
   /**
-   * Phase 42：根据推理模式限制 tier 选择范围
-   * 死代码清理：reasoningMode 配置未接入后端（buildRouterConfig 不读，构造函数不接收），
-   * 故原 fast/accurate 分支为死代码。保留方法本身（route() 仍调用），简化为直接返回原 tier。
-   *
    * Phase 81 Task 2：置信度阈值微调层默认旁路（confidenceThresholdEnabled 默认 false）
    * 保留原始逻辑骨架，通过开关守卫；旁路时恒等映射，启用时保留扩展点
+   * TD-13 已清理：原 Phase 42 reasoningMode 分支已删除（配置未接入后端，2026-07-29）
    */
   private clampTier(tier: ScenarioTier): ScenarioTier {
     // Phase 81 Task 2：confidenceThresholdEnabled 默认 false，旁路置信度阈值微调层

@@ -15,6 +15,7 @@
 import { sampleJson } from './compressors/json-sampler.js';
 import { summarizeCode } from './compressors/code-ast-summary.js';
 import { KSentenceCompressor } from '../ksentence-compressor.js';
+import { logger } from '../../utils/logger.js';
 
 /** 压缩策略类型 */
 export type CompressStrategy = 'passthrough' | 'json-sampler' | 'code-ast-summary' | 'ksentence';
@@ -59,8 +60,7 @@ function looksLikeJson(content: string): boolean {
     return true;
   } catch (e) {
     // JSON 解析失败，返回 false（非 JSON 内容检测的正常路径）
-    // eslint-disable-next-line no-console
-    console.warn(`[content-router] JSON 检测失败: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('JSON 检测失败', { error: e instanceof Error ? e.message : String(e) });
     return false;
   }
 }

@@ -3,7 +3,7 @@
 // 从 SettingsPage.tsx 迁移
 
 import type { Dispatch, SetStateAction } from 'react';
-import { Server, Plus, Trash2, Eye, EyeOff, Zap, Brain, Gauge, Lightbulb, RefreshCw } from 'lucide-react';
+import { Server, Plus, Trash2, Eye, EyeOff, Zap, RefreshCw } from 'lucide-react';
 import type { AppConfig, ModelConfig } from '../../../../shared/config-types.js';
 // Phase 96 P1-4：从内置 catalog 查询模型元数据（cost / contextWindow / capabilities）
 // catalog 是 pure TS（仅依赖 type ModelCapability），可被 renderer 直接 import
@@ -332,46 +332,7 @@ export function SettingsProvidersTab({
           </>
         )}
 
-        {/* ===== 推理模式（Phase 42） ===== */}
-        {/* 暂未实现：仅展示 UI，按钮全部禁用 */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Brain size={16} className="text-rd-primary" />
-              推理模式
-            </CardTitle>
-            <CardDescription>暂未实现</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              {([
-                { id: 'fast', label: '快速', icon: Zap, desc: '最低延迟，适合简单任务和迭代调试' },
-                { id: 'balanced', label: '均衡', icon: Gauge, desc: '速度与质量平衡，推荐大多数场景' },
-                { id: 'accurate', label: '精准', icon: Lightbulb, desc: '深度推理，适合复杂架构与关键决策' },
-              ] as const).map((mode) => {
-                const Icon = mode.icon;
-                const active = draft.reasoningMode === mode.id;
-                return (
-                  <button
-                    key={mode.id}
-                    type="button"
-                    disabled
-                    onClick={() => updateDraft({ reasoningMode: mode.id })}
-                    className={`flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-colors pointer-events-none opacity-60 ${
-                      active
-                        ? 'border-rd-primary bg-rd-primary/10 text-rd-text'
-                        : 'border-rd-border bg-rd-surface text-rd-textMuted hover:bg-rd-surfaceHover hover:text-rd-text'
-                    }`}
-                  >
-                    <Icon size={20} className={active ? 'text-rd-primary' : ''} />
-                    <span className="text-sm font-medium">{mode.label}</span>
-                    <span className="text-xs text-rd-textMuted">{mode.desc}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
+        {/* TD-13 已清理：推理模式卡片已删除（reasoningMode 未接入后端，2026-07-29） */}
       </div>
 
       {/* 模型编辑模态 */}

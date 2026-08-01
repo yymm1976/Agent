@@ -148,6 +148,7 @@ function saveToLocalStorage(projects: Project[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
   } catch (err) {
+    // eslint-disable-next-line no-console -- 渲染层日志，logger 为 Node-only 模块无法在浏览器导入
     console.error('[projects] 持久化失败:', err);
   }
 }
@@ -157,6 +158,7 @@ function saveArchivedToLocalStorage(archived: ArchivedConversation[]): void {
   try {
     localStorage.setItem(ARCHIVE_STORAGE_KEY, JSON.stringify(archived));
   } catch (err) {
+    // eslint-disable-next-line no-console -- 渲染层日志，logger 为 Node-only 模块无法在浏览器导入
     console.error('[archived] 持久化失败:', err);
   }
 }

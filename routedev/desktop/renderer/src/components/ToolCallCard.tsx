@@ -735,10 +735,10 @@ export function ActionSummaryRow({
         type="button"
         onClick={() => setExpanded((v) => !v)}
         aria-label={`${getToolLabel(toolName)} · ${items.length} 项 · ${summary}`}
-        className={`group flex w-full items-center gap-2 rounded-md border px-2 py-1 text-left transition-all ${
+        className={`group flex min-h-8 w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition-all ${
           hasRunning
-            ? 'border-rd-primary/40 bg-rd-surface shadow-[0_0_0_1px_var(--rd-primary),0_0_12px_rgba(139,141,255,0.15)] animate-pulse'
-            : 'border-rd-border bg-rd-surface hover:border-rd-borderHover hover:bg-rd-surfaceHover'
+            ? 'bg-rd-primary/5'
+            : 'hover:bg-rd-surfaceHover'
         }`}
       >
         <ToolIcon toolType={toolType} size="sm" />

@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
 import type { FieldDiff, VersionMeta } from '../../../../../shared/ipc-types.js';
 import { ProfileVersionPanel } from '../ProfileVersionPanel.js';
 
@@ -16,7 +17,10 @@ const VERSION_A: VersionMeta = {
   profileId: 'profile-1',
   timestamp: new Date('2026-03-20T10:00:00').getTime(),
   source: 'user_edit',
-  fieldChanges: ['modelId', 'systemPrompt'],
+  fieldChanges: [
+    { field: 'modelId', before: 'gpt-4o-mini', after: 'gpt-4o' },
+    { field: 'systemPrompt', before: '旧提示词', after: '新提示词' },
+  ],
   changeSummary: '调整模型与提示词',
   label: '编辑 v1',
 };
@@ -26,7 +30,7 @@ const VERSION_B: VersionMeta = {
   profileId: 'profile-1',
   timestamp: new Date('2026-03-21T12:30:00').getTime(),
   source: 'programmatic_write',
-  fieldChanges: ['temperature'],
+  fieldChanges: [{ field: 'temperature', before: 0.2, after: 0.7 }],
   changeSummary: '程序写入 temperature',
 };
 

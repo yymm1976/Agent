@@ -24,38 +24,13 @@ export const LanguageSchema = z.enum(['zh-CN', 'en-US']);
 export type Language = z.infer<typeof LanguageSchema>;
 
 // --- 提示音配置 ---
-
-export const SoundsConfigSchema = z.object({
-  enabled: z.boolean().default(true),
-  completion: z.string().default('default'),
-  error: z.string().default('warning'),
-  approval: z.string().default('notification'),
-});
-export type SoundsConfig = z.infer<typeof SoundsConfigSchema>;
+// TD-13 已清理：SoundsConfigSchema 全库零消费，已删除（2026-07-29）
+// 旧 config.json 中的 sounds 字段会被 Zod 默认 strip，不影响 parse
 
 // --- UI 配置（Phase 25 / Phase 34） ---
 
-/**
- * Phase 50 Task 7：CLI 组件开关配置
- * 控制 7 个 React 组件是否接入 UI（关闭时回退到纯文本渲染函数）
- */
-export const UIComponentsSchema = z.preprocess((v) => v ?? {}, z.object({
-  /** BranchSwitcher：分支树可视化（状态栏区域） */
-  branchSwitcher: z.boolean().default(true),
-  /** ResumePicker：恢复执行选择器（/resume 命令） */
-  resumePicker: z.boolean().default(true),
-  /** ProgressBar：通用进度条（goal 执行进度） */
-  progressBar: z.boolean().default(true),
-  /** TracePanel：Trace 时间线（/trace 命令） */
-  tracePanel: z.boolean().default(false),
-  /** DisclosureLevel：渐进披露容器（消息列表） */
-  disclosureLevel: z.boolean().default(true),
-  /** DiffView：diff 可视化（/diff 命令） */
-  diffView: z.boolean().default(true),
-  /** ConfigReloadNotice：配置变更通知卡片 */
-  configReloadNotice: z.boolean().default(true),
-}));
-export type UIComponentsConfig = z.infer<typeof UIComponentsSchema>;
+// TD-13 已清理：UIComponentsSchema 全库零消费，已删除（2026-07-29）
+// 桌面端组件接入由各页面自行控制，无需配置开关
 
 export const UIConfigSchema = z.preprocess(
   (v) => {
@@ -83,8 +58,6 @@ export const UIConfigSchema = z.preprocess(
     idleHintSeconds: z.number().positive().int().default(30),
     /** 配置热重载提示开关：开启后配置变更时显示提示 */
     hotReloadNotify: z.boolean().default(true),
-    /** Phase 50 Task 7：组件级开关，控制 7 个 React 组件接入 */
-    components: UIComponentsSchema,
   }),
 );
 export type UIConfig = z.infer<typeof UIConfigSchema>;

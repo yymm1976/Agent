@@ -6,6 +6,7 @@
 // 打破方式：向 ctx.metadata 注入 loopDetected 标记
 
 import type { MiddlewareHandler } from '../middleware.js';
+import { logger } from '../../utils/logger.js';
 
 /** djb2 字符串哈希（非加密强度，仅用于参数指纹） */
 function djb2Hash(str: string): number {
@@ -24,8 +25,7 @@ function computeArgsHash(args: Record<string, unknown> | undefined): number {
     return djb2Hash(JSON.stringify(args));
   } catch (e) {
     // JSON.stringify 失败（循环引用等），降级到 String(args)
-    // eslint-disable-next-line no-console
-    console.warn(`[loop-detection] computeArgsHash: JSON.stringify 失败，降级处理: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('computeArgsHash: JSON.stringify 失败，降级处理', { error: e instanceof Error ? e.message : String(e) });
     return djb2Hash(String(args));
   }
 }

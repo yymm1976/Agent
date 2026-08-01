@@ -21,7 +21,7 @@ import * as path from 'node:path';
 export type UsageEvent =
   | { kind: 'tool'; name: string }
   | { kind: 'command'; name: string }
-  | { kind: 'pack'; name: string; action: 'load' | 'skip' }
+  | { kind: 'pack'; name: string; action: 'discover' | 'load' | 'skip' }
   | { kind: 'config_gate'; name: string; enabled: boolean };
 
 // ============================================================

@@ -129,11 +129,7 @@ export const RouterConfigSchema = z.object({
 });
 export type RouterConfig = z.infer<typeof RouterConfigSchema>;
 
-// --- 推理模式配置（Phase 42） ---
-// fast（快速）/ balanced（均衡）/ accurate（精准）
-// 状态：已定义未消费 — router.ts 注释明确说明未接入后端
-export const ReasoningModeSchema = z.enum(['fast', 'balanced', 'accurate']).default('balanced');
-export type ReasoningMode = z.infer<typeof ReasoningModeSchema>;
+// TD-13 已清理：ReasoningModeSchema 已删除（未接入后端，UI 入口已移除，2026-07-29）
 
 // --- MCP 配置 ---
 

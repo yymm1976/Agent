@@ -64,7 +64,7 @@ function makeConfig(overrides?: Partial<AppConfig['optimization']>): AppConfig {
     },
     channels: { entries: [], port: 9800, maxResponseLength: 2000, requestTimeout: 60000 },
     autonomy: { defaultMode: 'semi', autoApprovePatterns: [], confirmTimeout: 30000 },
-    sounds: { enabled: true, completion: 'default', error: 'warning', approval: 'notification' },
+    // TD-13 已清理：sounds 字段已删除
     updates: { checkOnStartup: true, autoUpdate: false },
     mcp: { servers: [], autoConnect: true },
     prompts: { projectOverrides: true, cacheTtlSeconds: 0 },

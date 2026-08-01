@@ -195,33 +195,26 @@
     @apply bg-rd-background text-rd-text antialiased;
   }
 
-  /* 滚动条：细半透明条（用户痛点 #7：原完全隐藏导致看不到滚动位置） */
+  /* 工作台保持可滚动，但不显示浏览器滚动条。 */
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    display: none;
+    width: 0;
+    height: 0;
   }
 
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  ::-webkit-scrollbar-thumb {
-    background: rgba(128, 128, 128, 0.3);
-    border-radius: 3px;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    background: rgba(128, 128, 128, 0.5);
-  }
-
-  /* Firefox：细半透明条 */
   * {
-    scrollbar-width: thin;
-    scrollbar-color: rgba(128, 128, 128, 0.3) transparent;
+    scrollbar-width: none;
   }
 }
 
 @layer components {
+  /* 主工作台使用色块与留白分层，不使用亮色描边。 */
+  .rd-workbench {
+    --rd-border: transparent;
+    --rd-border-hover: transparent;
+    --rd-tree-line: transparent;
+  }
+
   /* === 按钮 === */
   /* 移除 focus ring：避免 Tab 键在按钮上显示选中框（用户明确不希望 Tab 键产生选中效果） */
   .btn-primary {

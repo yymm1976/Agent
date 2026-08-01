@@ -11,6 +11,7 @@
 // 4. 严禁死代码：PlanState 由 plan-tool 消费，plan-tool 由 app-init 注册到 ToolRegistry
 
 import type { VirtualFS } from './virtual-fs.js';
+import { logger } from '../../utils/logger.js';
 
 /**
  * 单个 plan 步骤
@@ -64,8 +65,7 @@ export class PlanState {
       return JSON.parse(raw) as Plan;
     } catch (e) {
       // fail-open：JSON 解析失败返回 null，不抛异常
-      // eslint-disable-next-line no-console
-      console.warn(`[plan-state] JSON 解析失败，返回 null: ${e instanceof Error ? e.message : String(e)}`);
+      logger.warn('JSON 解析失败，返回 null', { error: e instanceof Error ? e.message : String(e) });
       return null;
     }
   }

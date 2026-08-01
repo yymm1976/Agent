@@ -48,6 +48,7 @@ export function useSkillsManager({ activeTab, setAlertMsg, setConfirmDialog }: U
       const list = await window.routedev.skill.list();
       setSkills(list);
     } catch (err) {
+      // eslint-disable-next-line no-console -- 渲染层日志，logger 为 Node-only 模块无法在浏览器导入
       console.error('加载 Skill 列表失败:', err);
     } finally {
       setSkillLoading(false);

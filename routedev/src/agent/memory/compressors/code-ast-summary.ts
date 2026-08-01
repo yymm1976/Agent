@@ -15,6 +15,7 @@
 import { parseFile } from '../../../code-map/parser.js';
 import { extractFromTree } from '../../../code-map/extractor.js';
 import { getLanguageByPath } from '../../../code-map/parser.js';
+import { logger } from '../../../utils/logger.js';
 
 /** AST 摘要结果 */
 export interface CodeAstSummaryResult {
@@ -64,8 +65,7 @@ export async function summarizeCode(content: string, filePath?: string): Promise
       }
     } catch (e) {
       // AST 提取失败（WASM 未加载 / 解析异常），降级到正则
-      // eslint-disable-next-line no-console
-      console.warn(`[code-ast-summary] AST 提取失败，降级到正则: ${e instanceof Error ? e.message : String(e)}`);
+      logger.warn('AST 提取失败，降级到正则', { error: e instanceof Error ? e.message : String(e) });
     }
   }
 

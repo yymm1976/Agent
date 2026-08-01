@@ -1,12 +1,14 @@
 // tests/integration/phase41-42.test.ts
 // Phase 41-42 集成测试
-// 验证代码地图升级 / 策略引擎 / 市场 / 推理模式的端到端流程
+// 验证代码地图升级 / 策略引擎 / 市场的端到端流程
 //
 // 测试策略：
-//   1. Schema 配置验证（codeMap/market/policies/reasoningMode）——直接测试 schema.ts
+//   1. Schema 配置验证（codeMap/market/policies）——直接测试 schema.ts
 //   2. Defaults 默认值验证——直接测试 defaults.ts
 //   3. PolicyEngine / SkillMdParser / ExecutionStateGraph / VariablePool——动态 import，
 //      模块不存在时 skip（fail-open，与其他子代理并行开发）
+//
+// TD-13 已清理：reasoningMode 测试已删除（配置未接入后端，2026-07-29）
 
 import { describe, it, expect } from 'vitest';
 import { AppConfigSchema, type AppConfig } from '../../src/config/schema.js';
@@ -47,8 +49,10 @@ describe('Phase 41-42 Integration - Schema 配置', () => {
   });
 
   it('reasoningMode：默认 balanced', () => {
+    // TD-13 已清理：reasoningMode 配置已删除
+    // 保留测试占位以验证删除后 schema 仍可正常 parse
     const config = AppConfigSchema.parse({}) as AppConfig;
-    expect(config.reasoningMode).toBe('balanced');
+    expect(config).toBeDefined();
   });
 
   it('codeMap 配置段：自定义值正确解析', () => {
@@ -73,9 +77,10 @@ describe('Phase 41-42 Integration - Schema 配置', () => {
   });
 
   it('reasoningMode 三种模式配置正确', () => {
+    // TD-13 已清理：reasoningMode 配置已删除，旧 config 中的字段会被 Zod strip
     for (const mode of ['fast', 'balanced', 'accurate'] as const) {
       const config = AppConfigSchema.parse({ reasoningMode: mode }) as AppConfig;
-      expect(config.reasoningMode).toBe(mode);
+      expect(config).toBeDefined();
     }
   });
 
@@ -101,14 +106,14 @@ describe('Phase 41-42 Integration - Schema 配置', () => {
 // 2. Defaults 默认值验证
 // ============================================================
 describe('Phase 41-42 Integration - Defaults 默认值', () => {
-  it('DEFAULT_CONFIG 包含 codeMap/market/policies/reasoningMode', () => {
+  it('DEFAULT_CONFIG 包含 codeMap/market/policies', () => {
     expect(DEFAULT_CONFIG.codeMap).toBeDefined();
     expect(DEFAULT_CONFIG.codeMap.engine).toBe('tree-sitter');
     expect(DEFAULT_CONFIG.market).toBeDefined();
     expect(DEFAULT_CONFIG.market.enabled).toBe(true);
     expect(DEFAULT_CONFIG.policies).toBeDefined();
     expect(DEFAULT_CONFIG.policies.intentGuard).toBe(true);
-    expect(DEFAULT_CONFIG.reasoningMode).toBe('balanced');
+    // TD-13 已清理：reasoningMode 默认值已删除
   });
 });
 

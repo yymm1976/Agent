@@ -17,6 +17,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
 import type { LLMMessage } from '../router/types.js';
+import { logger } from '../utils/logger.js';
 
 // DatabaseSync 类型降级：node:sqlite 在 Electron 中可能不可用（实验性模块被排除）
 // 定义本地接口描述用到的 DatabaseSync 方法，避免静态 import 导致 ERR_UNKNOWN_BUILTIN_MODULE
@@ -39,8 +40,7 @@ try {
   DatabaseSyncCtor = mod.DatabaseSync;
 } catch (e) {
   // fail-open：node:sqlite 不可用（Electron 未包含实验性模块），降级为内存 Map
-  // eslint-disable-next-line no-console
-  console.warn(`[CCRCache] node:sqlite 不可用，降级为内存 Map: ${e instanceof Error ? e.message : String(e)}`);
+  logger.warn('node:sqlite 不可用，降级为内存 Map', { error: e instanceof Error ? e.message : String(e) });
 }
 
 export interface CCRRecord {
@@ -73,8 +73,7 @@ function deserializeMessages(s: string): LLMMessage[] | null {
     return JSON.parse(s) as LLMMessage[];
   } catch (e) {
     // JSON 解析失败：缓存内容损坏，降级返回 null（调用方视为未命中缓存）
-    // eslint-disable-next-line no-console
-    console.warn(`[CCRCache] 反序列化消息失败，降级返回 null: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('反序列化消息失败，降级返回 null', { error: e instanceof Error ? e.message : String(e) });
     return null;
   }
 }
@@ -139,8 +138,7 @@ export class CCRCache {
       // 不抛错，避免阻断主流程；后续 store/retrieve 走内存路径
       this.db = null;
       // 静默降级（CCR 失败只影响可逆压缩取回能力，不影响主流程）
-      // eslint-disable-next-line no-console
-      console.warn(`[CCRCache] SQLite init failed, falling back to in-memory: ${String(err)}`);
+      logger.warn('SQLite init failed, falling back to in-memory', { error: String(err) });
     }
     this.initialized = true;
   }
@@ -188,8 +186,7 @@ export class CCRCache {
         }
       } catch (err) {
         // SQLite 写入失败，降级到内存 Map
-        // eslint-disable-next-line no-console
-        console.warn(`[CCRCache] SQLite store failed, using in-memory: ${String(err)}`);
+        logger.warn('SQLite store failed, using in-memory', { error: String(err) });
         this.fallbackStore(record);
       }
     } else {
@@ -222,8 +219,7 @@ export class CCRCache {
         if (!row) return null;
         return deserializeMessages(row.original_content);
       } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn(`[CCRCache] SQLite retrieve failed, falling back: ${String(err)}`);
+        logger.warn('SQLite retrieve failed, falling back', { error: String(err) });
       }
     }
     // 内存降级路径
@@ -244,8 +240,7 @@ export class CCRCache {
         if (!row) return null;
         return deserializeMessages(row.original_content);
       } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn(`[CCRCache] SQLite retrieveByPrefix failed, falling back: ${String(err)}`);
+        logger.warn('SQLite retrieveByPrefix failed, falling back', { error: String(err) });
       }
     }
     // 内存降级路径
@@ -273,8 +268,7 @@ export class CCRCache {
         this.db.close();
       } catch (e) {
         // 关闭失败不影响主流程，记录警告
-        // eslint-disable-next-line no-console
-        console.warn(`[CCRCache] 关闭数据库连接失败: ${e instanceof Error ? e.message : String(e)}`);
+        logger.warn('关闭数据库连接失败', { error: e instanceof Error ? e.message : String(e) });
       }
       this.db = null;
     }

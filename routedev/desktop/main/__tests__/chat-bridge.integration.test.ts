@@ -18,7 +18,10 @@
 //   - mock 所有外部依赖（LLM 客户端、agentLoop、classifier、modelRouter 等）
 //   - 通过 vi.fn / vi.spyOn 验证调用次数、参数与 ctx 内部状态
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, type Mock } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { ChatBridge } from '../bridges/chat-bridge.js';
 import { EngineContext } from '../bridges/engine-context.js';
 import { AppConfigSchema, type AppConfig } from '../../../src/config/schema.js';
@@ -77,6 +80,13 @@ interface SetupOptions {
   agentLoopRun?: MockAgentLoopRun;
   classifierThrow?: Error;
   clientReady?: boolean;
+  cwd?: string;
+  promptRender?: Mock;
+  registryTools?: Array<{
+    definition: { name: string; description: string };
+  }>;
+  /** TD-21：completionGate.verify 的 mock 注入（消除后注入 `as any`） */
+  completionGateVerify?: Mock;
 }
 
 /** 完整测试装配：创建 ctx + mock deps + ChatBridge 实例 */
@@ -85,14 +95,14 @@ function setupBridge(options: SetupOptions = {}) {
   const onStream = vi.fn();
   const onToolConfirmRequest = vi.fn();
   const ctx = new EngineContext(config, {
-    cwd: '/test',
+    cwd: options.cwd ?? '/test',
     onStream,
     onToolConfirmRequest,
   });
 
   // mock deps：覆盖 sendChat 调用链涉及的所有子系统
   ctx.deps = {
-    registry: { list: () => [] },
+    registry: { list: () => options.registryTools ?? [] },
     agentLoop: {
       run: options.agentLoopRun ?? defaultAgentLoopRun(),
       followUp: vi.fn(),
@@ -117,7 +127,7 @@ function setupBridge(options: SetupOptions = {}) {
       // Phase 70：模型切换时同步更新 AutoCompactGuardian 的 contextWindow
       updateAutoCompactContextWindow: vi.fn(),
     },
-    prompts: { render: async () => '' },
+    prompts: { render: options.promptRender ?? (async () => '') },
     trace: {
       startSession: vi.fn(),
       summarizeTrajectory: () => ({ stepCount: 0, keyDecisions: [], fileChanges: [] }),
@@ -127,6 +137,10 @@ function setupBridge(options: SetupOptions = {}) {
     audit: { logTrajectorySummary: vi.fn() },
     visionAssistant: undefined,
     dispose: vi.fn(),
+    // TD-21：completionGate 通过选项注入，消除后注入 `as any`
+    completionGate: options.completionGateVerify
+      ? { verify: options.completionGateVerify }
+      : undefined,
   } as unknown as AppDependencies;
 
   // mock classifier
@@ -166,6 +180,55 @@ function setupBridge(options: SetupOptions = {}) {
 // ============================================================
 
 describe('ChatBridge 集成测试 (Phase 79 Task 1)', () => {
+
+  describe('系统提示词上下文', () => {
+    it('注入项目指令、项目记忆与工具用途，而不只传工具名称', async () => {
+      const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'chat-prompt-context-'));
+      const promptRender = vi.fn(async () => '');
+      await fs.writeFile(
+        path.join(cwd, 'AGENTS.md'),
+        '# Project Instructions\nUse the indexed graph before editing.',
+        'utf-8',
+      );
+      await fs.mkdir(path.join(cwd, '.routedev'), { recursive: true });
+      await fs.writeFile(
+        path.join(cwd, '.routedev', 'rules.md'),
+        '# Runtime Rules\nAlways run the focused test.',
+        'utf-8',
+      );
+
+      const { bridge } = setupBridge({
+        cwd,
+        promptRender,
+        registryTools: [
+          {
+            definition: {
+              name: 'file_read',
+              description: 'Read a precise range from a text file.',
+            },
+          },
+        ],
+      });
+
+      try {
+        await bridge.sendChat('检查当前项目');
+        await bridge.flushOnShutdown();
+
+        expect(promptRender).toHaveBeenCalledWith(
+          'main.system',
+          expect.objectContaining({
+            availableTools: expect.stringContaining(
+              '- file_read: Read a precise range from a text file.',
+            ),
+            projectRules: expect.stringContaining('Use the indexed graph before editing.'),
+            projectMemory: expect.stringContaining('Always run the focused test.'),
+          }),
+        );
+      } finally {
+        await fs.rm(cwd, { recursive: true, force: true });
+      }
+    });
+  });
 
   // ============================================================
   // 1. 并发 requestId 处理
@@ -849,9 +912,8 @@ describe('ChatBridge 集成测试 (Phase 79 Task 1)', () => {
         agentLoopRun: async function* () {
           yield* fileWriteEvents() as any;
         },
+        completionGateVerify: verifySpy,
       });
-      // 注入 gate mock（setupBridge 默认未设置 completionGate）
-      (ctx.deps as any).completionGate = { verify: verifySpy };
 
       await bridge.sendChat('请帮我测试这个修改');
 
@@ -871,8 +933,8 @@ describe('ChatBridge 集成测试 (Phase 79 Task 1)', () => {
         agentLoopRun: async function* () {
           yield* fileWriteEvents() as any;
         },
+        completionGateVerify: verifySpy,
       });
-      (ctx.deps as any).completionGate = { verify: verifySpy };
 
       await bridge.sendChat('请帮我检查构建');
 
@@ -886,8 +948,8 @@ describe('ChatBridge 集成测试 (Phase 79 Task 1)', () => {
         agentLoopRun: async function* () {
           yield* fileWriteEvents() as any;
         },
+        completionGateVerify: verifySpy,
       });
-      (ctx.deps as any).completionGate = { verify: verifySpy };
 
       await bridge.sendChat('请帮我验证');
 
@@ -916,8 +978,8 @@ describe('ChatBridge 集成测试 (Phase 79 Task 1)', () => {
           };
           yield { type: 'done', content: '', usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } };
         },
+        completionGateVerify: verifySpy,
       });
-      (ctx.deps as any).completionGate = { verify: verifySpy };
 
       await bridge.sendChat('请帮我测试');
 
@@ -955,5 +1017,190 @@ describe('ChatBridge 集成测试 (Phase 79 Task 1)', () => {
         expect(onToolConfirmRequest).not.toHaveBeenCalled();
       },
     );
+  });
+
+  // ============================================================
+  // Phase 91 Task 5：requestId 隔离回归测试（G-004）
+  // 补充现有测试未覆盖的精准中断隔离、Map 覆盖语义、批量清理生命周期
+  // ============================================================
+  describe('Phase 91 Task 5：requestId 隔离回归测试', () => {
+    it('stopGeneration(req-A) 仅中断 A，req-B 的 controller 保持未 aborted 且仍在 Map 中', () => {
+      const { bridge, ctx } = setupBridge();
+      const cA = new AbortController();
+      const cB = new AbortController();
+      ctx.setAbortController('req-isolate-A', cA);
+      ctx.setAbortController('req-isolate-B', cB);
+
+      bridge.stopGeneration('req-isolate-A');
+
+      // A 已中断并清理
+      expect(cA.signal.aborted).toBe(true);
+      expect(ctx.getAbortController('req-isolate-A')).toBeUndefined();
+      // B 未受影响：仍未 aborted 且仍在 Map 中
+      expect(cB.signal.aborted).toBe(false);
+      expect(ctx.getAbortController('req-isolate-B')).toBe(cB);
+    });
+
+    it('stopGeneration(req-A) 仅清理 A 的 pendingConfirm，B 的 pendingConfirm 不受影响', () => {
+      const { bridge, ctx } = setupBridge();
+      const resolveA = vi.fn();
+      const resolveB = vi.fn();
+      ctx.setPendingConfirm('req-confirm-A', { resolve: resolveA, toolName: 'file_read' });
+      ctx.setPendingConfirm('req-confirm-B', { resolve: resolveB, toolName: 'shell_exec' });
+      ctx.setAbortController('req-confirm-A', new AbortController());
+
+      bridge.stopGeneration('req-confirm-A');
+
+      // A 的 pendingConfirm 已 resolve({approved:false}) 并清理
+      expect(resolveA).toHaveBeenCalledWith({ approved: false });
+      expect(ctx.getPendingConfirm('req-confirm-A')).toBeUndefined();
+      // B 的 pendingConfirm 未受影响
+      expect(resolveB).not.toHaveBeenCalled();
+      expect(ctx.getPendingConfirm('req-confirm-B')).toBeDefined();
+    });
+
+    it('requestId 复用：同 requestId set 新 controller 时旧 controller 不被自动 abort（Map 覆盖语义）', () => {
+      const { ctx } = setupBridge();
+      const oldController = new AbortController();
+      const newController = new AbortController();
+
+      ctx.setAbortController('reuse-req', oldController);
+      expect(ctx.getAbortController('reuse-req')).toBe(oldController);
+
+      // 同 requestId 再次 set——Map 覆盖旧引用，但不主动 abort 旧 controller
+      ctx.setAbortController('reuse-req', newController);
+      expect(ctx.getAbortController('reuse-req')).toBe(newController);
+      // 旧 controller 信号未被触发（Map 仅覆盖引用，不 abort）
+      expect(oldController.signal.aborted).toBe(false);
+      expect(newController.signal.aborted).toBe(false);
+
+      // clear 也仅移除 Map 中的引用，不 abort
+      ctx.clearAbortController('reuse-req');
+      expect(ctx.getAbortController('reuse-req')).toBeUndefined();
+      expect(newController.signal.aborted).toBe(false);
+    });
+
+    it('clearAllAbortControllers 逐个 abort 后清空 Map（引擎热重载/destroy 等价路径）', () => {
+      const { ctx } = setupBridge();
+      const c1 = new AbortController();
+      const c2 = new AbortController();
+      const c3 = new AbortController();
+      ctx.setAbortController('hot-reload-1', c1);
+      ctx.setAbortController('hot-reload-2', c2);
+      ctx.setAbortController('hot-reload-3', c3);
+
+      // 模拟引擎热重载：clearAllAbortControllers 逐个 abort 并清空 Map
+      ctx.clearAllAbortControllers();
+
+      expect(c1.signal.aborted).toBe(true);
+      expect(c2.signal.aborted).toBe(true);
+      expect(c3.signal.aborted).toBe(true);
+      expect(ctx.getAbortController('hot-reload-1')).toBeUndefined();
+      expect(ctx.getAbortController('hot-reload-2')).toBeUndefined();
+      expect(ctx.getAbortController('hot-reload-3')).toBeUndefined();
+    });
+
+    it('AbortController 完整生命周期：set → get → abort → clear', () => {
+      const { ctx } = setupBridge();
+      const controller = new AbortController();
+
+      // 1. set：注册到 Map
+      ctx.setAbortController('lifecycle-1', controller);
+      expect(ctx.getAbortController('lifecycle-1')).toBe(controller);
+
+      // 2. get：可读回同一引用
+      const retrieved = ctx.getAbortController('lifecycle-1');
+      expect(retrieved).toBe(controller);
+      expect(retrieved?.signal.aborted).toBe(false);
+
+      // 3. abort：外部触发中断信号
+      controller.abort();
+      expect(ctx.getAbortController('lifecycle-1')?.signal.aborted).toBe(true);
+
+      // 4. clear：从 Map 移除（不二次 abort，仅 delete）
+      ctx.clearAbortController('lifecycle-1');
+      expect(ctx.getAbortController('lifecycle-1')).toBeUndefined();
+    });
+
+    it('并发 3 请求各自独立的 requestId（互不重叠）', async () => {
+      const { bridge, ctx } = setupBridge();
+      const setSpy = vi.spyOn(ctx, 'setAbortController');
+
+      await Promise.all([
+        bridge.sendChat('并发1'),
+        bridge.sendChat('并发2'),
+        bridge.sendChat('并发3'),
+      ]);
+
+      // 3 次 setAbortController 调用的 requestId 互不相同
+      const requestIds = setSpy.mock.calls.map(c => c[0]);
+      expect(requestIds).toHaveLength(3);
+      const uniqueIds = new Set(requestIds);
+      expect(uniqueIds.size).toBe(3);
+      // 完成后全部清理
+      for (const id of requestIds) {
+        expect(ctx.getAbortController(id)).toBeUndefined();
+      }
+    });
+  });
+
+  describe('主动上下文压缩', () => {
+    it('强制执行增强压缩、替换引擎历史并立即持久化', async () => {
+      const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'chat-manual-compact-'));
+      try {
+        const { bridge, ctx } = setupBridge({ cwd });
+        const history = Array.from({ length: 8 }, (_, index) => ({
+          role: index % 2 === 0 ? 'user' : 'assistant',
+          content: `第 ${index + 1} 条消息 ${'上下文'.repeat(80)}`,
+        }));
+        const compressed = [history[0], history[6], history[7]];
+        const compressEnhanced = ctx.deps!.contextManager.compressEnhanced as unknown as Mock;
+        compressEnhanced.mockResolvedValueOnce({
+          compressed,
+          result: {
+            tokensBefore: 960,
+            tokensAfter: 280,
+            messagesCompressed: 5,
+            offloadedOutputs: 1,
+            timestamp: Date.now(),
+          },
+        });
+        const persistenceSave = vi.spyOn((bridge as any).persistence, 'save');
+        bridge.syncConversationHistory(history as any);
+
+        const result = await bridge.executeCommand('/compact') as {
+          ok: boolean;
+          message: string;
+          compaction?: {
+            tokensBefore: number;
+            tokensAfter: number;
+            messagesCompressed: number;
+            offloadedOutputs: number;
+          };
+        };
+
+        expect(compressEnhanced).toHaveBeenCalledWith(
+          history,
+          expect.objectContaining({
+            force: true,
+            preserveLast: 4,
+            offloadDir: path.join(cwd, '.routedev', 'offloaded'),
+          }),
+        );
+        expect(ctx.conversationHistory).toEqual(compressed);
+        expect(persistenceSave).toHaveBeenLastCalledWith(compressed);
+        expect(result).toMatchObject({
+          ok: true,
+          compaction: {
+            tokensBefore: 960,
+            tokensAfter: 280,
+            messagesCompressed: 5,
+            offloadedOutputs: 1,
+          },
+        });
+      } finally {
+        await fs.rm(cwd, { recursive: true, force: true });
+      }
+    });
   });
 });

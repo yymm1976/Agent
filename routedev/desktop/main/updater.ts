@@ -5,6 +5,7 @@ import { app, dialog } from 'electron';
 // electron-updater 是 CommonJS 模块，ESM 环境下必须用默认导入再解构
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
+import { logger } from '../../src/utils/logger.js';
 
 /**
  * 初始化自动更新
@@ -14,7 +15,7 @@ const { autoUpdater } = electronUpdater;
 export function initUpdater(): void {
   // 开发环境或缺少更新配置文件时跳过（避免 ENOENT 错误）
   if (!app.isPackaged || process.env.NODE_ENV === 'development') {
-    console.log('[updater] 开发环境，跳过自动更新检查');
+    logger.info('[updater] 开发环境，跳过自动更新检查');
     return;
   }
 
@@ -31,7 +32,7 @@ export function initUpdater(): void {
     //   未签名状态下，autoDownload=false 是唯一的缓解措施（强制用户确认）
 
     autoUpdater.on('update-available', (info) => {
-      console.log('[updater] 发现新版本:', info.version);
+      logger.info('[updater] 发现新版本', { version: info.version });
       // V3-003：autoDownload=false 时，主动询问用户是否下载
       dialog.showMessageBox({
         type: 'info',
@@ -44,25 +45,25 @@ export function initUpdater(): void {
       }).then((result) => {
         if (result.response === 0) {
           autoUpdater.downloadUpdate().catch((err: unknown) => {
-            console.error('[updater] 下载更新失败:', err);
+            logger.error('[updater] 下载更新失败', { error: err instanceof Error ? err.message : String(err) });
           });
         }
       }).catch((err: unknown) => {
-        console.error('[updater] 显示更新对话框失败:', err);
+        logger.error('[updater] 显示更新对话框失败', { error: err instanceof Error ? err.message : String(err) });
       });
     });
 
     autoUpdater.on('update-not-available', (info) => {
-      console.log('[updater] 当前为最新版本:', info.version);
+      logger.info('[updater] 当前为最新版本', { version: info.version });
     });
 
     autoUpdater.on('update-downloaded', async (info) => {
       // V3-025：签名校验（electron-updater 在下载阶段已校验 code signature，
       // 此处记录审计日志；若未配置签名，应在 release 前补齐）
-      console.log('[updater] 更新已下载完成，校验签名中', { version: info.version });
+      logger.info('[updater] 更新已下载完成，校验签名中', { version: info.version });
       // electron-updater 默认会校验 publisher name（若 signing 已配置）
       // 此处仅记录审计日志，无法额外校验签名链（需 CA 证书）
-      console.log('[updater] 更新签名校验通过，询问用户是否立即安装');
+      logger.info('[updater] 更新签名校验通过，询问用户是否立即安装');
       const result = await dialog.showMessageBox({
         type: 'info',
         title: 'RouteDev 更新',
@@ -79,14 +80,14 @@ export function initUpdater(): void {
 
     autoUpdater.on('error', (err) => {
       // V3-025：审计日志（记录更新失败详情，便于安全审计）
-      console.error('[updater] 自动更新出错（审计日志）:', err);
+      logger.error('[updater] 自动更新出错（审计日志）', { error: err instanceof Error ? err.message : String(err) });
     });
 
     // 启动检查（异步，失败由 error 事件捕获）
     autoUpdater.checkForUpdatesAndNotify().catch((err: unknown) => {
-      console.error('[updater] 检查更新失败:', err);
+      logger.error('[updater] 检查更新失败', { error: err instanceof Error ? err.message : String(err) });
     });
   } catch (err) {
-    console.warn('[updater] 初始化失败，跳过自动更新:', err);
+    logger.warn('[updater] 初始化失败，跳过自动更新', { error: err instanceof Error ? err.message : String(err) });
   }
 }

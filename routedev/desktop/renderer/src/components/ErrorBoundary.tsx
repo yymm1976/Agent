@@ -24,7 +24,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    // 仅打印到控制台便于调试，不向上抛
+    // eslint-disable-next-line no-console -- 渲染层异常边界，logger 为 Node-only 模块无法在浏览器导入
     console.error('[ErrorBoundary] 捕获渲染异常:', error, info);
   }
 

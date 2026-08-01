@@ -2,10 +2,10 @@
 // 右侧任务监控面板：从消息流中实时提取待办项、产物、上下文
 // 数据来源：当前对话的 ChatMessage[]
 
-import { useMemo, useState, memo } from 'react';
+import { useEffect, useMemo, useState, memo } from 'react';
 import {
-  PanelRightClose, CheckSquare, FileOutput, Database, Check, Loader2,
-  ChevronLeft, ChevronRight, Archive,
+  PanelRightClose, CheckSquare, Database, Check, Loader2,
+  ChevronDown, ChevronRight, Archive, AlertCircle,
 } from 'lucide-react';
 import { useRouteDevStore, type ChatMessage } from '../store/useRouteDevStore.js';
 
@@ -55,11 +55,13 @@ function extractTodos(messages: ChatMessage[]): { id?: string; text: string; don
  * 从 todo_write 工具调用历史中重建当前待办列表
  * 按 add/update/delete/clear 操作顺序回放，得到最终状态
  */
-function rebuildTodosFromToolCalls(messages: ChatMessage[]): { id?: string; text: string; done: boolean; status?: string; priority?: string }[] {
+export function rebuildTodosFromToolCalls(messages: ChatMessage[]): { id?: string; text: string; done: boolean; status?: string; priority?: string }[] {
   const items: Map<string, { id: string; text: string; done: boolean; status: string; priority: string }> = new Map();
 
   for (const msg of messages) {
     if (msg.role !== 'system' || msg.toolName !== 'todo_write' || !msg.toolArgs) continue;
+    // 失败调用只用于错误展示，不能改变右栏状态，更不能用请求参数制造幽灵待办。
+    if (msg.toolStatus === 'error') continue;
     const args = msg.toolArgs;
     const action = args.action as string;
     const result = msg.toolResult as Record<string, unknown> | undefined;
@@ -126,11 +128,13 @@ function rebuildTodosFromToolCalls(messages: ChatMessage[]): { id?: string; text
         break;
       }
       case 'update': {
-        const id = args.id as string;
         const metadata = result?.metadata as Record<string, unknown> | undefined;
         const item = metadata?.item as Record<string, unknown> | undefined;
         if (item) {
-          const existing = items.get(id);
+          const id = String(item.id);
+          const requestedId = String(args.id ?? '');
+          const existing = items.get(id) ?? items.get(requestedId);
+          if (requestedId && requestedId !== id) items.delete(requestedId);
           const content = (item.content as string) || existing?.text || (args.content as string) || id;
           const status = (item.status as string) || (args.status as string) || existing?.status || 'pending';
           const priority = (item.priority as string) || (args.priority as string) || existing?.priority || 'medium';
@@ -141,21 +145,12 @@ function rebuildTodosFromToolCalls(messages: ChatMessage[]): { id?: string; text
             priority,
             done: status === 'completed',
           });
-        } else if (args.status || args.content || args.priority) {
-          const existing = items.get(id);
-          const status = (args.status as string) || existing?.status || 'pending';
-          items.set(id, {
-            id,
-            text: (args.content as string) || existing?.text || id,
-            status,
-            priority: (args.priority as string) || existing?.priority || 'medium',
-            done: status === 'completed',
-          });
         }
         break;
       }
       case 'delete': {
-        const id = args.id as string;
+        const metadata = result?.metadata as Record<string, unknown> | undefined;
+        const id = String(metadata?.deletedId ?? args.id ?? '');
         items.delete(id);
         break;
       }
@@ -267,268 +262,239 @@ function computeContextTokens(messages: ChatMessage[]): ContextTokenBreakdown {
   return { system, user, assistant, toolCalls, toolResults, total };
 }
 
-type TabKey = 'tasks' | 'context' | 'artifacts';
-
 export const TaskMonitorPanel = memo(function TaskMonitorPanel({ messages, onCollapse, maxTokens = 128000 }: TaskMonitorPanelProps) {
-  const [activeTab, setActiveTab] = useState<TabKey>('tasks');
+  const [completedExpanded, setCompletedExpanded] = useState(false);
 
-  // 从消息流中提取各类数据
   const data = useMemo(() => {
     const todos = extractTodos(messages);
-    const artifacts = extractArtifacts(messages);
     const context = computeContextTokens(messages);
-    return { todos, artifacts, context };
+    return { todos, context };
   }, [messages]);
 
-  const tabs: { key: TabKey; label: string; icon: React.ReactNode; count: number }[] = [
-    { key: 'tasks', label: '任务', icon: <CheckSquare size={14} />, count: data.todos.length },
-    { key: 'artifacts', label: '产物', icon: <FileOutput size={14} />, count: data.artifacts.length },
-    { key: 'context', label: '上下文', icon: <Database size={14} />, count: 0 },
-  ];
-  const activeIndex = tabs.findIndex((tab) => tab.key === activeTab);
-  const active = tabs[activeIndex] ?? tabs[0];
-  const goPrev = () => setActiveTab(tabs[(activeIndex - 1 + tabs.length) % tabs.length].key);
-  const goNext = () => setActiveTab(tabs[(activeIndex + 1) % tabs.length].key);
+  const activeTodos = data.todos
+    .filter((todo) => !todo.done)
+    .sort((a, b) => Number(b.status === 'in_progress') - Number(a.status === 'in_progress'));
+  const completedTodos = data.todos.filter((todo) => todo.done);
+
+  const renderTodo = (
+    todo: { id?: string; text: string; done: boolean; status?: string },
+    idx: number,
+  ) => {
+    const isInProgress = todo.status === 'in_progress';
+    return (
+      <li
+        key={todo.id ?? idx}
+        className={[
+          'flex min-h-9 items-start gap-2.5 rounded-md px-1.5 py-2 text-sm leading-5',
+          isInProgress ? 'bg-rd-primary/5 text-rd-text' : 'text-rd-textMuted',
+        ].join(' ')}
+      >
+        <span
+          className={[
+            'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-all',
+            todo.done
+              ? 'border-rd-success text-rd-success'
+              : isInProgress
+                ? 'border-rd-primary text-rd-primary'
+                : 'border-rd-textSubtle',
+          ].join(' ')}
+        >
+          {todo.done && <Check size={11} strokeWidth={2.5} />}
+          {isInProgress && !todo.done && <Loader2 size={10} className="animate-spin" />}
+        </span>
+        <span className={todo.done ? 'flex-1 text-rd-textSubtle line-through' : 'flex-1'}>
+          {todo.text}
+        </span>
+      </li>
+    );
+  };
 
   return (
     <div className="flex h-full flex-col bg-rd-surface">
-      {/* 顶部标题栏 */}
-      <div className="flex h-12 shrink-0 items-center gap-2 px-3">
-        <span className="flex-1 text-sm font-semibold text-rd-text">任务监控</span>
+      <div className="flex h-12 shrink-0 items-center gap-2 px-4">
+        <CheckSquare size={15} className="text-rd-textMuted" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
+            <span className="text-sm font-semibold text-rd-text">任务摘要</span>
+            {data.todos.length > 0 && (
+              <span className="text-xs tabular-nums text-rd-textSubtle">
+                {completedTodos.length}/{data.todos.length}
+              </span>
+            )}
+          </div>
+        </div>
         <button
+          type="button"
           onClick={onCollapse}
-          title="缩进面板"
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-rd-textMuted transition hover:bg-rd-surfaceHover hover:text-rd-primary"
+          title="收起任务摘要"
+          aria-label="收起任务摘要"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-rd-textMuted transition hover:bg-rd-surfaceHover hover:text-rd-text"
         >
           <PanelRightClose size={16} />
         </button>
       </div>
 
-      {/* 左右切换栏：单页展示，避免右栏拥挤 */}
-      <div className="mx-3 mb-3 flex shrink-0 items-center gap-2 rounded-xl border border-rd-border bg-rd-surfaceHover p-1.5">
-        <button
-          type="button"
-          onClick={goPrev}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-rd-textMuted transition hover:bg-rd-surface hover:text-rd-text"
-          title="上一页"
-        >
-          <ChevronLeft size={14} />
-        </button>
-        <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-xs font-medium text-rd-text">
-          <span className="text-rd-primary">{active.icon}</span>
-          <span>{active.label}</span>
-          {active.count > 0 && (
-            <span className="rounded-full bg-rd-primary px-1.5 py-0.5 text-[10px] text-white">
-              {active.count}
-            </span>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={goNext}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-rd-textMuted transition hover:bg-rd-surface hover:text-rd-text"
-          title="下一页"
-        >
-          <ChevronRight size={14} />
-        </button>
-      </div>
-
-      {/* 内容区 */}
-      <div className="flex-1 overflow-hidden px-3 pb-3">
-        <div className="h-full overflow-y-auto pr-1">
-        {/* 任务 Tab：只展示本次对话的待办；产物在专属页展示。 */}
-        {activeTab === 'tasks' && (
-          <div className="space-y-3">
-            <div className="rounded-xl border border-rd-border bg-rd-surfaceHover p-2.5">
-              <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-rd-text">
-                <CheckSquare size={13} className="text-rd-primary" />
-                <span>待办</span>
-                {data.todos.length > 0 && (
-                  <span className="ml-auto text-rd-textSubtle">
-                    {data.todos.filter((t) => t.done).length}/{data.todos.length}
-                  </span>
-                )}
-              </div>
-              {data.todos.length === 0 ? (
-                <p className="py-1.5 text-xs text-rd-textSubtle">暂无待办项</p>
-              ) : (
-                <ul className="space-y-1.5">
-                  {data.todos.map((todo, idx) => {
-                    const isInProgress = todo.status === 'in_progress';
-                    return (
-                      <li
-                        key={todo.id ?? idx}
-                        className={[
-                          'flex items-center gap-2 rounded-lg p-2 text-xs transition-all',
-                          todo.done
-                            ? 'bg-rd-surface text-rd-text'
-                            : isInProgress
-                              ? 'border border-rd-primary bg-rd-surfaceHighlight text-rd-text'
-                              : 'bg-rd-surface text-rd-textMuted',
-                        ].join(' ')}
-                      >
-                        <span
-                          className={[
-                            'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border-[1.5px] transition-all',
-                            todo.done
-                              ? 'border-rd-success bg-rd-success text-white'
-                              : isInProgress
-                                ? 'border-rd-warning bg-rd-warning/20 text-rd-warning'
-                                : 'border-rd-textSubtle',
-                          ].join(' ')}
-                        >
-                          {todo.done && <Check size={10} strokeWidth={3} />}
-                          {isInProgress && !todo.done && (
-                            <Loader2 size={10} className="animate-spin" />
-                          )}
-                        </span>
-                        <span className="flex-1 break-words">{todo.text}</span>
-                      </li>
-                    );
-                  })}
-                </ul>
+      <div className="flex min-h-0 flex-1 flex-col px-3 pb-3">
+        <section className="min-h-0 flex-1 overflow-y-auto px-1 pt-2" aria-label="当前对话待办">
+          <div className="mb-2 flex items-center justify-between px-1.5 text-xs text-rd-textSubtle">
+            <span>待办</span>
+            {activeTodos.length > 0 && <span>{activeTodos.length} 项进行中</span>}
+          </div>
+          {data.todos.length === 0 ? (
+            <p className="px-1.5 py-2 text-xs leading-5 text-rd-textSubtle">
+              本轮尚未生成待办，模型开始规划后会在这里更新。
+            </p>
+          ) : (
+            <>
+              {activeTodos.length > 0 && <ul>{activeTodos.map(renderTodo)}</ul>}
+              {completedTodos.length > 0 && (
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setCompletedExpanded((value) => !value)}
+                    className="flex h-8 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-xs text-rd-textSubtle transition hover:bg-rd-surfaceHover hover:text-rd-text"
+                  >
+                    {completedExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                    <span>已完成 {completedTodos.length} 项</span>
+                  </button>
+                  {completedExpanded && <ul>{completedTodos.map(renderTodo)}</ul>}
+                </div>
               )}
-            </div>
-          </div>
-        )}
+            </>
+          )}
+        </section>
 
-        {/* 上下文 Tab */}
-        {activeTab === 'context' && (
-          <ContextTab breakdown={data.context} maxTokens={maxTokens} />
-        )}
-
-        {/* 产物 Tab */}
-        {activeTab === 'artifacts' && (
-          <div>
-            {data.artifacts.length === 0 ? (
-              <p className="py-2 text-xs text-rd-textSubtle">暂无产物</p>
-            ) : (
-              <ul className="space-y-1">
-                {data.artifacts.map((path, idx) => (
-                  <li key={idx} className="flex items-center gap-2 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => window.routedev.fs.openFolder(path)}
-                      className="min-w-0 flex-1 truncate rounded px-1 py-0.5 text-left font-mono text-rd-textMuted transition hover:bg-rd-surfaceHover hover:text-rd-primary"
-                      title={path}
-                    >
-                      {path}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-        </div>
+        <ContextSection
+          breakdown={data.context}
+          maxTokens={maxTokens}
+          messageCount={messages.length}
+        />
       </div>
     </div>
   );
 });
 
-// 上下文 Tab：水平堆叠柱状图 + 图例
-function ContextTab({ breakdown, maxTokens }: {
+interface CompactCommandResult {
+  ok?: boolean;
+  message?: string;
+  compaction?: {
+    tokensBefore: number;
+    tokensAfter: number;
+    messagesCompressed: number;
+    offloadedOutputs: number;
+  };
+}
+
+function ContextSection({ breakdown, maxTokens, messageCount }: {
   breakdown: ContextTokenBreakdown;
   maxTokens: number;
+  messageCount: number;
 }) {
   const { system, user, assistant, toolCalls, toolResults, total } = breakdown;
-  // 从 store 取处理状态和发送方法，用于手动压缩按钮
   const isProcessing = useRouteDevStore((s) => s.isProcessing);
-  const sendMessage = useRouteDevStore((s) => s.sendMessage);
-  // chat-bridge 要求 conversationHistory.length > 4 才压缩，前端按消息数对齐
-  const tooShort = total === 0 || total < 2000;
-  const disabled = isProcessing || tooShort;
+  const [status, setStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
+  const [feedback, setFeedback] = useState('');
+  const [effectiveTotal, setEffectiveTotal] = useState<number | null>(null);
 
-  if (total === 0) {
-    return <p className="py-2 text-xs text-rd-textSubtle">暂无上下文数据</p>;
-  }
+  useEffect(() => {
+    setEffectiveTotal(null);
+    setStatus('idle');
+    setFeedback('');
+  }, [total, messageCount]);
 
   const segments = [
-    { label: '系统提示词', tokens: system, color: 'bg-blue-500' },
-    { label: '用户消息', tokens: user, color: 'bg-green-500' },
-    { label: '助手消息', tokens: assistant, color: 'bg-purple-500' },
-    { label: '工具调用', tokens: toolCalls, color: 'bg-orange-500' },
-    { label: '工具结果', tokens: toolResults, color: 'bg-pink-500' },
-  ];
+    { label: '系统', tokens: system, color: 'bg-blue-400' },
+    { label: '用户', tokens: user, color: 'bg-emerald-400' },
+    { label: '模型', tokens: assistant, color: 'bg-violet-400' },
+    { label: '工具', tokens: toolCalls + toolResults, color: 'bg-amber-400' },
+  ].filter((segment) => segment.tokens > 0);
 
-  const totalPercent = maxTokens > 0 ? Math.min((total / maxTokens) * 100, 100) : 0;
+  const displayedTotal = effectiveTotal ?? total;
+  const totalPercent = maxTokens > 0 ? Math.min((displayedTotal / maxTokens) * 100, 100) : 0;
   const formatNum = (n: number) => n.toLocaleString();
+  const tooShort = messageCount <= 4;
+  const disabled = isProcessing || status === 'running' || tooShort;
+
+  const handleCompact = async () => {
+    setStatus('running');
+    setFeedback('正在压缩上下文…');
+    try {
+      const result = await window.routedev.command.execute({ text: '/compact' }) as CompactCommandResult;
+      if (!result?.ok) throw new Error(result?.message || '上下文压缩失败');
+      if (result.compaction) setEffectiveTotal(result.compaction.tokensAfter);
+      setStatus('success');
+      setFeedback(result.message || '上下文压缩完成');
+    } catch (error) {
+      setStatus('error');
+      setFeedback(error instanceof Error ? error.message : String(error));
+    }
+  };
 
   return (
-    <div className="space-y-3">
-      {/* 柱状图区 */}
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between text-xs">
-          <span className="font-medium text-rd-text">上下文占用</span>
-          <span className="font-medium text-rd-text">{Math.round(totalPercent)}%</span>
-        </div>
-        {/* 水平堆叠柱状图 */}
-        <div className="flex h-3 w-full overflow-hidden rounded-full bg-rd-border/30">
-          {segments.map((seg, idx) => {
-            const pct = maxTokens > 0 ? (seg.tokens / maxTokens) * 100 : 0;
-            if (pct <= 0) return null;
-            return (
-              <div
-                key={idx}
-                className={`${seg.color} h-full`}
-                style={{ width: `${Math.min(pct, 100)}%` }}
-              />
-            );
-          })}
-        </div>
-        <div className="text-xs text-rd-textSubtle">
-          模型限制: {(maxTokens / 1000).toFixed(0)}K tokens
-        </div>
+    <section className="mt-3 shrink-0 rounded-lg bg-rd-background/45 p-3" aria-label="上下文占用">
+      <div className="flex items-center gap-2">
+        <Database size={14} className="text-rd-textMuted" />
+        <span className="flex-1 text-xs font-semibold text-rd-text">上下文</span>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => void handleCompact()}
+          title={tooShort ? '至少需要 5 条对话消息才能压缩' : '立即压缩当前模型上下文'}
+          className={[
+            'flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition',
+            disabled
+              ? 'cursor-not-allowed text-rd-textSubtle'
+              : 'bg-rd-surfaceHover text-rd-text hover:bg-rd-surfaceHighlight',
+          ].join(' ')}
+        >
+          {status === 'running' ? <Loader2 size={13} className="animate-spin" /> : <Archive size={13} />}
+          <span>{status === 'running' ? '压缩中' : '压缩'}</span>
+        </button>
       </div>
 
-      {/* 图例列表 */}
-      <div className="space-y-1.5 text-xs">
-        {segments.map((seg, idx) => {
-          const pct = maxTokens > 0 ? (seg.tokens / maxTokens) * 100 : 0;
-          return (
-            <div key={idx} className="flex items-center gap-2">
-              <span className={`h-2.5 w-2.5 shrink-0 rounded-sm ${seg.color}`} />
-              <span className="flex-1 text-rd-textMuted">{seg.label}</span>
-              <span className="font-medium text-rd-text">{formatNum(seg.tokens)}</span>
-              <span className="w-10 text-right text-rd-textSubtle">{pct.toFixed(0)}%</span>
-            </div>
-          );
-        })}
-      </div>
+      {total === 0 ? (
+        <p className="mt-3 text-xs text-rd-textSubtle">对话开始后显示上下文占用。</p>
+      ) : (
+        <>
+          <div className="mt-3 flex items-end justify-between">
+            <span className="text-xl font-semibold tabular-nums text-rd-text">{Math.round(totalPercent)}%</span>
+            <span className="text-xs tabular-nums text-rd-textSubtle">
+              {formatNum(displayedTotal)} / {formatNum(maxTokens)}
+            </span>
+          </div>
+          <div className="mt-2 flex h-1.5 w-full overflow-hidden rounded-full bg-rd-surfaceHover">
+            {segments.map((segment) => {
+              const share = total > 0 ? segment.tokens / total : 0;
+              const width = maxTokens > 0 ? Math.min((share * displayedTotal / maxTokens) * 100, 100) : 0;
+              return <span key={segment.label} className={segment.color} style={{ width: `${width}%` }} />;
+            })}
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5">
+            {segments.map((segment) => (
+              <div key={segment.label} className="flex min-w-0 items-center gap-1.5 text-[11px] text-rd-textSubtle">
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${segment.color}`} />
+                <span className="truncate">{segment.label}</span>
+                <span className="ml-auto tabular-nums">{formatNum(segment.tokens)}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
-      {/* 总计 */}
-      <div className="space-y-1.5 border-t border-rd-border/30 pt-2 text-xs">
-        <div className="flex items-center justify-between">
-          <span className="text-rd-textMuted">总计</span>
-          <span className="font-medium text-rd-text">{formatNum(total)}</span>
+      {feedback && (
+        <div
+          className={[
+            'mt-2 flex items-start gap-1.5 text-[11px] leading-4',
+            status === 'error' ? 'text-rd-danger' : 'text-rd-textSubtle',
+          ].join(' ')}
+          role={status === 'error' ? 'alert' : 'status'}
+          aria-live="polite"
+        >
+          {status === 'error' && <AlertCircle size={12} className="mt-0.5 shrink-0" />}
+          <span>{feedback}</span>
         </div>
-        <div className="flex items-center justify-between">
-          <span className="text-rd-textMuted">模型限制</span>
-          <span className="font-medium text-rd-text">{formatNum(maxTokens)}</span>
-        </div>
-      </div>
-
-      {/* 手动压缩按钮：复用 /compact 斜杠命令路径，主进程走 compressEnhanced 两轮压缩 */}
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => sendMessage('/compact')}
-        title={tooShort ? '对话过短，无需压缩' : '压缩上下文（offload 大输出 + 摘要老消息）'}
-        className={[
-          'flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-medium transition',
-          disabled
-            ? 'cursor-not-allowed bg-rd-surfaceHover/50 text-rd-textSubtle'
-            : 'bg-rd-primary text-white hover:bg-rd-primary/90',
-        ].join(' ')}
-      >
-        {isProcessing ? (
-          <Loader2 size={14} className="animate-spin" />
-        ) : (
-          <Archive size={14} />
-        )}
-        <span>压缩上下文</span>
-      </button>
-    </div>
+      )}
+    </section>
   );
 }
 

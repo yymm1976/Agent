@@ -80,6 +80,7 @@ export function getAppDataDir(): string {
   // 全部不可写时退回第一个候选（让后续写入抛出明确错误）
   const dir = chosen ?? candidates[0];
   if (chosen && chosen !== candidates[0]) {
+    // eslint-disable-next-line no-console -- logger.ts 依赖本模块，导入 logger 会形成循环依赖
     console.warn(`[paths] 首选数据目录不可写，已回落到: ${dir}`);
   }
   cachedAppDataDir = dir;

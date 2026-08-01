@@ -8,6 +8,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '../types.js';
 import { walkDir, isIgnoredPath, matchGlob, checkPathBoundary } from './search-utils.js';
+import { logger } from '../../utils/logger.js';
 
 export class CodeSearchTool implements ITool {
   readonly definition: ToolDefinition = {
@@ -192,7 +193,7 @@ export class CodeSearchTool implements ITool {
           }
         }
       } catch (e) {
-        console.warn(`[code-search] 读取文件失败: ${searchPath}: ${e instanceof Error ? e.message : String(e)}`);
+        logger.warn('读取文件失败', { filePath: searchPath, error: e instanceof Error ? e.message : String(e) });
       }
       return results.join('\n');
     }
@@ -222,8 +223,7 @@ export class CodeSearchTool implements ITool {
         }
       } catch (e) {
         // skip（文件读取或正则匹配失败，跳过该文件）
-        // eslint-disable-next-line no-console
-        console.warn(`[code-search] 读取文件失败，跳过 ${relativePath}: ${e instanceof Error ? e.message : String(e)}`);
+        logger.warn('读取文件失败，跳过', { filePath: relativePath, error: e instanceof Error ? e.message : String(e) });
       }
     }
 

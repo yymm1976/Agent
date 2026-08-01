@@ -7,6 +7,7 @@ import type { AppConfig } from '../../shared/config-types.js';
 import { createLLMClient } from '../../../src/router/llm/index.js';
 // G-006 修复：test_connection 增加 SSRF 防护
 import { checkSSRF } from '../../../src/tools/security-enhanced.js';
+import { logger } from '../../../src/utils/logger.js';
 import type { EngineContext } from './engine-context.js';
 
 /**
@@ -30,7 +31,7 @@ export class ConfigBridge {
    */
   updateConfig(newConfig: AppConfig): void {
     this.ctx.config = newConfig;
-    console.log(`[Engine] 配置已更新，自主度: ${newConfig.autonomy.defaultMode}`);
+    logger.info('[Engine] 配置已更新', { autonomyMode: newConfig.autonomy.defaultMode });
   }
 
   /**
@@ -128,8 +129,8 @@ export class ConfigBridge {
         timeoutMs: 15000,
       });
       // Phase 96 P1-4：调用 BaseLLMClient.getModels() 拉取远端模型列表
-      // 失败时 getModels 内部已 fail-open 返回空数组，此处不再二次捕获
-      const models = await client.getModels();
+      // getModels 为可选能力（ILLMClient.getModels?），不支持时直接返回空数组
+      const models = client.getModels ? await client.getModels() : [];
       return { success: true, models };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
