@@ -55,7 +55,7 @@ export function exportArtifact(db: DB, repoRoot: string): { ratio: number; artif
     const escapedPath = tmpVacuumPath.replace(/'/g, "''");
     db.exec(`VACUUM INTO '${escapedPath}'`);
   } catch (e) {
-    console.warn(`[artifact] VACUUM INTO 失败，跳过导出: ${(e as Error).message}`);
+    logger.warn('[artifact] VACUUM INTO 失败，跳过导出', { error: (e as Error).message });
     try { fs.unlinkSync(tmpVacuumPath); } catch (e) { logger.debug('cleanup failed', { error: e instanceof Error ? e.message : String(e) }); }
     return null;
   }
@@ -73,7 +73,7 @@ export function exportArtifact(db: DB, repoRoot: string): { ratio: number; artif
     fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
     fs.writeFileSync(artifactPath, compressed);
   } catch (e) {
-    console.warn(`[artifact] zstd 压缩写入失败: ${(e as Error).message}`);
+    logger.warn('[artifact] zstd 压缩写入失败', { error: (e as Error).message });
     try { fs.unlinkSync(tmpVacuumPath); } catch (e) { logger.debug('cleanup failed', { error: e instanceof Error ? e.message : String(e) }); }
     return null;
   }
@@ -84,13 +84,17 @@ export function exportArtifact(db: DB, repoRoot: string): { ratio: number; artif
   // 4. 压缩比校验
   const ratio = compressedSize > 0 ? originalSize / compressedSize : 0;
   if (ratio < MIN_COMPRESSION_RATIO) {
-    console.warn(
-      `[artifact] 压缩比 ${ratio.toFixed(2)}:1 低于门槛 ${MIN_COMPRESSION_RATIO}:1，artifact 已生成但建议检查 DB 内容是否过于稀疏`,
-    );
+    logger.warn('[artifact] 压缩比低于门槛，artifact 已生成但建议检查 DB 内容是否过于稀疏', {
+      ratio: `${ratio.toFixed(2)}:1`,
+      threshold: `${MIN_COMPRESSION_RATIO}:1`,
+    });
   } else {
-    console.log(
-      `[artifact] 导出成功: ${artifactPath} (${originalSize} -> ${compressedSize} bytes, ratio ${ratio.toFixed(2)}:1)`,
-    );
+    logger.info('[artifact] 导出成功', {
+      artifactPath,
+      originalSize,
+      compressedSize,
+      ratio: ratio.toFixed(2),
+    });
   }
 
   return { ratio, artifactPath };
@@ -118,8 +122,7 @@ export async function importArtifact(repoRoot: string): Promise<string | null> {
     artifactBuf = await fsp.readFile(artifactPath);
   } catch (e) {
     // artifact 不存在（ENOENT）或读取失败：调用方走 fullIndex
-    // eslint-disable-next-line no-console
-    console.warn(`[artifact] 读取 artifact 失败，将走全量索引: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('[artifact] 读取 artifact 失败，将走全量索引', { error: e instanceof Error ? e.message : String(e) });
     return null;
   }
 
@@ -130,11 +133,11 @@ export async function importArtifact(repoRoot: string): Promise<string | null> {
     await fsp.mkdir(path.dirname(dbPath), { recursive: true });
     await fsp.writeFile(dbPath, decompressed);
   } catch (e) {
-    console.warn(`[artifact] zstd 解压失败，将走全量索引: ${(e as Error).message}`);
+    logger.warn('[artifact] zstd 解压失败，将走全量索引', { error: (e as Error).message });
     return null;
   }
 
-  console.log(`[artifact] 导入成功: ${artifactPath} -> ${dbPath} (${artifactBuf.length} -> 文件系统)`);
+  logger.info('[artifact] 导入成功', { artifactPath, dbPath, artifactSize: artifactBuf.length });
   return dbPath;
 }
 
@@ -149,8 +152,7 @@ export async function artifactExists(repoRoot: string): Promise<boolean> {
     return true;
   } catch (e) {
     // access 失败（通常是 ENOENT），返回 false
-    // eslint-disable-next-line no-console
-    console.warn(`[artifact] artifactExists: 检测失败: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('[artifact] artifactExists: 检测失败', { error: e instanceof Error ? e.message : String(e) });
     return false;
   }
 }

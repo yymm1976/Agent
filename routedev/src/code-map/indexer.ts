@@ -41,6 +41,7 @@ import {
 import { computePageRank } from './ranker.js';
 import { exportArtifact, importArtifact, artifactExists } from './artifact.js';
 import { buildFileImportMap, buildExportedSymbolMap, resolveRefByImport } from './type-resolver.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * 自上次 PageRank 计算以来发生 content hash 变化的文件路径集合
@@ -149,8 +150,7 @@ export async function indexFile(
     content = await fsp.readFile(filePath, 'utf-8');
   } catch (e) {
     // 读取失败（ENOENT 或权限问题），跳过该文件
-    // eslint-disable-next-line no-console
-    console.warn(`[indexer] 读取文件失败，跳过 ${filePath}: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('[indexer] 读取文件失败，跳过文件', { filePath, error: e instanceof Error ? e.message : String(e) });
     return { nodeCount: 0, edgeCount: 0, skipped: true };
   }
 

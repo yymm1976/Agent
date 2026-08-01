@@ -14,6 +14,7 @@ import {
   LANGUAGE_WASM_MAP,
   type Language,
 } from './schema.js';
+import { logger } from '../utils/logger.js';
 
 // ---- web-tree-sitter 最小类型声明（兼容 0.22.x / 0.26.x 运行时） ----
 interface TSPoint {
@@ -81,8 +82,7 @@ function findWtsModulePath(): string | null {
     return req.resolve('web-tree-sitter');
   } catch (e) {
     // web-tree-sitter 模块未安装或路径解析失败
-    // eslint-disable-next-line no-console
-    console.warn(`[parser] 解析 web-tree-sitter 模块路径失败: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('[parser] 解析 web-tree-sitter 模块路径失败', { error: e instanceof Error ? e.message : String(e) });
     return null;
   }
 }
@@ -131,8 +131,7 @@ export async function loadLanguage(lang: Language): Promise<TSLanguage | null> {
     wasmPath = req.resolve(`tree-sitter-wasms/out/${wasmName}`);
   } catch (e) {
     // WASM 文件路径解析失败（包未安装）
-    // eslint-disable-next-line no-console
-    console.warn(`[parser] 解析 ${wasmName} WASM 路径失败: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('[parser] 解析 WASM 路径失败', { wasmName, error: e instanceof Error ? e.message : String(e) });
     return null;
   }
   if (!fs.existsSync(wasmPath)) return null;
@@ -173,8 +172,7 @@ export async function parseFile(filePath: string, content: string): Promise<Pars
     return { tree, language: lang };
   } catch (e) {
     // 解析失败（语法错误或解析器内部错误），返回 null 让调用方降级处理
-    // eslint-disable-next-line no-console
-    console.warn(`[parser] 解析文件失败 ${filePath}: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('[parser] 解析文件失败', { filePath, error: e instanceof Error ? e.message : String(e) });
     return null;
   } finally {
     parser.delete();

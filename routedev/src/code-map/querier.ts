@@ -30,6 +30,7 @@ import { computePersonalizedPageRank, incrementalPageRank, type RankedEdge } fro
 import { getSeedNodeIdsFromCache } from './git-integration.js';
 import { getChangedFilesSinceRank, clearChangedFilesSinceRank } from './indexer.js';
 import { buildFtsMatchQuery } from './camel-split-tokenizer.js';
+import { logger } from '../utils/logger.js';
 
 /** 查询选项 */
 interface QueryOptions {
@@ -708,8 +709,7 @@ function rankByPPROrScore(
         .slice(0, maxResults);
     } catch (e) {
       // PPR 计算失败：fail-open 回退原 rankScore 排序
-      // eslint-disable-next-line no-console
-      console.warn(`[querier] PPR 计算失败，回退原 rankScore 排序: ${e instanceof Error ? e.message : String(e)}`);
+      logger.warn('PPR 计算失败，回退原 rankScore 排序', { error: e instanceof Error ? e.message : String(e) });
       return filtered
         .sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0))
         .slice(0, maxResults);
@@ -743,8 +743,7 @@ async function readSnippetAsync(
     };
   } catch (e) {
     // 文件读取失败（ENOENT 或权限问题），返回 null
-    // eslint-disable-next-line no-console
-    console.warn(`[querier] readSnippetAsync: 读取文件失败 ${fullPath}: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('readSnippetAsync: 读取文件失败', { filePath: fullPath, error: e instanceof Error ? e.message : String(e) });
     return null;
   }
 }
@@ -771,8 +770,7 @@ async function readSnippet(
     };
   } catch (e) {
     // 文件读取失败（ENOENT 或权限问题），返回 null
-    // eslint-disable-next-line no-console
-    console.warn(`[querier] readSnippet: 读取文件失败 ${fullPath}: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('readSnippet: 读取文件失败', { filePath: fullPath, error: e instanceof Error ? e.message : String(e) });
     return null;
   }
 }

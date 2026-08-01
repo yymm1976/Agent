@@ -4,6 +4,7 @@
 
 import simpleGit from 'simple-git';
 import type { DB } from './database.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * 内存级种子缓存：按 DB 实例隔离
@@ -67,8 +68,7 @@ export function getSeedNodeIdsFromCache(db: DB): Set<string> {
     return gitSeedCache.get(db) ?? new Set();
   } catch (e) {
     // 缓存读取失败（WeakMap 异常极少见），返回空集合
-    // eslint-disable-next-line no-console
-    console.warn(`[git-integration] getSeedNodeIdsFromCache: 读取缓存失败: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('[git-integration] getSeedNodeIdsFromCache: 读取缓存失败', { error: e instanceof Error ? e.message : String(e) });
     return new Set();
   }
 }
@@ -84,7 +84,6 @@ export async function refreshGitSeedCache(
     gitSeedCache.set(db, seeds);
   } catch (e) {
     // fail-open：缓存更新失败时保留旧值或空集合，不抛错
-    // eslint-disable-next-line no-console
-    console.warn(`[git-integration] refreshGitSeedCache: 缓存更新失败: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('[git-integration] refreshGitSeedCache: 缓存更新失败', { error: e instanceof Error ? e.message : String(e) });
   }
 }

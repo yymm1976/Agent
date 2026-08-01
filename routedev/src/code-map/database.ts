@@ -12,6 +12,8 @@ import type {
 } from './schema.js';
 import type { PendingReference } from './extractor.js';
 import { camelSplitToFTS } from './camel-split-tokenizer.js';
+import { parseFileRow, parseJsonArrayField } from '../config/schemas/database.js';
+import { logger } from '../utils/logger.js';
 
 // DatabaseSync 类型降级：node:sqlite 在 Electron 中可能不可用（实验性模块被排除）
 // 定义本地接口描述用到的 DatabaseSync 方法，避免静态 import 导致 ERR_UNKNOWN_BUILTIN_MODULE
@@ -33,10 +35,9 @@ try {
   const mod = requireFromESM('node:sqlite') as { DatabaseSync: DatabaseSyncConstructor };
   DatabaseSyncCtor = mod.DatabaseSync;
 } catch (e) {
-  // fail-open：node:sqlite 不可用（Electron 未包含实验性模块），降级为 null
-  // eslint-disable-next-line no-console
-  console.warn(`[database] node:sqlite 不可用，降级为 null: ${e instanceof Error ? e.message : String(e)}`);
-}
+    // fail-open：node:sqlite 不可用（Electron 未包含实验性模块），降级为 null
+    logger.warn('[database] node:sqlite 不可用，降级为 null', { error: e instanceof Error ? e.message : String(e) });
+  }
 
 export type DB = DatabaseSyncLike;
 
@@ -132,8 +133,7 @@ export function initDatabase(dbPath: string): DB {
     db.exec('ALTER TABLE unresolved_refs ADD COLUMN import_source TEXT');
   } catch (e) {
     // 列已存在或表不存在，忽略（旧 DB 兼容的正常路径）
-    // eslint-disable-next-line no-console
-    console.warn(`[database] ALTER TABLE 添加 import_source 列失败（可能已存在）: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('[database] ALTER TABLE 添加 import_source 列失败（可能已存在）', { error: e instanceof Error ? e.message : String(e) });
   }
 
   return db;
@@ -430,7 +430,7 @@ export function batchUpdateRankScores(db: DB, scores: Map<string, number>): void
 
 /** 按路径获取文件 */
 function getFileByPath(db: DB, filePath: string): CodeMapFile | null {
-  const row = db.prepare('SELECT * FROM files WHERE path = ?').get(filePath) as Record<string, unknown> | undefined;
+  const row = parseFileRow(db.prepare('SELECT * FROM files WHERE path = ?').get(filePath));
   return row ? rowToFile(row) : null;
 }
 
@@ -560,10 +560,10 @@ function rowToNode(row: Record<string, unknown>): CodeMapNode {
     static: Boolean(row.static),
     visibility: (row.visibility as string) ?? undefined,
     className: (row.class_name as string) ?? undefined,
-    extends: row.extends ? JSON.parse(row.extends as string) : undefined,
-    implements: row.implements ? JSON.parse(row.implements as string) : undefined,
+    extends: row.extends ? parseJsonArrayField(JSON.parse(row.extends as string)) : undefined,
+    implements: row.implements ? parseJsonArrayField(JSON.parse(row.implements as string)) : undefined,
     sourceModule: (row.source_module as string) ?? undefined,
-    importedNames: row.imported_names ? JSON.parse(row.imported_names as string) : undefined,
+    importedNames: row.imported_names ? parseJsonArrayField(JSON.parse(row.imported_names as string)) : undefined,
     rankScore: (row.rank_score as number) ?? 0,
   };
 }
