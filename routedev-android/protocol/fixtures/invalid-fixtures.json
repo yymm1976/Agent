@@ -1,0 +1,102 @@
+[
+  {
+    "name": "event missing sequence",
+    "schema": "event",
+    "value": {
+      "protocolVersion": 1,
+      "eventId": "event-invalid",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": "session-1",
+      "turnId": null,
+      "type": "assistant.text.delta",
+      "payload": { "text": "x" }
+    }
+  },
+  {
+    "name": "event invalid type",
+    "schema": "event",
+    "value": {
+      "protocolVersion": 1,
+      "eventId": "event-invalid",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": "session-1",
+      "turnId": null,
+      "sequence": 1,
+      "type": "assistant.fake.thinking",
+      "payload": {}
+    }
+  },
+  {
+    "name": "event invalid timestamp",
+    "schema": "event",
+    "value": {
+      "protocolVersion": 1,
+      "eventId": "event-invalid",
+      "timestamp": "not-a-time",
+      "sessionId": "session-1",
+      "turnId": null,
+      "sequence": 1,
+      "type": "assistant.text.delta",
+      "payload": { "text": "x" }
+    }
+  },
+  {
+    "name": "request invalid autonomy enum",
+    "schema": "sendMessageRequest",
+    "value": {
+      "text": "hello",
+      "autonomyMode": "unsafe",
+      "clientMessageId": "message-1"
+    }
+  },
+  {
+    "name": "request missing idempotency key",
+    "schema": "sendMessageRequest",
+    "value": { "text": "hello" }
+  },
+  {
+    "name": "pair invalid scope",
+    "schema": "pairRequest",
+    "value": {
+      "pairingId": "pair-1",
+      "secret": "0123456789abcdef0123456789abcdef",
+      "deviceId": "android-1",
+      "deviceName": "Pixel",
+      "requestedScopes": ["admin:all"],
+      "protocolVersion": 1
+    }
+  },
+  {
+    "name": "response unknown error code",
+    "schema": "errorResponse",
+    "value": {
+      "protocolVersion": 1,
+      "requestId": "req-error",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": null,
+      "turnId": null,
+      "ok": false,
+      "payload": null,
+      "error": { "code": "UNKNOWN", "message": "x", "retryable": false }
+    }
+  },
+  {
+    "name": "response wrong protocol",
+    "schema": "healthResponse",
+    "value": {
+      "protocolVersion": 2,
+      "requestId": "req-health",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": null,
+      "turnId": null,
+      "ok": true,
+      "payload": {
+        "status": "ok",
+        "desktopName": "RouteDev",
+        "gatewayVersion": "1",
+        "engineAvailable": true
+      },
+      "error": null
+    }
+  }
+]

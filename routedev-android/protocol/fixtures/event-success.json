@@ -1,0 +1,243 @@
+[
+  {
+    "protocolVersion": 1,
+    "eventId": "event-1",
+    "timestamp": "2026-07-30T08:00:01.000Z",
+    "sessionId": "session-1",
+    "turnId": null,
+    "sequence": 1,
+    "type": "session.created",
+    "payload": {
+      "session": {
+        "sessionId": "session-1",
+        "title": "远程任务",
+        "status": "idle",
+        "createdAt": "2026-07-30T08:00:00.000Z",
+        "updatedAt": "2026-07-30T08:00:01.000Z",
+        "activeTurnId": null,
+        "lastSequence": 1
+      }
+    },
+    "futureEnvelopeField": "ignored"
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-2",
+    "timestamp": "2026-07-30T08:00:02.000Z",
+    "sessionId": "session-1",
+    "turnId": null,
+    "sequence": 2,
+    "type": "session.updated",
+    "payload": {
+      "session": {
+        "sessionId": "session-1",
+        "title": "远程任务",
+        "status": "running",
+        "createdAt": "2026-07-30T08:00:00.000Z",
+        "updatedAt": "2026-07-30T08:00:02.000Z",
+        "activeTurnId": "turn-1",
+        "lastSequence": 2
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-3",
+    "timestamp": "2026-07-30T08:00:03.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-1",
+    "sequence": 3,
+    "type": "turn.started",
+    "payload": { "clientMessageId": "message-1", "userText": "检查项目" }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-4",
+    "timestamp": "2026-07-30T08:00:04.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-1",
+    "sequence": 4,
+    "type": "assistant.reasoning.delta",
+    "payload": { "text": "先定位入口。", "visibility": "provider_returned", "futurePayloadField": 1 }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-5",
+    "timestamp": "2026-07-30T08:00:05.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-1",
+    "sequence": 5,
+    "type": "assistant.progress",
+    "payload": { "text": "正在读取项目入口与约定。", "source": "model" }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-6",
+    "timestamp": "2026-07-30T08:00:06.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-1",
+    "sequence": 6,
+    "type": "tool.started",
+    "payload": { "toolCallId": "tool-1", "toolName": "file_read", "argsSummary": "AGENTS.md" }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-7",
+    "timestamp": "2026-07-30T08:00:07.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-1",
+    "sequence": 7,
+    "type": "tool.output.delta",
+    "payload": { "toolCallId": "tool-1", "delta": "项目约定…" }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-8",
+    "timestamp": "2026-07-30T08:00:08.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-1",
+    "sequence": 8,
+    "type": "tool.completed",
+    "payload": { "toolCallId": "tool-1", "outputSummary": "读取 120 行" }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-9",
+    "timestamp": "2026-07-30T08:00:09.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-1",
+    "sequence": 9,
+    "type": "assistant.reasoning.delta",
+    "payload": { "text": "入口已确认，接下来检查实现。", "visibility": "provider_returned" }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-10",
+    "timestamp": "2026-07-30T08:00:10.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-1",
+    "sequence": 10,
+    "type": "todo.replaced",
+    "payload": {
+      "items": [
+        { "id": "todo-1", "content": "检查入口", "status": "completed", "priority": "high" },
+        { "id": "todo-2", "content": "运行测试", "status": "in_progress" }
+      ]
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-11",
+    "timestamp": "2026-07-30T08:00:11.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-1",
+    "sequence": 11,
+    "type": "todo.updated",
+    "payload": { "item": { "id": "todo-2", "content": "运行测试", "status": "completed" } }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-12",
+    "timestamp": "2026-07-30T08:00:12.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-1",
+    "sequence": 12,
+    "type": "approval.required",
+    "payload": {
+      "approval": {
+        "approvalId": "approval-1",
+        "toolName": "shell_exec",
+        "summary": "运行项目测试",
+        "expiresAt": "2026-07-30T08:05:12.000Z",
+        "canResolveRemotely": true
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-13",
+    "timestamp": "2026-07-30T08:00:13.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-1",
+    "sequence": 13,
+    "type": "approval.resolved",
+    "payload": { "approvalId": "approval-1", "approved": true, "resolvedBy": "android" }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-14",
+    "timestamp": "2026-07-30T08:00:14.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-1",
+    "sequence": 14,
+    "type": "assistant.text.delta",
+    "payload": { "text": "检查完成。" }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-15",
+    "timestamp": "2026-07-30T08:00:15.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-1",
+    "sequence": 15,
+    "type": "turn.completed",
+    "payload": { "finishReason": "stop", "completionStatus": "completed_verified" }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-16",
+    "timestamp": "2026-07-30T08:00:16.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-1",
+    "sequence": 16,
+    "type": "task.completed",
+    "payload": { "summary": "检查与测试均完成" }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-17",
+    "timestamp": "2026-07-30T08:00:17.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-2",
+    "sequence": 17,
+    "type": "tool.failed",
+    "payload": {
+      "toolCallId": "tool-2",
+      "error": { "code": "TOOL_NOT_ALLOWED", "message": "工具不在允许范围", "retryable": false }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-18",
+    "timestamp": "2026-07-30T08:00:18.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-2",
+    "sequence": 18,
+    "type": "turn.failed",
+    "payload": {
+      "error": { "code": "ENGINE_UNAVAILABLE", "message": "引擎不可用", "retryable": true }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-19",
+    "timestamp": "2026-07-30T08:00:19.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-2",
+    "sequence": 19,
+    "type": "task.failed",
+    "payload": {
+      "error": { "code": "ENGINE_UNAVAILABLE", "message": "任务失败", "retryable": true }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-20",
+    "timestamp": "2026-07-30T08:00:20.000Z",
+    "sessionId": "session-1",
+    "turnId": null,
+    "sequence": 20,
+    "type": "connection.notice",
+    "payload": { "level": "warning", "message": "连接即将重试", "code": "RECONNECTING" }
+  }
+]

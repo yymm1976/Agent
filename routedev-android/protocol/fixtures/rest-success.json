@@ -1,0 +1,349 @@
+[
+  {
+    "name": "pair request",
+    "schema": "pairRequest",
+    "value": {
+      "pairingId": "pair-1",
+      "secret": "0123456789abcdef0123456789abcdef",
+      "deviceId": "android-1",
+      "deviceName": "Pixel 9",
+      "requestedScopes": ["sessions:read", "messages:send", "skills:select", "mcp:select"],
+      "protocolVersion": 1,
+      "futureField": "ignored"
+    }
+  },
+  {
+    "name": "create session request",
+    "schema": "createSessionRequest",
+    "value": {
+      "title": "远程检查",
+      "projectId": "project-1",
+      "clientSessionId": "local-session-1",
+      "futureField": true
+    }
+  },
+  {
+    "name": "send message request",
+    "schema": "sendMessageRequest",
+    "value": {
+      "text": "检查当前项目并运行相关测试",
+      "skillIds": ["review"],
+      "mcpServerIds": ["codegraph"],
+      "allowedToolNames": ["file_read", "codegraph_explore"],
+      "autonomyMode": "auto",
+      "clientMessageId": "message-1",
+      "futureField": { "supportedLater": true }
+    }
+  },
+  {
+    "name": "stop request",
+    "schema": "stopTaskRequest",
+    "value": { "turnId": "turn-1", "reason": "用户停止" }
+  },
+  {
+    "name": "approval request",
+    "schema": "approvalResolveRequest",
+    "value": { "approved": true, "payload": { "remember": false } }
+  },
+  {
+    "name": "health response",
+    "schema": "healthResponse",
+    "value": {
+      "protocolVersion": 1,
+      "requestId": "req-health",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": null,
+      "turnId": null,
+      "ok": true,
+      "payload": {
+        "status": "ok",
+        "desktopName": "RouteDev Workstation",
+        "gatewayVersion": "1.0.0",
+        "engineAvailable": true,
+        "futureHealthField": 1
+      },
+      "error": null,
+      "futureEnvelopeField": "ignored"
+    }
+  },
+  {
+    "name": "capabilities response",
+    "schema": "capabilitiesResponse",
+    "value": {
+      "protocolVersion": 1,
+      "requestId": "req-capabilities",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": null,
+      "turnId": null,
+      "ok": true,
+      "payload": {
+        "protocolVersion": 1,
+        "eventTypes": ["session.created", "turn.started", "assistant.text.delta", "task.completed"],
+        "deviceScopes": ["sessions:read", "messages:send"],
+        "supportsImages": true,
+        "maxImageCount": 8,
+        "maxImageBytes": 8388608
+      },
+      "error": null
+    }
+  },
+  {
+    "name": "pair response",
+    "schema": "pairResponse",
+    "value": {
+      "protocolVersion": 1,
+      "requestId": "req-pair",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": null,
+      "turnId": null,
+      "ok": true,
+      "payload": {
+        "deviceId": "android-1",
+        "deviceToken": "f1c2d3e4f5a6b7c8d9e0f1c2d3e4f5a6b7c8d9e0f1",
+        "grantedScopes": ["sessions:read", "messages:send"],
+        "desktopName": "RouteDev Workstation",
+        "baseUrl": "https://routedev.tailnet.ts.net"
+      },
+      "error": null
+    }
+  },
+  {
+    "name": "devices response",
+    "schema": "devicesResponse",
+    "value": {
+      "protocolVersion": 1,
+      "requestId": "req-devices",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": null,
+      "turnId": null,
+      "ok": true,
+      "payload": [{
+        "deviceId": "android-1",
+        "deviceName": "Pixel 9",
+        "scopes": ["sessions:read"],
+        "createdAt": "2026-07-30T08:00:00.000Z",
+        "lastSeenAt": null,
+        "revokedAt": null
+      }],
+      "error": null
+    }
+  },
+  {
+    "name": "sessions response",
+    "schema": "sessionsResponse",
+    "value": {
+      "protocolVersion": 1,
+      "requestId": "req-sessions",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": null,
+      "turnId": null,
+      "ok": true,
+      "payload": [{
+        "sessionId": "session-1",
+        "title": "远程任务",
+        "status": "running",
+        "createdAt": "2026-07-30T08:00:00.000Z",
+        "updatedAt": "2026-07-30T08:01:00.000Z",
+        "activeTurnId": "turn-1",
+        "lastSequence": 3
+      }],
+      "error": null
+    }
+  },
+  {
+    "name": "create session response",
+    "schema": "createSessionResponse",
+    "value": {
+      "protocolVersion": 1,
+      "requestId": "req-create-session",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": "session-1",
+      "turnId": null,
+      "ok": true,
+      "payload": {
+        "clientSessionId": "local-session-1",
+        "session": {
+          "sessionId": "session-1",
+          "title": "远程任务",
+          "status": "idle",
+          "createdAt": "2026-07-30T08:00:00.000Z",
+          "updatedAt": "2026-07-30T08:00:00.000Z",
+          "activeTurnId": null,
+          "lastSequence": 0,
+          "projectId": "project-1",
+          "projectName": "RouteDev",
+          "latestResult": null
+        }
+      },
+      "error": null
+    }
+  },
+  {
+    "name": "session response",
+    "schema": "sessionResponse",
+    "value": {
+      "protocolVersion": 1,
+      "requestId": "req-session",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": "session-1",
+      "turnId": null,
+      "ok": true,
+      "payload": {
+        "sessionId": "session-1",
+        "title": "远程任务",
+        "status": "completed",
+        "createdAt": "2026-07-30T08:00:00.000Z",
+        "updatedAt": "2026-07-30T08:03:00.000Z",
+        "activeTurnId": null,
+        "lastSequence": 19,
+        "projectId": "project-1",
+        "projectName": "RouteDev",
+        "latestResult": "任务完成"
+      },
+      "error": null
+    }
+  },
+  {
+    "name": "timeline response",
+    "schema": "timelineResponse",
+    "value": {
+      "protocolVersion": 1,
+      "requestId": "req-timeline",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": "session-1",
+      "turnId": null,
+      "ok": true,
+      "payload": {
+        "events": [{
+          "protocolVersion": 1,
+          "eventId": "event-1",
+          "timestamp": "2026-07-30T08:00:01.000Z",
+          "sessionId": "session-1",
+          "turnId": null,
+          "sequence": 1,
+          "type": "session.created",
+          "payload": {
+            "session": {
+              "sessionId": "session-1",
+              "title": "远程任务",
+              "status": "idle",
+              "createdAt": "2026-07-30T08:00:00.000Z",
+              "updatedAt": "2026-07-30T08:00:00.000Z",
+              "activeTurnId": null,
+              "lastSequence": 1
+            }
+          }
+        }],
+        "nextSequence": 2
+      },
+      "error": null
+    }
+  },
+  {
+    "name": "send message response",
+    "schema": "sendMessageResponse",
+    "value": {
+      "protocolVersion": 1,
+      "requestId": "req-send",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": "session-1",
+      "turnId": "turn-1",
+      "ok": true,
+      "payload": {
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "clientMessageId": "message-1",
+        "acceptedAt": "2026-07-30T08:00:00.000Z",
+        "duplicate": false
+      },
+      "error": null
+    }
+  },
+  {
+    "name": "empty response",
+    "schema": "emptyResponse",
+    "value": {
+      "protocolVersion": 1,
+      "requestId": "req-empty",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": "session-1",
+      "turnId": "turn-1",
+      "ok": true,
+      "payload": {},
+      "error": null
+    }
+  },
+  {
+    "name": "skills response",
+    "schema": "skillsResponse",
+    "value": {
+      "protocolVersion": 1,
+      "requestId": "req-skills",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": null,
+      "turnId": null,
+      "ok": true,
+      "payload": [{
+        "id": "review",
+        "name": "Review",
+        "description": "审查当前代码改动",
+        "source": "workspace",
+        "enabled": true
+      }],
+      "error": null
+    }
+  },
+  {
+    "name": "mcp response",
+    "schema": "mcpServersResponse",
+    "value": {
+      "protocolVersion": 1,
+      "requestId": "req-mcp",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": null,
+      "turnId": null,
+      "ok": true,
+      "payload": [{ "id": "codegraph", "name": "Codegraph", "connected": true, "toolCount": 5 }],
+      "error": null
+    }
+  },
+  {
+    "name": "tools response",
+    "schema": "toolsResponse",
+    "value": {
+      "protocolVersion": 1,
+      "requestId": "req-tools",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": null,
+      "turnId": null,
+      "ok": true,
+      "payload": [{
+        "name": "file_read",
+        "description": "读取文件",
+        "source": "builtin",
+        "mcpServerId": null,
+        "allowed": true
+      }],
+      "error": null
+    }
+  },
+  {
+    "name": "stable error response",
+    "schema": "errorResponse",
+    "value": {
+      "protocolVersion": 1,
+      "requestId": "req-error",
+      "timestamp": "2026-07-30T08:00:00.000Z",
+      "sessionId": "missing",
+      "turnId": null,
+      "ok": false,
+      "payload": null,
+      "error": {
+        "code": "SESSION_NOT_FOUND",
+        "message": "对话不存在",
+        "retryable": false,
+        "details": { "sessionId": "missing" }
+      }
+    }
+  }
+]

@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">RouteDev Remote</string>
+    <string name="notification_channel_connection">任务连接</string>
+    <string name="notification_channel_result">任务进度</string>
+</resources>
