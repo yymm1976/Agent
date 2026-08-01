@@ -1,0 +1,2 @@
+[permissions]
+allow = ["Bash=cd routedev; Select-String -Path src/agent/loop.ts -Pattern \"^\\s*(async\\s+)?(run|abort|getSessionState|setEngineEventSink|runGoal)\\s*\\(\" | Select-Object -First 20; Write-Host \"---loop.ts size---\"; (Get-Content src/agent/loop.ts | Measure-Object -Line).Lines", "Bash=cd routedev; Get-ChildItem tests/agent/kernel.test.ts -ErrorAction SilentlyContinue | Select-Object FullName; if (Test-Path tests/agent/kernel.test.ts) { Get-Content tests/agent/kernel.test.ts -TotalCount 120 }"]

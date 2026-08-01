@@ -1,0 +1,1305 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RouteDev 工作台重设计预览</title>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --canvas: #14161a;
+      --panel: #1a1d22;
+      --panel-raised: #20242a;
+      --panel-hover: #262b32;
+      --panel-selected: #2b3038;
+      --text: #f0f1f3;
+      --text-2: #b3b8c2;
+      --text-3: #777e8b;
+      --accent: #8589ff;
+      --accent-soft: rgba(133, 137, 255, .13);
+      --success: #45c99a;
+      --warning: #e9aa56;
+      --danger: #f26d78;
+      --shadow: 0 18px 60px rgba(4, 6, 10, .24);
+      --panel-radius: 12px;
+      --control-radius: 8px;
+      --composer-radius: 14px;
+      --ease: cubic-bezier(.2, .8, .2, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      scrollbar-width: none;
+    }
+
+    *::-webkit-scrollbar {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+
+    html,
+    body {
+      width: 100%;
+      min-width: 980px;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--canvas);
+    }
+
+    body {
+      font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+      border: 0;
+      cursor: pointer;
+    }
+
+    i[data-lucide] {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 1em;
+      font-style: normal;
+      line-height: 1;
+    }
+
+    i[data-lucide]:empty::before { content: "\00B7"; }
+    i[data-lucide="route"]:empty::before { content: "\21DD"; }
+    i[data-lucide="minus"]:empty::before { content: "\2212"; }
+    i[data-lucide="square"]:empty::before { content: "\25A1"; }
+    i[data-lucide="x"]:empty::before { content: "\00D7"; }
+    i[data-lucide="panel-left-close"]:empty::before,
+    i[data-lucide="chevron-left"]:empty::before { content: "\2039"; }
+    i[data-lucide="panel-left-open"]:empty::before,
+    i[data-lucide="chevron-right"]:empty::before { content: "\203A"; }
+    i[data-lucide="panel-right-close"]:empty::before { content: "\203A"; }
+    i[data-lucide="panel-right-open"]:empty::before { content: "\2039"; }
+    i[data-lucide="search"]:empty::before,
+    i[data-lucide="scan-search"]:empty::before { content: "\2315"; }
+    i[data-lucide="square-pen"]:empty::before,
+    i[data-lucide="plus"]:empty::before { content: "+"; }
+    i[data-lucide="folder"]:empty::before { content: "\25B8"; }
+    i[data-lucide="folder-open"]:empty::before,
+    i[data-lucide="chevron-down"]:empty::before { content: "\2304"; }
+    i[data-lucide="message-square"]:empty::before,
+    i[data-lucide="circle"]:empty::before { content: "\25CB"; }
+    i[data-lucide="history"]:empty::before { content: "\21BA"; }
+    i[data-lucide="settings"]:empty::before { content: "\2699"; }
+    i[data-lucide="monitor"]:empty::before { content: "\25A3"; }
+    i[data-lucide="ellipsis"]:empty::before { content: "\2026"; }
+    i[data-lucide="check-circle-2"]:empty::before,
+    i[data-lucide="check"]:empty::before { content: "\2713"; }
+    i[data-lucide="files"]:empty::before,
+    i[data-lucide="list-checks"]:empty::before { content: "\2637"; }
+    i[data-lucide="loader-circle"]:empty::before { content: "\25CC"; }
+    i[data-lucide="triangle-alert"]:empty::before { content: "!"; }
+    i[data-lucide="zap"]:empty::before { content: "\25C7"; }
+    i[data-lucide="brain-circuit"]:empty::before { content: "\25C6"; }
+    i[data-lucide="arrow-up"]:empty::before { content: "\2191"; }
+    i[data-lucide="arrow-down-up"]:empty::before { content: "\2195"; }
+    i[data-lucide="circle-dollar-sign"]:empty::before { content: "\00A4"; }
+    i[data-lucide="database"]:empty::before { content: "\25B1"; }
+    i[data-lucide="activity"]:empty::before { content: "\223F"; }
+    i[data-lucide="file-code-2"]:empty::before,
+    i[data-lucide="file-text"]:empty::before { content: "\25A7"; }
+
+    button:focus-visible,
+    textarea:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .app {
+      height: 100dvh;
+      min-height: 640px;
+      padding: 0 7px 7px;
+      display: grid;
+      grid-template-rows: 44px minmax(0, 1fr);
+      background: var(--canvas);
+    }
+
+    .window-bar {
+      display: flex;
+      align-items: center;
+      padding: 0 8px 0 12px;
+      color: var(--text-3);
+      user-select: none;
+    }
+
+    .window-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 248px;
+      color: var(--text-2);
+      font-weight: 560;
+    }
+
+    .brand-mark {
+      width: 20px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #11131a;
+    }
+
+    .window-menu {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      margin-left: 14px;
+      font-size: 13px;
+    }
+
+    .window-drag {
+      flex: 1;
+      height: 100%;
+    }
+
+    .window-actions {
+      display: flex;
+      gap: 2px;
+    }
+
+    .icon-btn,
+    .window-btn {
+      display: inline-grid;
+      place-items: center;
+      width: 36px;
+      height: 36px;
+      border-radius: var(--control-radius);
+      background: transparent;
+      color: var(--text-3);
+      transition: background 160ms var(--ease), color 160ms var(--ease), transform 100ms var(--ease);
+    }
+
+    .window-btn {
+      width: 42px;
+      height: 32px;
+    }
+
+    .icon-btn:hover,
+    .window-btn:hover {
+      background: var(--panel-hover);
+      color: var(--text);
+    }
+
+    .icon-btn:active,
+    .window-btn:active,
+    .soft-btn:active,
+    .send-btn:active {
+      transform: scale(.97);
+    }
+
+    .workspace {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 244px minmax(540px, 1fr) 304px;
+      gap: 6px;
+      transition: grid-template-columns 220ms var(--ease);
+    }
+
+    .workspace.left-closed {
+      grid-template-columns: 50px minmax(540px, 1fr) 304px;
+    }
+
+    .workspace.right-closed {
+      grid-template-columns: 244px minmax(540px, 1fr) 50px;
+    }
+
+    .workspace.left-closed.right-closed {
+      grid-template-columns: 50px minmax(540px, 1fr) 50px;
+    }
+
+    .panel {
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      background: var(--panel);
+      border-radius: var(--panel-radius);
+      box-shadow: var(--shadow);
+    }
+
+    .sidebar,
+    .inspector {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-head,
+    .inspector-head,
+    .chat-head {
+      height: 54px;
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+    }
+
+    .sidebar-head {
+      padding: 0 10px 0 14px;
+      gap: 10px;
+    }
+
+    .sidebar-title {
+      flex: 1;
+      font-size: 17px;
+      font-weight: 650;
+      letter-spacing: -.02em;
+    }
+
+    .search {
+      height: 38px;
+      margin: 0 10px 10px;
+      padding: 0 11px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      border-radius: var(--control-radius);
+      background: #15181c;
+      color: var(--text-3);
+    }
+
+    .search span {
+      flex: 1;
+    }
+
+    kbd {
+      min-width: 28px;
+      padding: 2px 6px;
+      border-radius: 5px;
+      background: var(--panel-raised);
+      color: var(--text-3);
+      font-family: inherit;
+      font-size: 11px;
+      text-align: center;
+    }
+
+    .sidebar-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 4px 8px 12px;
+    }
+
+    .primary-action {
+      height: 40px;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 10px;
+      border-radius: var(--control-radius);
+      background: transparent;
+      color: var(--text);
+      font-weight: 560;
+      text-align: left;
+    }
+
+    .primary-action:hover,
+    .conversation:hover {
+      background: var(--panel-hover);
+    }
+
+    .section-label {
+      margin: 20px 10px 8px;
+      color: var(--text-3);
+      font-size: 12px;
+      font-weight: 560;
+    }
+
+    .project-row {
+      height: 36px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 10px;
+      color: var(--text-2);
+      font-weight: 560;
+    }
+
+    .project-row .count {
+      margin-left: auto;
+      color: var(--text-3);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .conversation {
+      width: 100%;
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 8px 10px 8px 30px;
+      border-radius: var(--control-radius);
+      background: transparent;
+      color: var(--text-2);
+      text-align: left;
+      transition: background 140ms var(--ease), color 140ms var(--ease);
+    }
+
+    .conversation.active {
+      background: var(--panel-selected);
+      color: var(--text);
+    }
+
+    .conversation span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .sidebar-foot {
+      flex: 0 0 auto;
+      padding: 8px;
+    }
+
+    .account {
+      width: 100%;
+      height: 44px;
+      padding: 0 10px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-radius: var(--control-radius);
+      background: transparent;
+      color: var(--text-2);
+      text-align: left;
+    }
+
+    .account:hover {
+      background: var(--panel-hover);
+    }
+
+    .avatar {
+      width: 26px;
+      height: 26px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: #343a45;
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .chat {
+      position: relative;
+      display: grid;
+      grid-template-rows: 54px minmax(0, 1fr) auto 28px;
+    }
+
+    .chat-head {
+      padding: 0 12px 0 18px;
+    }
+
+    .chat-title {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 620;
+    }
+
+    .chat-title span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .model-state {
+      margin-left: 10px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: var(--accent-soft);
+      color: #bbbdfd;
+      font-size: 12px;
+      font-weight: 560;
+    }
+
+    .chat-actions {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .soft-btn {
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      border-radius: var(--control-radius);
+      background: var(--panel-raised);
+      color: var(--text-2);
+      transition: background 160ms var(--ease), color 160ms var(--ease), transform 100ms var(--ease);
+    }
+
+    .soft-btn:hover {
+      background: var(--panel-hover);
+      color: var(--text);
+    }
+
+    .conversation-flow {
+      min-height: 0;
+      overflow: auto;
+      padding: 26px clamp(24px, 5vw, 72px) 20px;
+      scroll-behavior: smooth;
+    }
+
+    .flow-inner {
+      width: min(880px, 100%);
+      margin: 0 auto;
+    }
+
+    .user-row {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 30px;
+    }
+
+    .user-message {
+      max-width: 72%;
+      padding: 10px 14px;
+      border-radius: 12px 12px 3px 12px;
+      background: var(--panel-selected);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    .run-summary {
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-3);
+      font-size: 12px;
+    }
+
+    .run-summary strong {
+      color: var(--text-2);
+      font-weight: 560;
+    }
+
+    .agent-text {
+      max-width: 76ch;
+      margin: 0 0 15px;
+      color: #dfe1e5;
+      font-size: 14px;
+      line-height: 1.72;
+    }
+
+    .event-group {
+      margin: 8px 0 18px;
+      padding: 7px;
+      border-radius: 10px;
+      background: #171a1f;
+    }
+
+    .event {
+      min-height: 38px;
+      width: 100%;
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 8px;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text-2);
+      text-align: left;
+      transition: background 150ms var(--ease), color 150ms var(--ease);
+    }
+
+    .event:hover {
+      background: var(--panel-raised);
+      color: var(--text);
+    }
+
+    .event-icon {
+      width: 26px;
+      height: 26px;
+      display: grid;
+      place-items: center;
+      border-radius: 7px;
+      background: var(--panel-raised);
+      color: var(--text-3);
+    }
+
+    .event.running .event-icon {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .event.error .event-icon {
+      background: rgba(242, 109, 120, .12);
+      color: var(--danger);
+    }
+
+    .event-copy {
+      min-width: 0;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .event-copy strong {
+      flex: 0 0 auto;
+      color: var(--text);
+      font-weight: 560;
+    }
+
+    .event-copy span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-3);
+    }
+
+    .event-meta {
+      color: var(--text-3);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .event-detail {
+      display: none;
+      margin: 3px 8px 8px 44px;
+      padding: 10px 12px;
+      border-radius: 7px;
+      background: #111419;
+      color: var(--text-2);
+      font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+    }
+
+    .event-detail.open {
+      display: block;
+      animation: reveal 160ms var(--ease);
+    }
+
+    .final-answer {
+      margin-top: 22px;
+      max-width: 76ch;
+      color: var(--text);
+      line-height: 1.72;
+    }
+
+    .final-answer h3 {
+      margin: 0 0 9px;
+      font-size: 15px;
+      font-weight: 650;
+    }
+
+    .final-answer p {
+      margin: 0 0 10px;
+      color: #d6d9de;
+    }
+
+    .composer-wrap {
+      padding: 10px clamp(20px, 4vw, 52px) 10px;
+    }
+
+    .composer {
+      width: min(920px, 100%);
+      min-height: 112px;
+      margin: 0 auto;
+      padding: 12px;
+      display: grid;
+      grid-template-rows: minmax(48px, 1fr) 36px;
+      border-radius: var(--composer-radius);
+      background: var(--panel-raised);
+      box-shadow: 0 12px 36px rgba(2, 4, 7, .28);
+    }
+
+    .composer textarea {
+      width: 100%;
+      height: 48px;
+      resize: none;
+      border: 0;
+      outline: 0;
+      padding: 2px 3px;
+      background: transparent;
+      color: var(--text);
+      line-height: 1.55;
+    }
+
+    .composer textarea::placeholder {
+      color: #7f8692;
+    }
+
+    .composer-bar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .composer-mode {
+      height: 32px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 9px;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text-2);
+    }
+
+    .composer-mode:hover {
+      background: var(--panel-hover);
+      color: var(--text);
+    }
+
+    .composer-hint {
+      margin-left: 6px;
+      color: var(--text-3);
+      font-size: 12px;
+    }
+
+    .send-btn {
+      width: 34px;
+      height: 34px;
+      margin-left: auto;
+      display: grid;
+      place-items: center;
+      border-radius: 9px;
+      background: var(--accent);
+      color: #11131a;
+      transition: filter 150ms var(--ease), transform 100ms var(--ease);
+    }
+
+    .send-btn:hover {
+      filter: brightness(1.08);
+    }
+
+    .status-bar {
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      color: var(--text-3);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .status-bar span {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .inspector-head {
+      padding: 0 8px;
+    }
+
+    .inspector-switch {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      font-weight: 600;
+    }
+
+    .inspector-switch span {
+      white-space: nowrap;
+    }
+
+    .inspector-body {
+      min-height: 0;
+      flex: 1;
+      overflow: auto;
+      padding: 12px 14px 18px;
+    }
+
+    .inspector-view {
+      display: none;
+      animation: reveal 160ms var(--ease);
+    }
+
+    .inspector-view.active {
+      display: block;
+    }
+
+    .task-overview {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      margin: 3px 2px 15px;
+    }
+
+    .task-overview strong {
+      font-size: 21px;
+      line-height: 1;
+      font-weight: 620;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .task-overview span {
+      color: var(--text-3);
+      font-size: 12px;
+    }
+
+    .task-list {
+      display: grid;
+      gap: 5px;
+    }
+
+    .task {
+      min-height: 46px;
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr);
+      gap: 9px;
+      align-items: start;
+      padding: 11px 10px;
+      border-radius: var(--control-radius);
+      color: var(--text-2);
+    }
+
+    .task.current {
+      background: var(--accent-soft);
+      color: var(--text);
+    }
+
+    .task.complete {
+      color: var(--text-3);
+    }
+
+    .task-icon {
+      width: 18px;
+      height: 18px;
+      margin-top: 1px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--panel-hover);
+      color: var(--text-3);
+    }
+
+    .task.current .task-icon {
+      background: var(--accent);
+      color: #11131a;
+    }
+
+    .task.complete .task-icon {
+      background: rgba(69, 201, 154, .13);
+      color: var(--success);
+    }
+
+    .task strong {
+      display: block;
+      margin-bottom: 2px;
+      font-weight: 560;
+      line-height: 1.45;
+    }
+
+    .task small {
+      color: var(--text-3);
+      font-size: 11px;
+    }
+
+    .collapsed-rail {
+      display: none;
+      height: 100%;
+      padding: 8px 6px;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .left-closed .sidebar > :not(.collapsed-rail),
+    .right-closed .inspector > :not(.collapsed-rail) {
+      display: none;
+    }
+
+    .left-closed .sidebar .collapsed-rail,
+    .right-closed .inspector .collapsed-rail {
+      display: flex;
+    }
+
+    .rail-spacer {
+      flex: 1;
+    }
+
+    .artifact-list,
+    .context-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .artifact,
+    .context-item {
+      min-height: 42px;
+      padding: 9px 10px;
+      border-radius: var(--control-radius);
+      background: var(--panel-raised);
+      color: var(--text-2);
+    }
+
+    .artifact {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .artifact span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .context-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .context-item strong {
+      font-weight: 560;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .context-note {
+      margin-top: 14px;
+      padding: 11px;
+      border-radius: var(--control-radius);
+      background: var(--accent-soft);
+      color: #c6c8ff;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .spin {
+      animation: spin 1.2s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes reveal {
+      from { opacity: 0; transform: translateY(3px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+      }
+    }
+
+    @media (max-width: 1180px) {
+      .workspace {
+        grid-template-columns: 214px minmax(520px, 1fr) 276px;
+      }
+
+      .workspace.left-closed {
+        grid-template-columns: 50px minmax(520px, 1fr) 276px;
+      }
+
+      .conversation-flow {
+        padding-inline: 28px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!--
+  THESIS: RouteDev 是按真实时间顺序工作的开发工作台，拒绝把状态、工具和待办堆成相互竞争的卡片。
+  OWN-WORLD: 冷中性深色表面，单一靛蓝强调色，低对比层级，12px 面板与 8px 控件。
+  STORY: 用户先看清模型做了什么，再看当前任务，最后从同一位置继续输入。
+  FIRST VIEWPORT: 左侧任务树，中央连续时间流，右侧单页任务监控，输入框贴近内容底部。
+  FORM: Operate 模式，手工降级方向，seed route-workbench-03。
+  FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+  -->
+  <main class="app">
+    <header class="window-bar">
+      <div class="window-brand">
+        <span class="brand-mark"><i data-lucide="route" width="13" height="13"></i></span>
+        <span>RouteDev</span>
+      </div>
+      <nav class="window-menu" aria-label="应用菜单">
+        <span>文件</span>
+        <span>编辑</span>
+        <span>视图</span>
+        <span>帮助</span>
+      </nav>
+      <div class="window-drag"></div>
+      <div class="window-actions">
+        <button class="window-btn" aria-label="最小化"><i data-lucide="minus" width="15"></i></button>
+        <button class="window-btn" aria-label="最大化"><i data-lucide="square" width="12"></i></button>
+        <button class="window-btn" aria-label="关闭"><i data-lucide="x" width="15"></i></button>
+      </div>
+    </header>
+
+    <section class="workspace" id="workspace">
+      <aside class="panel sidebar" aria-label="项目与对话">
+        <div class="sidebar-head">
+          <span class="sidebar-title">工作区</span>
+          <button class="icon-btn" id="collapseLeft" aria-label="收起左侧栏">
+            <i data-lucide="panel-left-close" width="16"></i>
+          </button>
+        </div>
+
+        <div class="search">
+          <i data-lucide="search" width="15"></i>
+          <span>搜索对话</span>
+          <kbd>⌘K</kbd>
+        </div>
+
+        <div class="sidebar-scroll">
+          <button class="primary-action">
+            <i data-lucide="square-pen" width="17"></i>
+            <span>新建任务</span>
+          </button>
+
+          <div class="section-label">项目</div>
+          <div class="project-row">
+            <i data-lucide="folder" width="16"></i>
+            <span>Agent</span>
+            <span class="count">6</span>
+          </div>
+          <button class="conversation active">
+            <i data-lucide="message-square" width="14"></i>
+            <span>重新设计主对话工作台</span>
+          </button>
+          <button class="conversation">
+            <i data-lucide="message-square" width="14"></i>
+            <span>Harness 性能与工具治理</span>
+          </button>
+          <button class="conversation">
+            <i data-lucide="message-square" width="14"></i>
+            <span>安卓客户端连接计划</span>
+          </button>
+
+          <div class="project-row" style="margin-top: 12px">
+            <i data-lucide="folder" width="16"></i>
+            <span>Victus 1.21.1</span>
+            <span class="count">3</span>
+          </div>
+          <button class="conversation">
+            <i data-lucide="message-square" width="14"></i>
+            <span>全量审查当前项目</span>
+          </button>
+
+          <div class="section-label">最近</div>
+          <button class="conversation" style="padding-left: 10px">
+            <i data-lucide="history" width="14"></i>
+            <span>工具调用失败回归</span>
+          </button>
+          <button class="conversation" style="padding-left: 10px">
+            <i data-lucide="history" width="14"></i>
+            <span>系统提示词优化</span>
+          </button>
+        </div>
+
+        <div class="sidebar-foot">
+          <button class="account">
+            <span class="avatar">YM</span>
+            <span style="flex:1">杨铭</span>
+            <i data-lucide="settings" width="15"></i>
+          </button>
+        </div>
+
+        <div class="collapsed-rail">
+          <button class="icon-btn" id="expandLeft" aria-label="展开左侧栏">
+            <i data-lucide="panel-left-open" width="17"></i>
+          </button>
+          <button class="icon-btn" aria-label="新建任务"><i data-lucide="square-pen" width="17"></i></button>
+          <button class="icon-btn" aria-label="搜索"><i data-lucide="search" width="17"></i></button>
+          <span class="rail-spacer"></span>
+          <span class="avatar">YM</span>
+        </div>
+      </aside>
+
+      <section class="panel chat" aria-label="主对话">
+        <header class="chat-head">
+          <div class="chat-title">
+            <i data-lucide="monitor" width="17"></i>
+            <span>重新设计主对话工作台</span>
+          </div>
+          <span class="model-state">gpt-5.6 sol / 高</span>
+          <div class="chat-actions">
+            <button class="soft-btn">
+              <i data-lucide="folder-open" width="15"></i>
+              <span>在 Agent 中打开</span>
+              <i data-lucide="chevron-down" width="13"></i>
+            </button>
+            <button class="icon-btn" aria-label="任务历史"><i data-lucide="history" width="16"></i></button>
+            <button class="icon-btn" aria-label="更多操作"><i data-lucide="ellipsis" width="17"></i></button>
+          </div>
+        </header>
+
+        <div class="conversation-flow" id="conversationFlow">
+          <div class="flow-inner" id="flowInner">
+            <div class="user-row">
+              <div class="user-message">重新设计主页面。流程必须体现模型输出和工具调用的真实先后顺序，右侧待办只保留当前列表。</div>
+            </div>
+
+            <div class="run-summary">
+              <i data-lucide="check-circle-2" width="14"></i>
+              <strong>已处理 5分12秒</strong>
+              <span>18 次操作 / 4 段模型输出</span>
+            </div>
+
+            <p class="agent-text">我先核对现有页面结构和消息事件模型，保留项目导航、连续对话与任务监控三部分，只重组它们的视觉优先级。</p>
+
+            <div class="event-group">
+              <button class="event" data-detail="detail-files">
+                <span class="event-icon"><i data-lucide="files" width="14"></i></span>
+                <span class="event-copy"><strong>读取界面结构</strong><span>Layout.tsx、ChatPage.tsx、TaskMonitorPanel.tsx</span></span>
+                <span class="event-meta">6 个文件</span>
+              </button>
+              <div class="event-detail" id="detail-files">desktop/renderer/src/components/Layout.tsx
+desktop/renderer/src/pages/ChatPage.tsx
+desktop/renderer/src/components/TaskMonitorPanel.tsx
+desktop/renderer/src/components/chat/ExecutionProcess.tsx</div>
+
+              <button class="event" data-detail="detail-search">
+                <span class="event-icon"><i data-lucide="scan-search" width="14"></i></span>
+                <span class="event-copy"><strong>检查消息流</strong><span>定位 text_delta、tool_start 与 todo_write 的状态聚合</span></span>
+                <span class="event-meta">1.4 秒</span>
+              </button>
+              <div class="event-detail" id="detail-search">按 timestamp 合并模型间隔输出与工具调用。
+运行时路由状态不写入对话历史。</div>
+            </div>
+
+            <p class="agent-text">现有问题不是信息太多，而是每一种信息都被做成了同等重量的卡片。新方案把模型文字恢复为正文，把工具调用压成可展开的操作记录，层级自然会安静下来。</p>
+
+            <div class="event-group">
+              <button class="event running" data-detail="detail-edit">
+                <span class="event-icon"><i class="spin" data-lucide="loader-circle" width="14"></i></span>
+                <span class="event-copy"><strong>生成高保真预览</strong><span>重建三栏比例、对话时间流与底部输入区</span></span>
+                <span class="event-meta">进行中</span>
+              </button>
+              <div class="event-detail" id="detail-edit">目标密度：8
+强调色：#8589ff
+面板间距：6px
+正文行高：1.72</div>
+
+              <button class="event error" data-detail="detail-error">
+                <span class="event-icon"><i data-lucide="triangle-alert" width="14"></i></span>
+                <span class="event-copy"><strong>视觉测试降级</strong><span>本地设计搜索脚本缺失，改用静态规则集</span></span>
+                <span class="event-meta">已恢复</span>
+              </button>
+              <div class="event-detail" id="detail-error">没有伪造数据库结果。
+已使用 ui-ux-pro-max quick-reference、Impeccable Operate 与 craft-floor 完成降级设计。</div>
+            </div>
+
+            <p class="agent-text">右侧只显示一个上下文页面。顶部左右按钮在任务、产物和上下文之间切换，不再把三个标签挤在同一行。新待办快照到达时，旧列表整体退出。</p>
+
+            <section class="final-answer">
+              <h3>新版工作台预览已经生成</h3>
+              <p>它保留 RouteDev 的三栏工作方式，但减少容器、边线和重复标签。模型输出成为连续正文，工具记录严格插在实际发生的位置，输入区也不再占据过多高度。</p>
+            </section>
+          </div>
+        </div>
+
+        <div class="composer-wrap">
+          <div class="composer">
+            <textarea id="messageInput" aria-label="输入消息" placeholder="描述任务，或输入 / 查看命令"></textarea>
+            <div class="composer-bar">
+              <button class="icon-btn" aria-label="添加上下文"><i data-lucide="plus" width="17"></i></button>
+              <button class="composer-mode">
+                <i data-lucide="zap" width="15"></i>
+                <span>全自动</span>
+                <i data-lucide="chevron-down" width="13"></i>
+              </button>
+              <button class="composer-mode">
+                <i data-lucide="brain-circuit" width="15"></i>
+                <span>gpt-5.6 sol</span>
+              </button>
+              <span class="composer-hint">Enter 发送 / Shift+Enter 换行</span>
+              <button class="send-btn" id="sendButton" aria-label="发送消息"><i data-lucide="arrow-up" width="17"></i></button>
+            </div>
+          </div>
+        </div>
+
+        <footer class="status-bar">
+          <span><i data-lucide="arrow-down-up" width="12"></i> 53.8k / 209.5k</span>
+          <span><i data-lucide="circle-dollar-sign" width="12"></i> $0.63</span>
+          <span><i data-lucide="database" width="12"></i> 上下文 26%</span>
+          <span style="margin-left:auto"><i data-lucide="activity" width="12"></i> 本地引擎正常</span>
+        </footer>
+      </section>
+
+      <aside class="panel inspector" aria-label="任务监控">
+        <header class="inspector-head">
+          <button class="icon-btn" id="prevInspector" aria-label="上一个面板"><i data-lucide="chevron-left" width="16"></i></button>
+          <div class="inspector-switch">
+            <i id="inspectorIcon" data-lucide="list-checks" width="16"></i>
+            <span id="inspectorTitle">任务</span>
+            <small id="inspectorCount" style="color:var(--text-3);font-weight:500">5</small>
+          </div>
+          <button class="icon-btn" id="nextInspector" aria-label="下一个面板"><i data-lucide="chevron-right" width="16"></i></button>
+          <button class="icon-btn" id="collapseRight" aria-label="收起右侧栏"><i data-lucide="panel-right-close" width="16"></i></button>
+        </header>
+
+        <div class="inspector-body">
+          <section class="inspector-view active" data-view="tasks">
+            <div class="task-overview">
+              <strong>2 / 5</strong>
+              <span>当前对话</span>
+            </div>
+            <div class="task-list">
+              <article class="task current">
+                <span class="task-icon"><i class="spin" data-lucide="loader-circle" width="12"></i></span>
+                <span><strong>生成独立 HTML 高保真预览</strong><small>正在写入设计方案</small></span>
+              </article>
+              <article class="task">
+                <span class="task-icon"><i data-lucide="circle" width="10"></i></span>
+                <span><strong>检查桌面与窄屏布局</strong><small>等待预览完成</small></span>
+              </article>
+              <article class="task">
+                <span class="task-icon"><i data-lucide="circle" width="10"></i></span>
+                <span><strong>整理实施映射</strong><small>用户确认后进入代码阶段</small></span>
+              </article>
+              <article class="task complete">
+                <span class="task-icon"><i data-lucide="check" width="11"></i></span>
+                <span><strong>审查现有工作台</strong><small>已完成</small></span>
+              </article>
+              <article class="task complete">
+                <span class="task-icon"><i data-lucide="check" width="11"></i></span>
+                <span><strong>确定设计系统</strong><small>已完成</small></span>
+              </article>
+            </div>
+          </section>
+
+          <section class="inspector-view" data-view="artifacts">
+            <div class="task-overview">
+              <strong>3</strong>
+              <span>本轮产物</span>
+            </div>
+            <div class="artifact-list">
+              <div class="artifact"><i data-lucide="file-code-2" width="15"></i><span>routedev-workbench-redesign-v3.html</span></div>
+              <div class="artifact"><i data-lucide="file-text" width="15"></i><span>PI_BASELINE_GAP_ANALYSIS_2026-07-30.md</span></div>
+              <div class="artifact"><i data-lucide="file-text" width="15"></i><span>HARNESS_SYSTEMATIC_EVALUATION_2026-07-30.md</span></div>
+            </div>
+          </section>
+
+          <section class="inspector-view" data-view="context">
+            <div class="task-overview">
+              <strong>53.8k</strong>
+              <span>209.5k 上限</span>
+            </div>
+            <div class="context-list">
+              <div class="context-item"><span>系统规则</span><strong>8.4k</strong></div>
+              <div class="context-item"><span>用户消息</span><strong>6.2k</strong></div>
+              <div class="context-item"><span>模型输出</span><strong>13.7k</strong></div>
+              <div class="context-item"><span>工具结果</span><strong>25.5k</strong></div>
+            </div>
+            <p class="context-note">Skill 正文按需读取，纯问答任务只暴露必要工具，减少上下文噪声。</p>
+          </section>
+        </div>
+
+        <div class="collapsed-rail">
+          <button class="icon-btn" id="expandRight" aria-label="展开右侧栏"><i data-lucide="panel-right-open" width="17"></i></button>
+          <button class="icon-btn" aria-label="任务"><i data-lucide="list-checks" width="17"></i></button>
+          <span class="rail-spacer"></span>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    if (window.lucide) window.lucide.createIcons();
+
+    const workspace = document.getElementById('workspace');
+    document.getElementById('collapseLeft').addEventListener('click', () => workspace.classList.add('left-closed'));
+    document.getElementById('expandLeft').addEventListener('click', () => workspace.classList.remove('left-closed'));
+    document.getElementById('collapseRight').addEventListener('click', () => workspace.classList.add('right-closed'));
+    document.getElementById('expandRight').addEventListener('click', () => workspace.classList.remove('right-closed'));
+
+    document.querySelectorAll('[data-detail]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const detail = document.getElementById(button.dataset.detail);
+        detail.classList.toggle('open');
+      });
+    });
+
+    const inspectorViews = [
+      { key: 'tasks', title: '任务', count: '5', icon: 'list-checks' },
+      { key: 'artifacts', title: '产物', count: '3', icon: 'files' },
+      { key: 'context', title: '上下文', count: '', icon: 'database' }
+    ];
+    let inspectorIndex = 0;
+
+    function renderInspector() {
+      const current = inspectorViews[inspectorIndex];
+      document.getElementById('inspectorTitle').textContent = current.title;
+      document.getElementById('inspectorCount').textContent = current.count;
+      const icon = document.getElementById('inspectorIcon');
+      icon.setAttribute('data-lucide', current.icon);
+      document.querySelectorAll('.inspector-view').forEach((view) => {
+        view.classList.toggle('active', view.dataset.view === current.key);
+      });
+      if (window.lucide) window.lucide.createIcons();
+    }
+
+    document.getElementById('prevInspector').addEventListener('click', () => {
+      inspectorIndex = (inspectorIndex - 1 + inspectorViews.length) % inspectorViews.length;
+      renderInspector();
+    });
+
+    document.getElementById('nextInspector').addEventListener('click', () => {
+      inspectorIndex = (inspectorIndex + 1) % inspectorViews.length;
+      renderInspector();
+    });
+
+    const input = document.getElementById('messageInput');
+    const flow = document.getElementById('conversationFlow');
+    const flowInner = document.getElementById('flowInner');
+
+    function sendPreviewMessage() {
+      const text = input.value.trim();
+      if (!text) return;
+      const row = document.createElement('div');
+      row.className = 'user-row';
+      const message = document.createElement('div');
+      message.className = 'user-message';
+      message.textContent = text;
+      row.appendChild(message);
+      flowInner.appendChild(row);
+      input.value = '';
+      flow.scrollTo({ top: flow.scrollHeight, behavior: 'smooth' });
+    }
+
+    document.getElementById('sendButton').addEventListener('click', sendPreviewMessage);
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendPreviewMessage();
+      }
+    });
+  </script>
+</body>
+</html>

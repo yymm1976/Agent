@@ -4,6 +4,184 @@
 
 > **路径迁移说明（Phase 60 后）：** `src/cli/` 已迁移到 `src/runtime/` 和 `desktop/renderer/src/`，历史条目中引用的 `src/cli/goal-runner.ts` / `src/cli/app-init.ts` / `src/cli/App.tsx` 等路径均已迁移到新位置，详见 `CODEMAP.md`。
 
+### Phase 95 — 工程收尾与治理 — 2026-07-29
+
+完成 92 个 IPC handler 统一校验中间件包装 + 全库 console 替换为结构化 logger，处理 2 项技术债（TD-07 / TD-20）。技术债跟踪表 §1 活跃清单清空。
+
+#### New
+- **TD-07 Task 1 IPC handler 清单文档**：新建 `docs/IPC_HANDLER_INVENTORY.md`，记录全部 92 个 IPC handler 的 channel / 参数 schema / 校验规则 / 风险分级 / 迁移状态。按高风险 18 个 / 中风险 43 个 / 低风险 31 个分级，便于审查与回归追踪
+- **TD-07 Task 2-3 校验工具**：在 `desktop/main/ipc-guard.ts` 新增 `createValidatedHandlerMulti<TResult>(channel, validators, handler)` 多参数 handler 包装器 + `ipcValidate.*` 通用校验器工厂（none / string / optionalString / number / optionalNumber / object / optionalObject / boolean）
+
+#### Changed
+- `desktop/main/index.ts`：完成剩余 85 个 IPC handler 的 `createValidatedHandler` / `createValidatedHandlerMulti` 包装迁移，92/92 全部包装。其中 18 个高风险 handler 含自定义业务校验（shell:open-external URL 协议白名单 / command:execute slash 命令白名单 / tool:execute 工具白名单 / clipboard:write-text 1MB 上限防 OOM / checkpoint:rollback 一次性确认令牌消费）
+- `src/` 29 文件 + `desktop/main/index.ts`：61 + 34 = 95 处 `console.log/info/debug` 全部替换为 `logger.warn/error/debug`，带结构化字段（channel / args / error / length / role / msg 等）
+- 保留必要场景并标注 `// eslint-disable-next-line no-console`：
+  - `src/utils/paths.ts` 3 处 `console.warn`：logger 未初始化的早期 bootstrap 阶段
+  - `desktop/main/index.ts` 1 处 `console.log`：渲染层 console-message 转发到 stdout
+- `desktop/renderer/` 15 处 `console.warn/error` 保留：渲染层无法使用 winston logger（写文件需主进程 API），主进程通过 `webContents.on('console-message')` 转发到日志文件
+
+#### 架构决策
+- 不重写 handler 业务逻辑（仅包装校验层）；不引入新日志库（用现有 winston logger）
+- eslint no-console 规则未启用：项目当前未配置 eslint（无 .eslintrc 文件、无 eslint 依赖、无 lint 脚本），添加 eslint 配置 + 依赖超出"工程收尾"范围，留待后续单独 Phase
+- 渲染层 `console.warn/error` 保留：渲染层无法使用 winston logger，主进程通过 `webContents.on('console-message')` 转发
+- IPC handler 校验工具分层：`createValidatedHandler` 是外层（参数校验），权限校验是内层，二者解耦
+- `ipcValidate.*` 校验器工厂返回 null 表示通过，字符串表示错误消息，与 `createValidatedHandler` 签名一致
+
+#### 验证
+- `pnpm typecheck`：TypeScript No errors found
+- `pnpm test`：全量测试通过（264 passed / 7 skipped test files，3623 passed / 160 skipped tests，0 failed）
+- IPC handler 包装覆盖率：92/92 = 100%
+- console.log/info/debug 残留：src/ 0 处实际调用 / desktop/main/ 1 处（已标注 eslint-disable）
+
+#### Docs
+- `docs/IPC_HANDLER_INVENTORY.md`：新建（Phase 95 Task 1）
+- `docs/TECH_DEBT_TRACKER.md`：TD-07 / TD-20 从 §1 活跃清单移至 §3 历史区；活跃项数 2 → 0；§2 详情区清空；§4 审查员指引数字同步更新
+
+### Phase 94 — 架构耦合治理 — 2026-07-29
+
+消除 goal-runner 子模块 ESM 循环依赖，收敛 Pack 门控散布，调整 agentLoop 创建职责归属，降低架构耦合度。处理 2 项 Medium 优先级架构耦合类技术债（TD-18 / TD-19）。
+
+#### New
+- **TD-19 Task 1 共享类型文件**：新建 `src/runtime/goal-runner-types.ts`，承载 `GoalRunnerCtx` 接口和 `MAX_CONTEXT_ITEMS` 常量，消除 core.ts 与 confirm/scheduler/recovery 子模块的 ESM 循环依赖
+- **TD-19 Task 2 EnabledPacks 功能矩阵**：在 `src/runtime/app-init.ts` 定义 `EnabledPacks` 接口和 `computeEnabledPacks(config)` 函数，单点计算 11 个 Pack 的 enabled 状态。`InitContext` 新增 `enabledPacks` 字段，子模块通过 `ctx.enabledPacks.xxx` 读取，替代散布的 `config.packs?.xxx?.enabled`
+
+#### Changed
+- `src/runtime/goal-runner-core.ts`：移除 `GoalRunnerCtx` 接口和 `MAX_CONTEXT_ITEMS` 常量定义，改为 re-export `goal-runner-types.ts`
+- `src/runtime/goal-runner-confirm.ts` / `goal-runner-scheduler.ts` / `goal-runner-recovery.ts`：从 `goal-runner-types.ts` import 共享类型和常量
+- `src/runtime/app-init-agent.ts`（`createAgentSubsystem`）：入口先创建 `ReActAgentLoop` 实例并写入 `ctx.agentLoop`，确保 `setupAgentMiddleware` / `setupAgentTrust` / `setupAgentLoop` 三个阶段都能访问
+- `src/runtime/app-init-agent-loop.ts`（`setupAgentLoop`）：移除 agentLoop 创建代码，改为从 `ctx.agentLoop` 读取；保留 12 个 setXxx 注入调用
+- `src/runtime/app-init-tools.ts`：移除 `ReActAgentLoop` 创建及 setXxx 调用；新增 `PolicyEngine` 和 `ToolOutputPipeline` 实例写入 ctx，供 agent 子系统注入
+- `src/runtime/app-init-agent-middleware.ts` / `app-init-memory.ts` / `app-init-router.ts`：5 处 `config.packs?.xxx?.enabled` 改为 `ctx.enabledPacks.xxx`
+- `src/runtime/goal-runner-scheduler.ts` / `goal-runner-recovery.ts`：2 处 `config.packs?.xxx?.enabled` 改为 `ctx.enabledPacks.xxx`
+- `desktop/main/bridges/goal-bridge.ts`：注入 `enabledPacks: computeEnabledPacks(config)` 到 GoalRunnerDeps
+
+#### 架构决策
+- 不重写 goal-runner 子模块逻辑，仅抽取共享类型到独立文件
+- 不新建 Pack 配置 DSL 或注册机制，EnabledPacks 仅承载 `packs?.xxx?.enabled` 维度
+- 不改变 ReActAgentLoop 类签名，仅调整创建归属
+- agentLoop 创建放在 `createAgentSubsystem` 入口而非 `setupAgentLoop` 内部，确保 middleware 阶段能访问（原 Task 3 迁移将创建放在 setupAgentLoop 开头导致 setupAgentMiddleware 访问 ctx.agentLoop 时为 undefined，Task 4 修复此问题）
+- trustGradient 在 Phase 79 后默认 Core，EnabledPacks 中固定 true（仍保留字段以兼容现有读取）
+
+#### 验证
+- `pnpm typecheck`：TypeScript No errors found
+- `pnpm test`：全量测试通过（exit code 0），含 16 个 app-init.test.ts 用例全部通过
+
+#### Docs
+- `docs/TECH_DEBT_TRACKER.md`：TD-18 / TD-19 从 §1 活跃清单移至 §3 历史区；活跃项数 4 → 2；§4 审查员指引数字同步更新
+
+### Phase 93 — 类型安全与运行时校验 — 2026-07-29
+
+为安全敏感路径建立 Zod schema 运行时校验体系 + schema migration 框架，防止反序列化数据被篡改或版本升级后格式不兼容导致数据丢失。处理 2 项 High 优先级类型安全类技术债（TD-14 / TD-15）。
+
+#### New
+- **TD-15 schema 体系**：新建 `src/config/schemas/` 目录，包含 5 个 schema 文件 + `index.ts` 聚合导出：
+  - `integrity-manifest.ts`：IntegrityManifestFileSchema + parseIntegrityManifestFile（fail-open，返回空 manifest）
+  - `goal-persistence.ts`：PersistedGoalSchema + parsePersistedGoal（fail-open，返回 null）
+  - `checkpoint.ts`：GoalPlanSchema + parseGoalPlan（fail-open，返回 null）
+  - `app-dependencies.ts`：AppDependenciesMergeSchema + parseAppDependenciesMerge（fail-closed，装配点失败抛错）
+  - `database.ts`：FileRowSchema / NodeRowSchema + parseFileRow / parseJsonArrayField（fail-open，返回 undefined/空数组）
+- **TD-15 IPC payload schema**：新建 `desktop/shared/ipc-schemas.ts`，提供 parseChatStreamPayload / parseToolConfirmRequest / parseObjectPayload 三个函数，为渲染层 IPC 事件回调提供运行时校验
+- **TD-14 migration 工具**：新建 `src/utils/migration.ts`，实现三个核心函数：
+  - `migrate(raw, options)`：将原始数据迁移到当前 schema 版本（逐版本迁移 + fail-open 返回 fallback）
+  - `readSchemaVersion(raw)`：读取 `__schemaVersion` 字段（缺失视为 0）
+  - `withSchemaVersion(data, version)`：标记数据为当前 schema 版本（save 时调用）
+- **TD-14 migration 单元测试**：新建 `tests/utils/migration.test.ts`，16 个用例覆盖版本读取、多版本迁移、异常处理、fallback 返回等场景
+
+#### Changed
+- `src/security/integrity-manifest.ts`：load 改为先 migrate 再 parseIntegrityManifestFile；save 用 withSchemaVersion 写入 `__schemaVersion`
+- `src/agent/goal-persistence.ts`：load / tryReadGoalFile 改为先 migrate 再 parsePersistedGoal；save 用 withSchemaVersion 写入 `__schemaVersion`
+- `src/harness/checkpoint-manager.ts`：loadGoalPlan 改为先 migrate 再 parseGoalPlan；saveGoalPlan 用 withSchemaVersion 写入 `__schemaVersion`
+- `src/runtime/app-init.ts`：AppDependencies 合并点 `as AppDependencies` 改为 parseAppDependenciesMerge
+- `src/code-map/database.ts`：files/nodes 表查询结果 `as Record<string, unknown>` 改为 parseFileRow；JSON 数组字段改为 parseJsonArrayField
+- `desktop/renderer/src/store/useRouteDevStore.ts`：7 处 IPC 回调 `as` 断言改为 parse 函数调用（parseChatStreamPayload / parseToolConfirmRequest / parseObjectPayload）
+
+#### 架构决策
+- 不全量替换 136 处 `as` 断言（仅覆盖 7 个安全敏感路径：磁盘 / LLM 输出 / 网络 / localStorage / IPC / 装配点 / 数据库行）
+- 不引入 io-ts / runtypes 等替代库（复用现有 Zod）
+- schema 校验策略分层：装配点 fail-closed（app-init.ts 抛错立即可见），持久化文件 fail-open（返回 null/空对象，与原行为一致，避免阻塞启动）
+- migration 框架仅接入 3 个有 schema 校验路径的 JSON 持久化文件，未接入无 schema 校验的文件（避免空头支票）
+- schema 采用宽松校验 + passthrough 策略，仅校验顶层关键字段，让业务层在读取时按需做更细的字段校验
+
+#### 验证
+- `pnpm typecheck`：TypeScript No errors found
+- `pnpm test`：全量测试通过（exit code 0），含 tests/utils/migration.test.ts 16 个用例
+
+#### Docs
+- `docs/TECH_DEBT_TRACKER.md`：TD-14 / TD-15 从 §1 活跃清单移至 §3 历史区；活跃项数 6 → 4；§4 审查员指引数字同步更新
+
+### Phase 92 — 大文件拆分 — 2026-07-29
+
+拆分 5 个超限文件，降低单文件改动成本与审查 token 消耗。主文件行数均降至 300 行以下（spawn-agent-delegation.ts 因单函数多阶段共享状态保留 405 行）。处理 5 项 Medium 文件拆分类技术债（TD-02 / TD-08 / TD-09 / TD-10 / TD-11）。
+
+#### New
+- **TD-02 goal-runner.ts 核实归档**：Phase 79 Task 2 已完成拆分（core/confirm/scheduler/recovery 4 子模块），本 Phase 核实确认主文件仅 13 行 re-export，直接归档
+- **TD-08 app-init-agent.ts 拆分**（1207 → 42 行）：新建 `app-init-agent-trust.ts`（76 行，TrustGradient + PermissionMiddleware）、`app-init-agent-middleware.ts`（254 行，PluginSystem + 8 个中间件 + HookRunner）、`app-init-agent-loop.ts`（931 行，SubAgent + SkillLifecycle + Goal + CompletionGate + Reviewer + CodeMap + DualLoop）。dispatcher 装配顺序：middleware → trust → loop，通过函数返回值传递 pluginSystem / hookRunner 无模块级全局
+- **TD-09 extractor.ts 拆分**（1003 → 137 行）：新建 `extractor-utils.ts`（69 行，共享辅助函数 + 类型）、`extractor-ts.ts`（431 行）、`extractor-py.ts`（169 行）、`extractor-java.ts`（250 行）、`extractor-go.ts`（183 行）。walkAndExtract 作为回调参数传递给各语言 extractor 避免循环依赖；PendingReference/ExtractionResult 通过 re-export 保持外部 import 路径不变
+- **TD-10 spawn-agent.ts 拆分**（1047 → 275 行）：新建 `spawn-agent-types.ts`（264 行，类型 + 常量）、`spawn-agent-utils.ts`（259 行，9 个工具函数）、`spawn-agent-delegation.ts`（405 行，wrapSpawnAgentWithDelegation 单函数）。18 个公共导出通过 re-export 保持调用方 import 路径不变
+- **TD-11 SettingsPage.tsx 拆分**（477 → 184 行）：新建 `components/settings/SettingsTabNav.tsx`（381 行，7 个 Tab 内容渲染）、`components/settings/SettingsDialogs.tsx`（24 行，AlertBanner）。SettingsTabNav 用 ReturnType<typeof useSettingsDraft> 类型别名简化 70+ 字段 props 接口
+
+#### Changed
+- `tests/integration/phase48.test.ts`：SPAWN_AGENT_PATH 改为 SPAWN_AGENT_UTILS_PATH（createChildRegistry / resolveProfileForSubagent 迁移到 spawn-agent-utils.ts）
+- `scripts/lint-descriptions.ts`：collectBuiltinToolFiles 排除列表新增 3 个非工具文件（spawn-agent-types/utils/delegation）
+
+#### 验证
+- `pnpm typecheck`：TypeScript No errors found
+- `pnpm test`：全量测试通过（含 tests/runtime / tests/code-map / tests/tools / desktop/renderer 各模块）
+
+#### Docs
+- `docs/TECH_DEBT_TRACKER.md`：TD-02 / TD-08 / TD-09 / TD-10 / TD-11 移至 §3 历史区；活跃项数 11 → 6；§4 审查员指引数字同步更新
+
+#### 备注
+- `spawn-agent-delegation.ts` 405 行超 300 行目标：wrapSpawnAgentWithDelegation 是单函数，包含 7+ 顺序执行阶段（CR-4b 策略守卫 → ContextPacker → DelegationGate → Enforcer → Lifecycle → 执行 → 活动面板 → detached session → schema 校验 → 收尾 → ScoreCard → SkillLifecycle），共享 taskId/agentId/role/enrichedPrompt/contextTokens 等局部状态。进一步拆分需新建传递状态的接口，属于"改逻辑"而非"仅移动代码"，违反 Phase 92 约束
+- `extractor-ts.ts` 431 行超 300 行目标：承载 TS 分支全部 8 种节点类型 + 7 个 TS 专用辅助函数，进一步拆分需引入新设计模式或过度拆分辅助函数
+
+### Phase 91 — 测试基建补全 — 2026-07-29
+
+补全 goal-runner 子模块零测试（TD-16，Critical）和 ChatBridge 入口级集成测试（TD-01，High）两项测试基建类技术债。新增 38 个单元/集成测试用例，全部通过。
+
+#### New
+- **TD-16 goal-runner-core 单元测试**（`tests/runtime/goal-runner-core.test.ts`，7 tests）：覆盖 createGoalRunner 工厂的 ctx 装配（返回 handleGoalCommand / executeGoalPlan / resumeGoalPlan 三个独立 API）、gid 生成（deps.goalId 未传时用 nextId 生成 msg- 前缀，传入时使用传入 id）、emit 安全调用（onGoalEvent 抛异常时不阻塞，未注入时 no-op）、跨模块函数引用填充（ctx Object.assign 后包含 confirm/scheduler/recovery 三模块函数）
+- **TD-16 goal-runner-confirm 单元测试**（`tests/runtime/goal-runner-confirm.test.ts`，11 tests）：覆盖 savePlanRevision（绝对路径拒绝、越界路径拒绝、正常 JSONL 写入、写入失败 fail-open）、handleGoalCommand（无引号参数解析、路由失败处理）、clarifyGoalIfNeeded（无 onToolConfirmRequest 时跳过澄清、LLM 解析失败 fail-open）
+- **TD-16 goal-runner-scheduler 单元测试**（`tests/runtime/goal-runner-scheduler.test.ts`，9 tests）：覆盖 executeGoalPlan attestation 校验（无 attestation 自动修复、校验失败中止执行）、executeSingleStep status 流转（pending→in_progress→completed/failed）、用户中断处理（aborted 状态置为 aborted 并停止）、收尾逻辑（plan.status 设为 completed）、executePlanWithDag 降级（dagEngine 未注入时降级到 single 并日志提示）
+- **TD-16 goal-runner-recovery 单元测试**（`tests/runtime/goal-runner-recovery.test.ts`，11 tests）：覆盖 resumeGoalPlan（数据校验、步骤过滤、持久化状态恢复、持久化失败 fail-open）、verifyPlan（classifier 异常 fail-open、空步骤处理）、runCompletionGate（默认 auditMode 行为、未触发条件时不输出"代码验证通过"消息）
+- **TD-01 ChatBridge 集成测试扩展**（`desktop/main/__tests__/chat-bridge.integration.test.ts`，+6 tests）：新增 Phase 91 Task 5 一节，覆盖 requestId 隔离回归场景——精准中断隔离（stopGeneration(req-A) 不影响 req-B 的 controller 和 pendingConfirm）、Map 覆盖语义（同 requestId set 新 controller 时不主动 abort 旧 controller）、批量清理生命周期（clearAllAbortControllers 逐个 abort 后清空 Map）、AbortController 完整生命周期（set → get → abort → clear）、并发 3 请求各自独立的 requestId
+
+#### Fixed
+- 修复 goal-runner-core.test.ts 中未 await Promise 导致 plan_created 事件未触发的时序问题
+- 修复 goal-runner-scheduler.test.ts 中 PathRouter 路由模式配置错误（使用 `mode: 'explicit'` + `explicitRoute: 'dag'` 强制 DAG 路由）
+- 修复 goal-runner-recovery.test.ts 中三处断言错误：空步骤消息文案（"无需恢复" → "goal 无步骤"）、classifier 异常断言（应为 status=failed 而非步骤 completed）、runCompletionGate 条件判断（默认 auditMode 不调用 completionGate）
+
+#### 验证
+- `pnpm typecheck`：TypeScript No errors found
+- `pnpm test`：3607 passed + 1 flaky（`tests/harness/audit-logger.test.ts > logChannelMessage in/out` 时序问题，单独运行通过，与 Phase 91 改动无关）
+- Phase 91 新增 5 个测试文件共 38 个用例全部通过
+
+#### Docs
+- `docs/TECH_DEBT_TRACKER.md`：TD-01 / TD-16 从 §1 活跃清单移至 §3 历史区；活跃项数 13 → 11；§4 审查员指引数字同步更新
+- Phase 91~95 解决计划文档已存在于 `蓝图与Phase/Phase-91-测试基建补全.md`
+
+### 技术债清理（续）— 2026-07-29
+
+Phase 96 之后的后续技术债清理，共处理 9 项技术债（5 项修复 / 4 项部分推进或现状标注）。详见 `docs/TECH_DEBT_TRACKER.md`。
+
+#### 修复
+- **TD-13 死配置清理**：删除全库零消费的 SoundsConfigSchema / UIComponentsSchema / ReasoningModeSchema 定义及 AppConfigSchema 对应字段；移除 defaults.ts 默认值；删除 SettingsProvidersTab 中 disabled 的推理模式 UI 块；更新 4 个测试文件
+- **TD-22 错误处理统一**：新建 `src/utils/errors.ts:toErrorMessage(error)` 工具函数（安全处理 Error/string/object/null/undefined）+ 7 个单元测试
+- **TD-21 测试类型安全**：`chat-bridge.integration.test.ts` 双重断言 `as unknown as AppDependencies` 改为单层 `as AppDependencies`；setupBridge 新增 `completionGateVerify` 选项，消除 4 处 `(ctx.deps as any).completionGate = ...` 后注入；47 个测试全部通过
+
+#### 部分推进
+- **TD-07 IPC 校验中间件**：新增 4 个 createValidatedHandler 包装高风险 handler——shell:open-external（URL 协议白名单 http/https/mailto，拒绝 file/javascript/data）、shell:open-path（长度上限）、shell:show-item-in-folder（长度上限）、clipboard:write-text（1MB 上限防 OOM）。共 7/92 handler 已包装
+- **TD-20 console 统一**：desktop/main/index.ts 替换 11/34 处 console（chat:sync-history 6 处 + agent:* 5 处）为 logger.warn 带结构化字段。剩余 23 处含启动日志（合理保留）+ 渲染层转发（必须 console）+ IPC handler 错误（待后续）
+
+#### 现状标注
+- **TD-06 TrustGradient 接线**：checkOperation 已在 permission-engine.ts 调用；动态升级旁路是 Phase 79 有意设计
+- **TD-12 跨层引用**：方案不合理（下沉会导致 src/ 反向引用 desktop/），保留现状
+- **TD-23 注释噪音** / **TD-24 日志脱敏**：标注为逐步清理 / no-op
+
+#### 文档修正
+- TD-25/26/27 早在 2026-07-20 已修复，此前误留在活跃清单，本轮修正归位至历史区
+- 审查员指引数字同步更新（活跃 13 项）
+
 ### Phase 96 — PI Agent 对齐 P2 批量修复
 
 对齐 PI Agent 基础功能差距的 P2 级修复（P2-3 ~ P2-10），全部通过 typecheck + test + dist:electron 验证。

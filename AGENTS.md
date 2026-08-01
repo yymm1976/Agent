@@ -234,3 +234,120 @@ rtk err <any-noisy-command>
 - MCP：`codegraph`、`codebase-memory-mcp`
 
 **本文件是仓库级强制约定**；与全局冲突时，**以本仓库 `AGENTS.md` + `routedev/AGENTS.md` 为准**。
+
+---
+
+## 8. 当前工作状态交付快照（2026-08-01）
+
+> 本节为跨 Harness / 跨会话交接而临时追加，保存当前进行中的工作状态。任务完成后可由后续维护者移除本节。
+> 计划文档：`报告/Proma借鉴落地计划-Phase97.md`。
+
+### 8.1 主线任务：Phase 97（Proma 借鉴落地）
+
+9 个 Part 渐进推进：A 统一执行上下文与事件生命周期 →（C 全局中断、D 工作区并行）→（B 联合回滚、E 子会话、G 输入框引用并行）→（F 自动化、H Agent Island），I 极简记忆穿插。
+
+**实现完成度（独立子 Agent 审查结论）：**
+
+| Part | 内容 | 完成度 | 结论 |
+|------|------|--------|------|
+| A | 执行上下文/事件生命周期/Kernel | 2/3 | ⚠️ 类型层全落地，运行时链路休眠 |
+| B | TurnSnapshot 联合回滚 | 2/2 | ✅ 主链路完整，UI 入口缺 |
+| C | 全局中断队列 | 2/2 | ✅ 完整（60s 超时 + abort） |
+| D | 工作区能力边界 | 2/2 | ✅ 完整，配置段有偏差 |
+| E | 子会话可见性 | 2/2 | ⚠️ 主进程完整，renderer 零消费 |
+| F | 自动化调度 + 自我迭代 | 1/2 | ⚠️ 调度器完整，evolution 孤立 |
+| G | ComposerReference | 2/2 | ⚠️ 解析器完整，renderer 未接入 |
+| H | Agent Island | 2/2 | ✅ 完整 |
+| I | 极简记忆 | 3/3 | ⚠️ 记录侧完整，淘汰侧未接线 |
+
+**关键缺口（审查发现）：**
+- A3 AgentKernel 无生产实现（仅测试 MockKernel）——Critical
+- F2 automation-evolution 整个模块孤立（仅测试引用）——Critical
+- EngineEventV1 事件发射无 sink 调用方（`setEngineEventSink` 无消费者）——事件恒短路
+- AgentExecutionContext 触发来源未透传（恒为兜底 `'user'`）
+- 三组 IPC（composer / 子会话 / turn 回滚）主进程完整但 renderer 无调用方
+
+**已确认的处理决策（用户拍板）：**
+1. 两个 Critical 孤立模块：**全部补接线保留**（不删除）——kernel.ts 补 routedev-native 薄适配装配到 app-init；automation-evolution.ts 接入 scheduler 执行闭环
+2. 三组休眠 IPC 的 renderer UI：**本轮全做**——InputArea composer 引用提示（/ @ & ~ + 拖拽）、子会话面板、对话回滚入口
+
+### 8.2 已完成的改动（全部未提交）
+
+**Phase 97 本体：**
+- Part A：`src/agent/execution-context.ts`、`src/harness/event-types.ts`、`src/agent/kernel.ts`（接口，待接线）；loop.ts 发射 agent/turn/message 生命周期 + sequence
+- Part B：`src/harness/turn-snapshot.ts` TurnSnapshotManager（capture/restore，hash+边界校验）；chat-bridge 每 turn capture
+- Part C：`src/agent/interruption.ts` + `interruption-broker.ts`（submit/resolve/reject/reclaim/abort + 60s 超时）；renderer `useGlobalInterruptions.ts` 顶层挂载
+- Part D：`src/workspace/types.ts` + `manager.ts`（CRUD + validateAttachments + isPathAllowed 接入权限引擎）
+- Part E：`src/agents/subagent-registry.ts`、`desktop/main/bridges/agent-bridge.ts`、spawn-agent 携带 childSessionId、delegation 增加 permissionCeiling（执行期强制）
+- Part F：`src/runtime/automation-scheduler.ts`（cron/迁移/tick/runTask）+ `automation-evolution.ts`（待接线）
+- Part G：`src/agent/context/composer-reference.ts`（/ & ~ @ 前缀 + accessScope）；chat-bridge 结构化注入 systemBlocks
+- Part H：`desktop/main/agent-status-service.ts` + `AgentIsland.tsx`（常驻顶部轮询 agent:get-status）
+- Part I：`src/memory/user-profile.ts`、`hit-stat.ts`、`src/skills/coach.ts`；skill-lifecycle 增 suggestSkillFromWorkflows
+- 装配：`src/runtime/app-init-agent-loop.ts` / `app-init-agent-middleware.ts` / `app-init-agent-trust.ts`（由 app-init-agent.ts 调用）
+
+**收尾修复：**
+1. preload/index.ts 两处重复 `agent` 段合并（follow-up + getStatus）
+2. desktop/main/index.ts Phase 97 handler 补 `async`；`chat:restore-turn` 修正 Multi 用法（1 个类型参数，handler 首参是 event）
+3. tests/harness/audit-logger.test.ts flaky 测试加 10ms 间隔
+4. **typecheck:desktop 存量错误清零**（46 → 0）：chat-bridge finalUsage 标注 TokenUsageInfo；config-bridge getModels 可选调用；index.ts `Electron.AppName`→`Parameters<typeof app.getPath>[0]`、isActive→isFocused、engine:start/stop/restart 改日志 stub；profile-bridge.test.ts 夹具补字段；gateway-server removeListener 类型；ProfileVersionPanel.test.tsx fieldChanges 对象化 + jest-dom import；useRouteDevStore `as unknown as GoalEvent`
+
+### 8.3 验证状态（截至 2026-08-01）
+
+| 检查 | 结果 |
+|------|------|
+| `pnpm typecheck`（tsc --noEmit） | ✅ exit 0 |
+| `pnpm typecheck:desktop` | ✅ exit 0（存量错误已清零） |
+| `pnpm test` | ✅ 284 文件通过，3775 测试通过，160 跳过 |
+
+注意：以上为收尾修复后状态；待办接线与 UI 改动完成后必须重跑全部验证。
+
+### 8.4 待办清单（按优先级）
+
+**Critical（补接线保留）：**
+- [ ] k1 kernel.ts 接线：补 routedev-native 薄适配（包装 ReActAgentLoop），装配到 `src/runtime/app-init.ts`，保证 getSessionState/abort 有生产消费点；更新 `tests/agent/kernel.test.ts`
+- [ ] k2 automation-evolution 接线：AutomationScheduler.runTask 后将结果转 AutomationFeedback → 定期 buildSuggestion → SuggestionApprovalQueue（人工审批后应用，不自动写）；更新测试
+
+**Warning（代码层）：**
+- [ ] k3 EngineEventV1 sink 接通：给 loop.setEngineEventSink 找生产调用方（trace-collector 或 chat-bridge）；trace 携带 sequence/turnId
+- [ ] k4 AgentExecutionContext 透传：chat-bridge 传 'user'、automation executor 传 'automation'、delegation 传 'delegation'、remote 传 'remote'
+- [ ] k5 导出即死函数接入：evaluateBatchCompletion、isAllowedByAllowlist + allowlist 字段、validateUserProfile、HitStat.evaluateLowHits
+
+**UI（本轮全做）：**
+- [ ] u1 InputArea 接入 composer 引用提示（/ @ & ~ 前缀 + 拖拽文件解析）
+- [ ] u2 子会话面板（listSubagents/getSubagent/stopSubagent）
+- [ ] u3 对话回滚入口（listTurnSnapshots/restoreTurn）
+
+**收尾：**
+- [ ] v1 重跑 pnpm typecheck / typecheck:desktop / pnpm test 全绿
+- [ ] v2 双轴代码审查（standards + spec）
+- [ ] 提交到 main 分支（当前领先 origin/main 94 提交未推送；用户要求提交时才提交）
+
+### 8.5 关键文件索引
+
+| 领域 | 文件 |
+|------|------|
+| 执行上下文 | `src/agent/execution-context.ts` |
+| 事件协议 | `src/harness/event-types.ts` |
+| Kernel 接口 | `src/agent/kernel.ts`（待接线） |
+| Turn 快照 | `src/harness/turn-snapshot.ts` |
+| 中断队列 | `src/agent/interruption.ts` / `src/agent/interruption-broker.ts` |
+| 工作区 | `src/workspace/types.ts` / `src/workspace/manager.ts` |
+| 子会话 | `src/agents/subagent-registry.ts` / `desktop/main/bridges/agent-bridge.ts` |
+| 自动化 | `src/runtime/automation-scheduler.ts` / `src/runtime/automation-evolution.ts`（待接线） |
+| 引用解析 | `src/agent/context/composer-reference.ts` |
+| Agent 状态 | `desktop/main/agent-status-service.ts` / `desktop/renderer/src/components/agent/AgentIsland.tsx` |
+| 记忆 | `src/memory/user-profile.ts` / `src/memory/hit-stat.ts` |
+| Skills 沉淀 | `src/skills/coach.ts` / `src/skills/skill-lifecycle.ts` |
+| 装配 | `src/runtime/app-init.ts` / `src/runtime/app-init-agent-loop.ts` 等 |
+
+### 8.6 陷阱与注意事项
+
+1. Zod schema preprocess 兜底：数组 schema 的 preprocess 兜底必须是 `[]` 而非 `{}`（已修复 automations 段）
+2. createValidatedHandlerMulti：只接受 1 个类型参数 `<TResult>`；handler 首参是 `event`
+3. createValidatedHandler：handler 必须返回 `Promise<TResult>`，同步回调要加 `async`
+4. BrowserWindow 没有 `isActive()`，用 `isFocused()`
+5. `Electron.AppName` 不存在，用 `Parameters<typeof app.getPath>[0]`
+6. git status：`main...origin/main [ahead 94]`，大量文件未提交；提交前确认范围
+7. typecheck:desktop 输出很长，用 `Select-String -Pattern "error TS"` 过滤
+8. 死代码审查发现 `KernelBinding` 全仓零引用，接线时注意
+9. 严格死代码原则：新增配置/模块/函数必须有消费点，孤立模块标 Critical 阻塞合入
