@@ -7,15 +7,13 @@
 //   2. ConfigGuard / CommandSandbox 安全注入
 //   3. MCPClientManager + McpSecurityScanner
 //   4. SecurityChecker / ToolExecutor / ToolRegistryAdapter / GuardedToolExecutorAdapter
-//   5. ReActAgentLoop 创建 + 基础注入（trace/recallInjector/virtualFS/planState/profiler/sanitizer）
-//   6. BudgetMonitor 动态 import（fail-open）
-//   7. PermissionEngine + TrustGradientManager（动态 import，fail-open）
-//   8. PolicyEngine（Intent Guard / Playbook / Tool Guide / Tool Approval）
-//   9. SkillsRouter + FilesystemDiscovery
-//   10. ToolResultSanitizer + ToolOutputPipeline
+//   5. PermissionEngine + TrustGradientManager（动态 import，fail-open）
+//   6. PolicyEngine（Intent Guard / Playbook / Tool Guide / Tool Approval）→ 写入 ctx 供 agent 子系统注入
+//   7. SkillsRouter + FilesystemDiscovery
+//   8. ToolResultSanitizer + ToolOutputPipeline → 写入 ctx 供 agent 子系统注入
 //
-// 注意：profiler 和 BudgetMonitor 因依赖 agentLoop（本模块创建），暂置于本模块。
-// 后续可通过调整调用顺序迁移到 observability 子模块。
+// Phase 94 Task 3：ReActAgentLoop 创建 + 所有 setXxx 注入（含 BudgetMonitor）已迁移至 agent 子系统
+// （app-init-agent-loop.ts setupAgentLoop 开头）。profiler 仍由本模块创建（作为返回值 + 写入 ctx.profiler）。
 
 import { ToolRegistry } from '../tools/registry.js';
 import { ToolExecutor } from '../tools/executor.js';
@@ -43,8 +41,9 @@ import { VfsReadTool, VfsWriteTool, VfsListTool, VfsDeleteTool } from '../agent/
 import { PlanState } from '../agent/context/plan-state.js';
 import { PlanGetTool, PlanSetTool, PlanUpdateStepTool, PlanAddStepTool, PlanRemoveStepTool } from '../agent/tools/plan-tool.js';
 import { createDefaultEngine, type PermissionEngine } from '../tools/permission-engine.js';
+// Phase 97 Part D：工作区管理器
+import { WorkspaceManager } from '../workspace/manager.js';
 import { MCPClientManager } from '../tools/mcp/client.js';
-import { ReActAgentLoop } from '../agent/loop.js';
 import { TokenProfiler } from '../agent/token-profiler.js';
 import { WorkModeController, GuardedToolExecutorAdapter } from '../agent/work-modes.js';
 import { ReadTracker, createReadTracker } from '../tools/read-tracker.js';
@@ -76,13 +75,13 @@ import { filterProcessEnvByWhitelist } from '../security/env-filter.js';
 
 /**
  * 创建工具子系统
- * 包含：ToolRegistry、全部内置工具、ToolExecutor、SecurityChecker、PermissionEngine、PolicyEngine、AgentLoop
+ * 包含：ToolRegistry、全部内置工具、ToolExecutor、SecurityChecker、PermissionEngine、PolicyEngine
  *
- * @param ctx 共享装配上下文（读取 config/cwd/trace/contextManager/recallInjector/ccrCache/offload*，写入 registry/agentLoop/toolExecutor/...）
+ * @param ctx 共享装配上下文（读取 config/cwd/trace/contextManager/recallInjector/ccrCache/offload*，写入 registry/toolExecutor/policyEngine/toolOutputPipeline/...）
  * @returns 工具子系统依赖片段
  */
 export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> {
-  const { config, cwd, trace, recallInjector, ccrCache, offloadSessionId, offloadRootDir } = ctx;
+  const { config, cwd, trace, ccrCache, offloadSessionId, offloadRootDir } = ctx;
 
   // ===== 工具链 =====
   // Phase 81 Task 1：工具默认注册收口——按 profile 档位注册
@@ -249,78 +248,20 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   const readTracker = createReadTracker(cwd);
   const readBeforeWriteEnabled = config.optimization?.safety?.readBeforeWrite !== false;
   const guardedAdapter = new GuardedToolExecutorAdapter(adapter, workModeController, readTracker, readBeforeWriteEnabled);
-  // 传入 autoApprovePatterns：从 config.autonomy 读取，让只读安全工具自动批准
-  // 匹配的工具跳过用户确认，写入/执行类工具仍需确认
-  const agentLoop = new ReActAgentLoop(guardedAdapter, {
-    maxIterations: 50,
-    toolsEnabled: true,
-    autoApprovePatterns: config.autonomy?.autoApprovePatterns ?? [],
-  });
-  // Phase 34：注入 TraceCollector，记录 LLM 调用与循环事件
-  // setTraceCollector 接受 null 不接受 undefined，用 ?? null 转换
-  agentLoop.setTraceCollector(trace ?? null);
-
-  // Phase 71 Task B3：注入记忆召回注入器到 agentLoop
-  // run() 在 systemPrompt 处理完后调用 recallInjector.recallToPrompt(userMessage)
-  // 把 KnowledgeGraph 中相关记忆格式化为【相关记忆】片段追加到 systemPrompt
-  // setRecallInjector 接受 null 不接受 undefined，用 ?? null 转换
-  agentLoop.setRecallInjector(recallInjector ?? null);
-
-  // 注入压缩器到 agentLoop：ReAct 循环每轮迭代前检查 messages 的 token 数，
-  // 超过阈值时调用 compressEnhanced 压缩，防止工具调用/结果持续累积导致超出模型窗口
-  // ContextManager 结构化兼容 CompactorLike（shouldCompressEnhanced + compressEnhanced）
-  agentLoop.setCompactor(ctx.contextManager ?? null);
-
-  // Phase 71 Task E1：注入 VirtualFS 到 agentLoop
-  // loop 持有同一 VFS 实例（与上方注册的 4 个 VFS 工具共享），保证工具层与 loop 状态一致
-  agentLoop.setVirtualFS(virtualFS);
-
-  // Phase 71 Task E2：注入 PlanState 到 agentLoop
-  // loop 持有同一 PlanState 实例（内部复用 virtualFS），保证工具层与 loop 状态一致
-  agentLoop.setPlanState(planState);
-
-  // 任务1：注入 ComposePipeline，让 Compose 模式具备阶段提示词注入和自动流转能力
-  // Phase 81 Task 4：packs.compose.enabled 门控（standard-pack，默认 false 退出装配）
-  //   未启用时注入 null，loop 走原始行为（无 compose 阶段流转）；enabled:true 恢复装配
-  agentLoop.setComposePipeline(
-    config.packs?.compose?.enabled === true ? workModeController.getComposePipeline() : null,
-  );
-  // 任务3：注入简洁思考约束开关（来自 optimization.conciseThinking.enabled，默认 false）
-  agentLoop.setConciseThinking(config.optimization?.conciseThinking?.enabled === true);
+  // Phase 94 Task 3：agentLoop 创建 + 所有 setXxx 注入（trace/recallInjector/contextManager/virtualFS/
+  //   planState/composePipeline/conciseThinking/profiler/budgetMonitor/policyEngine/sanitizer/
+  //   toolOutputPipeline）已迁移至 agent 子系统（app-init-agent-loop.ts setupAgentLoop 开头）
+  // 此处仅保留 tools 子系统需要的中间产物创建：
+  //   - profiler：仍由 tools 子系统创建（作为返回值 + 写入 ctx.profiler 供 agent 子系统注入）
+  //   - PolicyEngine：tools 子系统创建，写入 ctx.policyEngine 供 agent 子系统注入
+  //   - ToolOutputPipeline：tools 子系统创建，写入 ctx.toolOutputPipeline 供 agent 子系统注入
 
   // Phase 30 Task 1：Token Profiler（可观测性）
   // 默认开启——可观测性不应是实验性的
+  // Phase 94 Task 3：setProfiler 调用已迁移至 agent 子系统，此处仅创建实例
   const profiler = config.optimization?.tokenTracking?.enabled !== false
     ? new TokenProfiler()
     : null;
-  if (profiler) {
-    agentLoop.setProfiler(profiler);
-  }
-
-  // Phase 53 Task 9：预算监控（受 config.phase53Integration.budgetMonitor.enabled 守护，fail-open）
-  // tokenLimit 取自 config.router.budget.dailyLimit（默认 500000），避免在 BudgetMonitorConfigSchema 重复定义
-  const phase53BudgetCfg = config.phase53Integration?.budgetMonitor;
-  if (phase53BudgetCfg?.enabled) {
-    const budgetMonitorModulePath = '../agent/budget-monitor.js';
-    import(budgetMonitorModulePath)
-      .then((mod: { BudgetMonitor: new (opts: { tokenLimit: number; costLimit?: number; tokenWarnRatio?: number; toolLoopThreshold?: number }) => import('../agent/budget-monitor.js').BudgetMonitor }) => {
-        const monitor = new mod.BudgetMonitor({
-          tokenLimit: config.router.budget.dailyLimit,
-          costLimit: phase53BudgetCfg.costLimitPerSession,
-          tokenWarnRatio: phase53BudgetCfg.tokenWarnRatio,
-          toolLoopThreshold: phase53BudgetCfg.toolLoopThreshold,
-        });
-        // setBudgetMonitor 已在 ReActAgentLoop 声明；保留 typeof 守卫兼容装配顺序
-        if (typeof agentLoop.setBudgetMonitor === 'function') {
-          agentLoop.setBudgetMonitor(monitor);
-          logger.debug('BudgetMonitor injected', {
-            via: 'setBudgetMonitor',
-            tokenLimit: config.router.budget.dailyLimit,
-          });
-        }
-      })
-      .catch((err) => { logger.warn('BudgetMonitor fail-open', { error: err instanceof Error ? err.message : String(err) }); });
-  }
 
   // ===== 权限引擎 =====
   const permissionEngine = createDefaultEngine();
@@ -333,6 +274,16 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
       permissionEngine.setApproval(category as never, level);
     }
   }
+
+  // ===== Phase 97 Part D：工作区管理器 + 路径边界注入 =====
+  // 工作区作为 Skill/MCP/记忆/权限的统一作用域；文件类工具先过工作区授权范围校验。
+  // 未激活工作区时 isPathAllowed 返回 true（fail-open，不改变现有行为）。
+  const workspaceManager = new WorkspaceManager();
+  void workspaceManager.load(); // fire-and-forget，load 幂等且未加载时 fail-open
+  permissionEngine.setPathBoundaryResolver((absPath) => ({
+    allowed: workspaceManager.isPathAllowed(workspaceManager.getActiveWorkspaceId(), absPath),
+  }));
+  ctx.workspaceManager = workspaceManager;
 
   // ===== Phase 42：PolicyEngine 接线（策略引擎） =====
   // Intent Guard + Playbook + Tool Guide + Tool Approval
@@ -369,10 +320,8 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
           engine.addPolicy(p);
         }
       }
-      // setPolicyEngine 已在 ReActAgentLoop 声明；保留 typeof 守卫兼容装配顺序
-      if (typeof agentLoop.setPolicyEngine === 'function') {
-        agentLoop.setPolicyEngine(engine);
-      }
+      // Phase 94 Task 3：PolicyEngine 实例写入 ctx，供 agent 子系统注入到 agentLoop
+      ctx.policyEngine = engine;
       logger.info('PolicyEngine registered', {
         intentGuard: policiesCfg.intentGuard,
         playbook: policiesCfg.playbook,
@@ -411,15 +360,15 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   //    maxOutputChars 来自配置 optimization.safety.maxToolOutputChars（默认 8000）
   const maxOutputChars = config.optimization?.safety?.maxToolOutputChars ?? 8000;
   const resultSanitizer = createToolResultSanitizer(maxOutputChars);
-  // Phase 32 Task 1.2：将 sanitizer 注入 agentLoop，所有工具结果在注入 LLM 上下文前都会经过净化
-  agentLoop.setSanitizer(resultSanitizer);
+  // Phase 32 Task 1.2：将 sanitizer 注入 agentLoop 已迁移至 agent 子系统（Phase 94 Task 3）
 
   // Phase 71 Task D3/D7：注入 ToolOutputPipeline（统一 Sanitizer / Concise Thinking / Budget Offload 三阶段）
   // pipeline 未注入时 loop 走原 sanitizeToolResult 逻辑（零回归）；注入后收拢到一处编排
   // 配置消费链：phase70Integration.toolOutputBudget.enabled + optimization.conciseThinking.enabled
+  // Phase 94 Task 3：ToolOutputPipeline 实例写入 ctx，供 agent 子系统注入到 agentLoop
   const p70Cfg = ctx.p70Cfg;
   const toolBudgetCfg = p70Cfg?.toolOutputBudget;
-  agentLoop.setToolOutputPipeline(new ToolOutputPipeline({
+  const toolOutputPipeline = new ToolOutputPipeline({
     sanitizer: resultSanitizer,
     conciseThinkingEnabled: config.optimization?.conciseThinking?.enabled === true,
     budgetEnabled: toolBudgetCfg?.enabled === true,
@@ -429,7 +378,8 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
     sessionId: offloadSessionId,
     // Phase 72 Task B2：ContentRouter 按内容类型分派压缩（默认关闭，零回归）
     contentRoutingEnabled: config.optimization?.contentRouting?.enabled === true,
-  }));
+  });
+  ctx.toolOutputPipeline = toolOutputPipeline;
   // Phase 32 Task 4.2：将 sanitizer 注入 MCPClientManager，检测 MCP 工具描述中的注入模式
   mcpManager.setSanitizer(resultSanitizer);
   // Phase 53 Task 5：McpSecurityScanner 注入（受 config.phase53Integration.mcpSecurityScan.enabled 守护）
@@ -513,7 +463,7 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   ctx.resultSanitizer = resultSanitizer;
   ctx.virtualFS = virtualFS;
   ctx.planState = planState;
-  ctx.agentLoop = agentLoop;
+  // Phase 94 Task 3：ctx.agentLoop 不再由 tools 子系统写入（agentLoop 创建迁移至 agent 子系统）
   ctx.profiler = profiler;
   // F-018：packRegistry 不再写入 ctx（对外暴露的僵尸字段已移除）
 
@@ -521,9 +471,11 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
     registry,
     mcpManager,
     toolExecutor,
-    agentLoop,
+    // Phase 94 Task 3：agentLoop 不再由 tools 子系统返回（创建迁移至 agent 子系统）
     // Phase 79 Task 4：暴露 permissionEngine 供 IPC tool:execute 复用权限校验
     permissionEngine,
+    // Phase 97 Part D：暴露工作区管理器（能力边界作用域）
+    workspaceManager,
     skillsRouter,
     filesystemDiscovery,
     profiler,

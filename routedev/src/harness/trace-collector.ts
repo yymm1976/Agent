@@ -137,6 +137,22 @@ export class TraceCollector {
     }
   }
 
+  /** 记录统一引擎事件（EngineEventV1，携带 sequence/turnId——Phase 97 Part A Task A3 消费点） */
+  recordEngineEvent(event: import('./event-types.js').EngineEventV1): void {
+    if (!this.config.enabled || !this.currentSession) return;
+    this.writeRecord({
+      timestamp: new Date(event.timestamp).toISOString(),
+      sessionId: this.currentSession.id,
+      event: `engine:${event.type}`,
+      data: {
+        sequence: event.sequence,
+        turnId: event.turnId,
+        triggerSource: event.triggerSource,
+        payload: event.payload,
+      },
+    });
+  }
+
   /** 记录工具调用 */
   recordToolCall(
     toolName: string,

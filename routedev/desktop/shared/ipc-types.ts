@@ -401,6 +401,25 @@ export type ChatStreamPayload =
   | { type: 'thinking'; message: string }
   | { type: 'escalation'; reason: string; iterations?: number };
 
+export interface RemoteGatewayStatus {
+  enabled: boolean;
+  running: boolean;
+  host: string;
+  port: number;
+  baseUrl: string;
+  transport: 'lan' | 'tailscale';
+  engineAvailable: boolean;
+  deviceCount: number;
+}
+
+export interface RemotePairingView {
+  qrDataUrl: string;
+  expiresAt: string;
+  baseUrl: string;
+  desktopName: string;
+  transport: 'lan' | 'https';
+}
+
 // ============================================================
 // 计划编辑 Payload（StepEditor 半自动 / 手动模式）
 // ============================================================
@@ -846,6 +865,39 @@ export interface RouteDevAPI {
     syncHistory: (
       messages: Array<{ role: 'user' | 'assistant' | 'tool'; content: string }>,
     ) => void;
+    /** Phase 97 Part B：列出 Turn 快照（对话级撤销入口，sessionId 缺省返回全部） */
+    listTurnSnapshots: (
+      sessionId?: string,
+    ) => Promise<import('../../src/harness/turn-snapshot.js').TurnSnapshot[]>;
+    /** Phase 97 Part B：恢复指定 turn 的快照（回退对话时同步恢复文件） */
+    restoreTurn: (
+      turnId: string,
+      sessionId?: string,
+    ) => Promise<import('../../src/harness/turn-snapshot.js').RestoreResult | null>;
+  };
+  /** Phase 97 Part C：统一中断队列（渲染层重载后 reclaim 恢复未处理中断） */
+  interruption: {
+    reclaim: (sessionId?: string) => Promise<import('../../src/agent/interruption.js').Interruption[]>;
+    list: (sessionId?: string) => Promise<import('../../src/agent/interruption.js').Interruption[]>;
+  };
+  /** Phase 97 Part E：子会话可见性（列表/详情/停止）+ 状态聚合（H） */
+  agent: {
+    listSubagents: (parentSessionId?: string) => Promise<import('../main/bridges/agent-bridge.js').SubagentView[]>;
+    getSubagent: (childSessionId: string) => Promise<import('../main/bridges/agent-bridge.js').SubagentView | null>;
+    stopSubagent: (childSessionId: string) => Promise<boolean>;
+    /** Phase 97 Part H：Agent 状态聚合快照（AgentIsland 渲染唯一数据源） */
+    getStatus: () => Promise<import('../main/agent-status-service.js').AgentStatusSnapshot>;
+    /** follow-up 队列（旧领域，保留兼容） */
+    followUp: (content: string) => void;
+    clearAllQueues: () => void;
+    setFollowUpMode: (mode: FollowUpMode) => void;
+    queueStatus: () => Promise<AgentQueueStatus>;
+    getFollowUpQueue: () => Promise<FollowUpItem[]>;
+    removeFollowUp: (index: number) => Promise<boolean>;
+  };
+  /** Phase 97 Part G：输入框结构化引用解析 */
+  composer: {
+    resolve: (text: string) => Promise<import('../../src/agent/context/composer-reference.js').ComposerReference[]>;
   };
   command: {
     execute: (payload: CommandExecutePayload | string) => Promise<unknown>;
@@ -874,6 +926,19 @@ export interface RouteDevAPI {
     get: () => Promise<AppConfig>;
     save: (config: AppConfig) => Promise<ConfigSaveResult>;
     reload: () => Promise<AppConfig>;
+  };
+
+  remote: {
+    status: () => Promise<RemoteGatewayStatus>;
+    restart: () => Promise<RemoteGatewayStatus>;
+    stop: () => Promise<RemoteGatewayStatus>;
+    createPairing: () => Promise<RemotePairingView>;
+    listDevices: () => Promise<import('./remote-protocol.js').RemoteDevice[]>;
+    revokeDevice: (deviceId: string) => Promise<boolean>;
+    updateDeviceScopes: (
+      deviceId: string,
+      scopes: import('./remote-protocol.js').RemoteDeviceScope[],
+    ) => Promise<import('./remote-protocol.js').RemoteDevice | null>;
   };
 
   // ===== MCP =====
@@ -941,16 +1006,6 @@ export interface RouteDevAPI {
   checkpoint: {
     list: (projectId?: string) => Promise<CheckpointInfo[]>;
     rollback: (checkpointId: string) => Promise<{ success: boolean; error?: string }>;
-  };
-
-  // ===== Agent（follow-up 队列） =====
-  agent: {
-    followUp: (content: string) => void;
-    clearAllQueues: () => void;
-    setFollowUpMode: (mode: FollowUpMode) => void;
-    queueStatus: () => Promise<AgentQueueStatus>;
-    getFollowUpQueue: () => Promise<FollowUpItem[]>;
-    removeFollowUp: (index: number) => Promise<boolean>;
   };
 
   // ===== Session 状态卡 =====

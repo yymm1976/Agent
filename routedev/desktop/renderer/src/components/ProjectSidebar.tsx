@@ -245,34 +245,32 @@ export function ProjectSidebar({ onOpenSettings, onOpenNewTask, onNavigateToChat
 
   return (
     <div className="flex h-full flex-col bg-rd-surface">
-      {/* 顶部：设置按钮 + 标题 + 缩进按钮 */}
-      <div className="flex h-14 shrink-0 items-center gap-2 px-3">
-        <Button
+      {/* 顶部：标题 + 设置 + 缩进，参考桌面工作台的轻量导航 */}
+      <div className="flex h-12 shrink-0 items-center gap-1 px-3">
+          <span className="flex-1 text-sm font-semibold tracking-tight text-rd-text">工作区</span>
+        <button
           onClick={onOpenSettings}
           title="设置"
-          variant="secondary"
-          size="sm"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-rd-textMuted transition hover:bg-rd-surfaceHover hover:text-rd-text"
         >
-          <Settings size={14} />
-          <span>设置</span>
-        </Button>
-        <span className="flex-1 text-base font-semibold tracking-tight text-rd-text">RouteDev</span>
+          <Settings size={15} />
+        </button>
         <button
           onClick={onCollapse}
           title="缩进侧边栏"
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-rd-textMuted transition hover:bg-rd-surfaceHover hover:text-rd-primary"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-rd-textMuted transition hover:bg-rd-surfaceHover hover:text-rd-text"
         >
           <PanelLeftClose size={16} />
         </button>
       </div>
 
       {/* Phase 74-H2：搜索触发器（侧边栏双入口之一，另一个是 ⌘K 快捷键） */}
-      <div className="shrink-0 px-3 pb-2">
+      <div className="shrink-0 px-2 pb-2">
         <button
           type="button"
           onClick={() => setSearchOpen(true)}
           title="搜索对话（⌘K）"
-          className="flex w-full items-center gap-2 rounded-md border border-rd-border bg-rd-background px-2.5 py-1.5 text-xs text-rd-textSubtle transition hover:bg-rd-surfaceHover hover:border-rd-borderHover"
+          className="flex h-8 w-full items-center gap-2 rounded-md border border-transparent bg-rd-surfaceHover px-2.5 text-xs text-rd-textSubtle transition hover:border-rd-border hover:text-rd-text"
         >
           <Search size={13} />
           <span className="flex-1 text-left">搜索对话...</span>
@@ -283,7 +281,7 @@ export function ProjectSidebar({ onOpenSettings, onOpenNewTask, onNavigateToChat
       </div>
 
       {/* 项目列表区 */}
-      <div className="flex-1 overflow-y-auto p-3">
+      <div className="flex-1 overflow-y-auto px-2 py-1">
         {projects.map((project, pIdx) => {
           const isCurrentProject = project.id === currentProjectId;
           return (
@@ -304,7 +302,7 @@ export function ProjectSidebar({ onOpenSettings, onOpenNewTask, onNavigateToChat
             >
               {/* 项目标题行 */}
               <div className={[
-                'group relative flex items-center gap-1.5 rounded-lg px-2.5 py-2',
+                'group relative flex h-8 items-center gap-1.5 rounded-md px-2',
                 isCurrentProject ? 'text-rd-text' : 'text-rd-textMuted hover:bg-rd-surfaceHover hover:text-rd-text',
               ].join(' ')}>
 
@@ -335,7 +333,7 @@ export function ProjectSidebar({ onOpenSettings, onOpenNewTask, onNavigateToChat
                 ) : (
                   <span
                     className={[
-                      'relative min-w-0 flex-1 truncate text-base',
+                      'relative min-w-0 flex-1 truncate text-sm',
                       isCurrentProject ? 'font-semibold text-rd-text' : 'font-medium text-rd-textMuted',
                     ].join(' ')}
                     title={project.path || undefined}
@@ -358,7 +356,7 @@ export function ProjectSidebar({ onOpenSettings, onOpenNewTask, onNavigateToChat
 
               {/* 对话列表（展开时） */}
               {project.expanded && (
-                <div className="ml-6 mt-0.5">
+                <div className="ml-5 mt-0.5">
                   {project.conversations.map((conv, cIdx) => {
                     const isCurrent = conv.id === currentConversationId;
                     const isEmpty = conv.messages.length === 0;
@@ -377,7 +375,7 @@ export function ProjectSidebar({ onOpenSettings, onOpenNewTask, onNavigateToChat
                           onNavigateToChat();
                         }}
                         className={[
-                          'group relative flex cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 transition',
+                          'group relative flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-2 transition',
                           isCurrent
                             ? 'bg-rd-surfaceHighlight text-rd-text'
                             : 'text-rd-textMuted hover:bg-rd-surfaceHover hover:text-rd-text',
@@ -424,11 +422,11 @@ export function ProjectSidebar({ onOpenSettings, onOpenNewTask, onNavigateToChat
       </div>
 
       {/* 底部：新建任务按钮 */}
-      <div className="shrink-0 p-3">
+      <div className="shrink-0 p-2">
         <Button
           onClick={() => onOpenNewTask()}
           variant="outline"
-          className="w-full"
+          className="h-9 w-full rounded-lg"
         >
           <Sparkles size={16} />
           新建任务

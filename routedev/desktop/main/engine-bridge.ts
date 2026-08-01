@@ -8,6 +8,7 @@
 //   4. 对各 bridge 方法的委托包装（保持对外 API 不变）
 // 各 delegate 通过共享 EngineContext 读写状态，跨 bridge 调用经 ctx.bridges 完成。
 
+import path from 'node:path';
 import type { AppConfig } from '../shared/config-types.js';
 import type { LLMMessage } from '../../src/router/types.js';
 import { LLMClientManager } from '../../src/router/llm/index.js';
@@ -45,6 +46,8 @@ import { AgentProfileManager } from '../../src/agents/profiles/manager.js';
 import { aggregateSessionStatus } from '../../src/agent/session-status-aggregator.js';
 // V2-001：统一环境变量脱敏，替代局部 SENSITIVE_ENV_PREFIX 正则
 import { sanitizeProcessEnv } from '../../src/security/env-filter.js';
+// Phase 97 Part H：常驻 Agent Island 状态聚合服务
+import { AgentStatusService, defaultAgentStatusPath } from './agent-status-service.js';
 
 // delegate bridge 与共享上下文
 import {
@@ -58,6 +61,7 @@ import {
   ProfileBridge,
   HookBridge,
   TraceBridge,
+  AgentBridge,
   type EngineBridgeOptions,
   type SkillInfo,
   type SkillPreview,
@@ -100,6 +104,10 @@ export class RouteDevEngine {
   private profileBridge: ProfileBridge;
   private hookBridge: HookBridge;
   private traceBridge: TraceBridge;
+  // Phase 97 Part E：子会话可见性 delegate
+  private agentBridge: AgentBridge;
+  // Phase 97 Part H：常驻 Agent Island 状态聚合服务（运行状态唯一权威源）
+  private agentStatus: AgentStatusService;
 
   constructor(config: AppConfig, options: EngineBridgeOptions) {
     this.ctx = new EngineContext(config, options);
@@ -113,6 +121,12 @@ export class RouteDevEngine {
     this.profileBridge = new ProfileBridge(this.ctx);
     this.hookBridge = new HookBridge(this.ctx);
     this.traceBridge = new TraceBridge(this.ctx);
+    // Phase 97 Part E：Agent 领域 delegate（子会话可见性，无需跨 bridge 调用）
+    this.agentBridge = new AgentBridge(this.ctx);
+    // Phase 97 Part H：状态聚合服务（持久化到 .routedev/agent-status.json，重启重建）
+    this.agentStatus = new AgentStatusService(undefined, {
+      persistPath: defaultAgentStatusPath(options.cwd),
+    });
     // 注入 bridge 互相引用，供跨 bridge 调用（如 ChatBridge.executeCommand → GoalBridge）
     this.ctx.bridges = {
       chat: this.chatBridge,
@@ -213,7 +227,7 @@ export class RouteDevEngine {
     // 与 app-init.ts 中的 workerProfileManager 行为一致：fail-open，加载失败仅记录
     ctx.profileManager = new AgentProfileManager(ctx.options.cwd);
     ctx.profileManager.loadAll().catch((err) => {
-      console.error('[Engine] AgentProfileManager.loadAll 失败:', err);
+      logger.error('[Engine] AgentProfileManager.loadAll 失败', { error: err instanceof Error ? err.message : String(err) });
     });
 
     // Phase 96 P0-1：加载上次对话历史（重启恢复）
@@ -221,6 +235,60 @@ export class RouteDevEngine {
     this.chatBridge.loadHistoryOnStart().catch((err) => {
       logger.warn('[Engine] loadHistoryOnStart failed', { err });
     });
+
+    // Phase 97 Part F：注入自动化调度器 executor——定时触发复用统一 Session 执行
+    // 权限白名单：触发时以任务 prompt 走 sendChat（权限模式由任务定义，非 bypassPermissions）
+    const scheduler = ctx.deps?.automationScheduler;
+    if (scheduler) {
+      scheduler.setExecutor(async (task) => {
+        try {
+          await this.sendChat(task.prompt, {
+            sessionId: `automation:${task.id}`,
+            autonomyMode: task.permissionMode === 'auto' ? 'auto' : 'semi',
+            // Phase 97 Part A Task A4：自动化调度触发来源透传
+            triggerSource: 'automation',
+          });
+          return { ok: true };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      });
+      scheduler.start();
+      logger.info('[Engine] automation scheduler executor wired', {
+        tasks: scheduler.listTasks().length,
+      });
+    }
+
+    // Phase 97 Part H：重启后从快照重建 Agent 状态（fail-open，无快照则空）
+    try {
+      // 注入聚合数据源：子会话可见性 + 中断队列 + 内核会话状态（deps 已就绪）
+      this.agentStatus.setSources({
+        subagent: ctx.deps?.subagentRegistry
+          ? { list: () => ctx.deps!.subagentRegistry.list() }
+          : undefined,
+        interruption: {
+          list: () => this.chatBridge.listInterruptions(),
+        },
+        // Phase 97 Part A Task A3：内核状态源（getSessionState/listSessions 生产消费点）
+        kernel: ctx.deps?.agentKernel
+          ? {
+              listSessions: () => ctx.deps!.agentKernel.listSessions(),
+              getSessionState: (sessionId) => ctx.deps!.agentKernel.getSessionState(sessionId),
+            }
+          : undefined,
+      });
+      const restored = this.agentStatus.restore();
+      logger.info('[Engine] agent status restored from snapshot', {
+        sessions: restored.sessions.length,
+      });
+    } catch (err) {
+      logger.warn('[Engine] agent status restore failed (fail-open)', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   async reloadConfig(config: AppConfig): Promise<void> {
@@ -257,6 +325,14 @@ export class RouteDevEngine {
     }
     // Phase 96 P0-1：退出前强制持久化对话历史，跳过防抖
     await this.chatBridge.flushOnShutdown();
+    // Phase 97 Part H：退出前持久化 Agent 状态快照（重启重建 UI）
+    try {
+      this.agentStatus.persist();
+    } catch (err) {
+      logger.warn('[Engine] agent status persist failed (fail-open)', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     // Phase 48 Task 4：清理 profileManager 引用，防止 reload 后旧实例残留
     this.ctx.profileManager = null;
   }
@@ -265,13 +341,66 @@ export class RouteDevEngine {
   // Chat 领域委托（ChatBridge）
   // ============================================================
 
-  async sendChat(text: string): Promise<void> {
-    return this.chatBridge.sendChat(text);
+  async sendChat(
+    text: string,
+    remoteContext?: import('./remote/chat-stream-event-publisher.js').RemoteTurnContextInput,
+  ): Promise<void> {
+    // Phase 97 Part H：标记 session 运行中（主进程唯一权威状态源）
+    const sessionId = remoteContext?.sessionId ?? 'desktop-local';
+    this.agentStatus.markRunning(sessionId, text.slice(0, 80));
+    try {
+      await this.chatBridge.sendChat(text, remoteContext);
+      this.agentStatus.markCompleted(sessionId);
+    } catch (err) {
+      // chatBridge.sendChat 内部已捕获错误并 emit，此处兜底（不向上抛）
+      this.agentStatus.markError(sessionId, err instanceof Error ? err.message : String(err));
+    }
+    // 每轮结束后持久化快照，重启可重建
+    this.agentStatus.persist();
+  }
+
+  /** Ordered event fan-out and replay journal used by the remote gateway. */
+  getEventHub(): import('./remote/engine-event-hub.js').EngineEventHub {
+    return this.ctx.eventHub;
+  }
+
+  isReady(): boolean {
+    return this.ctx.deps !== null;
+  }
+
+  getProjectInfo(): { id: string; name: string; cwd: string } {
+    const normalized = path.resolve(this.ctx.options.cwd);
+    return {
+      id: normalized,
+      name: path.basename(normalized),
+      cwd: normalized,
+    };
+  }
+
+  listRemoteTools(): import('../shared/remote-protocol.js').RemoteTool[] {
+    if (!this.ctx.deps) return [];
+    return this.ctx.deps.registry.list().map((tool) => {
+      const name = tool.definition.name;
+      const mcpParts = name.startsWith('mcp__') ? name.split('__') : [];
+      const mcpServerId = mcpParts.length >= 3 ? mcpParts[1] : null;
+      return {
+        name,
+        description: tool.definition.description ?? '',
+        source: mcpServerId ? 'mcp' : 'builtin',
+        mcpServerId,
+        allowed: true,
+      };
+    });
   }
 
   /** G-004 修复：按 requestId 解析工具确认 */
-  resolveToolConfirm(requestId: string, approved: boolean, payload?: unknown): void {
-    this.chatBridge.resolveToolConfirm(requestId, approved, payload);
+  resolveToolConfirm(
+    requestId: string,
+    approved: boolean,
+    payload?: unknown,
+    resolvedBy: 'desktop' | 'android' = 'desktop',
+  ): void {
+    this.chatBridge.resolveToolConfirm(requestId, approved, payload, resolvedBy);
   }
 
   resolvePlanEdit(requestId: string, steps: import('../shared/ipc-types.js').PlanEditRequestPayload['plan']['steps'] | null): void {
@@ -281,6 +410,51 @@ export class RouteDevEngine {
   /** 停止当前生成（供 IPC chat:stop 调用）；G-004：支持可选 requestId 精准中断 */
   stopGeneration(requestId?: string): void {
     this.chatBridge.stopGeneration(requestId);
+  }
+
+  /** Phase 97 Part C：重新取回未处理中断（渲染层重载恢复用） */
+  reclaimInterruptions(sessionId?: string): import('../../src/agent/interruption.js').Interruption[] {
+    return this.chatBridge.reclaimInterruptions(sessionId);
+  }
+
+  /** Phase 97 Part C：列出中断（可按会话过滤） */
+  listInterruptions(sessionId?: string): import('../../src/agent/interruption.js').Interruption[] {
+    return this.chatBridge.listInterruptions(sessionId);
+  }
+
+  /** Phase 97 Part B：列出 Turn 快照（对话级撤销入口） */
+  listTurnSnapshots(sessionId?: string): Promise<import('../../src/harness/turn-snapshot.js').TurnSnapshot[]> {
+    return this.chatBridge.listTurnSnapshots(sessionId);
+  }
+
+  /** Phase 97 Part B：恢复指定 turn 的快照（回退对话时同步恢复文件） */
+  restoreTurn(
+    turnId: string,
+    sessionId?: string,
+  ): Promise<import('../../src/harness/turn-snapshot.js').RestoreResult | null> {
+    return this.chatBridge.restoreTurn(turnId, sessionId);
+  }
+
+  /** Phase 97 Part E：列出子会话（可按父会话过滤） */
+  listSubagents(parentSessionId?: string): import('./bridges/agent-bridge.js').SubagentView[] {
+    return this.agentBridge.listSubagents(parentSessionId);
+  }
+
+  /** Phase 97 Part E：获取单个子会话详情 */
+  getSubagent(childSessionId: string): import('./bridges/agent-bridge.js').SubagentView | null {
+    return this.agentBridge.getSubagent(childSessionId);
+  }
+
+  /** Phase 97 Part E：停止运行中的子会话 */
+  stopSubagent(childSessionId: string): boolean {
+    return this.agentBridge.stopSubagent(childSessionId);
+  }
+
+  /** Phase 97 Part G：解析输入框结构化引用（/ @ & ~ 前缀 + accessScope 校验） */
+  resolveComposerRefs(
+    text: string,
+  ): import('../../src/agent/context/composer-reference.js').ComposerReference[] {
+    return this.chatBridge.resolveComposerRefs(text);
   }
 
   async generateTitle(userMessage: string, assistantReply?: string): Promise<string> {
@@ -613,17 +787,17 @@ export class RouteDevEngine {
     const osMod = await import('node:os');
     const resolved = pathMod.resolve(newCwd);
     if (resolved === pathMod.parse(resolved).root) {
-      console.error('[Engine] setCwd 拒绝系统根目录:', resolved);
+      logger.error('[Engine] setCwd 拒绝系统根目录', { resolved });
       return;
     }
     if (resolved === osMod.homedir()) {
-      console.error('[Engine] setCwd 拒绝用户主目录:', resolved);
+      logger.error('[Engine] setCwd 拒绝用户主目录', { resolved });
       return;
     }
     this.ctx.options.cwd = resolved;
     await this.initialize();
     this.ctx.conversationHistory = [];
-    console.log(`[Engine] 工作目录已切换: ${resolved}`);
+    logger.info('[Engine] 工作目录已切换', { resolved });
   }
 
   /** 获取当前工作目录 */
@@ -650,6 +824,19 @@ export class RouteDevEngine {
       currentGoalId: this.ctx.currentGoalId,
       blackboard: this.ctx.deps?.blackboard,
     });
+  }
+
+  /**
+   * Phase 97 Part H：获取 Agent 状态聚合快照（驱动 AgentIsland 渲染）
+   *
+   * 数据源：
+   *   - 内存显式标记（sendChat 生命周期 + 中断更新）
+   *   - subagentRegistry：running 子会话
+   *   - interruptionBroker：pending 中断 → waiting_interruption + 计数
+   * 渲染层只消费此快照，不做二次推导。
+   */
+  getAgentStatus(): import('./agent-status-service.js').AgentStatusSnapshot {
+    return this.agentStatus.getSnapshot();
   }
 
   /**

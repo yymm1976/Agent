@@ -16,6 +16,15 @@
 
 import type { KnowledgeGraph } from './graph.js';
 import { logger } from '../../utils/logger.js';
+// Phase 97 Part I Task I2：记忆命中计数（记录点：recallToPrompt 命中时）
+import type { HitStat } from '../../memory/hit-stat.js';
+
+// Phase 97 Part I Task I2 接线：低触发评估节流间隔（10 分钟一次，避免每次召回全量扫描统计表）
+const LOW_HIT_EVAL_INTERVAL_MS = 10 * 60 * 1000;
+/** 低触发评估窗口：仅统计窗口内命中（最近命中早于窗口起点视为窗口内 0 次） */
+const LOW_HIT_EVAL_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** 低触发阈值：窗口内命中次数低于该值视为低触发（建议级，不自动淘汰） */
+const LOW_HIT_MIN_HITS = 2;
 
 /** 召回并适配后的记忆条目（对外暴露，便于测试与扩展） */
 export interface RecalledMemory {
@@ -41,6 +50,8 @@ export interface RecalledMemory {
 export class MemoryRecallInjector {
   /** 上次召回命中的节点 ID 列表（用于 session 结束时反馈 useful） */
   private lastRecalledNodeIds: string[] = [];
+  /** Phase 97 Part I Task I2 接线：上次低触发评估时间戳（节流用） */
+  private lastLowHitEvalAt = 0;
   /**
    * Phase 96 R-2 修复：图谱持久化回调
    * session 结束反馈 useful 后立即调用，避免进程崩溃丢失整个 session 的知识强化数据。
@@ -55,6 +66,8 @@ export class MemoryRecallInjector {
     private readonly maxMemories: number = 5,
     /** 长期未使用阈值：unusedCount 超过此值的节点会被 forget（Phase 96 I-3） */
     private readonly staleUnusedThreshold: number = 10,
+    /** Phase 97 Part I Task I2：命中计数（可选注入；未注入时跳过记录） */
+    private readonly hitStat?: HitStat,
   ) {}
 
   /**
@@ -87,6 +100,40 @@ export class MemoryRecallInjector {
       }));
       const filtered = adapted.filter(m => m.confidence >= this.injectThreshold);
       if (filtered.length === 0) return '';
+
+      // Phase 97 Part I Task I2：命中计数（每个命中节点 record 一次，供低触发评估）
+      // fail-open：hitStat 未注入或 record 抛错均不影响召回主流程
+      if (this.hitStat) {
+        try {
+          for (const m of memories) {
+            if (m.score >= this.injectThreshold) {
+              this.hitStat.record(`memory:${m.node.id}`, 'memory');
+            }
+          }
+
+          // Phase 97 Part I Task I2 接线：生产消费 evaluateLowHits——节流评估低触发记忆
+          // 仅记录日志建议（不自动淘汰），与 hitStat.record 共用本 fail-open try/catch
+          if (Date.now() - this.lastLowHitEvalAt >= LOW_HIT_EVAL_INTERVAL_MS) {
+            this.lastLowHitEvalAt = Date.now();
+            const lowHits = this.hitStat.evaluateLowHits(
+              Date.now() - LOW_HIT_EVAL_WINDOW_MS,
+              LOW_HIT_MIN_HITS,
+            );
+            if (lowHits.length > 0) {
+              logger.info('MemoryRecallInjector: low-hit memories detected (suggestion only, no auto-eviction)', {
+                count: lowHits.length,
+                windowMs: LOW_HIT_EVAL_WINDOW_MS,
+                minHits: LOW_HIT_MIN_HITS,
+                samples: lowHits.slice(0, 5).map((h) => h.key),
+              });
+            }
+          }
+        } catch (hitErr) {
+          logger.debug('MemoryRecallInjector: hitStat.record failed (fail-open)', {
+            error: hitErr instanceof Error ? hitErr.message : String(hitErr),
+          });
+        }
+      }
 
       // Phase 96 I-2：记录命中的 nodeIds，session 结束时反馈 useful
       this.lastRecalledNodeIds = memories

@@ -171,10 +171,18 @@ export class PermissionEngine {
   /** headless 模式（无 TTY，always-ask 工具自动 deny） */
   private headless: boolean = false;
 
+  /** Phase 97 Part D：可选的路径边界解析器（工作区授权范围校验；注入后文件类工具先过边界，未注入则行为不变） */
+  private pathBoundaryResolver: ((absPath: string) => { allowed: boolean; reason?: string }) | null = null;
+
   /** 设置沙箱级（同时激活沙箱和审批级检查） */
   setSandboxLevel(level: SandboxLevel): void {
     this.sandboxLevel = level;
     this.sandboxActive = true;
+  }
+
+  /** Phase 97 Part D：注入路径边界解析器（工作区能力边界；传 null 卸载） */
+  setPathBoundaryResolver(resolver: ((absPath: string) => { allowed: boolean; reason?: string }) | null): void {
+    this.pathBoundaryResolver = resolver;
   }
 
   /** 获取当前沙箱级 */
@@ -292,6 +300,21 @@ export class PermissionEngine {
           decision: 'deny',
           reason: `沙箱级拒绝: ${toolName} 属于 "${category}" 类别，当前沙箱级 "${this.sandboxLevel}" 不允许此类别`,
         };
+      }
+    }
+
+    // Phase 97 Part D：工作区路径边界（可选注入的确定性 deny，位于 deny 规则之前）
+    // 文件类工具（file_read/file_write/file_edit/list_directory）先过工作区授权范围校验
+    if (this.pathBoundaryResolver) {
+      const pathArg = this.extractPathArg(toolName, args);
+      if (pathArg !== null) {
+        const boundary = this.pathBoundaryResolver(pathArg);
+        if (!boundary.allowed) {
+          return {
+            decision: 'deny',
+            reason: `工作区边界拒绝: ${pathArg} 不在当前工作区授权范围内${boundary.reason ? `（${boundary.reason}）` : ''}`,
+          };
+        }
       }
     }
 
@@ -457,6 +480,18 @@ export class PermissionEngine {
     }
 
     return true;
+  }
+
+  /**
+   * Phase 97 Part D：提取文件类工具的路径参数（相对路径原样传递，由边界解析器自行 resolve）
+   * 仅覆盖文件读写与目录列举；shell_exec 的命令路径无法可靠解析，保持现状
+   */
+  private extractPathArg(toolName: string, args: Record<string, unknown>): string | null {
+    if (toolName === 'file_read' || toolName === 'file_write' || toolName === 'file_edit' || toolName === 'list_directory') {
+      const p = args.path;
+      return typeof p === 'string' && p.length > 0 ? p : null;
+    }
+    return null;
   }
 
   /**

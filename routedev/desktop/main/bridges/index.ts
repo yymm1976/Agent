@@ -22,3 +22,6 @@ export { GoalBridge } from './goal-bridge.js';
 export { ProfileBridge } from './profile-bridge.js';
 export { HookBridge } from './hook-bridge.js';
 export { TraceBridge } from './trace-bridge.js';
+// Phase 97 Part E：子会话可见性 delegate
+export { AgentBridge } from './agent-bridge.js';
+export type { SubagentView } from './agent-bridge.js';

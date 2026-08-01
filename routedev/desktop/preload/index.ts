@@ -192,6 +192,54 @@ const api: RouteDevAPI = {
     syncHistory: (messages) => {
       ipcRenderer.send('chat:sync-history', messages);
     },
+    // Phase 97 Part B：对话级撤销（Turn 快照）
+    listTurnSnapshots: (sessionId?: string) =>
+      ipcRenderer.invoke('chat:list-turn-snapshots', sessionId) as Promise<import('../../src/harness/turn-snapshot.js').TurnSnapshot[]>,
+    restoreTurn: (turnId: string, sessionId?: string) =>
+      ipcRenderer.invoke('chat:restore-turn', turnId, sessionId) as Promise<import('../../src/harness/turn-snapshot.js').RestoreResult | null>,
+  },
+
+  // Phase 97 Part C：统一中断队列（渲染层重载后 reclaim 恢复未处理中断）
+  interruption: {
+    reclaim: (sessionId?: string) =>
+      ipcRenderer.invoke('interruption:reclaim', sessionId) as Promise<import('../../src/agent/interruption.js').Interruption[]>,
+    list: (sessionId?: string) =>
+      ipcRenderer.invoke('interruption:list', sessionId) as Promise<import('../../src/agent/interruption.js').Interruption[]>,
+  },
+
+  // Phase 97 Part E：子会话可见性（列表/详情/停止）
+  agent: {
+    listSubagents: (parentSessionId?: string) =>
+      ipcRenderer.invoke('agent:list-subagents', parentSessionId) as Promise<import('../main/bridges/agent-bridge.js').SubagentView[]>,
+    getSubagent: (childSessionId: string) =>
+      ipcRenderer.invoke('agent:get-subagent', childSessionId) as Promise<import('../main/bridges/agent-bridge.js').SubagentView | null>,
+    stopSubagent: (childSessionId: string) =>
+      ipcRenderer.invoke('agent:stop-subagent', childSessionId) as Promise<boolean>,
+    // Phase 97 Part H：Agent 状态聚合快照
+    getStatus: () =>
+      ipcRenderer.invoke('agent:get-status') as Promise<import('../main/agent-status-service.js').AgentStatusSnapshot>,
+    // follow-up 队列
+    followUp: (content: string) => {
+      ipcRenderer.send('agent:followUp', content);
+    },
+    clearAllQueues: () => {
+      ipcRenderer.send('agent:clearAllQueues');
+    },
+    setFollowUpMode: (mode) => {
+      ipcRenderer.send('agent:setFollowUpMode', mode);
+    },
+    queueStatus: () =>
+      ipcRenderer.invoke('agent:queueStatus') as Promise<import('../shared/ipc-types.js').AgentQueueStatus>,
+    getFollowUpQueue: () =>
+      ipcRenderer.invoke('agent:getFollowUpQueue') as Promise<import('../shared/ipc-types.js').FollowUpItem[]>,
+    removeFollowUp: (index: number) =>
+      ipcRenderer.invoke('agent:removeFollowUp', index) as Promise<boolean>,
+  },
+
+  // Phase 97 Part G：输入框结构化引用解析
+  composer: {
+    resolve: (text: string) =>
+      ipcRenderer.invoke('composer:resolve', text) as Promise<import('../../src/agent/context/composer-reference.js').ComposerReference[]>,
   },
   command: {
     execute: (payload) =>
@@ -223,6 +271,18 @@ const api: RouteDevAPI = {
     get: () => ipcRenderer.invoke('config:get') as Promise<import('../shared/ipc-types.js').AppConfig>,
     save: (config) => ipcRenderer.invoke('config:save', config) as Promise<import('../shared/ipc-types.js').ConfigSaveResult>,
     reload: () => ipcRenderer.invoke('config:reload') as Promise<import('../shared/ipc-types.js').AppConfig>,
+  },
+
+  // ===== Android 远程连接 =====
+  remote: {
+    status: () => ipcRenderer.invoke('remote:status') as Promise<import('../shared/ipc-types.js').RemoteGatewayStatus>,
+    restart: () => ipcRenderer.invoke('remote:restart') as Promise<import('../shared/ipc-types.js').RemoteGatewayStatus>,
+    stop: () => ipcRenderer.invoke('remote:stop') as Promise<import('../shared/ipc-types.js').RemoteGatewayStatus>,
+    createPairing: () => ipcRenderer.invoke('remote:create-pairing') as Promise<import('../shared/ipc-types.js').RemotePairingView>,
+    listDevices: () => ipcRenderer.invoke('remote:list-devices') as Promise<import('../shared/remote-protocol.js').RemoteDevice[]>,
+    revokeDevice: (deviceId: string) => ipcRenderer.invoke('remote:revoke-device', deviceId) as Promise<boolean>,
+    updateDeviceScopes: (deviceId, scopes) =>
+      ipcRenderer.invoke('remote:update-device-scopes', { deviceId, scopes }) as Promise<import('../shared/remote-protocol.js').RemoteDevice | null>,
   },
 
   // ===== MCP =====
@@ -310,25 +370,6 @@ const api: RouteDevAPI = {
       ipcRenderer.invoke('checkpoint:list', projectId) as Promise<import('../shared/ipc-types.js').CheckpointInfo[]>,
     rollback: (checkpointId: string) =>
       ipcRenderer.invoke('checkpoint:rollback', checkpointId) as Promise<{ success: boolean; error?: string }>,
-  },
-
-  // ===== Agent（follow-up 队列） =====
-  agent: {
-    followUp: (content: string) => {
-      ipcRenderer.send('agent:followUp', content);
-    },
-    clearAllQueues: () => {
-      ipcRenderer.send('agent:clearAllQueues');
-    },
-    setFollowUpMode: (mode) => {
-      ipcRenderer.send('agent:setFollowUpMode', mode);
-    },
-    queueStatus: () =>
-      ipcRenderer.invoke('agent:queueStatus') as Promise<import('../shared/ipc-types.js').AgentQueueStatus>,
-    getFollowUpQueue: () =>
-      ipcRenderer.invoke('agent:getFollowUpQueue') as Promise<import('../shared/ipc-types.js').FollowUpItem[]>,
-    removeFollowUp: (index: number) =>
-      ipcRenderer.invoke('agent:removeFollowUp', index) as Promise<boolean>,
   },
 
   // ===== Session 状态卡 =====

@@ -12,6 +12,10 @@ import { StatusBanner } from './components/StatusBanner.js';
 import { type RecentConversation, type SuggestedTask } from './components/DiscoveryPage.js';
 import { Button } from './components/ui/button.js';
 import { useTheme } from './hooks/useTheme.js';
+// Phase 97 Part C：全局中断消费（渲染层重载后 reclaim 恢复未处理中断）
+import { useGlobalInterruptions } from './hooks/useGlobalInterruptions.js';
+// Phase 97 Part H：常驻 Agent Island 状态条（顶部聚合 Agent 运行状态）
+import { AgentIsland } from './components/agent/AgentIsland.js';
 import { initIPCListeners, loadInitialConfig, useRouteDevStore } from './store/useRouteDevStore.js';
 import { useProjectsStore } from './store/useProjectsStore.js';
 
@@ -61,6 +65,9 @@ export default function App() {
 
   // 应用主题和字体大小
   useTheme(config);
+
+  // Phase 97 Part C：顶层挂载全局中断消费（重载后 reclaim 未处理中断）
+  useGlobalInterruptions();
 
   // 初始化 IPC 事件订阅 + 加载初始配置 + 加载项目数据（仅执行一次）
   useEffect(() => {
@@ -293,6 +300,8 @@ export default function App() {
       <div className="min-h-0 overflow-hidden">
         <ErrorBoundary>
           <StatusBanner />
+          {/* Phase 97 Part H：常驻顶部 Agent 状态条（页面切换不丢状态，数据来自主进程聚合） */}
+          <AgentIsland />
           <Layout
             onOpenSettings={() => setSettingsOpen(true)}
             onOpenNewTask={handleOpenNewTask}

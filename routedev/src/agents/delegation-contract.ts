@@ -16,6 +16,8 @@ export interface DelegationContract {
     maxTokens: number;
     maxSteps: number;
     canChallenge: boolean;
+    /** Phase 97 Part E：权限天花板——子 Agent 请求权限不得高于此值 */
+    permissionCeiling: 'read_only' | 'sandboxed_write' | 'full';
   };
 
   obligation: {
@@ -127,6 +129,7 @@ export class DelegationContractManager {
       `- 允许读取的文件：${readFiles}`,
       `- 允许修改的文件：${writeFiles}`,
       `- 允许使用的工具：${allowedTools}`,
+      `- 权限天花板：${contract.grant.permissionCeiling}`,
       `- Token 预算：${maxTokens}`,
       `- 最大步数：${maxSteps}`,
       '',
@@ -157,6 +160,9 @@ export class DelegationContractManager {
     }
     if (contract.grant.maxTokens <= 0) errors.push('maxTokens 必须大于 0');
     if (contract.grant.maxSteps <= 0) errors.push('maxSteps 必须大于 0');
+    if (!['read_only', 'sandboxed_write', 'full'].includes(contract.grant.permissionCeiling)) {
+      errors.push('permissionCeiling 必须是 read_only/sandboxed_write/full 之一');
+    }
     if (!contract.deliverable.format) errors.push('deliverable.format 不能为空');
     if (contract.obligation.challengeChannel !== 'parent_only') {
       errors.push('challengeChannel 必须为 parent_only');

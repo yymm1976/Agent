@@ -12,6 +12,13 @@ import type { SkillInfo, MCPToolInfo } from '../../../../shared/ipc-types.js';
 import { Button } from '../ui/button.js';
 import { Card } from '../ui/card.js';
 import { Textarea } from '../ui/textarea.js';
+import type { ComposerSuggestion } from '../../hooks/useComposerReference.js';
+import { useComposerReference } from '../../hooks/useComposerReference.js';
+
+// Phase 97 Part G：命令补全与引用提示合并菜单的条目类型
+type MenuItem =
+  | { type: 'command'; label: string; hint?: string }
+  | { type: 'reference'; ref: ComposerSuggestion };
 
 // 支持的命令列表（Phase 37：扩展为动态获取 + 静态兜底）
 // Phase 54：补全 /goal 命令
@@ -61,6 +68,8 @@ export function InputArea({
   focusKey?: string | null;
 }) {
   const [input, setInput] = useState('');
+  // Phase 97 Part G：光标位置（用于定位当前引用 token）
+  const [cursor, setCursor] = useState(0);
   const [commandIndex, setCommandIndex] = useState(0);
   const [commandMenuVisible, setCommandMenuVisible] = useState(false);
   // Phase 54 修复：命令菜单位置状态（用 Portal 渲染到 body，避免被祖先 overflow-hidden 裁剪）
@@ -70,17 +79,17 @@ export function InputArea({
   // 自主度下拉菜单
   const [autonomyMenuOpen, setAutonomyMenuOpen] = useState(false);
   // 输入区高度（可拖动上边框调整）
-  // 使用 v2 后缀避免读取到旧版本存储的小高度值
+  // v3 使用参考界面的紧凑默认高度，避免继承旧版过高输入区。
   // 最小值保护：防止 localStorage 中存储了 0 或负数导致输入区不可见
   const [inputHeight, setInputHeight] = useState<number>(() => {
-    const saved = localStorage.getItem('routedev-input-height-v2');
+    const saved = localStorage.getItem('routedev-input-height-v3');
     if (saved) {
       const n = Number(saved);
-      if (!isNaN(n) && n >= 140) return Math.min(n, 640);
+      if (!isNaN(n) && n >= 116) return Math.min(n, 420);
     }
     // 清除旧版本 key
-    localStorage.removeItem('routedev-input-height');
-    return 180;
+    localStorage.removeItem('routedev-input-height-v2');
+    return 148;
   });
   const [isResizing, setIsResizing] = useState(false);
   // Phase 37：已启用的 Skill 列表和 MCP 工具列表（用于输入框上方 Badge 显示）
@@ -130,6 +139,7 @@ export function InputArea({
         setEnabledSkills(skills.filter((s) => s.enabled));
         setMcpTools(mcpResult.tools);
       } catch (err) {
+        // eslint-disable-next-line no-console -- 渲染层日志，logger 为 Node-only 模块无法在浏览器导入
         console.error('加载 Skill/MCP 状态失败:', err);
       }
     };
@@ -157,18 +167,28 @@ export function InputArea({
     filteredCommands.length > 0;
   const visibleSkills = enabledSkills.slice(0, 3);
   const visibleMcpTools = mcpTools.slice(0, 3);
-  // Phase 54 修复：showCommands 为 true 时，计算 textarea 位置，用 Portal 渲染菜单到 body
+  // Phase 97 Part G：Composer 引用提示（/ @ & ~ 前缀）——仅输入辅助，不改变发送逻辑
+  const { trigger, suggestions, applySuggestion, insertDroppedFile } = useComposerReference(input, cursor);
+  // 命令补全与引用提示合并为一个菜单：命令组（仅行首 / 时）+ 引用组
+  const commandItems = showCommands ? filteredCommands : [];
+  const refItems = trigger.active && suggestions.length > 0 ? suggestions : [];
+  const menuItems: MenuItem[] = [
+    ...commandItems.map((cmd) => ({ type: 'command' as const, label: cmd, hint: COMMAND_DESCRIPTIONS[cmd] })),
+    ...refItems.map((ref) => ({ type: 'reference' as const, ref })),
+  ];
+  const menuVisible = commandMenuVisible && !isComposing && menuItems.length > 0;
+  // Phase 54 修复：菜单显示时计算 textarea 位置，用 Portal 渲染菜单到 body
   useLayoutEffect(() => {
-    if (showCommands && textareaRef.current) {
+    if (menuVisible && textareaRef.current) {
       const rect = textareaRef.current.getBoundingClientRect();
       setCommandMenuPos({ top: rect.top, left: rect.left });
     } else {
       setCommandMenuPos(null);
     }
-  }, [showCommands]);
+  }, [menuVisible]);
   const activeCommandIndex = Math.min(
     commandIndex,
-    Math.max(0, filteredCommands.length - 1),
+    Math.max(0, menuItems.length - 1),
   );
 
   // 提交消息：引擎工作时进入队列，否则直接发送
@@ -198,12 +218,12 @@ export function InputArea({
     resizeAbortRef.current = controller;
     const onMove = (moveE: MouseEvent) => {
       const delta = startY - moveE.clientY;
-      nextHeight = Math.max(140, Math.min(640, startHeight + delta));
+      nextHeight = Math.max(116, Math.min(420, startHeight + delta));
       setInputHeight(nextHeight);
     };
     const onUp = () => {
       setIsResizing(false);
-      localStorage.setItem('routedev-input-height-v2', String(nextHeight));
+      localStorage.setItem('routedev-input-height-v3', String(nextHeight));
       controller.abort();
       resizeAbortRef.current = null;
     };
@@ -217,6 +237,48 @@ export function InputArea({
     textareaRef.current?.focus();
   };
 
+  // Phase 97 Part G：选中引用候选——替换当前 token 并聚焦回输入框
+  const selectReference = (ref: ComposerSuggestion) => {
+    const next = applySuggestion(ref);
+    setInput(next);
+    setCommandMenuVisible(false);
+    // 计算插入后光标位置：token 起始 + 前缀(1) + id + 末尾空格
+    const before = input.slice(0, cursor);
+    const m = /(?:^|\s)([/&~@])([^\s@]*)$/.exec(before);
+    const tokenStart = m ? m.index + m[1].length : input.length;
+    const newCursor = tokenStart + 1 + ref.id.length + 1;
+    setCursor(newCursor);
+    textareaRef.current?.focus();
+  };
+
+  // Phase 97 Part G：统一选中当前菜单项（命令或引用）
+  const selectActive = () => {
+    const item = menuItems[activeCommandIndex];
+    if (!item) return;
+    if (item.type === 'command') selectCommand(item.label);
+    else selectReference(item.ref);
+  };
+
+  // Phase 97 Part G：拖拽文件到输入框 → 把文件路径解析为 @ 引用标记插入文本
+  const handleDragOver = (e: React.DragEvent<HTMLTextAreaElement>) => {
+    // 仅对文件拖拽阻止默认（防止浏览器打开文件），文本拖拽保持默认
+    if (e.dataTransfer.types.includes('Files')) e.preventDefault();
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLTextAreaElement>) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    // Electron 中 File 对象带非标准 path 属性（绝对路径）
+    const filePath = (file as File & { path?: string }).path;
+    if (!filePath) return;
+    const next = insertDroppedFile(filePath);
+    setInput(next);
+    setCursor(next.length);
+    setCommandMenuVisible(false);
+    textareaRef.current?.focus();
+  };
+
   // 关闭自主度菜单（点击外部）
   useEffect(() => {
     if (!autonomyMenuOpen) return;
@@ -226,28 +288,28 @@ export function InputArea({
   }, [autonomyMenuOpen]);
 
   return (
-    <div className="bg-rd-surfaceHover" style={{ height: inputHeight }}>
+    <div className="bg-rd-surface px-3 pb-3" style={{ height: inputHeight }}>
       <div
         onMouseDown={handleResizeStart}
         className={[
-          'flex h-2 cursor-row-resize items-center justify-center transition',
+          'flex h-1 cursor-row-resize items-center justify-center transition',
           isResizing ? 'bg-rd-primary/20' : 'bg-transparent hover:bg-rd-surfaceHover',
         ].join(' ')}
         title="拖动调整输入区高度"
       >
-        <div className="h-0.5 w-12 rounded-full bg-rd-textSubtle/35" />
+        <div className="h-px w-10 rounded-full bg-transparent" />
       </div>
-      <div className="flex h-[calc(100%-8px)] p-4 pt-2">
+      <div className="flex h-[calc(100%-4px)]">
         <form
           onSubmit={(e) => {
             e.preventDefault();
             handleSubmit();
           }}
-          className="flex h-full w-full flex-col overflow-hidden rounded-rdLg border border-rd-border bg-rd-surface shadow-rd transition"
+          className="flex h-full w-full flex-col overflow-hidden rounded-2xl bg-rd-background/30 shadow-rd transition"
         >
           {/* Phase 37：Skill/MCP 状态栏——显示已启用的 Skill 和已连接的 MCP 工具 */}
           {showSkillBar && (enabledSkills.length > 0 || mcpTools.length > 0) && (
-            <div className="flex shrink-0 items-center gap-1.5 overflow-hidden border-b border-rd-border/50 px-4 py-2">
+            <div className="flex shrink-0 items-center gap-1.5 overflow-hidden px-4 py-2">
               {enabledSkills.length > 0 && (
                 <>
                   <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-rd-textSubtle">
@@ -297,31 +359,74 @@ export function InputArea({
             </div>
           )}
           <div className="relative min-h-0 flex-1">
-          {showCommands && commandMenuPos && createPortal(
+          {menuVisible && commandMenuPos && createPortal(
             <Card
-              className="fixed z-[9999] mb-2 w-72 overflow-hidden border-rd-border/80 bg-rd-background p-1 shadow-rdLg"
+              className="fixed z-[9999] mb-2 w-96 overflow-hidden border-rd-border/80 bg-rd-background p-1 shadow-rdLg"
               style={{ top: commandMenuPos.top - 8, left: commandMenuPos.left, transform: 'translateY(-100%)' }}
             >
-              {filteredCommands.map((cmd, idx) => (
-                <Button
-                  key={cmd}
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => selectCommand(cmd)}
-                  className={[
-                    'flex w-full items-center justify-start gap-2 px-3 py-2 text-left text-sm',
-                    idx === activeCommandIndex
-                      ? 'bg-rd-primary/10 text-rd-primary'
-                      : 'text-rd-text',
-                  ].join(' ')}
-                >
-                  <span className="font-mono">{cmd}</span>
-                  <span className="ml-auto text-xs text-rd-textMuted">
-                    {COMMAND_DESCRIPTIONS[cmd]}
-                  </span>
-                </Button>
-              ))}
+              {commandItems.length > 0 && (
+                <>
+                  {refItems.length > 0 && (
+                    <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-rd-textSubtle">命令</div>
+                  )}
+                  {commandItems.map((cmd, idx) => (
+                    <Button
+                      key={cmd}
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => selectCommand(cmd)}
+                      className={[
+                        'flex w-full items-center justify-start gap-2 px-3 py-2 text-left text-sm',
+                        idx === activeCommandIndex
+                          ? 'bg-rd-primary/10 text-rd-primary'
+                          : 'text-rd-text',
+                      ].join(' ')}
+                    >
+                      <span className="font-mono">{cmd}</span>
+                      <span className="ml-auto text-xs text-rd-textMuted">
+                        {COMMAND_DESCRIPTIONS[cmd]}
+                      </span>
+                    </Button>
+                  ))}
+                </>
+              )}
+              {refItems.length > 0 && (
+                <>
+                  {commandItems.length > 0 && (
+                    <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-rd-textSubtle">引用</div>
+                  )}
+                  {refItems.map((ref, idx) => {
+                    const active = commandItems.length + idx === activeCommandIndex;
+                    return (
+                      <Button
+                        key={`${ref.kind}:${ref.id}`}
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => selectReference(ref)}
+                        className={[
+                          'flex w-full items-center justify-start gap-2 px-3 py-2 text-left text-sm',
+                          active ? 'bg-rd-primary/10 text-rd-primary' : 'text-rd-text',
+                        ].join(' ')}
+                      >
+                        <span
+                          className={[
+                            'w-4 shrink-0 text-center font-mono text-xs font-bold',
+                            active ? 'text-rd-primary' : 'text-rd-textMuted',
+                          ].join(' ')}
+                        >
+                          {ref.prefix}
+                        </span>
+                        <span className="truncate font-mono text-[13px]">{ref.label}</span>
+                        <span className="ml-auto min-w-0 shrink-0 truncate pl-2 text-xs text-rd-textMuted">
+                          {ref.hint}
+                        </span>
+                      </Button>
+                    );
+                  })}
+                </>
+              )}
             </Card>,
             document.body,
           )}
@@ -339,7 +444,12 @@ export function InputArea({
             }}
             onChange={(e) => {
               setInput(e.target.value);
+              setCursor(e.target.selectionStart ?? e.target.value.length);
               setCommandMenuVisible(true);
+            }}
+            onSelect={(e) => {
+              // 光标移动（方向键 / 点击）时同步，确保引用 token 定位准确
+              setCursor(e.currentTarget.selectionStart ?? e.currentTarget.value.length);
             }}
             onCompositionStart={() => {
               setIsComposing(true);
@@ -349,25 +459,27 @@ export function InputArea({
               // compositionEnd 后手动同步输入框当前值（IME 最终输出）
               const v = (e.target as HTMLTextAreaElement).value;
               setInput(v);
+              setCursor((e.target as HTMLTextAreaElement).selectionStart ?? v.length);
               setCommandMenuVisible(true);
             }}
             onKeyDown={(e) => {
-              if (showCommands) {
+              if (menuVisible) {
                 if (e.key === 'ArrowDown') {
                   e.preventDefault();
-                  setCommandIndex((prev) => (prev + 1) % filteredCommands.length);
+                  setCommandIndex((prev) => (prev + 1) % menuItems.length);
                   return;
                 }
                 if (e.key === 'ArrowUp') {
                   e.preventDefault();
                   setCommandIndex(
-                    (prev) => (prev - 1 + filteredCommands.length) % filteredCommands.length,
+                    (prev) => (prev - 1 + menuItems.length) % menuItems.length,
                   );
                   return;
                 }
-                if (e.key === 'Enter' && !e.shiftKey) {
+                // Enter / Tab 选中当前项（引用候选支持 Tab 快速选择）
+                if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
                   e.preventDefault();
-                  selectCommand(filteredCommands[activeCommandIndex]);
+                  selectActive();
                   return;
                 }
                 if (e.key === 'Escape') {
@@ -382,18 +494,20 @@ export function InputArea({
                 }
               }
             }}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
             placeholder={isProcessing ? '输入下一条消息（Enter 加入排队队列）... Shift+Enter 换行' : '输入问题开始... Shift+Enter 换行，输入 / 查看命令'}
-            rows={6}
-            className="h-full min-h-0 resize-none border-0 bg-transparent px-4 py-4 text-base leading-7 shadow-none focus-visible:ring-0"
+            rows={4}
+            className="h-full min-h-0 resize-none border-0 bg-transparent px-4 py-3 text-sm leading-6 shadow-none focus-visible:ring-0"
           />
           </div>
-          <div className="flex shrink-0 items-center justify-between gap-3 px-3 py-2.5">
+          <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
             <div className="flex min-w-0 items-center gap-2">
               {autonomyMode && (
                 <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
                   <Button
                     type="button"
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
                     onClick={() => setAutonomyMenuOpen(!autonomyMenuOpen)}
                     title={`自主度: ${AUTONOMY_LABELS[autonomyMode]}`}
@@ -423,7 +537,7 @@ export function InputArea({
                   )}
                 </div>
               )}
-              <span className="truncate text-xs text-rd-textSubtle">Enter 发送 · Shift+Enter 换行 · 输入 / 查看命令</span>
+              <span className="hidden truncate text-xs text-rd-textSubtle 2xl:block">Enter 发送 · Shift+Enter 换行</span>
             </div>
             {isProcessing ? (
               <div className="flex items-center gap-2">
@@ -437,7 +551,7 @@ export function InputArea({
                   }}
                   disabled={!input.trim()}
                   title="把当前输入作为后续任务排队（Agent 完成当前工作后自动接续）"
-                  className="h-11 gap-2 rounded-rdLg px-4"
+                  className="h-9 gap-2 rounded-lg px-3"
                 >
                   <History size={16} />
                   加入后续
@@ -447,7 +561,7 @@ export function InputArea({
                   variant="secondary"
                   onClick={onStop}
                   title="停止生成"
-                  className="h-11 gap-2 rounded-rdLg px-5"
+                  className="h-9 gap-2 rounded-lg px-3"
                 >
                   <Square size={16} fill="currentColor" />
                   停止
@@ -457,10 +571,12 @@ export function InputArea({
               <Button
                 type="submit"
                 disabled={!input.trim()}
-                className="h-11 gap-2 rounded-rdLg px-5"
+                title="发送"
+                aria-label="发送"
+                className="!h-9 !w-9 !rounded-full !px-0 !py-0 disabled:!bg-rd-surfaceHover disabled:!text-rd-textMuted disabled:!opacity-100"
               >
-                <Send size={16} />
-                发送
+                <Send size={15} strokeWidth={2.3} className="shrink-0" />
+                <span className="sr-only">发送</span>
               </Button>
             )}
           </div>

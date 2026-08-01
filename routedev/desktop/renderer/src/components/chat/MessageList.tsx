@@ -5,6 +5,7 @@
 // Phase 74-D：在 fork 点（有分支派生的消息）上方内联渲染 BranchSwitcher
 
 import { useRef, useCallback, useMemo, memo, useState } from 'react';
+import { History } from 'lucide-react';
 import type { ChatMessage } from '../../store/useRouteDevStore.js';
 import type { Conversation } from '../../store/useProjectsStore.js';
 import type { OutputStyle } from '../ToolCallCard.js';
@@ -12,6 +13,8 @@ import { TaskBlock } from './TaskBlock.js';
 import { MessageBubble } from './MessageBubble.js';
 import { BranchSwitcher } from './BranchSwitcher.js';
 import { ConfirmDialog } from '../ui/dialog.js';
+import { Button } from '../ui/button.js';
+import { TurnRollbackDialog } from './TurnRollbackDialog.js';
 
 function MessageListImpl({
   messages,
@@ -68,8 +71,12 @@ function MessageListImpl({
       textarea.select();
       const ok = document.execCommand('copy');
       document.body.removeChild(textarea);
-      if (!ok) console.warn('[ChatPage] execCommand copy 返回 false，文本可能未复制');
+      if (!ok) {
+        // eslint-disable-next-line no-console -- 渲染层日志，logger 为 Node-only 模块无法在浏览器导入
+        console.warn('[ChatPage] execCommand copy 返回 false，文本可能未复制');
+      }
     } catch (err) {
+      // eslint-disable-next-line no-console -- 渲染层日志，logger 为 Node-only 模块无法在浏览器导入
       console.error('[ChatPage] fallback copy 失败:', err);
     }
   }, []);
@@ -80,6 +87,7 @@ function MessageListImpl({
     if (!text) return;
     if (navigator.clipboard && window.isSecureContext) {
       navigator.clipboard.writeText(text).catch((err) => {
+        // eslint-disable-next-line no-console -- 渲染层日志，logger 为 Node-only 模块无法在浏览器导入
         console.error('[ChatPage] clipboard API 失败，尝试 fallback:', err);
         fallbackCopy(text);
       });
@@ -138,6 +146,9 @@ function MessageListImpl({
     else messageRefs.current.delete(id);
   }, []);
 
+  // Phase 97 Part B：对话回滚入口（TurnSnapshotManager 已每 turn capture，renderer 侧仅入口）
+  const [rollbackOpen, setRollbackOpen] = useState(false);
+
   // 按 taskId 分组消息：有 taskId 的消息归入对应任务块，无 taskId 的独立渲染
   const messageGroups = useMemo(() => {
     const groups: { taskId: string | null; msgs: ChatMessage[] }[] = [];
@@ -187,6 +198,16 @@ function MessageListImpl({
 
   return (
     <>
+      {/* Phase 97 Part B：消息列表工具条——对话回滚入口 */}
+      {messages.length > 0 && (
+        <div className="mb-2 flex items-center justify-between border-b border-rd-border pb-2">
+          <span className="text-xs text-rd-textMuted">{messages.length} 条消息</span>
+          <Button variant="outline" size="sm" onClick={() => setRollbackOpen(true)}>
+            <History size={14} className="mr-1" />
+            回滚
+          </Button>
+        </div>
+      )}
       {messageGroups.map((group) => {
         if (group.taskId) {
           // 有 taskId 的消息：用 TaskBlock 渲染
@@ -246,6 +267,9 @@ function MessageListImpl({
         onConfirm={confirmState.onConfirm}
         onCancel={() => setConfirmState((s) => ({ ...s, open: false }))}
       />
+
+      {/* Phase 97 Part B：对话回滚对话框 */}
+      <TurnRollbackDialog open={rollbackOpen} onClose={() => setRollbackOpen(false)} />
     </>
   );
 }

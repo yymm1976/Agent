@@ -9,7 +9,7 @@
 //   后续 74-D 可改为细粒度 selector + 按需传入 props，进一步减少 ChatPage 重渲染范围
 
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { FolderOpen, History, GitBranch } from 'lucide-react';
+import { FolderOpen, GitBranch, PanelRightOpen } from 'lucide-react';
 import type { ChatMessage, PendingConfirm } from '../hooks/useRouteDev.js';
 import type { AppConfig, AutonomyMode } from '../../../shared/config-types.js';
 import type { TokenProfileSnapshot } from '../../../../src/agent/token-profiler.js';
@@ -17,10 +17,9 @@ import type { ConfigSaveResult, FollowUpItem, FollowUpMode, SessionStatus } from
 // Phase 84：会话树面板 + IPC 类型（消费 session-tree-types.ts，消除死代码）
 import type { SessionTreeGetResult } from '../types/session-tree-types.js';
 import { NeuralNetworkBackground } from '../components/NeuralNetworkBackground.js';
-import { ArtifactPanel } from '../components/ArtifactPanel.js';
 import { StepEditor } from '../components/StepEditor.js';
-import { Badge } from '../components/ui/badge.js';
 import { Card } from '../components/ui/card.js';
+import { useWorkbenchPanel } from '../components/Layout.js';
 import { useProjectsStore } from '../store/useProjectsStore.js';
 import { MessageList } from '../components/chat/MessageList.js';
 import { ToolConfirmDialog } from '../components/chat/ToolConfirmDialog.js';
@@ -54,7 +53,7 @@ interface ChatPageProps {
 }
 
 export function ChatPage({
-  messages, isProcessing, currentModel, pendingConfirm, config, lastTokenSnapshot,
+  messages, isProcessing, currentModel, pendingConfirm, config,
   sendMessage, confirmTool, stopGeneration, saveConfig, deleteMessage, retryMessage,
 }: ChatPageProps) {
   const [showScrollBottom, setShowScrollBottom] = useState(false);
@@ -66,7 +65,6 @@ export function ChatPage({
   const [followUpQueue, setFollowUpQueue] = useState<FollowUpItem[]>([]);
   const [followUpExpanded, setFollowUpExpanded] = useState(false);
   const [followUpMode, setFollowUpModeState] = useState<FollowUpMode>('one-at-a-time');
-  const [showCheckpointPanel, setShowCheckpointPanel] = useState(false);
   // Phase 84：会话树面板显示/隐藏 + 树数据（IPC 接通前传 null 显示空状态）
   const [showTreePanel, setShowTreePanel] = useState(false);
   const [treeData, setTreeData] = useState<SessionTreeGetResult>(null);
@@ -83,6 +81,8 @@ export function ChatPage({
   const forkConversationFromMessage = useProjectsStore((s) => s.forkConversationFromMessage);
   const selectConversation = useProjectsStore((s) => s.selectConversation);
   const currentProject = projects.find((p) => p.id === currentProjectId);
+  const currentConversation = currentProject?.conversations.find((c) => c.id === currentConversationId);
+  const { rightPanelOpen, openRightPanel } = useWorkbenchPanel();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
@@ -234,38 +234,46 @@ export function ChatPage({
   }, [stopGeneration]);
 
   const outputStyle = config?.ui?.outputStyle;
-  const tokenUsage = lastTokenSnapshot?.totalEstimated ?? 0;
   const autonomyMode = config?.autonomy?.defaultMode;
 
   return (
     <Card
       className="relative flex h-full flex-col overflow-hidden rounded-none border-0 bg-rd-surface p-0 shadow-none"
     >
-      {/* 状态栏 */}
-      {/* Phase 96：px-5 → px-4 收紧内容到窗口边的距离 */}
-      <div className="flex h-14 shrink-0 items-center justify-between px-4">
-        <div className="flex items-center gap-2 overflow-x-auto">
-          {currentProject && (
-            <Badge variant="default" className="shrink-0 gap-1.5">
-              <span className="max-w-[120px] truncate">{currentProject.name}</span>
-              {currentProject.path && (
-                <button onClick={handleOpenProjectFolder} title={`打开: ${currentProject.path}`}
-                  className="ml-0.5 flex h-5 w-5 items-center justify-center rounded hover:bg-rd-surfaceHighlight">
-                  <FolderOpen size={14} />
-                </button>
-              )}
-            </Badge>
+      {/* 当前对话标题栏 */}
+      <div className="flex h-12 shrink-0 items-center justify-between px-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <FolderOpen size={15} className="shrink-0 text-rd-textMuted" />
+          <span className="max-w-[360px] truncate text-sm font-semibold text-rd-text">
+            {currentConversation?.title || currentProject?.name || '新任务'}
+          </span>
+          {currentProject?.path && (
+            <button
+              onClick={handleOpenProjectFolder}
+              title={`打开: ${currentProject.path}`}
+              className="rounded px-1.5 py-1 text-xs text-rd-textSubtle transition hover:bg-rd-surfaceHover hover:text-rd-text"
+            >
+              打开项目
+            </button>
           )}
           {currentModel && (
-            <Badge variant="outline" className="max-w-[220px] shrink-0" title={`当前模型: ${currentModel}`}>
-              <span className="truncate">模型: {currentModel}</span>
-            </Badge>
-          )}
-          {tokenUsage > 0 && (
-            <Badge variant="primary" className="shrink-0">Tokens: {tokenUsage.toLocaleString()}</Badge>
+            <span className="max-w-48 truncate rounded-md bg-rd-surfaceHover px-2 py-1 text-xs text-rd-textMuted">
+              {currentModel}
+            </span>
           )}
         </div>
         <div className="flex items-center gap-1">
+          {!rightPanelOpen && (
+            <button
+              type="button"
+              onClick={openRightPanel}
+              title="展开任务摘要"
+              aria-label="展开任务摘要"
+              className="flex h-8 w-8 items-center justify-center rounded-md text-rd-textSubtle transition hover:bg-rd-surfaceHover hover:text-rd-text"
+            >
+              <PanelRightOpen size={16} />
+            </button>
+          )}
           {/* Phase 84：会话树面板切换按钮 */}
           <button type="button" onClick={() => setShowTreePanel(!showTreePanel)}
             title={showTreePanel ? '隐藏会话树面板' : '显示会话树面板'}
@@ -273,13 +281,6 @@ export function ChatPage({
               showTreePanel ? 'bg-rd-primary/10 text-rd-primary' : 'text-rd-textSubtle hover:bg-rd-surfaceHover hover:text-rd-text',
             ].join(' ')}>
             <GitBranch size={16} />
-          </button>
-          <button type="button" onClick={() => setShowCheckpointPanel(!showCheckpointPanel)}
-            title={showCheckpointPanel ? '隐藏检查点面板' : '显示检查点面板'}
-            className={['flex h-8 w-8 items-center justify-center rounded-md transition',
-              showCheckpointPanel ? 'bg-rd-primary/10 text-rd-primary' : 'text-rd-textSubtle hover:bg-rd-surfaceHover hover:text-rd-text',
-            ].join(' ')}>
-            <History size={16} />
           </button>
         </div>
       </div>
@@ -297,12 +298,13 @@ export function ChatPage({
             - 上下 padding 16→12px：减少顶部留白
             - space-y 10→16px：拉开消息间距，解决「字挤在一块」 */}
         <div ref={scrollRef} onScroll={handleScroll}
-          className="flex-1 space-y-4 overflow-y-auto px-4 py-3">
-          {/* Phase 77：Voice Memo 式会话状态卡（无活跃 goal 时不渲染） */}
-          {sessionStatus && sessionStatus.status !== 'idle' && (
-            <SessionStatusCard status={sessionStatus} />
-          )}
-          {messages.length === 0 ? (
+          className="flex-1 overflow-y-auto px-3 py-4">
+          <div className="mx-auto h-full w-full max-w-[960px] space-y-4">
+            {/* Phase 77：Voice Memo 式会话状态卡（无活跃 goal 时不渲染） */}
+            {sessionStatus && sessionStatus.status !== 'idle' && (
+              <SessionStatusCard status={sessionStatus} />
+            )}
+            {messages.length === 0 ? (
             <div className="relative flex h-full items-center justify-center overflow-hidden px-6 pb-[10%]">
               <NeuralNetworkBackground />
               <div className="relative z-10 flex max-w-2xl flex-col items-center text-center">
@@ -331,25 +333,26 @@ export function ChatPage({
                 <p className="mt-5 text-xs text-rd-textSubtle">也可以直接在下方输入，Enter 发送，Shift+Enter 换行。</p>
               </div>
             </div>
-          ) : (
-            <MessageList messages={messages} isProcessing={isProcessing} outputStyle={outputStyle}
-              deleteMessage={deleteMessage} retryMessage={retryMessage}
-              currentProjectId={currentProjectId} currentConversationId={currentConversationId}
-              forkConversationFromMessage={forkConversationFromMessage}
-              conversations={currentProject?.conversations ?? []}
-              onSwitchBranch={(targetConvId) => {
-                if (currentProjectId) selectConversation(currentProjectId, targetConvId);
-              }} />
-          )}
+            ) : (
+              <MessageList messages={messages} isProcessing={isProcessing} outputStyle={outputStyle}
+                deleteMessage={deleteMessage} retryMessage={retryMessage}
+                currentProjectId={currentProjectId} currentConversationId={currentConversationId}
+                forkConversationFromMessage={forkConversationFromMessage}
+                conversations={currentProject?.conversations ?? []}
+                onSwitchBranch={(targetConvId) => {
+                  if (currentProjectId) selectConversation(currentProjectId, targetConvId);
+                }} />
+            )}
+          </div>
         </div>
 
-        <ScrollToBottom visible={showScrollBottom} onClick={jumpToBottom} rightOffset={showCheckpointPanel} />
+        <ScrollToBottom visible={showScrollBottom} onClick={jumpToBottom} rightOffset={showTreePanel} />
 
         {/* Phase 84：会话树面板（占位集成，IPC 接通后 treeData 由 session:get-tree 填充） */}
         {showTreePanel && (
           <SessionTreePanel
             tree={treeData}
-            className="w-64 shrink-0 border-l border-rd-border"
+            className="w-64 shrink-0 bg-rd-background/35"
             onNodeClick={(nodeId) => {
               // IPC 接通后调用 window.routedev.session.switchBranch
               void nodeId;
@@ -358,13 +361,6 @@ export function ChatPage({
               // IPC 接通后调用 window.routedev.session.fork
               void nodeId;
             }}
-          />
-        )}
-
-        {showCheckpointPanel && (
-          <ArtifactPanel
-            messages={messages}
-            projectId={currentProjectId ?? undefined}
           />
         )}
       </div>

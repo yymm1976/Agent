@@ -20,6 +20,7 @@
 // 类型导入（用于 AppDependencies 和 InitContext 接口定义）
 // ============================================================
 import type { AppConfig } from '../config/schema.js';
+import { parseAppDependenciesMerge } from '../config/schemas/app-dependencies.js';
 import type { ILLMClient } from '../router/types.js';
 import type { LLMClientManager } from '../router/llm/index.js';
 import type { ScenarioClassifier } from '../router/classifier.js';
@@ -65,6 +66,8 @@ import type { QuantitativeGate } from '../agent/quantitative-gate.js';
 import type { classifyOperation } from '../skills/operation-classifier.js';
 // Phase 80 Task 2：本地使用计数器类型导入
 import type { UsageCounter } from '../observability/usage-counter.js';
+// Phase 97 Part I Task I2：触发率统计器类型导入
+import type { HitStat } from '../memory/hit-stat.js';
 // F-018：CapabilityPackRegistry 类型导入已移除（不再用于接口定义）
 
 // InitContext 中间变量类型导入
@@ -77,9 +80,22 @@ import type { ToolRegistryAdapter } from '../tools/adapter.js';
 import type { WorkModeController, GuardedToolExecutorAdapter } from '../agent/work-modes.js';
 import type { ReadTracker } from '../tools/read-tracker.js';
 import type { PermissionEngine } from '../tools/permission-engine.js';
+// Phase 97 Part D：工作区管理器类型
+import type { WorkspaceManager } from '../workspace/manager.js';
+// Phase 97 Part E：子会话注册表类型
+import type { SubagentRegistry } from '../agents/subagent-registry.js';
+// Phase 97 Part A：内核插槽类型与 routedev-native 薄适配
+import type { AgentKernel } from '../agent/kernel.js';
+import { NativeAgentKernel } from '../agent/kernel-native.js';
+// Phase 97 Part F：自动化调度器类型
+import type { AutomationScheduler } from './automation-scheduler.js';
+import { AutomationScheduler as AutomationSchedulerImpl, migrateAutomationTasks } from './automation-scheduler.js';
 import type { ToolResultSanitizer } from '../tools/result-sanitizer.js';
 import type { PlanState } from '../agent/context/plan-state.js';
 import type { TaskOrchestrator } from '../agent/task-orchestrator.js';
+// Phase 94 Task 3：tools 子系统创建、agent 子系统注入到 agentLoop 的实例类型
+import type { PolicyEngine } from '../policies/policy-engine.js';
+import type { ToolOutputPipeline } from '../agent/context/tool-output-pipeline.js';
 // F-027：Phase 70 上下文压缩模块类型（InitContext.p70* 字段原为 unknown，替换为具体类型）
 import type { ToolOutputBudgetManager } from '../agent/memory/tool-output-budget.js';
 import type { MessageGrouper } from '../agent/memory/message-grouper.js';
@@ -111,6 +127,63 @@ let globalHandlersRegistered = false;
 // ============================================================
 
 /**
+ * Phase 94 Task 2：EnabledPacks 功能矩阵
+ *
+ * 单点计算所有 Pack 的 enabled 状态，替代 27 处散布的 `config.packs?.xxx?.enabled` 读取。
+ * 各 setup 函数从 ctx.enabledPacks 读取，避免每个子模块重复访问 config.packs。
+ *
+ * 设计原则：
+ *   - 仅承载 packs?.xxx?.enabled 维度，不包含其他 config 字段的组合条件
+ *   - trustGradient 在 Phase 79 后默认 Core，此处固定 true（仍保留字段以兼容现有读取）
+ *   - 新增 Pack 时在此接口和 computeEnabledPacks 中追加字段
+ */
+export interface EnabledPacks {
+  /** 代码地图 Pack（codeMap engine + watchMode） */
+  codeMap: boolean;
+  /** 信任梯度 Pack（Phase 79 后 Core，固定 true） */
+  trustGradient: boolean;
+  /** 知识图谱高级算法 Pack（社区检测） */
+  kgAdvanced: boolean;
+  /** CCR 可逆压缩 Pack */
+  ccrCompression: boolean;
+  /** Compose 工作模式 Pack */
+  compose: boolean;
+  /** Skill 生命周期 Pack */
+  skillLifecycle: boolean;
+  /** 多 Agent Pack（subAgents / breaker） */
+  multiAgent: boolean;
+  /** Goal 高级 Pack（DAG / DualLoop / BoundedRecovery / TaskOrchestrator） */
+  goalAdvanced: boolean;
+  /** 完整性校验 Pack */
+  integrity: boolean;
+  /** 对抗审查 Pack（adversarial / crossModelReviewer） */
+  adversarial: boolean;
+  /** ACRouter 闭环模型路由 Pack */
+  acRouter: boolean;
+}
+
+/**
+ * Phase 94 Task 2：从 config 计算 EnabledPacks 功能矩阵
+ *
+ * 单点收敛所有 packs?.xxx?.enabled 读取，子模块通过 ctx.enabledPacks 访问。
+ */
+export function computeEnabledPacks(config: AppConfig): EnabledPacks {
+  return {
+    codeMap: config.packs?.codeMap?.enabled === true,
+    trustGradient: true, // Phase 79 后 Core
+    kgAdvanced: config.packs?.kgAdvanced?.enabled === true,
+    ccrCompression: config.packs?.ccrCompression?.enabled === true,
+    compose: config.packs?.compose?.enabled === true,
+    skillLifecycle: config.packs?.skillLifecycle?.enabled === true,
+    multiAgent: config.packs?.multiAgent?.enabled === true,
+    goalAdvanced: config.packs?.goalAdvanced?.enabled === true,
+    integrity: config.packs?.integrity?.enabled === true,
+    adversarial: config.packs?.adversarial?.enabled === true,
+    acRouter: config.packs?.acRouter?.enabled === true,
+  };
+}
+
+/**
  * CR-4b：组合式路由器实例类型
  * 包装 compositional-router.ts 的 decomposeWithSkillAwareness / composeDAG，
  * 按配置注入路由参数，供上层 planner 调用。
@@ -140,6 +213,14 @@ export interface AppDependencies {
   agentLoop: ReActAgentLoop;
   /** Phase 79 Task 4：权限引擎实例，供 IPC tool:execute 复用权限校验 */
   permissionEngine?: PermissionEngine;
+  /** Phase 97 Part D：工作区管理器（能力边界作用域） */
+  workspaceManager: WorkspaceManager;
+  /** Phase 97 Part E：子会话注册表（子 Agent 可见性——登记/查询/停止） */
+  subagentRegistry: SubagentRegistry;
+  /** Phase 97 Part F：自动化调度器（定时触发复用统一 Session 执行） */
+  automationScheduler: AutomationScheduler;
+  /** Phase 97 Part A：Agent 内核插槽（当前为 routedev-native 薄适配，包装 ReActAgentLoop） */
+  agentKernel: AgentKernel;
   // 插件系统
   skillsRouter: SkillsRouter;
   filesystemDiscovery: FilesystemDiscovery;
@@ -155,6 +236,8 @@ export interface AppDependencies {
   hookRunner: HookRunner;
   /** Phase 80 Task 2：本地使用计数器（fail-open，仅本地计数，禁止云上报） */
   usageCounter?: UsageCounter;
+  /** Phase 97 Part I Task I2：触发率统计器（记忆/Skill/UserProfile 命中计数） */
+  hitStat: HitStat;
   // F-018：packRegistry 僵尸字段已移除（Pack 加载机制保留在 app-init-tools.ts 内部）
   // LLM 客户端
   checkpointClient: ILLMClient;
@@ -221,6 +304,13 @@ export interface InitContext {
   classifier?: ScenarioClassifier;
   modelRouter?: ModelRouter;
   tracker?: TokenTracker;
+  /**
+   * Phase 94 Task 2：EnabledPacks 功能矩阵
+   *
+   * 由 createAppDependencies 在装配入口计算，各 setup 函数从 ctx.enabledPacks 读取，
+   * 替代散布的 `config.packs?.xxx?.enabled` 读取（27 处收敛为单点计算）。
+   */
+  enabledPacks: EnabledPacks;
   /** 递归工厂引用（供 agent 子系统的 depsFactory 创建 worktree 独立依赖） */
   createAppDependencies?: (
     config: AppConfig,
@@ -247,6 +337,12 @@ export interface InitContext {
   offloadRootDir?: string;
   /** Phase 80 Task 2：本地使用计数器（由 observability 子系统创建） */
   usageCounter?: UsageCounter;
+  /** Phase 97 Part I Task I2：触发率统计器（由 observability 子系统创建） */
+  hitStat?: HitStat;
+  /** Phase 97 Part D：工作区管理器（由 tools 子系统创建） */
+  workspaceManager?: WorkspaceManager;
+  /** Phase 97 Part E：子会话注册表（由 agent 子系统创建） */
+  subagentRegistry?: SubagentRegistry;
 
   // ===== 由 memory 子系统写入 =====
   checkpointManager?: CheckpointManager;
@@ -279,6 +375,10 @@ export interface InitContext {
   skillsRouter?: SkillsRouter;
   filesystemDiscovery?: FilesystemDiscovery;
   resultSanitizer?: ToolResultSanitizer;
+  /** Phase 94 Task 3：PolicyEngine 实例（由 tools 子系统创建，供 agent 子系统注入到 agentLoop） */
+  policyEngine?: PolicyEngine;
+  /** Phase 94 Task 3：ToolOutputPipeline 实例（由 tools 子系统创建，供 agent 子系统注入到 agentLoop） */
+  toolOutputPipeline?: ToolOutputPipeline;
   virtualFS?: unknown;
   planState?: PlanState;
   agentLoop?: ReActAgentLoop;
@@ -360,6 +460,8 @@ export function createAppDependencies(
     classifier,
     modelRouter,
     tracker,
+    // Phase 94 Task 2：单点计算 EnabledPacks，供各 setup 函数读取
+    enabledPacks: computeEnabledPacks(config),
   };
   // 设置递归引用（供 agent 子系统的 depsFactory 创建 worktree 独立依赖）
   ctx.createAppDependencies = (
@@ -394,17 +496,37 @@ export function createAppDependencies(
   //    内部还包含 Plugin / CodeMap / Hook / Phase 48/49/52/53/77 全部接线
   const agentDeps = createAgentSubsystem(ctx);
 
+  // 6. Phase 97 Part F：自动化调度器（定时触发复用统一 Session 执行）
+  //    executor 由 desktop 装配层注入（engine.sendChat），调度器本身只做 cron 匹配与运行历史
+  const automationScheduler = new AutomationSchedulerImpl(
+    migrateAutomationTasks(config.automations),
+  );
+
+  // 7. Phase 97 Part A Task A3：routedev-native 内核薄适配（kernel 插槽）
+  //    包装主 ReActAgentLoop 满足 AgentKernel 接口；EngineEventV1 sink 由 kernel.run 注入
+  //    （当前生产入口 sendChat 仍直连 agentLoop；kernel 作为未来 Pi/Claude SDK 的插槽）
+  //    k3：装配时注入 trace，kernel 路径的 EngineEventV1 同步写入 trace（携带 sequence/turnId）
+  const agentKernel = new NativeAgentKernel((ctx.agentLoop ?? agentDeps.agentLoop) as ReActAgentLoop, {
+    trace: ctx.trace ?? null,
+  });
+
   // ===== 合并所有子系统的返回值 =====
-  return {
+  const merged = {
     ...observabilityDeps,
     ...routerDeps,
     ...memoryDeps,
     ...toolsDeps,
     ...agentDeps,
+    // Phase 97 Part F：自动化调度器
+    automationScheduler,
+    // Phase 97 Part A：Agent 内核插槽（routedev-native 薄适配）
+    agentKernel,
     // G-007：统一资源释放协议——按逆序调用各子系统 dispose（仅调用已存在的，不强制新增）
     async dispose() {
       // 逆序释放：agent → tools → memory → router → observability（与创建顺序相反）
       // F-056：用 Disposable 接口替代内联 as 断言
+      // Phase 97 Part F：先停止自动化调度器（释放 timer）
+      automationScheduler.stop();
       await (agentDeps as Disposable).dispose?.();
       await (toolsDeps as Disposable).dispose?.();
       await (memoryDeps as Disposable).dispose?.();
@@ -415,8 +537,9 @@ export function createAppDependencies(
       await (clientManager as Disposable).dispose?.();
       await (classifier as Disposable | undefined)?.dispose?.();
       await (modelRouter as Disposable | undefined)?.dispose?.();
-      console.log('[AppDependencies] 已释放所有依赖资源');
+      logger.info('已释放所有依赖资源');
     },
-    // F-048 类型安全：子系统返回 Partial<AppDependencies>，合并后用 as 断言（字段由各子系统保证存在）
-  } as AppDependencies;
+  };
+  // F-048 类型安全：子系统返回 Partial<AppDependencies>，合并后用 Zod 校验核心字段存在性（fail-closed）
+  return parseAppDependenciesMerge(merged);
 }

@@ -410,4 +410,35 @@ describe('SkillLifecycleManager (Phase 52 Task 1)', () => {
     const suggestion = manager.checkCreationTrigger(history);
     expect(suggestion).toBeNull();
   });
+
+  // ---- Phase 97 Part I Task I3：流程沉淀建议（Skills 化） ----
+
+  it('suggestSkillFromWorkflows 检测重复工作流并生成建议', () => {
+    const sequence = ['file_read', 'file_write', 'file_read', 'file_write'];
+    const suggestion = manager.suggestSkillFromWorkflows(sequence);
+    expect(suggestion).not.toBeNull();
+    expect(suggestion!.suggestedCategory).toBe('workflow-derived');
+    expect(suggestion!.similarTaskCount).toBeGreaterThanOrEqual(2);
+    expect(suggestion!.reason).toContain('重复的工作流');
+  });
+
+  it('suggestSkillFromWorkflows 无重复模式时返回 null', () => {
+    expect(manager.suggestSkillFromWorkflows(['file_read', 'file_write'])).toBeNull();
+  });
+
+  it('suggestSkillFromWorkflows 附带示例任务描述（截断到 5 条）', () => {
+    const sequence = ['a', 'b', 'a', 'b'];
+    const tasks = ['t1', 't2', 't3', 't4', 't5', 't6'];
+    const suggestion = manager.suggestSkillFromWorkflows(sequence, tasks);
+    expect(suggestion!.exampleTaskDescriptions).toHaveLength(5);
+    expect(suggestion!.exampleTaskDescriptions[0]).toBe('t1');
+  });
+
+  it('suggestSkillFromWorkflows 配置关闭时不生成建议', () => {
+    const disabledManager = new SkillLifecycleManager(
+      makeEnabledConfig({ enabled: false }),
+    );
+    const sequence = ['a', 'b', 'a', 'b'];
+    expect(disabledManager.suggestSkillFromWorkflows(sequence)).toBeNull();
+  });
 });

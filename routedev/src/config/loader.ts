@@ -8,9 +8,18 @@ import { AppConfigSchema, type AppConfig } from './schema.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 import { getGlobalConfigPath, getProjectConfigPath } from '../utils/paths.js';
 import { ConfigValidationError } from '../utils/errors.js';
+import { logger } from '../utils/logger.js';
+// Phase 97 Part F / Part I 接线：自动化任务预授权白名单判定 + 用户档案纵深校验
+import { isAllowedByAllowlist } from '../runtime/automation-scheduler.js';
+import { validateUserProfile } from '../memory/user-profile.js';
 
 // 配置文件大小上限：1MB，防止超大文件导致主进程 OOM
 const MAX_CONFIG_SIZE = 1024 * 1024;
+
+// Phase 97 Part F 接线：自动化任务预授权能力探测前缀（模块级常量）
+// isAllowedByAllowlist 按「能力前缀匹配」判定（read:/write:/run:/tool:），
+// 此处用 web 搜索工具能力作为代表性探测，判断任务是否配置了任何预授权能力
+const AUTOMATION_CAPABILITY_PROBE = 'tool:web_search';
 
 /**
  * 替换配置字符串中的环境变量引用
@@ -155,7 +164,7 @@ function loadYamlFile(filePath: string): Record<string, unknown> | null {
     parsed = parseYaml(content);
   } catch (err) {
     // YAML 解析失败（文件损坏）：返回空对象，避免启动崩溃
-    console.warn(`[config] 配置文件解析失败，使用默认配置: ${filePath}`, err);
+    logger.warn('配置文件解析失败，使用默认配置', { filePath, error: err instanceof Error ? err.message : String(err) });
     return {};
   }
 
@@ -165,7 +174,7 @@ function loadYamlFile(filePath: string): Record<string, unknown> | null {
 
   if (typeof parsed !== 'object' || Array.isArray(parsed)) {
     // 格式无效但不崩溃：返回空对象，让 loadConfig 使用默认值
-    console.warn(`[config] 配置文件格式无效，使用默认配置: ${filePath}`);
+    logger.warn('配置文件格式无效，使用默认配置', { filePath });
     return {};
   }
 
@@ -217,13 +226,12 @@ function tryLoadBackup(globalPath: string, projectPath?: string): AppConfig | nu
 
     const backupResult = AppConfigSchema.safeParse(backupConfig);
     if (backupResult.success) {
-      console.warn('[config] 主配置验证失败，已从 .bak 备份恢复配置');
+      logger.warn('主配置验证失败，已从 .bak 备份恢复配置');
       return backupResult.data;
     }
   } catch (e) {
     // 备份恢复失败，返回 null 让调用方抛出原始错误
-    // eslint-disable-next-line no-console
-    console.warn(`[config] 备份恢复失败: ${e instanceof Error ? e.message : String(e)}`, { backupPath });
+    logger.warn('备份恢复失败', { backupPath, error: e instanceof Error ? e.message : String(e) });
   }
   return null;
 }
@@ -239,14 +247,14 @@ function migrateConfig(config: Record<string, unknown>): Record<string, unknown>
   if (security && security.networkConfirm === true) {
     // 安全默认值变更：自动关闭全局网络确认，避免基础网络工具无法使用
     security.networkConfirm = false;
-    console.warn('[config] 自动迁移：security.networkConfirm 由 true 调整为 false（v3.0.0 默认策略变更）');
+    logger.warn('自动迁移：security.networkConfirm 由 true 调整为 false（v3.0.0 默认策略变更）');
   }
 
   // v3.0.0 修复：agent.maxConcurrentSubAgents 旧默认值为 3，改为 5
   const agent = config.agent as Record<string, unknown> | undefined;
   if (agent && agent.maxConcurrentSubAgents === 3) {
     agent.maxConcurrentSubAgents = 5;
-    console.warn('[config] 自动迁移：agent.maxConcurrentSubAgents 由 3 调整为 5（v3.0.0 默认策略变更）');
+    logger.warn('自动迁移：agent.maxConcurrentSubAgents 由 3 调整为 5（v3.0.0 默认策略变更）');
   }
 
   return config;
@@ -309,6 +317,27 @@ export function loadConfig(options?: {
     throw new Error(`[config] Configuration validation failed:\n${errors}`);
   }
 
+  // Phase 97 Part F / Part I 接线：预授权白名单与用户档案纵深校验（仅日志，fail-open）
+  // schema 已保证类型合法；此处防御 schema 之外的运行时变更，并给自动化任务预授权状态留痕
+  const automationTasks = result.data.automations ?? [];
+  if (automationTasks.length > 0) {
+    const hasPreauthorization = automationTasks.some(
+      (task) => isAllowedByAllowlist(task.allowlist, AUTOMATION_CAPABILITY_PROBE),
+    );
+    if (!hasPreauthorization) {
+      logger.debug('config: 自动化任务未预授权任何能力（allowlist 为空），执行时仍走正常权限引擎', {
+        tasks: automationTasks.length,
+        probe: AUTOMATION_CAPABILITY_PROBE,
+      });
+    }
+  }
+  const userProfileIssues = validateUserProfile(result.data.userProfile);
+  if (userProfileIssues.length > 0) {
+    logger.warn('config: userProfile 校验发现异常（schema 之外的运行时变更）', {
+      errors: userProfileIssues,
+    });
+  }
+
   return result.data;
 }
 
@@ -356,6 +385,18 @@ export function validateConfigFile(filePath: string): {
     if (!result.success) {
       for (const issue of result.error.issues) {
         errors.push(`${issue.path.join('.')}: ${issue.message}`);
+      }
+    } else {
+      // Phase 97 Part F / Part I 接线：预授权白名单与用户档案纵深校验（附加警告，不阻断）
+      for (const task of result.data.automations ?? []) {
+        if (task.permissionMode === 'auto' && !isAllowedByAllowlist(task.allowlist, AUTOMATION_CAPABILITY_PROBE)) {
+          warnings.push(
+            `Automation task "${task.name}" uses permissionMode=auto but its allowlist has no preauthorized capability (probe: ${AUTOMATION_CAPABILITY_PROBE}); execution still goes through the normal permission engine`,
+          );
+        }
+      }
+      for (const issue of validateUserProfile(result.data.userProfile)) {
+        warnings.push(`userProfile: ${issue}`);
       }
     }
 

@@ -3,6 +3,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { MemoryRecallInjector } from '../../../src/agent/memory/recall-injector.js';
 import type { KnowledgeGraph, GraphNode } from '../../../src/agent/memory/graph.js';
+import type { HitStat } from '../../../src/memory/hit-stat.js';
 
 // mock KnowledgeGraph：只暴露 recall 方法
 function makeMockGraph(
@@ -127,5 +128,33 @@ describe('MemoryRecallInjector', () => {
     const graph = makeMockGraph([]);
     const injector = new MemoryRecallInjector(graph, 0.7, 5);
     expect(injector.recallToPrompt('test')).toBe('');
+  });
+});
+
+describe('MemoryRecallInjector 接线（HitStat.evaluateLowHits 生产消费）', () => {
+  it('hitStat 注入时记录命中并节流调用 evaluateLowHits（fail-open）', () => {
+    const graph = makeMockGraph([
+      { node: makeNode({ id: 'n1', content: 'fact A' }), score: 0.9, path: 'precise' },
+    ]);
+    const hitStat = {
+      record: vi.fn(),
+      evaluateLowHits: vi.fn().mockReturnValue([
+        { key: 'memory:n1', category: 'memory', count: 1, lastHitAt: Date.now(), hitsInWindow: 1 },
+      ]),
+    } as unknown as HitStat;
+    const injector = new MemoryRecallInjector(graph, 0.7, 5, 10, hitStat);
+
+    const prompt = injector.recallToPrompt('test');
+    expect(prompt).toContain('fact A');
+    expect(hitStat.record).toHaveBeenCalledWith('memory:n1', 'memory');
+    expect(hitStat.evaluateLowHits).toHaveBeenCalledTimes(1);
+  });
+
+  it('hitStat 未注入时跳过统计与低触发评估（fail-open）', () => {
+    const graph = makeMockGraph([
+      { node: makeNode({ content: 'fact A' }), score: 0.9, path: 'precise' },
+    ]);
+    const injector = new MemoryRecallInjector(graph, 0.7, 5);
+    expect(injector.recallToPrompt('test')).toContain('fact A');
   });
 });

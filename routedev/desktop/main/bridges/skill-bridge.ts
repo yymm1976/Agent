@@ -9,6 +9,7 @@ import type { SkillInstallPayload } from '../../shared/ipc-types.js';
 import { SkillMarketManager } from '../../../src/skills/market-manager.js';
 // Phase 53 Task 6：安装前安全门控（仅类型，运行时按需动态 import）
 import type { SkillSecurityGate } from '../../../src/skills/security-gate.js';
+import { logger } from '../../../src/utils/logger.js';
 import type { EngineContext, SkillInfo, SkillPreview } from './engine-context.js';
 
 /**
@@ -96,6 +97,8 @@ export class SkillBridge {
         integrityManifest,
         // Phase 89：注入完整性校验严格模式（未配置时默认 false，与 SkillMarketManager 默认值一致）
         this.ctx.config?.security?.integrityStrict ?? false,
+        // Phase 97 Part I Task I2：Skill 激活计数（deps 未初始化时 undefined，内部 fail-open 跳过）
+        this.ctx.deps?.hitStat,
       );
       await marketManager.install(payload.name, payload.version);
 
@@ -137,7 +140,7 @@ export class SkillBridge {
       return new mod.SkillSecurityGate({ autoInstallThreshold: cfg.autoInstallThreshold });
     } catch (err) {
       // fail-open：模块不可用时不阻塞安装
-      console.warn('SkillSecurityGate module not available, install will skip scan', err);
+      logger.warn('SkillSecurityGate module not available, install will skip scan', { error: err instanceof Error ? err.message : String(err) });
       return undefined;
     }
   }
@@ -163,7 +166,7 @@ export class SkillBridge {
       return manifest;
     } catch (err) {
       // fail-open：模块不可用时不阻塞安装
-      console.warn('IntegrityManifest module not available, install will skip checksum', err);
+      logger.warn('IntegrityManifest module not available, install will skip checksum', { error: err instanceof Error ? err.message : String(err) });
       return undefined;
     }
   }

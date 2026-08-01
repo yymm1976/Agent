@@ -65,7 +65,8 @@ export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies
 
   // Phase 81 Task 3：KG 高级算法（社区检测，freeze 层 F-03）条件装配
   // 默认 false → 仅保留基础存储/查询 + 精确路径召回；enabled:true 恢复社区检测
-  if (config.packs?.kgAdvanced?.enabled) {
+  // Phase 94 Task 2：从 ctx.enabledPacks 读取（单点计算）
+  if (ctx.enabledPacks.kgAdvanced) {
     const graphModulePath = '../agent/memory/graph.js';
     import(graphModulePath)
       .then(({ initKnowledgeGraphAdvanced }: { initKnowledgeGraphAdvanced: () => void }) => {
@@ -106,6 +107,9 @@ export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies
     contextManager.getKnowledgeGraph(),
     config.memory?.injectThreshold ?? 0.7,
     MAX_RECALL_MEMORIES,
+    // Phase 97 Part I Task I2：记忆命中计数（observability 子系统先装配，此处必已就绪）
+    undefined,
+    ctx.hitStat,
   );
   contextManager.setRecallInjector(recallInjector);
   // Phase 96 R-2 修复：注入图谱持久化回调
@@ -117,7 +121,8 @@ export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies
   // L5 summarize 回调使用 checkpointClient（已配置的辅助模型），失败时由 B12 的 try/catch 降级
   // Phase 55 Task 9：CCR 可逆压缩——compact 前缓存原始消息，LLM 可通过 ccr_retrieve 工具取回
   // G-F016 修复：受 config.packs.ccrCompression.enabled 门控
-  const ccrCache = (config.ccrCompression?.enabled && config.packs?.ccrCompression?.enabled)
+  // Phase 94 Task 2：packs 维度从 ctx.enabledPacks 读取（单点计算）
+  const ccrCache = (config.ccrCompression?.enabled && ctx.enabledPacks.ccrCompression)
     ? new CCRCache(config.ccrCompression?.maxCacheSize ?? 50)
     : undefined;
 
@@ -213,7 +218,7 @@ export function createMemorySubsystem(ctx: InitContext): Partial<AppDependencies
         }
       : undefined,
     contextWindow: currentModelConfig?.contextWindow ?? 128000,
-    ccrCache: (config.ccrCompression?.enabled && config.packs?.ccrCompression?.enabled) ? ccrCache : undefined,
+    ccrCache: (config.ccrCompression?.enabled && ctx.enabledPacks.ccrCompression) ? ccrCache : undefined,
     // Phase 70：上下文压缩技术深度优化
     toolOutputBudgetManager: p70ToolOutputBudgetManager,
     messageGrouper: p70MessageGrouper,

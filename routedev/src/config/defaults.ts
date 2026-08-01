@@ -96,12 +96,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     ],
     confirmTimeout: 30000,
   },
-  sounds: {
-    enabled: true,
-    completion: 'default',
-    error: 'warning',
-    approval: 'notification',
-  },
+  // TD-13 已清理：sounds 默认值已删除（全库零消费，2026-07-29）
   updates: {
     checkOnStartup: true,
     autoUpdate: false,
@@ -113,6 +108,18 @@ export const DEFAULT_CONFIG: AppConfig = {
     connectTimeout: 30000,
     // Phase 48 Task 4：默认会话生命周期策略（Claude Code .mcp.json 未声明时使用 per-session）
     lifecyclePolicy: 'per-session',
+  },
+  remote: {
+    enabled: false,
+    host: '127.0.0.1',
+    port: 43117,
+    pairingTtlMs: 300000,
+    allowRemoteApprovals: false,
+    allowAutonomyChange: false,
+    deviceStorePath: '.routedev/remote/devices.json',
+    transport: 'lan',
+    lanBaseUrl: '',
+    tailscaleBaseUrl: '',
   },
   prompts: {
     projectOverrides: true,
@@ -134,17 +141,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     bell: true,
     idleHintSeconds: 30,
     hotReloadNotify: true,
-    // Phase 50 Task 7：7 个 React 组件接入开关（tracePanel 默认 false，其余默认 true）
-    // CLI 退役遗留，桌面端不消费 — 以下组件开关仅 CLI 端使用，桌面端组件接入由各页面自行控制
-    components: {
-      branchSwitcher: true,    // CLI 退役遗留
-      resumePicker: true,      // CLI 退役遗留
-      progressBar: true,       // CLI 退役遗留
-      tracePanel: false,       // CLI 退役遗留
-      disclosureLevel: true,   // CLI 退役遗留
-      diffView: true,          // CLI 退役遗留
-      configReloadNotice: true,
-    },
+    // TD-13 已清理：components 子字段已删除（全库零消费，2026-07-29）
   },
   optimization: {
     tokenTracking: {
@@ -326,8 +323,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     toolApproval: false,
     approvalMode: 'risky-only',
   },
-  // Phase 42：推理模式（fast / balanced / accurate）
-  reasoningMode: 'balanced',
+  // TD-13 已清理：reasoningMode 默认值已删除（未接入后端，2026-07-29）
   // Phase 43：子 Agent 配置（并行上限 + 角色门控）
   subAgents: {
     enabled: false,
@@ -805,4 +801,8 @@ export const DEFAULT_CONFIG: AppConfig = {
     // TD-25 解冻：ACRouter 从 freeze 提升为 standard-pack（默认装配，功能由 closedLoopRouting.enabled 控制）
     acRouter: { enabled: true },          // standard-pack（原 freeze，TD-25 解冻）
   },
+  // Phase 97 Part F：自动化任务配置（默认空——用户显式添加任务后调度器才生效）
+  automations: [],
+  // Phase 97 Part I：轻量用户档案（默认空档案——渲染时安全降级为空字符串）
+  userProfile: { mustRemember: [] },
 };

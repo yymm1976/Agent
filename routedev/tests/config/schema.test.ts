@@ -8,6 +8,15 @@ describe('AppConfigSchema', () => {
   it('应接受空对象（所有字段有默认值或 preprocess）', () => {
     const result = AppConfigSchema.safeParse({});
     expect(result.success).toBe(true);
+    if (result.success) expect(result.data.remote.transport).toBe('lan');
+  });
+
+  it('保留旧配置中的 Tailscale 传输模式', () => {
+    const result = AppConfigSchema.safeParse({
+      remote: { tailscaleBaseUrl: 'https://desktop.example.ts.net' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.remote.transport).toBe('tailscale');
   });
 
   it('应接受完整的 providers 数组', () => {

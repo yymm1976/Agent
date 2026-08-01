@@ -12,6 +12,9 @@ interface EnforcementResult {
 /** 写操作工具集合 */
 const WRITE_TOOLS = new Set(['file_write', 'file_edit', 'delete_file']);
 
+/** 系统级操作工具集合（sandboxed_write 之下仍禁止，需 full 权限） */
+const SYSTEM_TOOLS = new Set(['shell_exec', 'git_op', 'npm_exec']);
+
 /** 常见文件路径参数名 */
 const PATH_ARG_KEYS = ['path', 'filePath', 'file_path', 'file'];
 
@@ -26,6 +29,16 @@ export class DelegationEnforcer {
 
   /** 工具调用前检查 */
   beforeToolCall(toolName: string, args: Record<string, unknown>): EnforcementResult {
+    // 0. Phase 97 Part E：权限天花板——read_only 禁写，sandboxed_write 禁系统级执行
+    const ceiling = this.contract.grant.permissionCeiling;
+    if (ceiling !== 'full') {
+      if (ceiling === 'read_only' && DelegationEnforcer.isWriteOperation(toolName)) {
+        return { allowed: false, reason: `权限天花板 read_only：工具 ${toolName} 是写操作，被拒绝` };
+      }
+      if (ceiling === 'sandboxed_write' && DelegationEnforcer.isSystemOperation(toolName)) {
+        return { allowed: false, reason: `权限天花板 sandboxed_write：工具 ${toolName} 属于系统级操作，被拒绝` };
+      }
+    }
     // 1. 检查 forbiddenTools（优先，明确禁止的立即拒绝）
     const forbidden = this.contract.grant.forbiddenTools;
     if (forbidden && forbidden.includes(toolName)) {
@@ -84,6 +97,11 @@ export class DelegationEnforcer {
   /** 判断是否是写操作 */
   static isWriteOperation(toolName: string): boolean {
     return WRITE_TOOLS.has(toolName);
+  }
+
+  /** 判断是否是系统级操作（shell/git/npm 等） */
+  static isSystemOperation(toolName: string): boolean {
+    return SYSTEM_TOOLS.has(toolName);
   }
 
   // ============================================================

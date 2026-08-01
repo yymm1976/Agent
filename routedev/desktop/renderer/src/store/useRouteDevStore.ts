@@ -14,6 +14,14 @@ import type {
   CompletionStatus,
 } from '../../../shared/ipc-types.js';
 import type { TraceSpan } from '../../../../src/harness/trace-types.js';
+// Phase 97 Part C：统一中断队列（渲染层重载后 reclaim 恢复）
+import type { Interruption } from '../../../../src/agent/interruption.js';
+// Phase 93 Task 5：IPC payload 运行时校验
+import {
+  parseChatStreamPayload,
+  parseToolConfirmRequest,
+  parseObjectPayload,
+} from '../../../shared/ipc-schemas.js';
 // 静态导入 useProjectsStore：该 store 仅导入本文件的类型（编译后移除），运行时无循环依赖
 import { useProjectsStore } from './useProjectsStore.js';
 
@@ -116,6 +124,8 @@ export interface RouteDevState {
   // Bug #5 修复：标记用户是否曾配置过 provider，避免保存错误导致 providers 清空时误触发 SetupWizard
   hasEverHadProviders: boolean;
   pendingConfirm: PendingConfirm | null;
+  /** Phase 97 Part C：渲染层重载后从主进程 reclaim 回的未处理中断 */
+  reclaimedInterruptions: Interruption[];
   tokenSnapshots: TokenProfileSnapshot[];
   traceEvents: TraceSpan[];
   // Phase 54：Goal 执行聚合状态（按 goalId 索引，驱动 GoalExecutionCard 就地刷新）
@@ -198,6 +208,8 @@ export interface RouteDevState {
   _setError: (error: string) => void;
   _setProcessing: (processing: boolean) => void;
   _setPendingConfirm: (confirm: PendingConfirm | null) => void;
+  /** Phase 97 Part C：写入 reclaim 回的未处理中断（渲染层重载恢复） */
+  _setReclaimedInterruptions: (items: Interruption[]) => void;
   _addTokenSnapshot: (snapshot: TokenProfileSnapshot) => void;
   _addTraceEvent: (span: TraceSpan) => void;
   /** Phase 54：处理 Goal 执行结构化事件（聚合到 goalExecutions） */
@@ -221,6 +233,7 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
   configError: null,
   hasEverHadProviders: false,
   pendingConfirm: null,
+  reclaimedInterruptions: [],
   tokenSnapshots: [],
   traceEvents: [],
   goalExecutions: [],
@@ -325,7 +338,6 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
       _pendingReasoning: '',
       _reasoningRafHandle: null,
       _intermediateThoughts: [],
-      _progressEvents: [],
       _progressEvents: [],
     });
     window.routedev.chat.send({ text: trimmed } as ChatSendPayload);
@@ -912,7 +924,6 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
         _reasoningRafHandle: null,
         _intermediateThoughts: [],
         _progressEvents: [],
-        _progressEvents: [],
       });
     } else {
       // 无正在进行的 assistant 消息，创建新的错误消息
@@ -936,6 +947,9 @@ export const useRouteDevStore = create<RouteDevState>((set, get) => ({
   _setProcessing: (processing) => set({ isProcessing: processing }),
 
   _setPendingConfirm: (confirm) => set({ pendingConfirm: confirm }),
+
+  /** Phase 97 Part C：写入 reclaim 回的未处理中断（渲染层重载恢复） */
+  _setReclaimedInterruptions: (items) => set({ reclaimedInterruptions: items }),
 
   _addTokenSnapshot: (snapshot) => {
     const state = get();
@@ -1121,13 +1135,14 @@ export function initIPCListeners(): () => void {
         useProjectsStore.getState().renameConversation(currentProjectId, currentConversationId, title.trim());
       }
     } catch (err) {
+      // eslint-disable-next-line no-console -- 渲染层日志，logger 为 Node-only 模块无法在浏览器导入
       console.error('[maybeGenerateTitle] 生成标题失败:', err);
     }
   }
 
   // 处理聊天流式事件
   const handleStream = (raw: unknown) => {
-    const payload = raw as ChatStreamPayload;
+    const payload = parseChatStreamPayload(raw) as ChatStreamPayload;
     switch (payload.type) {
       case 'text_delta':
         store.getState()._appendTextDelta(payload.chunk ?? '');
@@ -1147,11 +1162,11 @@ export function initIPCListeners(): () => void {
         store.getState()._addToolDone(payload.toolName!, payload.toolResult, payload.isError, payload.toolCallId);
         break;
       case 'progress':
-        // 同时保留到当前任务，完成后可按时间线回看。
-        if (payload.progress?.label) {
-          store.getState()._appendProgressEvent(payload.progress.label);
-        }
+        // 运行时路由/图片分析等状态只用于顶部即时状态，不写入对话时间线。
+        // 时间线只展示模型真实输出（text_delta）与工具调用，避免把程序生成的
+        // “模型思考中 / 路由中”等文案伪装成模型自己的工作进度。
         store.setState((state) => ({
+          progressLabel: payload.progress?.label ?? state.progressLabel,
           currentModel: payload.progress?.modelId ?? state.currentModel,
           currentTier: payload.progress?.tier ?? state.currentTier,
           messages: payload.progress?.tier
@@ -1167,10 +1182,10 @@ export function initIPCListeners(): () => void {
         store.getState()._setError(payload.error ?? '未知错误');
         break;
       case 'thinking':
-        // 思考阶段提示也属于可回看的工作流状态。
-        if (payload.message) {
-          store.getState()._appendProgressEvent(payload.message);
-        }
+        // AgentLoop 的 thinking 文案是循环状态，不是模型输出，禁止写入历史时间线。
+        // 模型在工具调用之间的真实输出由 text_delta 累积，并在 _addToolStart
+        // 封存为 intermediateThoughts，按真实时间与工具调用交错展示。
+        store.setState({ progressLabel: payload.message ?? '模型处理中…' });
         break;
       case 'escalation':
         // 升级事件（达到 maxIterations 等）：作为独立系统消息显示，不追加到 assistant 文本
@@ -1200,37 +1215,41 @@ export function initIPCListeners(): () => void {
   // 工具调用确认请求
   // G-004 修复：从事件中提取 requestId，存入 pendingConfirm 供 confirmTool 回传
   const handleToolConfirm = (raw: unknown) => {
-    const payload = raw as { requestId: string; toolName: string; params: Record<string, unknown> };
+    const payload = parseToolConfirmRequest(raw);
     store.getState()._setPendingConfirm({ requestId: payload.requestId, toolName: payload.toolName, params: payload.params });
   };
 
   // Token 快照事件
   const handleTokenProfile = (raw: unknown) => {
-    const payload = raw as TokenProfileSnapshot;
+    const payload = parseObjectPayload<TokenProfileSnapshot>(raw, {} as TokenProfileSnapshot, 'handleTokenProfile');
     store.getState()._addTokenSnapshot(payload);
   };
 
   // Trace 事件
   const handleTraceEvent = (raw: unknown) => {
-    const payload = raw as TraceSpan;
+    const payload = parseObjectPayload<TraceSpan>(raw, {} as TraceSpan, 'handleTraceEvent');
     store.getState()._addTraceEvent(payload);
   };
 
   // Phase 54：Goal 执行结构化事件
   const handleGoalEvent = (raw: unknown) => {
-    const payload = raw as GoalEvent;
+    const payload = parseObjectPayload<GoalEvent>(raw, { type: 'unknown' } as unknown as GoalEvent, 'handleGoalEvent');
     store.getState()._handleGoalEvent(payload);
   };
 
   // Phase 54：计划编辑请求（semi/manual 模式触发 StepEditor 显示）
   const handlePlanEditRequest = (raw: unknown) => {
-    const payload = raw as { requestId: string; plan: import('../../../shared/ipc-types.js').PlanEditRequestPayload['plan'] };
+    const payload = parseObjectPayload<{ requestId: string; plan: import('../../../shared/ipc-types.js').PlanEditRequestPayload['plan'] }>(
+      raw,
+      { requestId: '', plan: { description: '', steps: [] } },
+      'handlePlanEditRequest',
+    );
     store.getState()._setPendingPlanEdit({ requestId: payload.requestId, plan: payload.plan });
   };
 
   // 配置热重载事件
   const handleConfigReloaded = (raw: unknown) => {
-    const payload = raw as AppConfig;
+    const payload = parseObjectPayload<AppConfig>(raw, {} as AppConfig, 'handleConfigReloaded');
     store.getState()._setConfig(payload);
   };
 
@@ -1267,6 +1286,7 @@ export async function loadInitialConfig(): Promise<void> {
   } catch (err) {
     // 配置加载失败（YAML 损坏/验证失败）：记录错误，不覆盖配置文件
     // config 保持 null，但 configLoading 设为 false，App 会显示错误提示而非 SetupWizard
+    // eslint-disable-next-line no-console -- 渲染层日志，logger 为 Node-only 模块无法在浏览器导入
     console.error('[loadInitialConfig] 配置加载失败:', err);
     store.getState()._setConfigLoading(false);
     // 设置一个错误标记，App 据此显示错误页面而非 SetupWizard

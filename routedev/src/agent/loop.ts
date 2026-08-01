@@ -30,6 +30,11 @@ import { DEFAULT_REACT_CONFIG } from './loop-config.js';
 import { logger } from '../utils/logger.js';
 import type { AgentMessage } from './message-types.js';
 import { defaultConvertToLlm } from './message-types.js';
+// Phase 97 Part A：统一事件协议与执行上下文
+import type { EngineEventV1, EngineEventBase } from '../harness/event-types.js';
+import { SequenceCounter } from '../harness/event-types.js';
+import type { AgentExecutionContext } from './execution-context.js';
+import { createDefaultExecutionContext } from './execution-context.js';
 import type { ToolResult } from '../tools/types.js';
 // 工具调用修复 pipeline（Phase 96+：借鉴 Reasonix 四道工序）
 import { run as runRepairPipeline } from '../tools/tool-call-repair/pipeline.js';
@@ -114,6 +119,13 @@ export interface ReActRunParams {
   onModelFailure?: (modelId: string, error: unknown) => void;
   /** 自主度模式（传递给权限中间件） */
   autonomyMode?: 'manual' | 'semi' | 'auto';
+  /** Phase 97 Part A：统一执行上下文（触发来源/sessionId/工作区等），缺失时以 user 兜底 */
+  context?: AgentExecutionContext;
+  /**
+   * 本轮暴露给模型的工具白名单。
+   * 未传入表示使用全部已注册工具；执行器的安全检查仍然是最终边界。
+   */
+  allowedToolNames?: readonly string[];
 }
 
 /**
@@ -144,6 +156,20 @@ export class ReActAgentLoop {
   private currentConfirmTool: ConfirmToolCallback | null = null;
   /** 当前 run() 期间的自主度模式（传递给权限中间件） */
   private currentAutonomyMode: 'manual' | 'semi' | 'auto' = 'semi';
+  /** Phase 97 Part A：当前 run() 期间的执行上下文（run 开始时设置） */
+  private currentContext: AgentExecutionContext | null = null;
+  /** Phase 97 Part A：EngineEventV1 事件接收器（可选注入，不注入则不影响现有行为） */
+  private engineSink: ((e: EngineEventV1) => void) | null = null;
+  /** Phase 97 Part A：turn 内 sequence 计数器 */
+  private engineSeq: SequenceCounter | null = null;
+  /** Phase 97 Part A：当前 turn 是否已发结束事件（防重复） */
+  private engineTurnEnded = false;
+  /** Phase 97 Part A：当前 turn id */
+  private currentTurnId: string | null = null;
+  /** Phase 97 Part A：当前 message id */
+  private currentMessageId: string | null = null;
+  /** Phase 97 Part A：agent 结束原因（finally 发射 agent_end 用） */
+  private engineEndReason: 'completed' | 'error' | 'cancelled' | 'max_iterations' = 'completed';
   /**
    * 压缩器（可选）：注入后在 ReAct 循环每轮迭代前检查 messages 的 token 数，
    * 超过阈值时调用 compressEnhanced 压缩，防止 messages 膨胀超出模型窗口
@@ -194,6 +220,56 @@ export class ReActAgentLoop {
   /** C5 修复：注入 Steering Queue 消费者 */
   setSteeringConsumer(consumer: (() => { content: string; mode: string }[] | null) | null): void {
     this.ctxMgr.setSteeringConsumer(consumer);
+  }
+
+  /** Phase 97 Part A：注入 EngineEventV1 接收器（桌面/远程/历史存储共用的事件协议） */
+  setEngineEventSink(sink: ((e: EngineEventV1) => void) | null): void {
+    this.engineSink = sink;
+  }
+
+  /** Phase 97 Part A：注入当前执行上下文（也可经 run params 传入，二选一） */
+  setExecutionContext(ctx: AgentExecutionContext | null): void {
+    this.currentContext = ctx;
+  }
+
+  /** Phase 97 Part A：生成事件公共字段（id/sessionId/sequence/timestamp） */
+  private engineBase(seq: number): Pick<EngineEventV1, 'id' | 'sessionId' | 'sequence' | 'timestamp' | 'triggerSource'> {
+    const sessionId = this.currentContext?.sessionId ?? this.ctxMgr.traceCollector?.getSessionId() ?? 'session-unknown';
+    return {
+      id: `${sessionId}-${seq}-${Date.now().toString(36)}`,
+      sessionId,
+      sequence: seq,
+      timestamp: Date.now(),
+      triggerSource: this.currentContext?.triggerSource,
+    };
+  }
+
+  /** Phase 97 Part A：发射 EngineEventV1，未注入 sink 时静默跳过 */
+  private emitEngineEvent(ev: Omit<EngineEventV1, 'id' | 'sessionId' | 'sequence' | 'timestamp' | 'triggerSource'>): void {
+    const sink = this.engineSink;
+    if (!sink || !this.engineSeq) return;
+    sink({ ...this.engineBase(this.engineSeq.next()), ...ev } as EngineEventV1);
+  }
+
+  /** Phase 97 Part A：开始一个新 turn（turn_start + message_start），防重复 */
+  private beginEngineTurn(input: string): void {
+    if (!this.engineSink || !this.engineSeq) return;
+    if (!this.engineTurnEnded) {
+      this.currentTurnId = `turn-${Date.now().toString(36)}-${this.engineSeq.next()}`;
+      this.emitEngineEvent({ type: 'turn_start', turnId: this.currentTurnId, payload: { input } });
+    }
+    this.currentMessageId = `msg-${Date.now().toString(36)}-${this.engineSeq.next()}`;
+    this.emitEngineEvent({ type: 'message_start', turnId: this.currentTurnId ?? undefined, messageId: this.currentMessageId, payload: { role: 'assistant' } });
+  }
+
+  /** Phase 97 Part A：结束当前 turn（message_end + turn_end），防重复 */
+  private finishEngineTurn(): void {
+    if (this.engineTurnEnded || !this.engineSink || !this.engineSeq) return;
+    this.engineTurnEnded = true;
+    this.emitEngineEvent({ type: 'message_end', turnId: this.currentTurnId ?? undefined, messageId: this.currentMessageId ?? undefined, payload: { contentLength: 0 } });
+    this.emitEngineEvent({ type: 'turn_end', turnId: this.currentTurnId ?? undefined, payload: { outputLength: 0 } });
+    this.currentTurnId = null;
+    this.currentMessageId = null;
   }
 
   /** Phase 73 Part C：排队 follow-up 消息 */
@@ -322,6 +398,13 @@ export class ReActAgentLoop {
     await this.mwRunner.fireHookSafe('on-session-start', {});
 
     try {
+      // Phase 97 Part A：设置执行上下文、初始化事件序列，发射 agent_start
+      this.currentContext = params.context ?? this.currentContext ?? createDefaultExecutionContext(this.ctxMgr.traceCollector?.getSessionId() ?? 'session-unknown');
+      this.engineSeq = new SequenceCounter();
+      this.engineTurnEnded = false;
+      this.engineEndReason = 'completed';
+      this.emitEngineEvent({ type: 'agent_start', payload: { kernel: 'routedev-native', model: routeDecision.model.id } });
+
       // Phase 38 Task 1：onSystemPrompt 中间件（systemBlocks 模式下跳过）
       if (!systemBlocks) {
         systemPrompt = await this.mwRunner.runOnSystemPrompt(systemPrompt);
@@ -352,7 +435,12 @@ export class ReActAgentLoop {
 
       // 获取可用工具定义
       const rawToolDefs = this.config.toolsEnabled ? this.toolExecutor.getToolDefinitions() : [];
-      const toolDefs = rawToolDefs;
+      const allowedToolNames = params.allowedToolNames
+        ? new Set(params.allowedToolNames)
+        : null;
+      const toolDefs = allowedToolNames
+        ? rawToolDefs.filter((tool) => allowedToolNames.has(tool.name))
+        : rawToolDefs;
 
       let iteration = 0;
       let consecutiveErrors = 0;
@@ -370,6 +458,8 @@ export class ReActAgentLoop {
       // V3-018 修复：添加全局迭代次数上限，防止 follow-up 队列持续注入导致无限循环
       let followupIteration = 0;
       followUpLoop: while (true) {
+        // Phase 97 Part A：每个 turn 开始（含 follow-up 续接的新 turn）
+        this.beginEngineTurn(userMessage);
         followupIteration++;
         if (followupIteration > MAX_FOLLOWUP_ITERATIONS) {
           logger.warn('FollowUp loop reached max iterations, breaking', {
@@ -385,6 +475,8 @@ export class ReActAgentLoop {
           yield overflowEscalation; trace?.recordEvent(overflowEscalation);
           const overflowDone: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
           yield overflowDone; trace?.recordEvent(overflowDone);
+          this.engineEndReason = 'max_iterations';
+          this.finishEngineTurn();
           break followUpLoop;
         }
         while (iteration < this.config.maxIterations) {
@@ -394,6 +486,8 @@ export class ReActAgentLoop {
             yield cancelError; trace?.recordEvent(cancelError);
             const doneEvent: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
             yield doneEvent; trace?.recordEvent(doneEvent);
+            this.engineEndReason = 'cancelled';
+            this.finishEngineTurn();
             return;
           }
 
@@ -440,13 +534,6 @@ export class ReActAgentLoop {
 
           logger.debug('ReAct iteration', { iteration, maxIterations: this.config.maxIterations, messageCount: messages.length });
 
-          // yield thinking 事件
-          const thinkingEvent: ReActEvent = {
-            type: 'thinking',
-            message: `模型思考中... (${routeDecision.model.id}, 迭代 ${iteration})`,
-          };
-          yield thinkingEvent; trace?.recordEvent(thinkingEvent);
-
           // 任务1：每次迭代重新注入 Compose 阶段提示词（阶段可能在上一轮工具执行后已流转）
           let effectiveSystemPrompt = systemPrompt;
           let effectiveSystemBlocks = systemBlocks;
@@ -488,6 +575,8 @@ export class ReActAgentLoop {
               yield cancelError; trace?.recordEvent(cancelError);
               const doneEvent: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
               yield doneEvent; trace?.recordEvent(doneEvent);
+              this.engineEndReason = 'cancelled';
+              this.finishEngineTurn();
               return;
             }
 
@@ -871,6 +960,7 @@ export class ReActAgentLoop {
 
             const finalDone: ReActEvent = { type: 'done', content: result.content, usage: totalUsage };
             yield finalDone; trace?.recordEvent(finalDone);
+            this.finishEngineTurn();
             return;
 
           } catch (error) {
@@ -888,6 +978,8 @@ export class ReActAgentLoop {
               yield errorEvent; trace?.recordEvent(errorEvent);
               const doneEvent: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
               yield doneEvent; trace?.recordEvent(doneEvent);
+              this.engineEndReason = 'error';
+              this.finishEngineTurn();
               return;
             }
 
@@ -918,10 +1010,19 @@ export class ReActAgentLoop {
         yield escalationEvent; trace?.recordEvent(escalationEvent);
         const doneEvent: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
         yield doneEvent; trace?.recordEvent(doneEvent);
+        this.engineEndReason = 'max_iterations';
+        this.finishEngineTurn();
         // maxIterations 退出不处理 follow-up（避免无限循环）
         break followUpLoop;
       } // end followUpLoop
     } finally {
+      // Phase 97 Part A：任何退出路径都发射 agent_end 并清理事件状态
+      this.emitEngineEvent({ type: 'agent_end', payload: { reason: this.engineEndReason } });
+      this.engineSeq = null;
+      this.currentContext = null;
+      this.engineTurnEnded = false;
+      this.currentTurnId = null;
+      this.currentMessageId = null;
       // C6 修复：确保 session 结束时触发 on-session-end
       await this.mwRunner.fireHookSafe('on-session-end', {});
       // Phase 79 Task 5：清理当前确认回调，避免 run 结束后残留

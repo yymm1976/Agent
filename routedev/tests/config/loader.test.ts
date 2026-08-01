@@ -106,4 +106,74 @@ providers:
     expect(result.valid).toBe(false);
     expect(result.errors.length).toBeGreaterThan(0);
   });
+
+  it('should load automations config (isAllowedByAllowlist 接线，不改变加载结果)', () => {
+    writeFileSync(configPath, `
+version: 1
+automations:
+  - id: a1
+    name: daily report
+    cron: "0 9 * * *"
+    permissionMode: auto
+    allowlist: []
+    prompt: "生成日报"
+`);
+
+    const config = loadConfig({ globalConfigPath: configPath });
+    expect(config.automations).toHaveLength(1);
+    expect(config.automations[0].permissionMode).toBe('auto');
+    expect(config.automations[0].allowlist).toEqual([]);
+  });
+
+  it('should warn on auto-mode automation without preauthorized capability (isAllowedByAllowlist 接线)', () => {
+    writeFileSync(configPath, `
+version: 1
+automations:
+  - id: a1
+    name: daily report
+    cron: "0 9 * * *"
+    permissionMode: auto
+    allowlist: []
+    prompt: "生成日报"
+`);
+
+    const result = validateConfigFile(configPath);
+    expect(result.valid).toBe(true);
+    expect(result.warnings.some((w) => w.includes('preauthorized'))).toBe(true);
+  });
+
+  it('should not warn on auto-mode automation with preauthorized capability', () => {
+    writeFileSync(configPath, `
+version: 1
+automations:
+  - id: a1
+    name: daily report
+    cron: "0 9 * * *"
+    permissionMode: auto
+    allowlist:
+      - tool:web_search
+    prompt: "生成日报"
+`);
+
+    const result = validateConfigFile(configPath);
+    expect(result.valid).toBe(true);
+    expect(result.warnings.some((w) => w.includes('preauthorized'))).toBe(false);
+  });
+
+  it('should load and validate userProfile (validateUserProfile 接线)', () => {
+    writeFileSync(configPath, `
+version: 1
+userProfile:
+  occupation: 前端工程师
+  mustRemember:
+    - 注释用中文
+`);
+
+    const config = loadConfig({ globalConfigPath: configPath });
+    expect(config.userProfile.occupation).toBe('前端工程师');
+
+    const result = validateConfigFile(configPath);
+    expect(result.valid).toBe(true);
+    expect(result.warnings.some((w) => w.startsWith('userProfile:'))).toBe(false);
+  });
 });

@@ -15,6 +15,7 @@
 
 // Phase 53 Task 11：熔断器（type-only import，避免运行时循环依赖）
 import type { CircuitBreaker } from '../agent/circuit-breaker.js';
+import { logger } from '../utils/logger.js';
 
 /** 子 Agent 状态 */
 type SubAgentStatus =
@@ -83,12 +84,11 @@ export class SubAgentLifecycle {
     if (this.circuitBreaker) {
       try {
         if (!this.circuitBreaker.canCall()) {
-          console.warn(`[Phase53 Task 11] CircuitBreaker open, sub-agent registration may fail: ${agentId}`);
+          logger.warn('CircuitBreaker open, sub-agent registration may fail', { agentId });
         }
       } catch (e) {
         // fail-open：熔断器检查异常不影响注册
-        // eslint-disable-next-line no-console
-        console.warn(`[sub-agent-lifecycle] 熔断器检查异常，继续注册 ${agentId}: ${e instanceof Error ? e.message : String(e)}`);
+        logger.warn('熔断器检查异常，继续注册', { agentId, error: e instanceof Error ? e.message : String(e) });
       }
     }
     this.agents.set(agentId, {

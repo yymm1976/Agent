@@ -21,6 +21,8 @@ import { SkillMdParser, type SkillMetadata, type ParsedSkill } from './skill-md-
 import type { SkillSecurityGate } from './security-gate.js';
 // Phase 49 Task 3.5：SkillQualityGate 已删除（无生产实例化，engine-bridge 传 undefined）
 import type { IntegrityManifest } from '../security/integrity-manifest.js';
+// Phase 97 Part I Task I2：Skill 使用计数（记录点：install 激活时）
+import type { HitStat } from '../memory/hit-stat.js';
 
 // ============================================================
 // 类型定义
@@ -65,12 +67,15 @@ export class SkillMarketManager {
   private readonly integrityManifest?: IntegrityManifest;
   /** 完整性校验严格模式：true 时校验失败抛错，false 时只 warn */
   private readonly integrityStrict: boolean;
+  /** Phase 97 Part I Task I2：Skill 使用计数（可选注入；未注入时跳过记录） */
+  private readonly hitStat?: HitStat;
 
   constructor(
     rootDir: string,
     securityGate?: SkillSecurityGate,
     integrityManifest?: IntegrityManifest,
     integrityStrict: boolean = false,
+    hitStat?: HitStat,
   ) {
     this.marketDir = path.join(rootDir, '.routedev', 'market', 'skills');
     this.draftDir = path.join(rootDir, '.routedev', 'market-draft', 'skills');
@@ -78,6 +83,7 @@ export class SkillMarketManager {
     this.securityGate = securityGate;
     this.integrityManifest = integrityManifest;
     this.integrityStrict = integrityStrict;
+    this.hitStat = hitStat;
   }
 
   /**
@@ -325,6 +331,18 @@ export class SkillMarketManager {
     }
 
     logger.info('SkillMarketManager: installed', { name, version: targetVersion });
+
+    // Phase 97 Part I Task I2：Skill 激活计数（fail-open，不阻塞安装）
+    // 记录点：install 成功 = 该 Skill 被实际激活使用一次
+    if (this.hitStat) {
+      try {
+        this.hitStat.record(`skill:${name}`, 'skill');
+      } catch (hitErr) {
+        logger.debug('SkillMarketManager.install: hitStat.record failed (fail-open)', {
+          error: hitErr instanceof Error ? hitErr.message : String(hitErr),
+        });
+      }
+    }
   }
 
   /**

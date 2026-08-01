@@ -31,6 +31,8 @@ import { logger } from '../utils/logger.js';
 import * as path from 'node:path';
 // Phase 80 Task 2：本地使用计数器
 import { UsageCounter } from '../observability/usage-counter.js';
+// Phase 97 Part I Task I2：触发率统计器（记忆/Skill/UserProfile 命中计数）
+import { HitStat } from '../memory/hit-stat.js';
 import type { InitContext, AppDependencies } from './app-init.js';
 
 /**
@@ -79,6 +81,10 @@ export function createObservabilitySubsystem(ctx: InitContext): Partial<AppDepen
   // 供工具执行 / slash 命令 / Pack 加载等关键路径调用 increment 累加计数
   const usageCounter = new UsageCounter();
 
+  // Phase 97 Part I Task I2：创建触发率统计器（记忆/Skill/UserProfile 命中计数）
+  // 供 recallInjector / SkillMarketManager / chat-bridge 注入 record，低触发评估用
+  const hitStat = new HitStat();
+
   // Phase 71 Task D7：注册 offload 清理钩子
   // - 启动时立即清理 7 天前的孤儿文件（防止异常退出累积）
   // - 退出时（beforeExit / SIGINT / SIGTERM）清理当前 session 的 offload 文件
@@ -116,6 +122,8 @@ export function createObservabilitySubsystem(ctx: InitContext): Partial<AppDepen
   ctx.offloadRootDir = offloadRootDir;
   // Phase 80 Task 2：写入 ctx 供 tools 子系统注入 ToolExecutor
   ctx.usageCounter = usageCounter;
+  // Phase 97 Part I Task I2：写入 ctx 供 memory/agent/desktop 子系统注入
+  ctx.hitStat = hitStat;
 
   // ===== Phase 53 Task 12：Doctor 健康检查（受 config.phase53Integration.doctor.runOnStartup 守护） =====
   // 启动时异步运行环境探测，结果输出到 logger；不阻塞主流程
@@ -199,6 +207,7 @@ export function createObservabilitySubsystem(ctx: InitContext): Partial<AppDepen
     trace,
     audit,
     usageCounter,
+    hitStat,
     // G-F022 修复：提供 dispose 方法，供 AppDependencies.dispose 调用刷新 trace
     dispose: async () => {
       try {

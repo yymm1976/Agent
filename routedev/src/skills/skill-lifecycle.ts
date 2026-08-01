@@ -19,6 +19,8 @@
 import type { SkillLifecycleConfig } from '../config/schema.js';
 // Phase 53 Task 6：技能安全门控（结构类型 import，无循环依赖）
 import type { SkillSecurityGate } from './security-gate.js';
+// Phase 97 Part I Task I3：流程沉淀建议生成（基于 trace tool 序列聚类）
+import { detectRepeatedWorkflows } from './coach.js';
 
 // ============================================================
 // 类型定义
@@ -332,6 +334,41 @@ export class SkillLifecycleManager {
       basedOnFailurePatterns: patternNames,
       expectedImprovement: `预计降低 ${patternNames.join('、')} 类失败的发生频率`,
       requiresUserApproval: !this.config.autoApplyRefinement,
+    };
+  }
+
+  /**
+   * Phase 97 Part I Task I3：基于 tool 工作流序列生成 Skill 沉淀建议
+   *
+   * 复用 Creation 建议路径（SkillCreationSuggestion），把 coach 检测到的
+   * 重复工作流模式包装为可审批的 Skill 草案建议。
+   *
+   * 不自动落盘：本方法只生成建议，用户批准后由上层调用
+   * SkillMarketManager.publish 进入现有落盘流程（陷阱：审批前不写任何文件）。
+   *
+   * @param toolSequence 一次任务执行的 tool 调用序列（按时间顺序）
+   * @param exampleTaskDescriptions 可选示例任务描述（用于建议展示）
+   * @returns 创建建议；无重复工作流或未启用时返回 null
+   */
+  suggestSkillFromWorkflows(
+    toolSequence: string[],
+    exampleTaskDescriptions: string[] = [],
+  ): SkillCreationSuggestion | null {
+    // 配置开关：默认 false
+    if (!this.config.enabled) {
+      return null;
+    }
+    const patterns = detectRepeatedWorkflows(toolSequence, { maxPatterns: 1 });
+    if (patterns.length === 0) {
+      return null;
+    }
+    const top = patterns[0];
+    return {
+      suggestedName: top.suggestedName,
+      suggestedCategory: 'workflow-derived',
+      reason: top.reason,
+      similarTaskCount: top.occurrences,
+      exampleTaskDescriptions: exampleTaskDescriptions.slice(0, MAX_EXAMPLE_TASK_DESCRIPTIONS),
     };
   }
 

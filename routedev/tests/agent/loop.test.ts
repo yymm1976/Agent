@@ -162,7 +162,7 @@ function makeRouteDecision(modelId: string = 'mock-model'): RoutingResult {
 
 describe('ReActAgentLoop', () => {
   describe('纯文本回复（无工具调用）', () => {
-    it('应该 yield thinking → text_delta → done', async () => {
+    it('应该只 yield 真实的 text_delta → done，不制造 thinking 事件', async () => {
       const loop = new ReActAgentLoop(new NoOpToolExecutor());
       const client = createMockTextClient('Hello world');
       const decision = makeRouteDecision();
@@ -177,8 +177,8 @@ describe('ReActAgentLoop', () => {
         events.push(event);
       }
 
-      // 应该有 thinking 事件
-      expect(events.some(e => e.type === 'thinking')).toBe(true);
+      // thinking 只能来自模型真实推理流，普通文本模型不应收到硬编码占位事件
+      expect(events.some(e => e.type === 'thinking')).toBe(false);
 
       // 应该有 text_delta 事件
       const textDeltas = events.filter(e => e.type === 'text_delta');
