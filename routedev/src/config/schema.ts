@@ -11,6 +11,7 @@
 //   - schema-observability.ts UI / 通用设置 / OTel / 显示 / 质量监测 / Phase68 / Phase70
 
 import { z } from 'zod';
+import { RemoteConfigSchema } from './schema-remote.js';
 
 // --- 聚合所需 Schema 引用 ---
 import {
@@ -18,7 +19,6 @@ import {
   LLMProvidersConfigSchema,
   RouterConfigSchema,
   MCPConfigSchema,
-  ReasoningModeSchema,
   ClosedLoopRoutingConfigSchema,
 } from './schema-router.js';
 import {
@@ -79,7 +79,6 @@ import {
   PlanConfigSchema,
 } from './schema-agent.js';
 import {
-  SoundsConfigSchema,
   UIConfigSchema,
   UpdatesConfigSchema,
   GeneralConfigSchema,
@@ -98,6 +97,7 @@ export * from './schema-security.js';
 export * from './schema-memory.js';
 export * from './schema-agent.js';
 export * from './schema-observability.js';
+export * from './schema-remote.js';
 
 // --- Pack 分组配置（Phase 81 Task 3+4/5） ---
 // PacksConfigSchema 和 PacksConfig 类型定义在 schema-observability.ts 中
@@ -111,6 +111,29 @@ export * from './schema-observability.js';
 //   adversarial  → extended-pack（cross-model-reviewer 对抗审查）
 //   trustGradient→ freeze（TrustGradient + Implicit Feedback + ExpertisePrompt，Phase 40 freeze 组）
 //   kgAdvanced   → freeze（KG 高级算法：社区检测等）
+
+// --- Phase 97 Part F：自动化任务配置 ---
+// 每个任务带 version 与迁移逻辑（见 runtime/automation-scheduler.ts migrateAutomationTasks）
+export const AutomationConfigSchema = z.preprocess((v) => v ?? [], z.array(z.object({
+  id: z.string().min(1).max(128),
+  name: z.string().min(1).max(200),
+  cron: z.string().min(1).max(64),
+  workspaceId: z.string().max(128).optional(),
+  permissionMode: z.enum(['manual', 'semi', 'auto']).default('semi'),
+  // 预授权能力白名单（读/写指定工作区/执行测试等）；非 bypassPermissions
+  allowlist: z.array(z.string().max(200)).default([]),
+  prompt: z.string().max(10_000),
+  version: z.number().int().default(1),
+})).default([]));
+
+// --- Phase 97 Part I：轻量用户档案（几百字 schema，进入系统提示词） ---
+export const UserProfileSchema = z.preprocess((v) => v ?? {}, z.object({
+  occupation: z.string().max(200).optional(),
+  currentWork: z.string().max(300).optional(),
+  skillLevel: z.string().max(300).optional(),
+  interactionPrefs: z.string().max(500).optional(),
+  mustRemember: z.array(z.string().max(200)).max(10).default([]),
+}));
 
 // --- 全局配置（完整 schema） ---
 // 顶层 AppConfig：所有配置的根节点
@@ -127,9 +150,10 @@ export const AppConfigSchema = z.object({
   goalVerifier: z.preprocess((v) => v ?? {}, GoalVerifierConfigSchema), // 目标验证
   security: z.preprocess((v) => v ?? {}, SecurityConfigSchema),        // 安全策略
   autonomy: z.preprocess((v) => v ?? {}, AutonomyConfigSchema),        // 自主度
-  sounds: z.preprocess((v) => v ?? {}, SoundsConfigSchema),            // 提示音
+  // TD-13 已清理：sounds 字段已删除（全库零消费，2026-07-29）
   updates: z.preprocess((v) => v ?? {}, UpdatesConfigSchema),          // 更新策略
   mcp: z.preprocess((v) => v ?? {}, MCPConfigSchema),                  // MCP 客户端配置
+  remote: z.preprocess((v) => v ?? {}, RemoteConfigSchema),            // Android 远程网关（默认关闭）
   prompts: z.preprocess((v) => v ?? {}, PromptConfigSchema),            // Prompt 模板系统（Phase 16）
   projectMemory: z.preprocess((v) => v ?? {}, ProjectMemoryConfigSchema), // 项目记忆（Phase 16）
   adversarial: z.preprocess((v) => v ?? {}, AdversarialConfigSchema),    // 对抗性验证（Phase 21 Task 4）
@@ -162,8 +186,7 @@ export const AppConfigSchema = z.object({
   market: MarketConfigSchema,
   // Phase 42：策略引擎配置（Intent Guard + Playbook + Tool Guide + Tool Approval）
   policies: PoliciesConfigSchema,
-  // Phase 42：推理模式（fast / balanced / accurate）
-  reasoningMode: ReasoningModeSchema,
+  // TD-13 已清理：reasoningMode 字段已删除（未接入后端，2026-07-29）
   // Phase 43：子 Agent 配置（并行上限 + 角色门控）
   subAgents: SubAgentsConfigSchema,
   // Phase 43：Goal 配置（澄清 + 确认 + 审计模式 + token 预算）
@@ -242,8 +265,14 @@ export const AppConfigSchema = z.object({
   // preprocess 兜底：未配置时解析为空对象，各 pack 默认 false，非 Core 模块退出默认装配
   // UI 在设置页"能力分层"tab 展示；enabled:true 可恢复对应模块装配
   packs: z.preprocess((v) => v ?? {}, PacksConfigSchema),
+  // Phase 97 Part F：自动化任务配置（定时触发统一 Session 执行 + 权限白名单 + 版本迁移）
+  // 注意：AutomationConfigSchema 是数组 schema，preprocess 兜底必须是 []（对象会被 Zod 拒绝）
+  automations: z.preprocess((v) => v ?? [], AutomationConfigSchema),
+  // Phase 97 Part I：轻量用户档案（进入系统提示词；空档案安全降级）
+  userProfile: z.preprocess((v) => v ?? {}, UserProfileSchema),
 });
 export type AppConfig = z.infer<typeof AppConfigSchema>;
+export type AutomationConfig = AppConfig['automations'];
 
 /** Plan diff + 遗漏点分析配置（Phase 71） */
 export type PlanConfig = AppConfig['plan'];

@@ -3,7 +3,7 @@
 // 从 29 个 tab 精简到 8 个，每 tab 内部按 Card 分区
 
 import {
-  Server, Palette, Shield, Zap, Users, Plug, BarChart3,
+  Server, Palette, Shield, Zap, Users, Plug, BarChart3, Smartphone,
 } from 'lucide-react';
 
 /**
@@ -21,7 +21,7 @@ import {
  */
 export type TabId =
   | 'models' | 'appearance' | 'security' | 'execution'
-  | 'orchestration' | 'plugins' | 'misc' | 'about';
+  | 'orchestration' | 'plugins' | 'remote' | 'misc' | 'about';
 
 interface SettingsNavProps {
   /** 当前激活的 Tab id */
@@ -55,6 +55,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { id: 'orchestration', label: '执行自动化', icon: Users, desc: '任务执行和确认方式' },
       { id: 'plugins', label: '工具与扩展', icon: Plug, desc: 'MCP、技能和插件' },
+      { id: 'remote', label: '手机远程连接', icon: Smartphone, desc: '配对手机，远程查看任务' },
     ],
   },
   {

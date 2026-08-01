@@ -25,44 +25,19 @@ import { Select, SelectItem } from '../components/ui/select.js';
 import { Badge } from '../components/ui/badge.js';
 import { Switch } from '../components/ui/switch.js';
 import { Alert, AlertTitle, AlertDescription } from '../components/ui/alert.js';
-import { ConfirmDialog, AlertBanner } from '../components/ui/dialog.js';
+import { ConfirmDialog } from '../components/ui/dialog.js';
 import { useProjectsStore } from '../store/useProjectsStore.js';
 import { useSettingsDraft } from '../hooks/useSettingsDraft.js';
 import { useAutoSave, type SaveResult } from '../hooks/useAutoSave.js';
 import { useSkillsManager, type ConfirmDialogState } from '../hooks/useSkillsManager.js';
 import { useHooksManager } from '../hooks/useHooksManager.js';
 import { useMcpCatalog } from '../hooks/useMcpCatalog.js';
-import { SettingsPersonaTab } from '../components/settings/SettingsPersonaTab.js';
-import { SettingsVoiceTab } from '../components/settings/SettingsVoiceTab.js';
-import { SettingsConversationTab } from '../components/settings/SettingsConversationTab.js';
-import { SettingsExperimentTab } from '../components/settings/SettingsExperimentTab.js';
-import { SettingsGoalTab } from '../components/settings/SettingsGoalTab.js';
-import { SettingsReviewerTab } from '../components/settings/SettingsReviewerTab.js';
-import { SettingsDelegationTab } from '../components/settings/SettingsDelegationTab.js';
-import { SettingsPhase52IntegrationTab } from '../components/settings/SettingsPhase52IntegrationTab.js';
-import { SettingsPhase53IntegrationTab } from '../components/settings/SettingsPhase53IntegrationTab.js';
-import { SettingsResultSchemaTab } from '../components/settings/SettingsResultSchemaTab.js';
-import { SettingsConfigLayeringTab } from '../components/settings/SettingsConfigLayeringTab.js';
-import { SettingsArchivedTab } from '../components/settings/SettingsArchivedTab.js';
-import { SettingsSubAgentsTab } from '../components/settings/SettingsSubAgentsTab.js';
-import { SettingsSecurityTab } from '../components/settings/SettingsSecurityTab.js';
-import { SettingsMcpTab } from '../components/settings/SettingsMcpTab.js';
-import { SettingsAppearanceTab } from '../components/settings/SettingsAppearanceTab.js';
-import { SettingsSkillsTab } from '../components/settings/SettingsSkillsTab.js';
-import { SettingsMemoryTab } from '../components/settings/SettingsMemoryTab.js';
-import { SettingsProvidersTab } from '../components/settings/SettingsProvidersTab.js';
-import { SettingsRouterTab } from '../components/settings/SettingsRouterTab.js';
-import { SettingsCommandsTab } from '../components/settings/SettingsCommandsTab.js';
-import { SettingsOptimizationTab } from '../components/settings/SettingsOptimizationTab.js';
-import { SettingsExecutionTab } from '../components/settings/SettingsExecutionTab.js';
-import { SettingsCodemapTab } from '../components/settings/SettingsCodemapTab.js';
-import { SettingsPoliciesTab } from '../components/settings/SettingsPoliciesTab.js';
-import { SettingsHooksTab } from '../components/settings/SettingsHooksTab.js';
-import { SettingsExpertiseTab, SettingsAboutTab, SettingsMarketTab } from '../components/settings/SettingsMiscTabs.js';
 import { SettingsHeader } from '../components/settings/SettingsHeader.js';
 import { SettingsNav, type TabId } from '../components/settings/SettingsNav.js';
 import { SaveToast } from '../components/settings/SaveToast.js';
-import { SettingsAdvancedSection } from '../components/settings/SettingsAdvancedSection.js';
+// Phase 92：Tab 内容渲染与对话框已拆分到独立组件
+import { SettingsTabNav } from '../components/settings/SettingsTabNav.js';
+import { SettingsDialogs } from '../components/settings/SettingsDialogs.js';
 
 interface SettingsPageProps {
   config: AppConfig | null;
@@ -96,32 +71,8 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- Phase 74-G：draft 状态 + 50 个 update* 函数迁移到 useSettingsDraft hook ---
-  const {
-    draft, setDraft, dirtyRef,
-    selectedSearchEngine, setSelectedSearchEngine,
-    showApiKeys, testingProvider, testResults,
-    modelEditor, setModelEditor,
-    mcpForm, setMcpForm, mcpEditingId, setMcpEditingId,
-    agentProfiles, setAgentProfiles, expandedAgentId, setExpandedAgentId,
-    updateDraft, updateProvider, addProvider, removeProvider,
-    updateModel, openAddModel, openEditModel, confirmModelEditor, removeModel,
-    updateRule, addRule, removeRule, updateBudget,
-    updateSecurity, updateSecurityApproval,
-    updatePermissionProfile, updateFsRule, addFsRule, removeFsRule,
-    updateNetworkAllow, updateNetworkDeny,
-    updateWebSearch, updateAutonomy,
-    updateOptimization, updateTokenTracking, updateWorkflow, updateSafety, updateConciseThinking,
-    updateCheckpoint, updateCheckpointTrigger, addCheckpointTrigger, removeCheckpointTrigger,
-    updateGoalVerifier, updateAdversarial,
-    updateExecution, updateUpdates, updatePhase48Integration, updatePhase49Integration,
-    updatePrompts, updateProjectMemory, updateMemory,
-    updateMcp, updateMcpServer, removeMcpServer, submitMcpForm, openAddMcp, openEditMcp,
-    updateGeneral, updateBackgroundBehavior, updateUi,
-    updateTrust, updateQuality, updateExpertise,
-    updateSubAgents, updateSubAgentsGateRules,
-    toggleApiKey, handleTestConnection,
-    handleRefreshModels, refreshingModels, remoteModels,
-  } = useSettingsDraft({ config, onClearSaveResult: () => setSaveResult(null) });
+  const draftApi = useSettingsDraft({ config, onClearSaveResult: () => setSaveResult(null) });
+  const { draft, setDraft, dirtyRef } = draftApi;
 
   // --- Phase 74-G：自动保存 + 实时预览 + 卸载恢复 + 保存提示已迁移到 useAutoSave hook ---
   const { saving, handleSave } = useAutoSave({
@@ -131,48 +82,9 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
   });
 
   // --- Phase 74-G：Skills/Hooks/MCP 管理已迁移到对应 hook ---
-  const {
-    skills, setSkills,
-    skillPreview, setSkillPreview,
-    skillForm, setSkillForm,
-    skillRouteTest, setSkillRouteTest,
-    skillLoading,
-    skillAiForm, setSkillAiForm,
-    refreshSkills,
-    handleSkillToggle,
-    handleSkillPreview,
-    handleSkillCreate,
-    handleSkillDelete,
-    handleSkillRouteTest,
-    handleSkillReload,
-    handleSkillAiGenerate,
-  } = useSkillsManager({ activeTab, setAlertMsg, setConfirmDialog });
-
-  const {
-    hooks, setHooks,
-    hookLoading,
-    hookCreateForm, setHookCreateForm,
-    refreshHooks,
-    handleHookToggle,
-    handleHookDelete,
-    handleHookAiGenerate,
-  } = useHooksManager({ activeTab, setAlertMsg, setConfirmDialog });
-
-  const {
-    catalogEntries, setCatalogEntries,
-    catalogCategory, setCatalogCategory,
-    catalogSearch, setCatalogSearch,
-    installingId,
-    installResult, setInstallResult,
-    installModal, setInstallModal,
-    envInputs, setEnvInputs,
-    headerInputs, setHeaderInputs,
-    refreshCatalog,
-    handleCatalogCategoryChange,
-    handleCatalogSearch,
-    openInstallModal,
-    handleInstall,
-  } = useMcpCatalog({ activeTab, updateDraft, draft });
+  const skillsApi = useSkillsManager({ activeTab, setAlertMsg, setConfirmDialog });
+  const hooksApi = useHooksManager({ activeTab, setAlertMsg, setConfirmDialog });
+  const mcpCatalogApi = useMcpCatalog({ activeTab, updateDraft: draftApi.updateDraft, draft });
 
   // Phase 88 重构：移除 advancedExpanded 折叠组，改为四层分组扁平展示
 
@@ -228,6 +140,7 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
 
   // --- Phase 74-G：handleSave 已迁移到 useAutoSave hook ---
   // --- Phase 74-G：mainTabs / advancedTabs 已迁移到 SettingsNav.tsx ---
+  // --- Phase 92：Tab 内容渲染已迁移到 SettingsTabNav.tsx ---
 
   return (
     <>
@@ -252,257 +165,23 @@ export function SettingsPage({ config, saveConfig, reloadConfig, onBack }: Setti
           setActiveTab={setActiveTab}
         />
 
-        {/* 右侧内容区（relative 定位，子 tab 内容用 absolute inset-0 填充，避免 flexbox 高度抖动） */}
-        <div className="relative min-w-0 flex-1 overflow-hidden">
-      {/* ===== 模型与路由（providers + router） ===== */}
-      {activeTab === 'models' && (
-        <div className="absolute inset-0 space-y-4 overflow-y-auto pr-2">
-          <SettingsProvidersTab
-            draft={draft}
-            updateDraft={updateDraft}
-            addProvider={addProvider}
-            removeProvider={removeProvider}
-            updateProvider={updateProvider}
-            showApiKeys={showApiKeys}
-            toggleApiKey={toggleApiKey}
-            handleTestConnection={handleTestConnection}
-            testingProvider={testingProvider}
-            testResults={testResults}
-            handleRefreshModels={handleRefreshModels}
-            refreshingModels={refreshingModels}
-            remoteModels={remoteModels}
-            openAddModel={openAddModel}
-            openEditModel={openEditModel}
-            removeModel={removeModel}
-            modelEditor={modelEditor}
-            setModelEditor={setModelEditor}
-            confirmModelEditor={confirmModelEditor}
-          />
-          <SettingsAdvancedSection
-            title="高级路由"
-            description="什么时候切换模型；通常保持默认即可"
-          >
-            <SettingsRouterTab
-              draft={draft}
-              updateDraft={updateDraft}
-              updateBudget={updateBudget}
-              updateRule={updateRule}
-              addRule={addRule}
-              removeRule={removeRule}
-            />
-          </SettingsAdvancedSection>
-        </div>
-      )}
-
-      {/* ===== 外观与交互（基本=appearance，高级=conversation/persona/voice） ===== */}
-      {activeTab === 'appearance' && (
-        <div className="absolute inset-0 space-y-4 overflow-y-auto pr-2">
-          <SettingsAppearanceTab
-            draft={draft}
-            updateGeneral={updateGeneral}
-            updateUi={updateUi}
-            updateBackgroundBehavior={updateBackgroundBehavior}
-            updateUpdates={updateUpdates}
-          />
-          <SettingsAdvancedSection
-            title="更多对话选项"
-            description="需要时调整对话显示、回复风格或语音"
-          >
-            <SettingsConversationTab draft={draft} updateDraft={updateDraft} />
-            <SettingsPersonaTab draft={draft} updateDraft={updateDraft} />
-            <SettingsVoiceTab draft={draft} updateDraft={updateDraft} />
-          </SettingsAdvancedSection>
-        </div>
-      )}
-
-      {/* ===== 安全与治理（基本=security，高级=policies/phase52-53/expertise/分层/packs） ===== */}
-      {activeTab === 'security' && (
-        <div className="absolute inset-0 space-y-4 overflow-y-auto pr-2">
-          <SettingsSecurityTab
-            draft={draft}
-            updateSecurity={updateSecurity}
-            updateSecurityApproval={updateSecurityApproval}
-            updateFsRule={updateFsRule}
-            addFsRule={addFsRule}
-            removeFsRule={removeFsRule}
-            updateNetworkAllow={updateNetworkAllow}
-            updateNetworkDeny={updateNetworkDeny}
-            updateWebSearch={updateWebSearch}
-            updateAdversarial={updateAdversarial}
-            updateTrust={updateTrust}
-            selectedSearchEngine={selectedSearchEngine}
-            setSelectedSearchEngine={setSelectedSearchEngine}
-          />
-          <SettingsAdvancedSection
-            title="高级安全选项"
-            description="一般保持默认；只在需要自定义规则时修改"
-          >
-            <SettingsPoliciesTab draft={draft} updateDraft={updateDraft} />
-            <SettingsPhase52IntegrationTab draft={draft} updateDraft={updateDraft} />
-            <SettingsPhase53IntegrationTab draft={draft} updateDraft={updateDraft} />
-            <SettingsExpertiseTab draft={draft} updateExpertise={updateExpertise} />
-            <SettingsConfigLayeringTab draft={draft} updateDraft={updateDraft} />
-            <SettingsResultSchemaTab draft={draft} updateDraft={updateDraft} />
-          </SettingsAdvancedSection>
-        </div>
-      )}
-
-      {/* ===== 执行与记忆（基本=execution，高级=memory/checkpoint） ===== */}
-      {activeTab === 'execution' && (
-        <div className="absolute inset-0 space-y-4 overflow-y-auto pr-2">
-          <SettingsExecutionTab
-            draft={draft}
-            updateExecution={updateExecution}
-            updateQuality={updateQuality}
-          />
-          <SettingsAdvancedSection
-            title="恢复与记忆"
-            description="保存进度，方便中断后继续"
-          >
-            <SettingsMemoryTab
-              draft={draft}
-              updateCheckpoint={updateCheckpoint}
-              updateCheckpointTrigger={updateCheckpointTrigger}
-              addCheckpointTrigger={addCheckpointTrigger}
-              removeCheckpointTrigger={removeCheckpointTrigger}
-              updateGoalVerifier={updateGoalVerifier}
-              updateProjectMemory={updateProjectMemory}
-              updateMemory={updateMemory}
-            />
-          </SettingsAdvancedSection>
-        </div>
-      )}
-
-      {/* ===== Agent 编排（基本=subagents+commands，高级=goal/experiment/reviewer/delegation） ===== */}
-      {activeTab === 'orchestration' && (
-        <div className="absolute inset-0 space-y-4 overflow-y-auto pr-2">
-          <SettingsSubAgentsTab
-            draft={draft}
-            updateSubAgents={updateSubAgents}
-            updateSubAgentsGateRules={updateSubAgentsGateRules}
-            agentProfiles={agentProfiles}
-            setAgentProfiles={setAgentProfiles}
-            expandedAgentId={expandedAgentId}
-            setExpandedAgentId={setExpandedAgentId}
-          />
-          <SettingsCommandsTab
-            draft={draft}
-            updateSecurity={updateSecurity}
-            updateAutonomy={updateAutonomy}
-            updatePhase48Integration={updatePhase48Integration}
-          />
-          <SettingsAdvancedSection
-            title="高级自动化"
-            description="目标、实验和审查流程；一般不需要调整"
-          >
-            <SettingsGoalTab draft={draft} updateDraft={updateDraft} />
-            <SettingsExperimentTab draft={draft} updateDraft={updateDraft} />
-            <SettingsReviewerTab draft={draft} updateDraft={updateDraft} />
-            <SettingsDelegationTab draft={draft} updateDraft={updateDraft} />
-          </SettingsAdvancedSection>
-        </div>
-      )}
-
-      {/* ===== 插件生态（基本=mcp，高级=skills/hooks/codemap/market） ===== */}
-      {activeTab === 'plugins' && (
-        <div className="absolute inset-0 space-y-4 overflow-y-auto pr-2">
-          <SettingsMcpTab
-            draft={draft}
-            updateMcp={updateMcp}
-            updateMcpServer={updateMcpServer}
-            removeMcpServer={removeMcpServer}
-            submitMcpForm={submitMcpForm}
-            openAddMcp={openAddMcp}
-            openEditMcp={openEditMcp}
-            mcpForm={mcpForm}
-            setMcpForm={setMcpForm}
-            mcpEditingId={mcpEditingId}
-            setMcpEditingId={setMcpEditingId}
-            catalogEntries={catalogEntries}
-            catalogCategory={catalogCategory}
-            catalogSearch={catalogSearch}
-            handleCatalogCategoryChange={handleCatalogCategoryChange}
-            handleCatalogSearch={handleCatalogSearch}
-            installingId={installingId}
-            installResult={installResult}
-            setInstallResult={setInstallResult}
-            installModal={installModal}
-            setInstallModal={setInstallModal}
-            envInputs={envInputs}
-            setEnvInputs={setEnvInputs}
-            headerInputs={headerInputs}
-            setHeaderInputs={setHeaderInputs}
-            openInstallModal={openInstallModal}
-            handleInstall={handleInstall}
-          />
-          <SettingsSkillsTab
-            skills={skills}
-            skillLoading={skillLoading}
-            skillPreview={skillPreview}
-            setSkillPreview={setSkillPreview}
-            skillForm={skillForm}
-            setSkillForm={setSkillForm}
-            skillRouteTest={skillRouteTest}
-            setSkillRouteTest={setSkillRouteTest}
-            skillAiForm={skillAiForm}
-            setSkillAiForm={setSkillAiForm}
-            handleSkillReload={handleSkillReload}
-            handleSkillToggle={handleSkillToggle}
-            handleSkillPreview={handleSkillPreview}
-            handleSkillDelete={handleSkillDelete}
-            handleSkillRouteTest={handleSkillRouteTest}
-            handleSkillCreate={handleSkillCreate}
-            handleSkillAiGenerate={handleSkillAiGenerate}
-            setAlertMsg={setAlertMsg}
-          />
-          <SettingsAdvancedSection
-            title="更多扩展"
-            description="钩子、代码地图和市场；按需启用"
-          >
-            <SettingsHooksTab
-              hooks={hooks}
-              hookLoading={hookLoading}
-              hookCreateForm={hookCreateForm}
-              setHookCreateForm={setHookCreateForm}
-              refreshHooks={refreshHooks}
-              handleHookToggle={handleHookToggle}
-              handleHookDelete={handleHookDelete}
-              handleHookAiGenerate={handleHookAiGenerate}
-            />
-            <SettingsCodemapTab draft={draft} updateDraft={updateDraft} />
-            <SettingsMarketTab draft={draft} updateDraft={updateDraft} />
-          </SettingsAdvancedSection>
-        </div>
-      )}
-
-      {/* ===== 统计与归档（基本=archived，高级=optimization） ===== */}
-      {activeTab === 'misc' && (
-        <div className="absolute inset-0 space-y-4 overflow-y-auto pr-2">
-          <SettingsArchivedTab />
-          <SettingsAdvancedSection
-            title="用量与缓存"
-            description="查看用量；其余选项通常保持默认"
-          >
-            <SettingsOptimizationTab
-              draft={draft}
-              updateTokenTracking={updateTokenTracking}
-              updateSafety={updateSafety}
-              updateConciseThinking={updateConciseThinking}
-              updatePrompts={updatePrompts}
-            />
-          </SettingsAdvancedSection>
-        </div>
-      )}
-
-      {/* ===== 关于 ===== */}
-      {activeTab === 'about' && (
-        <SettingsAboutTab />
-      )}
-
-        </div>
+        {/* 右侧内容区（Phase 92：迁移到 SettingsTabNav；relative 定位，子 tab 内容用 absolute inset-0 填充，避免 flexbox 高度抖动） */}
+        <SettingsTabNav
+          activeTab={activeTab}
+          draft={draft}
+          draftApi={draftApi}
+          skillsApi={skillsApi}
+          hooksApi={hooksApi}
+          mcpCatalogApi={mcpCatalogApi}
+          setAlertMsg={setAlertMsg}
+          applyConfig={async () => {
+            await handleSave();
+          }}
+        />
       </div>
     </div>
-    <AlertBanner message={alertMsg} onDismiss={() => setAlertMsg(null)} />
+    {/* 错误提示横幅（Phase 92：迁移到 SettingsDialogs） */}
+    <SettingsDialogs alertMsg={alertMsg} onDismiss={() => setAlertMsg(null)} />
     </>
   );
 }

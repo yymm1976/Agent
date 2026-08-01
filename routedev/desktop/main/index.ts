@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import { randomBytes } from 'node:crypto';
+import QRCode from 'qrcode';
 import { fileURLToPath } from 'node:url';
 import type {
   ChatSendPayload,
@@ -27,24 +28,48 @@ import { AGENT_PROFILE_ROLES } from '../shared/ipc-types.js';
 import { loadConfig } from '../../src/config/loader.js';
 import { saveConfig } from './config-store.js';
 import { RouteDevEngine } from './engine-bridge.js';
+import {
+  RemoteDeviceStore,
+  RemoteGatewayServer,
+  RemotePairingService,
+  RouteDevRemoteService,
+} from './remote/index.js';
 import { createSplash } from './splash.js';
 import { createTray } from './tray.js';
 import { initUpdater } from './updater.js';
 import { listCatalog, searchCatalog } from './mcp-catalog.js';
 // TD-08：IPC 参数统一校验工具
 // Phase 79 Task 7：createValidatedHandler 统一 IPC handler 参数校验中间件
-import { ipcGuard, createValidatedHandler } from './ipc-guard.js';
+// Phase 95：createValidatedHandlerMulti（多参数）+ ipcValidate（通用校验器工厂）
+import {
+  ipcGuard,
+  createValidatedHandler,
+  createValidatedHandlerMulti,
+  ipcValidate,
+} from './ipc-guard.js';
 // F-032：fail-open 降级日志
 import { logger } from '../../src/utils/logger.js';
 // F-027/F-029：Zod schema 用于 config:save / hook:create 的完整 payload 校验
 import { z } from 'zod';
 import { AppConfigSchema, type AppConfig } from '../../src/config/schema.js';
+import {
+  REMOTE_DEVICE_SCOPES,
+  type RemoteDeviceScope,
+} from '../shared/remote-protocol.js';
+import type {
+  RemoteGatewayStatus,
+  RemotePairingView,
+} from '../shared/ipc-types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // 保持全局引用，防止垃圾回收
 let mainWindow: BrowserWindow | null = null;
 let engine: RouteDevEngine | null = null;
+let remoteDeviceStore: RemoteDeviceStore | null = null;
+let remotePairingService: RemotePairingService | null = null;
+let remoteService: RouteDevRemoteService | null = null;
+let remoteGateway: RemoteGatewayServer | null = null;
 // 系统托盘需保持全局引用，否则会被垃圾回收导致托盘消失
 let tray: Tray | null = null;
 // C2 修复：记录用户通过选择器授权过的工作目录集合
@@ -53,6 +78,117 @@ const authorizedCwds = new Set<string>();
 
 // 持久化最后使用的项目路径，启动时恢复（解决 process.cwd() 不正确的问题）
 const LAST_CWD_FILE = path.join(app.getPath('userData'), 'last-project-cwd.txt');
+
+function isPrivateIpv4(address: string): boolean {
+  const parts = address.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+  const [first, second] = parts;
+  return first === 10
+    || (first === 192 && second === 168)
+    || (first === 172 && second >= 16 && second <= 31)
+    || (first === 169 && second === 254);
+}
+
+function firstLanIpv4(): string | null {
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family === 'IPv4' && !entry.internal && isPrivateIpv4(entry.address)) {
+        return entry.address;
+      }
+    }
+  }
+  return null;
+}
+
+function getRemoteBaseUrl(config: AppConfig): string {
+  if (config.remote.transport === 'tailscale') return config.remote.tailscaleBaseUrl.trim().replace(/\/$/, '');
+  const configured = config.remote.lanBaseUrl.trim();
+  if (configured) return configured.replace(/\/$/, '');
+  const address = firstLanIpv4();
+  return address ? `http://${address}:${config.remote.port}` : '';
+}
+
+async function startRemoteGateway(config: AppConfig, currentEngine: RouteDevEngine): Promise<void> {
+  if (!config.remote.enabled) return;
+  const deviceStorePath = path.isAbsolute(config.remote.deviceStorePath)
+    ? config.remote.deviceStorePath
+    : path.join(app.getPath('userData'), config.remote.deviceStorePath);
+  remoteDeviceStore = new RemoteDeviceStore(deviceStorePath);
+  await remoteDeviceStore.initialize();
+  remoteService = new RouteDevRemoteService(currentEngine);
+  remotePairingService = new RemotePairingService(
+    remoteDeviceStore,
+    async (request, proposedScopes) => {
+      const permitted = proposedScopes.filter((scope) => {
+        if (scope === 'approvals:resolve') return config.remote.allowRemoteApprovals;
+        if (scope === 'autonomy:change') return config.remote.allowAutonomyChange;
+        return true;
+      });
+      const result = await dialog.showMessageBox({
+        type: 'question',
+        buttons: ['允许', '拒绝'],
+        defaultId: 1,
+        cancelId: 1,
+        title: 'RouteDev 手机配对',
+        message: `是否允许设备“${request.deviceName}”连接？`,
+        detail: `请求权限：${permitted.join('、') || '仅连接'}\n\n高风险权限默认关闭，可稍后在远程设置中调整。`,
+        noLink: true,
+      });
+      return result.response === 0 ? permitted : false;
+    },
+  );
+  const lanMode = config.remote.transport === 'lan';
+  const lanHost = firstLanIpv4() ?? '127.0.0.1';
+  remoteGateway = new RemoteGatewayServer({
+    host: lanMode ? lanHost : '127.0.0.1',
+    allowLan: lanMode,
+    port: config.remote.port,
+    desktopName: os.hostname(),
+    gatewayVersion: app.getVersion(),
+    service: remoteService,
+    devices: remoteDeviceStore,
+    pairing: remotePairingService,
+  });
+  const address = await remoteGateway.start();
+  logger.info('Remote Gateway started', { host: address.host, port: address.port });
+}
+
+async function stopRemoteGateway(): Promise<void> {
+  try {
+    await remoteGateway?.close();
+  } finally {
+    remoteGateway = null;
+    remoteService?.close();
+    remoteService = null;
+    remotePairingService = null;
+    remoteDeviceStore = null;
+  }
+}
+
+function getRemoteGatewayStatus(config = loadConfig({
+  globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH,
+})): RemoteGatewayStatus {
+  return {
+    enabled: config.remote.enabled,
+    running: remoteGateway !== null,
+    host: config.remote.transport === 'lan' ? (firstLanIpv4() ?? '127.0.0.1') : '127.0.0.1',
+    port: config.remote.port,
+    baseUrl: getRemoteBaseUrl(config),
+    transport: config.remote.transport,
+    engineAvailable: engine?.isReady() ?? false,
+    deviceCount: remoteDeviceStore?.list().filter((device) => !device.revokedAt).length ?? 0,
+  };
+}
+
+async function restartRemoteGateway(config: AppConfig): Promise<RemoteGatewayStatus> {
+  await stopRemoteGateway();
+  if (config.remote.enabled && engine) {
+    await startRemoteGateway(config, engine);
+  }
+  return getRemoteGatewayStatus(config);
+}
 
 function readLastCwd(): string | null {
   try {
@@ -70,7 +206,7 @@ function writeLastCwd(cwd: string): void {
   try {
     fs.writeFileSync(LAST_CWD_FILE, cwd, 'utf8');
   } catch (err) {
-    console.error('[last-cwd] 持久化失败:', err);
+    logger.error('[last-cwd] 持久化失败', { error: err instanceof Error ? err.message : String(err) });
   }
 }
 
@@ -172,7 +308,7 @@ Menu.setApplicationMenu(null);
 // 单实例锁：防止多实例并发写入配置文件导致 EPERM，也避免双击打开两个窗口
 // 锁获取失败说明已有实例在运行，直接退出当前进程
 if (!app.requestSingleInstanceLock()) {
-  console.warn('[main] 单实例锁获取失败，已有实例运行，当前进程退出');
+  logger.warn('[main] 单实例锁获取失败，已有实例运行，当前进程退出');
   app.exit(0);
 }
 app.on('second-instance', () => {
@@ -243,6 +379,7 @@ function createWindow(splash?: BrowserWindow | null): void {
   // 调用点（console-message / render-process-gone 等事件处理器）均为 fire-and-forget，无需 await
   const rendererLog = async (msg: string) => {
     const line = `[${new Date().toISOString()}] ${msg}\n`;
+    // eslint-disable-next-line no-console -- 渲染进程日志回显到 stdout，使用 logger 会与主日志混淆
     console.log(line.trim());
     try {
       // 检查大小并轮转
@@ -255,7 +392,7 @@ function createWindow(splash?: BrowserWindow | null): void {
             await fs.promises.unlink(backup);
           } catch (e) {
             if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-              console.warn('[rendererLog] 删除旧备份失败:', e);
+              logger.warn('[rendererLog] 删除旧备份失败', { error: e instanceof Error ? e.message : String(e) });
             }
           }
           await fs.promises.rename(rendererLogPath, backup);
@@ -265,7 +402,7 @@ function createWindow(splash?: BrowserWindow | null): void {
       }
       await fs.promises.appendFile(rendererLogPath, line);
     } catch (e) {
-      console.error('[rendererLog] 写入失败:', e);
+      logger.error('[rendererLog] 写入失败', { error: e instanceof Error ? e.message : String(e) });
     }
   };
   mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
@@ -331,7 +468,7 @@ function createWindow(splash?: BrowserWindow | null): void {
   // 安全：仅允许 http/https 协议，阻止 file:/javascript:/data: 等危险 scheme
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) {
-      shell.openExternal(url).catch(e => console.warn('[openExternal] 打开链接失败:', url, e));
+      shell.openExternal(url).catch(e => logger.warn('[openExternal] 打开链接失败', { url, error: e instanceof Error ? e.message : String(e) }));
     }
     return { action: 'deny' };
   });
@@ -405,10 +542,11 @@ app.whenReady().then(async () => {
     if (config.providers && config.providers.length > 0) {
       await engine.initialize();
     } else {
-      console.warn('[Startup] providers 为空，跳过 engine.initialize（等待用户配置后 reload）');
+      logger.warn('[Startup] providers 为空，跳过 engine.initialize（等待用户配置后 reload）');
     }
+    await startRemoteGateway(config, engine);
   } catch (err) {
-    console.error('Engine initialization failed:', err);
+    logger.error('Engine initialization failed', { error: err instanceof Error ? err.message : String(err) });
     dialog.showErrorBox(
       'RouteDev 启动失败',
       err instanceof Error ? err.message : String(err),
@@ -437,11 +575,14 @@ app.on('before-quit', async (event) => {
       // I25 修复：超时保护——最多等待 5 秒，超时后强制退出
       // 避免 MCP 断连或异步保存卡住导致应用永不退出
       await Promise.race([
-        engine.destroy(),
+        (async () => {
+          await stopRemoteGateway();
+          await engine!.destroy();
+        })(),
         new Promise<void>((resolve) => setTimeout(resolve, 5000)),
       ]);
     } catch (err) {
-      console.error('Engine destroy failed on quit:', err);
+      logger.error('Engine destroy failed on quit', { error: err instanceof Error ? err.message : String(err) });
     }
     engine = null;
     // 清理完成，真正退出
@@ -480,7 +621,7 @@ ipcMain.on('chat:send', (_event, rawPayload: unknown) => {
   }
   engine.sendChat(payload.text).catch((err: Error) => {
     // F-059 修复：记录错误日志便于主进程侧排障
-    console.error('[chat:send] failed:', err);
+    logger.error('[chat:send] failed', { error: err instanceof Error ? err.message : String(err) });
     // I26 修复：确保所有异常都反馈到前端，并发送 done 事件终止 loading 状态
     sendChatStream({ type: 'error', error: err.message || '发送消息时发生未知错误' });
     sendChatStream({ type: 'done' });
@@ -509,7 +650,73 @@ ipcMain.on('plan:edit-response', (_event, payload: import('../shared/ipc-types.j
 });
 
 // Phase 71：Plan 修订历史读取 + 遗漏点检查
-ipcMain.handle('plan:get-revisions', async (_event, goalId: string) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+// Phase 97 Part C：中断队列查询（渲染层重载恢复 + 状态轮询）
+ipcMain.handle('interruption:reclaim', createValidatedHandler<string, import('../../src/agent/interruption.js').Interruption[]>(
+  'interruption:reclaim',
+  ipcValidate.optionalString(128),
+  async (sessionId, _event) => engine?.reclaimInterruptions(sessionId ?? undefined) ?? [],
+));
+
+ipcMain.handle('interruption:list', createValidatedHandler<string, import('../../src/agent/interruption.js').Interruption[]>(
+  'interruption:list',
+  ipcValidate.optionalString(128),
+  async (sessionId, _event) => engine?.listInterruptions(sessionId ?? undefined) ?? [],
+));
+
+// Phase 97 Part B：Turn 快照查询与恢复（对话级撤销）
+ipcMain.handle('chat:list-turn-snapshots', createValidatedHandler<string, import('../../src/harness/turn-snapshot.js').TurnSnapshot[]>(
+  'chat:list-turn-snapshots',
+  ipcValidate.optionalString(128),
+  async (sessionId, _event) => engine?.listTurnSnapshots(sessionId ?? undefined) ?? [],
+));
+
+ipcMain.handle('chat:restore-turn', createValidatedHandlerMulti<import('../../src/harness/turn-snapshot.js').RestoreResult | null>(
+  'chat:restore-turn',
+  [ipcValidate.string(128), ipcValidate.optionalString(128)],
+  async (_event, turnId, sessionId) => {
+    if (!engine) return null;
+    return engine.restoreTurn(turnId as string, (sessionId as string | undefined) ?? undefined);
+  },
+));
+
+// Phase 97 Part E：子会话可见性（列表/详情/停止）
+ipcMain.handle('agent:list-subagents', createValidatedHandler<string, import('./bridges/agent-bridge.js').SubagentView[]>(
+  'agent:list-subagents',
+  ipcValidate.optionalString(128),
+  async (parentSessionId, _event) => engine?.listSubagents(parentSessionId ?? undefined) ?? [],
+));
+
+ipcMain.handle('agent:get-subagent', createValidatedHandler<string, import('./bridges/agent-bridge.js').SubagentView | null>(
+  'agent:get-subagent',
+  ipcValidate.string(128),
+  async (childSessionId, _event) => engine?.getSubagent(childSessionId) ?? null,
+));
+
+ipcMain.handle('agent:stop-subagent', createValidatedHandler<string, boolean>(
+  'agent:stop-subagent',
+  ipcValidate.string(128),
+  async (childSessionId, _event) => engine?.stopSubagent(childSessionId) ?? false,
+));
+
+// Phase 97 Part H：Agent 状态聚合快照（AgentIsland 渲染唯一数据源）
+ipcMain.handle('agent:get-status', createValidatedHandler<undefined, import('./agent-status-service.js').AgentStatusSnapshot>(
+  'agent:get-status',
+  ipcValidate.none,
+  async () => engine?.getAgentStatus() ?? { sessions: [], updatedAt: new Date().toISOString() },
+));
+
+// Phase 97 Part G：输入框结构化引用解析（/ @ & ~ 前缀 + accessScope 校验）
+ipcMain.handle('composer:resolve', createValidatedHandler<string, import('../../src/agent/context/composer-reference.js').ComposerReference[]>(
+  'composer:resolve',
+  ipcValidate.string(100000),
+  async (text, _event) => engine?.resolveComposerRefs(text) ?? [],
+));
+
+ipcMain.handle('plan:get-revisions', createValidatedHandler<string, { ok: boolean; revisions: unknown[] }>(
+  'plan:get-revisions',
+  ipcValidate.string(256),
+  async (goalId, _event) => {
   // 从 .routedev/plan-revisions/<goalId>.jsonl 读取修订历史
   // 路径通过 config.plan.revisionHistoryPath 配置，默认 .routedev/plan-revisions/
   // 安全：校验 goalId 字符集，防止路径穿越（../ 注入）
@@ -560,7 +767,8 @@ ipcMain.handle('plan:get-revisions', async (_event, goalId: string) => {
     logger.warn('plan revisions fail-open', { error: error instanceof Error ? error.message : String(error) });
     return { ok: true, revisions: [] };
   }
-});
+  },
+));
 
 /** G-F033：遗漏点检查结果类型（用于 type guard 校验 engine 返回结构） */
 interface OmissionCheckResult {
@@ -586,7 +794,10 @@ function isOmissionCheckResult(value: unknown): value is OmissionCheckResult {
   return true;
 }
 
-ipcMain.handle('plan:check-omissions', async (_event, goalId: string) => {
+ipcMain.handle('plan:check-omissions', createValidatedHandler<string, { ok: boolean; error?: string; result?: unknown }>(
+  'plan:check-omissions',
+  ipcValidate.string(256),
+  async (goalId, _event) => {
   // F-N026 修复：补 goalId 正则校验（参照 plan:get-revisions），防止路径穿越
   if (typeof goalId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(goalId)) {
     return { ok: false, error: 'Invalid goalId' };
@@ -606,7 +817,8 @@ ipcMain.handle('plan:check-omissions', async (_event, goalId: string) => {
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
-});
+  },
+));
 
 // ============================================================
 // Phase 77 借鉴点 7：冷启动恢复 IPC——goal:list-resumable / goal:resume / goal:discard
@@ -614,7 +826,11 @@ ipcMain.handle('plan:check-omissions', async (_event, goalId: string) => {
 // ============================================================
 
 // 列出可恢复 goal（驱动 UI 提示条）
-ipcMain.handle('goal:list-resumable', async (): Promise<import('../shared/ipc-types.js').ResumableGoalIpcInfo[]> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('goal:list-resumable', createValidatedHandler<undefined, import('../shared/ipc-types.js').ResumableGoalIpcInfo[]>(
+  'goal:list-resumable',
+  ipcValidate.none,
+  async () => {
   try {
     return (await engine?.listResumableGoals?.()) ?? [];
   } catch (error) {
@@ -622,18 +838,18 @@ ipcMain.handle('goal:list-resumable', async (): Promise<import('../shared/ipc-ty
     logger.warn('goal:list-resumable fail-open', { error: error instanceof Error ? error.message : String(error) });
     return [];
   }
-});
+  },
+));
 
 // 恢复指定 goal 的执行
 // TD-08：用 ipcGuard 统一参数校验（goal:start 在本项目中由 chat:send 携 /goal 命令触发，
 // 此处对最接近的 goal:resume 做参数校验重构）
-ipcMain.handle('goal:resume', async (_event, rawGoalId: unknown): Promise<{ success: boolean; error?: string }> => {
-  let goalId: string;
-  try {
-    goalId = ipcGuard.string(256)(rawGoalId);
-  } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : '无效的 goalId' };
-  }
+// Phase 95：用 createValidatedHandler 包装，外层 ipcValidate.string 替代手写 ipcGuard
+ipcMain.handle('goal:resume', createValidatedHandler<string, { success: boolean; error?: string }>(
+  'goal:resume',
+  ipcValidate.string(256),
+  async (rawGoalId, _event) => {
+  const goalId: string = rawGoalId;
   if (goalId.length === 0) {
     return { success: false, error: 'goalId 不能为空' };
   }
@@ -646,10 +862,15 @@ ipcMain.handle('goal:resume', async (_event, rawGoalId: unknown): Promise<{ succ
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
-});
+  },
+));
 
 // 放弃（归档）指定 goal
-ipcMain.handle('goal:discard', async (_event, goalId: string): Promise<{ success: boolean; error?: string }> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('goal:discard', createValidatedHandler<string, { success: boolean; error?: string }>(
+  'goal:discard',
+  ipcValidate.string(256),
+  async (goalId, _event) => {
   // V3-004：破坏性操作审计日志
   auditDestructiveOperation('goal:discard', goalId);
   if (!goalId || typeof goalId !== 'string' || goalId.length > 256) {
@@ -664,7 +885,8 @@ ipcMain.handle('goal:discard', async (_event, goalId: string): Promise<{ success
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
-});
+  },
+));
 
 // 聊天：停止当前生成（中止进行中的 LLM 请求与 Agent Loop）
 // G-004 修复：支持可选 requestId 精准中断指定请求；未传则中断全部（向后兼容）
@@ -680,7 +902,7 @@ ipcMain.on('chat:stop', (_event, payload?: { requestId?: string }) => {
 ipcMain.on('chat:sync-history', (_event, messages: import('../../src/router/types.js').LLMMessage[]) => {
   // F5-2 修复：messages 数组长度上限校验（10000 条）
   if (!Array.isArray(messages) || messages.length > 10000) {
-    console.error('[chat:sync-history] 无效 messages');
+    logger.warn('[chat:sync-history] 无效 messages', { length: Array.isArray(messages) ? messages.length : -1 });
     return;
   }
   // F-037 修复：逐条校验消息 role/content，禁止 renderer 发送 role: 'system'
@@ -689,19 +911,19 @@ ipcMain.on('chat:sync-history', (_event, messages: import('../../src/router/type
   const validRoles = ['user', 'assistant', 'tool'];
   for (const msg of messages) {
     if (!msg || typeof msg !== 'object') {
-      console.error('[chat:sync-history] 消息非对象');
+      logger.warn('[chat:sync-history] 消息非对象', { msg });
       return;
     }
     if (typeof msg.role !== 'string' || !validRoles.includes(msg.role)) {
-      console.error('[chat:sync-history] 非法 role:', msg.role);
+      logger.warn('[chat:sync-history] 非法 role', { role: msg.role });
       return;
     }
     if (typeof msg.content !== 'string') {
-      console.error('[chat:sync-history] content 非字符串');
+      logger.warn('[chat:sync-history] content 非字符串', { msg });
       return;
     }
     if (msg.content.length > MAX_MESSAGE_CONTENT_LENGTH) {
-      console.error(`[chat:sync-history] content 过长 (max ${MAX_MESSAGE_CONTENT_LENGTH})`);
+      logger.warn('[chat:sync-history] content 过长', { length: msg.content.length, max: MAX_MESSAGE_CONTENT_LENGTH });
       return;
     }
   }
@@ -762,11 +984,16 @@ function maskSensitiveConfig(config: import('../../src/config/schema.js').AppCon
 }
 
 // 配置：读取
-ipcMain.handle('config:get', async (): Promise<import('../../src/config/schema.js').AppConfig> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('config:get', createValidatedHandler<undefined, import('../../src/config/schema.js').AppConfig>(
+  'config:get',
+  ipcValidate.none,
+  async () => {
   const config = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
   // F-N010 修复：对敏感字段脱敏后再返回渲染进程，防止 apiKey 泄露
   return maskSensitiveConfig(config);
-});
+  },
+));
 
 /**
  * G-F001：检测新配置是否弱化了安全相关字段
@@ -910,7 +1137,11 @@ function detectConfigWeakening(
 // 配置：保存
 // F-027 修复：用完整 Zod Schema parse 替代 ipcGuard.object({}) + as 强制转换，
 // 确保 config:save 入参符合 AppConfig 结构（含 security.sandbox / permissionProfile 等安全字段）
-ipcMain.handle('config:save', async (_event, rawConfig: unknown): Promise<ConfigSaveResult> => {
+// Phase 95：用 createValidatedHandler 包装，外层 ipcValidate.object 做基础类型校验
+ipcMain.handle('config:save', createValidatedHandler<unknown, ConfigSaveResult>(
+  'config:save',
+  ipcValidate.object(),
+  async (rawConfig, _event) => {
   let config: import('../../src/config/schema.js').AppConfig;
   try {
     config = AppConfigSchema.parse(rawConfig);
@@ -1018,7 +1249,8 @@ ipcMain.handle('config:save', async (_event, rawConfig: unknown): Promise<Config
   } catch (err) {
     return { success: false, error: safeError(err) };
   }
-});
+  },
+));
 
 // 配置：重新加载
 // Phase 79 Task 7：用 createValidatedHandler 包装（无参数 handler，校验层留空）
@@ -1032,18 +1264,94 @@ ipcMain.handle('config:reload', createValidatedHandler<undefined, import('../../
       // 场景：用户清空所有 provider、或从 SetupWizard 跳过时保存了空 providers
       const hasProvider = Array.isArray(cfg.providers) && cfg.providers.length > 0;
       if (!hasProvider) {
-        console.warn('[config:reload] providers 为空，跳过引擎重载');
+        logger.warn('[config:reload] providers 为空，跳过引擎重载');
+        await restartRemoteGateway(cfg);
         return maskSensitiveConfig(cfg);
       }
       await engine?.reloadConfig(cfg);
+      await restartRemoteGateway(cfg);
       // G-002 修复：返回前对敏感字段脱敏，防止明文 apiKey 泄露到渲染进程
       return maskSensitiveConfig(cfg);
     } catch (err) {
-      console.error('[config:reload] 重载配置失败:', err);
+      logger.error('[config:reload] 重载配置失败', { error: err instanceof Error ? err.message : String(err) });
       throw new Error(`重载配置失败: ${err instanceof Error ? err.message : String(err)}`);
     }
   },
 ));
+
+// Android 远程连接：运行状态、配对和设备管理
+ipcMain.handle('remote:status', async (): Promise<RemoteGatewayStatus> =>
+  getRemoteGatewayStatus());
+
+ipcMain.handle('remote:restart', async (): Promise<RemoteGatewayStatus> => {
+  const config = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+  return restartRemoteGateway(config);
+});
+
+ipcMain.handle('remote:stop', async (): Promise<RemoteGatewayStatus> => {
+  await stopRemoteGateway();
+  return getRemoteGatewayStatus();
+});
+
+ipcMain.handle('remote:create-pairing', async (): Promise<RemotePairingView> => {
+  const config = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+  if (!remotePairingService || !remoteGateway) {
+    throw new Error('请先开启并启动“手机远程连接”');
+  }
+  if (!getRemoteBaseUrl(config)) {
+    throw new Error(config.remote.transport === 'lan'
+      ? '未发现可用的局域网地址，请手动填写电脑的局域网地址'
+      : '请先填写 Tailscale HTTPS 地址');
+  }
+  const offer = remotePairingService.createOffer(
+    getRemoteBaseUrl(config),
+    os.hostname(),
+    config.remote.pairingTtlMs,
+    config.remote.transport === 'lan' ? 'lan' : 'https',
+  );
+  const qrDataUrl = await QRCode.toDataURL(offer.qrPayload, {
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    width: 320,
+    color: { dark: '#111111', light: '#ffffff' },
+  });
+  return {
+    qrDataUrl,
+    expiresAt: offer.expiresAt,
+    baseUrl: offer.baseUrl,
+    desktopName: offer.desktopName,
+    transport: offer.transport,
+  };
+});
+
+ipcMain.handle('remote:list-devices', async () =>
+  remoteDeviceStore?.list() ?? []);
+
+ipcMain.handle('remote:revoke-device', async (_event, rawDeviceId: unknown) => {
+  const deviceId = ipcGuard.string(256)(rawDeviceId);
+  return remoteDeviceStore?.revoke(deviceId) ?? false;
+});
+
+ipcMain.handle('remote:update-device-scopes', async (_event, rawPayload: unknown) => {
+  const payload = ipcGuard.object<{ deviceId: string; scopes: string[] }>({
+    deviceId: ipcGuard.string(256),
+    scopes: (value: unknown) => {
+      if (!Array.isArray(value) || value.some((scope) => typeof scope !== 'string')) {
+        throw new Error('scopes 必须是字符串数组');
+      }
+      return value;
+    },
+  })(rawPayload);
+  const config = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+  const validScopes = new Set<string>(REMOTE_DEVICE_SCOPES);
+  const scopes = [...new Set(payload.scopes)].filter((scope): scope is RemoteDeviceScope => {
+    if (!validScopes.has(scope)) return false;
+    if (scope === 'approvals:resolve') return config.remote.allowRemoteApprovals;
+    if (scope === 'autonomy:change') return config.remote.allowAutonomyChange;
+    return true;
+  });
+  return remoteDeviceStore?.updateScopes(payload.deviceId, scopes) ?? null;
+});
 
 // V3-007：command:execute 允许的命令白名单（大小写不敏感）
 // 仅对非 slash 命令（不以 / 开头）的 shell 命令做白名单校验
@@ -1095,7 +1403,7 @@ ipcMain.handle('tool:execute', createValidatedHandler<ToolExecutePayload, unknow
     // TD-07：白名单校验——非白名单工具直接拒绝
     if (typeof p.name !== 'string' || p.name.length === 0 || p.name.length > 256) return '无效的 name';
     if (!IPC_TOOL_WHITELIST.has(p.name)) {
-      console.warn(`[IPC] tool:execute 拒绝非白名单工具: ${p.name}`);
+      logger.warn('[IPC] tool:execute 拒绝非白名单工具', { tool: p.name });
       return '该工具不允许通过 IPC 直接调用';
     }
     // 安全：args 必须是对象（或 null/undefined），拒绝数组/原始值
@@ -1110,14 +1418,24 @@ ipcMain.handle('tool:execute', createValidatedHandler<ToolExecutePayload, unknow
 ));
 
 // MCP 状态
-ipcMain.handle('mcp:status', async (): Promise<MCPStatus> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('mcp:status', createValidatedHandler<undefined, MCPStatus>(
+  'mcp:status',
+  ipcValidate.none,
+  async () => {
   return engine?.getMCPStatus() ?? { connected: false, servers: [] };
-});
+  },
+));
 
 // Phase 37：MCP 工具列表
-ipcMain.handle('mcp:tools', async () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('mcp:tools', createValidatedHandler<undefined, { tools: unknown[] }>(
+  'mcp:tools',
+  ipcValidate.none,
+  async () => {
   return { tools: engine?.listMCPTools() ?? [] };
-});
+  },
+));
 
 // ============================================================
 // MCP 插件市场 IPC handler
@@ -1125,25 +1443,39 @@ ipcMain.handle('mcp:tools', async () => {
 
 // 列出内置精选目录（可按分类过滤）
 // F-N026 修复：补 category 类型与长度校验
-ipcMain.handle('mcp:catalog:list', async (_event, category?: string): Promise<MCPCatalogResult> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('mcp:catalog:list', createValidatedHandler<string | undefined, MCPCatalogResult>(
+  'mcp:catalog:list',
+  ipcValidate.optionalString(256),
+  async (category, _event) => {
   if (category !== undefined && (typeof category !== 'string' || category.length > 256)) {
     return { entries: [], total: 0 };
   }
   return listCatalog(category);
-});
+  },
+));
 
 // 按关键词搜索目录
 // G-020 修复：校验 query 为字符串且长度 <= 1000，防止超长输入耗尽资源
-ipcMain.handle('mcp:catalog:search', async (_event, query: string): Promise<MCPCatalogResult> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('mcp:catalog:search', createValidatedHandler<string, MCPCatalogResult>(
+  'mcp:catalog:search',
+  ipcValidate.string(1000),
+  async (query, _event) => {
   if (typeof query !== 'string' || query.length > 1000) {
     return { entries: [], total: 0 };
   }
   return searchCatalog(query);
-});
+  },
+));
 
 // 一键安装：添加到配置 + 立即连接 + 持久化
 // G-020 修复：校验 payload 为对象且含 catalogId 字段（字符串 <= 256）
-ipcMain.handle('mcp:install', async (_event, payload: MCPInstallPayload): Promise<MCPInstallResult> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('mcp:install', createValidatedHandler<MCPInstallPayload, MCPInstallResult>(
+  'mcp:install',
+  ipcValidate.object(),
+  async (payload, _event) => {
   if (!engine) return { success: false, error: '引擎未初始化' };
   if (!payload || typeof payload !== 'object' ||
       typeof payload.catalogId !== 'string' || payload.catalogId.length === 0 || payload.catalogId.length > 256) {
@@ -1156,53 +1488,83 @@ ipcMain.handle('mcp:install', async (_event, payload: MCPInstallPayload): Promis
       await saveConfig(engine.getConfig());
     } catch (err) {
       // 持久化失败不影响安装结果，但记录错误
-      console.error('[MCP] 配置持久化失败:', err);
+      logger.error('[MCP] 配置持久化失败', { error: err instanceof Error ? err.message : String(err) });
     }
   }
   return result;
-});
+  },
+));
 
 // 连接指定服务器
-ipcMain.handle('mcp:connect', async (_event, serverId: string): Promise<MCPConnectionResult> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('mcp:connect', createValidatedHandler<string, MCPConnectionResult>(
+  'mcp:connect',
+  ipcValidate.string(256),
+  async (serverId, _event) => {
   if (typeof serverId !== 'string' || serverId.length === 0 || serverId.length > 256) {
     return { success: false, error: '无效的参数' };
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.connectServer(serverId);
-});
+  },
+));
 
 // 断开指定服务器
-ipcMain.handle('mcp:disconnect', async (_event, serverId: string): Promise<MCPConnectionResult> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('mcp:disconnect', createValidatedHandler<string, MCPConnectionResult>(
+  'mcp:disconnect',
+  ipcValidate.string(256),
+  async (serverId, _event) => {
   if (typeof serverId !== 'string' || serverId.length === 0 || serverId.length > 256) {
     return { success: false, error: '无效的参数' };
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.disconnectServer(serverId);
-});
+  },
+));
 
 // ============================================================
 // Phase 37：Skill 管理 IPC handler
 // ============================================================
 
-ipcMain.handle('skill:list', async () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('skill:list', createValidatedHandler<undefined, unknown[]>(
+  'skill:list',
+  ipcValidate.none,
+  async () => {
   return engine?.listSkills() ?? [];
-});
+  },
+));
 
-ipcMain.handle('skill:preview', async (_event, name: string) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('skill:preview', createValidatedHandler<string, unknown>(
+  'skill:preview',
+  ipcValidate.string(256),
+  async (name, _event) => {
   if (typeof name !== 'string' || name.length === 0 || name.length > 256) {
     return null;
   }
   return engine?.previewSkill(name) ?? null;
-});
+  },
+));
 
-ipcMain.handle('skill:toggle', async (_event, payload: { name: string; enabled: boolean }) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('skill:toggle', createValidatedHandler<{ name: string; enabled: boolean }, boolean>(
+  'skill:toggle',
+  ipcValidate.object(),
+  async (payload, _event) => {
   if (!payload || typeof payload.name !== 'string' || payload.name.length === 0 || payload.name.length > 256) {
     return false;
   }
   return engine?.toggleSkill(payload.name, payload.enabled) ?? false;
-});
+  },
+));
 
-ipcMain.handle('skill:create', async (_event, rawPayload: unknown) => {
+// Phase 95：用 createValidatedHandler 包装，外层 ipcValidate.object 做基础类型校验
+ipcMain.handle('skill:create', createValidatedHandler<unknown, { success: boolean; error?: string }>(
+  'skill:create',
+  ipcValidate.object(),
+  async (rawPayload, _event) => {
   // TD-08：用 ipcGuard 统一参数校验
   let payload: import('../shared/ipc-types.js').SkillCreatePayload;
   try {
@@ -1224,30 +1586,50 @@ ipcMain.handle('skill:create', async (_event, rawPayload: unknown) => {
   }
   return engine?.createSkill(payload.name, payload.description, payload.keywords, payload.content)
     ?? { success: false, error: '引擎未初始化' };
-});
+  },
+));
 
-ipcMain.handle('skill:delete', async (_event, name: string) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('skill:delete', createValidatedHandler<string, { success: boolean; error?: string }>(
+  'skill:delete',
+  ipcValidate.string(256),
+  async (name, _event) => {
   if (typeof name !== 'string' || name.length === 0 || name.length > 256) {
     return { success: false, error: '无效的参数' };
   }
   return engine?.deleteSkill(name) ?? { success: false, error: '引擎未初始化' };
-});
+  },
+));
 
-ipcMain.handle('skill:reload', async () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('skill:reload', createValidatedHandler<undefined, { count: number }>(
+  'skill:reload',
+  ipcValidate.none,
+  async () => {
   return engine?.reloadSkills() ?? { count: 0 };
-});
+  },
+));
 
 // G-020 修复：校验 taskDescription 为字符串且长度 <= 10000
-ipcMain.handle('skill:route', async (_event, taskDescription: string) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('skill:route', createValidatedHandler<string, { skills: unknown[] }>(
+  'skill:route',
+  ipcValidate.string(10000),
+  async (taskDescription, _event) => {
   if (typeof taskDescription !== 'string' || taskDescription.length === 0 || taskDescription.length > 10000) {
     return { skills: [] };
   }
   return { skills: engine?.routeSkills(taskDescription) ?? [] };
-});
+  },
+));
 
 // 文件读取（用于渲染进程读取本地文件，如拖拽图片预览等）
 // 安全：白名单到当前项目目录，拒绝敏感 pattern，防止任意文件读取
-ipcMain.handle('fs:read', async (_event, filePath: string): Promise<{ data: string; error?: string }> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('fs:read', createValidatedHandler<string, { data: string; error?: string }>(
+  'fs:read',
+  ipcValidate.string(4096),
+  async (filePath, _event) => {
   try {
     const cwd = path.resolve(engine?.getCwd?.() ?? process.cwd());
     const resolved = path.isAbsolute(filePath) ? path.resolve(filePath) : path.resolve(cwd, filePath);
@@ -1301,11 +1683,16 @@ ipcMain.handle('fs:read', async (_event, filePath: string): Promise<{ data: stri
   } catch (err) {
     return { data: '', error: safeError(err) };
   }
-});
+  },
+));
 
 // 文件夹选择对话框：返回用户选择的文件夹路径，取消则返回 null
 // F-N026 修复：补 defaultPath 长度上限，防止超长路径导致异常
-ipcMain.handle('fs:select-folder', async (_event, defaultPath?: string): Promise<string | null> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('fs:select-folder', createValidatedHandler<string | undefined, string | null>(
+  'fs:select-folder',
+  ipcValidate.optionalString(4096),
+  async (defaultPath, _event) => {
   if (defaultPath !== undefined && (typeof defaultPath !== 'string' || defaultPath.length > 4096)) {
     defaultPath = undefined;
   }
@@ -1323,15 +1710,20 @@ ipcMain.handle('fs:select-folder', async (_event, defaultPath?: string): Promise
   const selected = path.resolve(result.filePaths[0]);
   authorizedCwds.add(selected.toLowerCase());
   return selected;
-});
+  },
+));
 
 // 在系统文件资源管理器中打开指定路径
 // C8 修复：添加 projectRoot 边界检查，只允许打开项目目录内的文件夹
 // 复用 fs:read 的路径边界校验逻辑，防止打开任意路径
-ipcMain.handle('fs:open-folder', async (_event, filePath: string): Promise<boolean> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('fs:open-folder', createValidatedHandler<string, boolean>(
+  'fs:open-folder',
+  ipcValidate.string(4096),
+  async (filePath, _event) => {
   try {
     if (!filePath) {
-      console.error('[fs:open-folder] 路径为空');
+      logger.error('[fs:open-folder] 路径为空');
       return false;
     }
     // 修复：相对路径基于项目工作目录解析，而非 process.cwd()
@@ -1339,17 +1731,17 @@ ipcMain.handle('fs:open-folder', async (_event, filePath: string): Promise<boole
     const resolved = path.isAbsolute(filePath) ? path.resolve(filePath) : path.resolve(cwd, filePath);
     // 基本校验：路径不能为空或仅系统根目录
     if (resolved === path.parse(resolved).root) {
-      console.error('[fs:open-folder] 拒绝打开系统根目录:', resolved);
+      logger.error('[fs:open-folder] 拒绝打开系统根目录', { resolved });
       return false;
     }
     // C8 修复：路径边界检查——只允许打开 projectRoot 内的路径
     if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
-      console.error('[fs:open-folder] 路径越界：仅允许打开项目目录内文件（项目根:', cwd, '）');
+      logger.error('[fs:open-folder] 路径越界：仅允许打开项目目录内文件', { cwd });
       return false;
     }
     const fsSync = await import('node:fs');
     if (!fsSync.existsSync(resolved)) {
-      console.error('[fs:open-folder] 路径不存在:', resolved);
+      logger.error('[fs:open-folder] 路径不存在', { resolved });
       return false;
     }
     // 安全修复：解析符号链接后重新校验路径，防止 symlink 逃逸（与 fs:read 一致）
@@ -1360,7 +1752,7 @@ ipcMain.handle('fs:open-folder', async (_event, filePath: string): Promise<boole
       // realpathSync 失败时保持原路径（理论上不会触发，已 existsSync 校验）
     }
     if (!realPath.startsWith(cwd + path.sep) && realPath !== cwd) {
-      console.error('[fs:open-folder] 符号链接逃逸：目标路径不在项目目录内');
+      logger.error('[fs:open-folder] 符号链接逃逸：目标路径不在项目目录内');
       return false;
     }
     if (fsSync.statSync(realPath).isFile()) {
@@ -1372,10 +1764,11 @@ ipcMain.handle('fs:open-folder', async (_event, filePath: string): Promise<boole
     }
     return true;
   } catch (err) {
-    console.error('Failed to open folder:', err);
+    logger.error('Failed to open folder', { error: err instanceof Error ? err.message : String(err) });
     return false;
   }
-});
+  },
+));
 
 // === 项目工作目录切换 ===
 // 用户切换项目或对话时，renderer 通知 main 更新 engine 的工作目录
@@ -1390,21 +1783,25 @@ ipcMain.on('project:set-cwd', (_event, cwd: string) => {
   // G-014 修复：授权与校验应为"与"关系——既未授权又未通过校验才拒绝改为任一不满足即拒绝
   // 原逻辑 && 意味着"未授权 且 未通过校验"才拒绝，导致未授权但通过基础校验的路径被放行
   if (!authorizedCwds.has(normalizedKey) || !isValidProjectCwd(resolved)) {
-    console.error('[project:set-cwd] 拒绝未授权的工作目录:', resolved);
+    logger.error('[project:set-cwd] 拒绝未授权的工作目录', { cwd: resolved });
     return;
   }
   engine.setCwd(resolved).then(() => {
     // 持久化成功切换的路径，下次启动时恢复
     writeLastCwd(resolved);
   }).catch((err) => {
-    console.error('[project:set-cwd] 切换工作目录失败:', err);
+    logger.error('[project:set-cwd] 切换工作目录失败', { error: err instanceof Error ? err.message : String(err) });
   });
 });
 
 // === 对话标题生成 ===
 // 使用路由模型（杂活模型）根据用户首条消息生成简洁对话标题
 // 失败时回退到截断策略，不影响主流程
-ipcMain.handle('chat:generate-title', async (_event, userMessage: string, assistantReply?: string) => {
+// Phase 95：用 createValidatedHandlerMulti 包装（多参数：userMessage + assistantReply?）
+ipcMain.handle('chat:generate-title', createValidatedHandlerMulti<string | null>(
+  'chat:generate-title',
+  [ipcValidate.string(100000), ipcValidate.optionalString(100000)],
+  async (_event, userMessage, assistantReply) => {
   // F-N026 修复：补 userMessage 类型+长度校验，assistantReply 类型校验
   if (typeof userMessage !== 'string' || userMessage.length === 0 || userMessage.length > 100000) return null;
   if (assistantReply !== undefined && (typeof assistantReply !== 'string' || assistantReply.length > 100000)) return null;
@@ -1412,10 +1809,11 @@ ipcMain.handle('chat:generate-title', async (_event, userMessage: string, assist
   try {
     return await engine.generateTitle(userMessage, assistantReply);
   } catch (err) {
-    console.error('[chat:generate-title] 生成标题失败:', err);
+    logger.error('[chat:generate-title] 生成标题失败', { error: err instanceof Error ? err.message : String(err) });
     return null;
   }
-});
+  },
+));
 
 // === 无边框窗口控制 ===
 // 安全：所有窗口控制 IPC 都加 isDestroyed 守卫，防止窗口关闭过程中调用导致抛错
@@ -1438,12 +1836,17 @@ ipcMain.on('window:close', () => {
 // 修复顽固 bug：删除对话后所有输入框失焦（持续 50+ Phase）
 // 根因：renderer 调用原生 confirm() 在 frame:false 窗口上会破坏 webContents 焦点
 // 兜底：显式聚焦 BrowserWindow + webContents，确保 OS 级键盘焦点归还
-ipcMain.handle('window:restore-focus', () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('window:restore-focus', createValidatedHandler<undefined, void>(
+  'window:restore-focus',
+  ipcValidate.none,
+  async () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.focus();
     mainWindow.webContents.focus();
   }
-});
+  },
+));
 
 // ============================================================
 // Phase 96 修复 I-1：补齐 preload 暴露但 main 未注册的 33 个 IPC 通道
@@ -1455,7 +1858,11 @@ ipcMain.handle('window:restore-focus', () => {
 // ============================================================
 
 // --- 应用 / 平台 (4) ---
-ipcMain.handle('app:get-info', async () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('app:get-info', createValidatedHandler<undefined, unknown>(
+  'app:get-info',
+  ipcValidate.none,
+  async () => {
   try {
     return {
       version: app.getVersion(),
@@ -1471,33 +1878,53 @@ ipcMain.handle('app:get-info', async () => {
     logger.error('app:get-info 失败', { error: e instanceof Error ? e.message : String(e) });
     return null;
   }
-});
+  },
+));
 
-ipcMain.handle('app:get-path', async (_event, name: string) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('app:get-path', createValidatedHandler<string, string>(
+  'app:get-path',
+  ipcValidate.string(256),
+  async (name, _event) => {
   try {
     // Electron app.getPath 支持的名称白名单
     const allowed = ['home', 'appData', 'userData', 'sessionData', 'temp', 'exe', 'desktop', 'documents', 'downloads', 'music', 'pictures', 'videos', 'recent', 'logs'];
     if (!allowed.includes(name)) {
       throw new Error(`不支持的路径名称: ${name}`);
     }
-    return app.getPath(name as Electron.AppName);
+    return app.getPath(name as Parameters<typeof app.getPath>[0]);
   } catch (e) {
     logger.error('app:get-path 失败', { name, error: e instanceof Error ? e.message : String(e) });
     throw e;
   }
-});
+  },
+));
 
-ipcMain.handle('app:quit', () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('app:quit', createValidatedHandler<undefined, void>(
+  'app:quit',
+  ipcValidate.none,
+  async () => {
   app.quit();
-});
+  },
+));
 
-ipcMain.handle('app:relaunch', () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('app:relaunch', createValidatedHandler<undefined, void>(
+  'app:relaunch',
+  ipcValidate.none,
+  async () => {
   app.relaunch();
   app.quit();
-});
+  },
+));
 
 // --- 窗口控制 (2) ---
-ipcMain.handle('window:action', async (_event, action: string) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('window:action', createValidatedHandler<string, void>(
+  'window:action',
+  ipcValidate.string(256),
+  async (action, _event) => {
   try {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     switch (action) {
@@ -1528,9 +1955,14 @@ ipcMain.handle('window:action', async (_event, action: string) => {
   } catch (e) {
     logger.error('window:action 失败', { action, error: e instanceof Error ? e.message : String(e) });
   }
-});
+  },
+));
 
-ipcMain.handle('window:get-state', async () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('window:get-state', createValidatedHandler<undefined, unknown>(
+  'window:get-state',
+  ipcValidate.none,
+  async () => {
   try {
     if (!mainWindow || mainWindow.isDestroyed()) {
       return { isMinimized: false, isMaximized: false, isFullScreen: false, isVisible: false, isActive: false };
@@ -1540,18 +1972,23 @@ ipcMain.handle('window:get-state', async () => {
       isMaximized: mainWindow.isMaximized(),
       isFullScreen: mainWindow.isFullScreen(),
       isVisible: mainWindow.isVisible(),
-      isActive: mainWindow.isActive(),
+      isActive: mainWindow.isFocused(),
     };
   } catch (e) {
     logger.error('window:get-state 失败', { error: e instanceof Error ? e.message : String(e) });
     return null;
   }
-});
+  },
+));
 
 // --- 引擎 (4) ---
 // 引擎生命周期由 desktop/main/engine-bridge.ts 管理，这里做 fail-open stub
 // 渲染层调用会收到 'not-running' 状态，不会 reject
-ipcMain.handle('engine:get-state', async () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('engine:get-state', createValidatedHandler<undefined, unknown>(
+  'engine:get-state',
+  ipcValidate.none,
+  async () => {
   try {
     if (!engine) {
       return { status: 'not-running', sessionId: null };
@@ -1562,46 +1999,50 @@ ipcMain.handle('engine:get-state', async () => {
     logger.error('engine:get-state 失败', { error: e instanceof Error ? e.message : String(e) });
     return { status: 'unknown', sessionId: null };
   }
-});
+  },
+));
 
-ipcMain.handle('engine:start', async () => {
-  try {
-    if (engine?.start) {
-      await engine.start();
-    } else {
-      logger.warn('engine:start 调用但 engine 未初始化或无 start 方法');
-    }
-  } catch (e) {
-    logger.error('engine:start 失败', { error: e instanceof Error ? e.message : String(e) });
-  }
-});
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('engine:start', createValidatedHandler<undefined, void>(
+  'engine:start',
+  ipcValidate.none,
+  async () => {
+  // 引擎生命周期由 desktop/main/engine-bridge.ts 管理，这里保持 fail-open stub
+  // 真实启停通过 reload/initialize 路径完成，渲染层不应依赖本 handler 的状态
+  logger.warn('engine:start 为 fail-open stub，引擎生命周期由 engine-bridge 管理');
+  },
+));
 
-ipcMain.handle('engine:stop', async () => {
-  try {
-    if (engine?.stop) {
-      await engine.stop();
-    }
-  } catch (e) {
-    logger.error('engine:stop 失败', { error: e instanceof Error ? e.message : String(e) });
-  }
-});
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('engine:stop', createValidatedHandler<undefined, void>(
+  'engine:stop',
+  ipcValidate.none,
+  async () => {
+  // 与 engine:start 相同：fail-open stub，避免渲染层 reject
+  logger.warn('engine:stop 为 fail-open stub，引擎生命周期由 engine-bridge 管理');
+  },
+));
 
-ipcMain.handle('engine:restart', async () => {
-  try {
-    if (engine?.restart) {
-      await engine.restart();
-    }
-  } catch (e) {
-    logger.error('engine:restart 失败', { error: e instanceof Error ? e.message : String(e) });
-  }
-});
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('engine:restart', createValidatedHandler<undefined, void>(
+  'engine:restart',
+  ipcValidate.none,
+  async () => {
+  // 与 engine:start 相同：fail-open stub
+  logger.warn('engine:restart 为 fail-open stub，引擎生命周期由 engine-bridge 管理');
+  },
+));
 
 // --- 终端 (5) ---
 // 终端功能由独立模块提供；这里做 stub 返回安全默认值
 // 避免渲染层调用时 reject；真正实现需引入 node-pty/xterm-headless
 const terminalSessions = new Map<string, { cwd: string; title: string; createdAt: number }>();
 
-ipcMain.handle('terminal:create', async (_event, options?: { cwd?: string; cols?: number; rows?: number }) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('terminal:create', createValidatedHandler<{ cwd?: string; cols?: number; rows?: number } | undefined, unknown>(
+  'terminal:create',
+  ipcValidate.optionalObject(),
+  async (options, _event) => {
   try {
     const id = `term-${Date.now()}-${randomBytes(4).toString('hex')}`;
     const cwd = options?.cwd || process.cwd();
@@ -1612,31 +2053,51 @@ ipcMain.handle('terminal:create', async (_event, options?: { cwd?: string; cols?
     logger.error('terminal:create 失败', { error: e instanceof Error ? e.message : String(e) });
     throw e;
   }
-});
+  },
+));
 
-ipcMain.handle('terminal:destroy', async (_event, id: string) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('terminal:destroy', createValidatedHandler<string, void>(
+  'terminal:destroy',
+  ipcValidate.string(256),
+  async (id, _event) => {
   try {
     terminalSessions.delete(id);
   } catch (e) {
     logger.error('terminal:destroy 失败', { id, error: e instanceof Error ? e.message : String(e) });
   }
-});
+  },
+));
 
-ipcMain.handle('terminal:write', async (_event, id: string, _data: string) => {
+// Phase 95：用 createValidatedHandlerMulti 包装（多参数：id + data）
+ipcMain.handle('terminal:write', createValidatedHandlerMulti<void>(
+  'terminal:write',
+  [ipcValidate.string(256), ipcValidate.string(1000000)],
+  async (_event, id, _data) => {
   // stub：真实终端功能未接入；这里不抛错避免渲染层报错
   // TODO: 接入 node-pty 实现真实终端
-  if (!terminalSessions.has(id)) {
+  if (!terminalSessions.has(id as string)) {
     logger.warn('terminal:write 会话不存在', { id });
   }
-});
+  },
+));
 
-ipcMain.handle('terminal:resize', async (_event, id: string, _cols: number, _rows: number) => {
-  if (!terminalSessions.has(id)) {
+// Phase 95：用 createValidatedHandlerMulti 包装（多参数：id + cols + rows）
+ipcMain.handle('terminal:resize', createValidatedHandlerMulti<void>(
+  'terminal:resize',
+  [ipcValidate.string(256), ipcValidate.number(0, 10000), ipcValidate.number(0, 10000)],
+  async (_event, id, _cols, _rows) => {
+  if (!terminalSessions.has(id as string)) {
     logger.warn('terminal:resize 会话不存在', { id });
   }
-});
+  },
+));
 
-ipcMain.handle('terminal:list', async () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('terminal:list', createValidatedHandler<undefined, unknown[]>(
+  'terminal:list',
+  ipcValidate.none,
+  async () => {
   try {
     const now = Date.now();
     return Array.from(terminalSessions.entries()).map(([id, s]) => ({
@@ -1650,10 +2111,15 @@ ipcMain.handle('terminal:list', async () => {
     logger.error('terminal:list 失败', { error: e instanceof Error ? e.message : String(e) });
     return [];
   }
-});
+  },
+));
 
 // --- 对话框 / 通知 / Shell / 剪贴板 (9) ---
-ipcMain.handle('dialog:open', async (_event, options?: Electron.OpenDialogOptions) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('dialog:open', createValidatedHandler<Electron.OpenDialogOptions | undefined, unknown>(
+  'dialog:open',
+  ipcValidate.optionalObject(),
+  async (options, _event) => {
   try {
     if (!mainWindow || mainWindow.isDestroyed()) {
       return { canceled: true, filePaths: [] };
@@ -1663,9 +2129,14 @@ ipcMain.handle('dialog:open', async (_event, options?: Electron.OpenDialogOption
     logger.error('dialog:open 失败', { error: e instanceof Error ? e.message : String(e) });
     return { canceled: true, filePaths: [] };
   }
-});
+  },
+));
 
-ipcMain.handle('dialog:save', async (_event, options?: Electron.SaveDialogOptions) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('dialog:save', createValidatedHandler<Electron.SaveDialogOptions | undefined, unknown>(
+  'dialog:save',
+  ipcValidate.optionalObject(),
+  async (options, _event) => {
   try {
     if (!mainWindow || mainWindow.isDestroyed()) {
       return { canceled: true, filePath: '' };
@@ -1675,9 +2146,14 @@ ipcMain.handle('dialog:save', async (_event, options?: Electron.SaveDialogOption
     logger.error('dialog:save 失败', { error: e instanceof Error ? e.message : String(e) });
     return { canceled: true, filePath: '' };
   }
-});
+  },
+));
 
-ipcMain.handle('dialog:message', async (_event, options: Electron.MessageBoxOptions) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('dialog:message', createValidatedHandler<Electron.MessageBoxOptions, unknown>(
+  'dialog:message',
+  ipcValidate.object(),
+  async (options, _event) => {
   try {
     if (!mainWindow || mainWindow.isDestroyed()) {
       return 0;
@@ -1687,9 +2163,14 @@ ipcMain.handle('dialog:message', async (_event, options: Electron.MessageBoxOpti
     logger.error('dialog:message 失败', { error: e instanceof Error ? e.message : String(e) });
     return 0;
   }
-});
+  },
+));
 
-ipcMain.handle('notification:show', async (_event, options: Electron.NotificationConstructorOptions) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('notification:show', createValidatedHandler<Electron.NotificationConstructorOptions, void>(
+  'notification:show',
+  ipcValidate.object(),
+  async (options, _event) => {
   try {
     // 静默降级：Electron 通知 API 跨平台差异大，这里仅写日志
     // TODO: 接入完整 Notification 实现（需处理 macOS 沙盒 / Windows 应用 ID）
@@ -1697,48 +2178,95 @@ ipcMain.handle('notification:show', async (_event, options: Electron.Notificatio
   } catch (e) {
     logger.error('notification:show 失败', { error: e instanceof Error ? e.message : String(e) });
   }
-});
+  },
+));
 
-ipcMain.handle('shell:open-external', async (_event, url: string) => {
-  try {
-    await shell.openExternal(url);
-  } catch (e) {
-    logger.error('shell:open-external 失败', { url, error: e instanceof Error ? e.message : String(e) });
-  }
-});
-
-ipcMain.handle('shell:open-path', async (_event, filePath: string) => {
-  try {
-    // shell.openPath 返回错误字符串（成功返回 ""）
-    const err = await shell.openPath(filePath);
-    if (err) {
-      logger.warn('shell:openPath 返回错误', { filePath, err });
+ipcMain.handle('shell:open-external', createValidatedHandler<string, void>(
+  'shell:open-external',
+  (args) => {
+    if (typeof args !== 'string') return 'url 必须是字符串';
+    if (args.length === 0 || args.length > 2048) return 'url 长度越界';
+    // 安全：仅允许 http/https/mailto 协议，拒绝 file:///、javascript:、data: 等危险协议
+    try {
+      const u = new URL(args);
+      if (!['http:', 'https:', 'mailto:'].includes(u.protocol)) {
+        return `不允许的协议: ${u.protocol}`;
+      }
+    } catch {
+      return 'url 格式无效';
     }
-    return filePath;
-  } catch (e) {
-    logger.error('shell:open-path 失败', { filePath, error: e instanceof Error ? e.message : String(e) });
-    throw e;
-  }
-});
+    return null;
+  },
+  async (url) => {
+    try {
+      await shell.openExternal(url);
+    } catch (e) {
+      logger.error('shell:open-external 失败', { url, error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+));
 
-ipcMain.handle('shell:show-item-in-folder', async (_event, filePath: string) => {
-  try {
-    shell.showItemInFolder(filePath);
-  } catch (e) {
-    logger.error('shell:show-item-in-folder 失败', { filePath, error: e instanceof Error ? e.message : String(e) });
-  }
-});
+ipcMain.handle('shell:open-path', createValidatedHandler<string, string>(
+  'shell:open-path',
+  (args) => {
+    if (typeof args !== 'string') return 'filePath 必须是字符串';
+    if (args.length === 0 || args.length > 4096) return 'filePath 长度越界';
+    return null;
+  },
+  async (filePath) => {
+    try {
+      // shell.openPath 返回错误字符串（成功返回 ""）
+      const err = await shell.openPath(filePath);
+      if (err) {
+        logger.warn('shell:openPath 返回错误', { filePath, err });
+      }
+      return filePath;
+    } catch (e) {
+      logger.error('shell:open-path 失败', { filePath, error: e instanceof Error ? e.message : String(e) });
+      throw e;
+    }
+  },
+));
 
-ipcMain.handle('clipboard:write-text', async (_event, text: string) => {
-  try {
-    const { clipboard } = await import('electron');
-    clipboard.writeText(text);
-  } catch (e) {
-    logger.error('clipboard:write-text 失败', { error: e instanceof Error ? e.message : String(e) });
-  }
-});
+ipcMain.handle('shell:show-item-in-folder', createValidatedHandler<string, void>(
+  'shell:show-item-in-folder',
+  (args) => {
+    if (typeof args !== 'string') return 'filePath 必须是字符串';
+    if (args.length === 0 || args.length > 4096) return 'filePath 长度越界';
+    return null;
+  },
+  async (filePath) => {
+    try {
+      shell.showItemInFolder(filePath);
+    } catch (e) {
+      logger.error('shell:show-item-in-folder 失败', { filePath, error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+));
 
-ipcMain.handle('clipboard:read-text', async () => {
+ipcMain.handle('clipboard:write-text', createValidatedHandler<string, void>(
+  'clipboard:write-text',
+  (args) => {
+    if (typeof args !== 'string') return 'text 必须是字符串';
+    // 长度上限 1MB，防止渲染层被劫持后写入超大字符串导致内存压力
+    if (args.length > 1_048_576) return 'text 长度超过 1MB 上限';
+    return null;
+  },
+  async (text) => {
+    try {
+      const { clipboard } = await import('electron');
+      clipboard.writeText(text);
+    } catch (e) {
+      logger.error('clipboard:write-text 失败', { error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+));
+
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('clipboard:read-text', createValidatedHandler<undefined, string>(
+  'clipboard:read-text',
+  ipcValidate.none,
+  async () => {
   try {
     const { clipboard } = await import('electron');
     return clipboard.readText();
@@ -1746,7 +2274,8 @@ ipcMain.handle('clipboard:read-text', async () => {
     logger.error('clipboard:read-text 失败', { error: e instanceof Error ? e.message : String(e) });
     return '';
   }
-});
+  },
+));
 
 // --- 项目 (3) ---
 // recent 列表持久化到 userData/projects.json
@@ -1769,7 +2298,11 @@ async function saveRecentProjects(list: Array<{ path: string; name: string; last
   }
 }
 
-ipcMain.handle('project:open', async (): Promise<{ path: string; name: string } | null> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('project:open', createValidatedHandler<undefined, { path: string; name: string } | null>(
+  'project:open',
+  ipcValidate.none,
+  async () => {
   try {
     if (!mainWindow || mainWindow.isDestroyed()) return null;
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -1783,13 +2316,23 @@ ipcMain.handle('project:open', async (): Promise<{ path: string; name: string } 
     logger.error('project:open 失败', { error: e instanceof Error ? e.message : String(e) });
     return null;
   }
-});
+  },
+));
 
-ipcMain.handle('project:get-recent', async () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('project:get-recent', createValidatedHandler<undefined, Array<{ path: string; name: string; lastOpened: number }>>(
+  'project:get-recent',
+  ipcValidate.none,
+  async () => {
   return loadRecentProjects();
-});
+  },
+));
 
-ipcMain.handle('project:add-recent', async (_event, projPath: string) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('project:add-recent', createValidatedHandler<string, void>(
+  'project:add-recent',
+  ipcValidate.string(4096),
+  async (projPath, _event) => {
   try {
     const list = await loadRecentProjects();
     const filtered = list.filter((p) => p.path !== projPath);
@@ -1799,11 +2342,16 @@ ipcMain.handle('project:add-recent', async (_event, projPath: string) => {
   } catch (e) {
     logger.error('project:add-recent 失败', { error: e instanceof Error ? e.message : String(e) });
   }
-});
+  },
+));
 
 // --- 更新检查 (3) ---
 // 真实更新逻辑由 initUpdater() 处理；这里 stub 返回 null 表示"无更新"
-ipcMain.handle('update:check', async () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('update:check', createValidatedHandler<undefined, unknown>(
+  'update:check',
+  ipcValidate.none,
+  async () => {
   try {
     // TODO: 接入 electron-updater 完整实现
     // 当前 initUpdater() 已订阅自动检查；这里返回 null 让渲染层显示"未检查到更新"
@@ -1812,25 +2360,36 @@ ipcMain.handle('update:check', async () => {
     logger.error('update:check 失败', { error: e instanceof Error ? e.message : String(e) });
     return null;
   }
-});
+  },
+));
 
-ipcMain.handle('update:download', async () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('update:download', createValidatedHandler<undefined, void>(
+  'update:download',
+  ipcValidate.none,
+  async () => {
   try {
     // TODO: 接入 electron-updater 下载流程
     logger.warn('update:download stub 被调用（真实更新流程未接入）');
   } catch (e) {
     logger.error('update:download 失败', { error: e instanceof Error ? e.message : String(e) });
   }
-});
+  },
+));
 
-ipcMain.handle('update:install', async () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('update:install', createValidatedHandler<undefined, void>(
+  'update:install',
+  ipcValidate.none,
+  async () => {
   try {
     // TODO: 接入 electron-updater 安装流程（quitAndInstall）
     logger.warn('update:install stub 被调用');
   } catch (e) {
     logger.error('update:install 失败', { error: e instanceof Error ? e.message : String(e) });
   }
-});
+  },
+));
 
 // --- 键值存储 (3) ---
 // 简单的 JSON 文件 KV 存储，避免引入 electron-store 依赖
@@ -1857,24 +2416,40 @@ async function persistStore(): Promise<void> {
   }
 }
 
-ipcMain.handle('store:get', async (_event, key: string) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('store:get', createValidatedHandler<string, unknown>(
+  'store:get',
+  ipcValidate.string(256),
+  async (key, _event) => {
   const store = await loadStore();
   return store[key];
-});
+  },
+));
 
-ipcMain.handle('store:set', async (_event, key: string, value: unknown) => {
+// Phase 95：用 createValidatedHandlerMulti 包装（多参数：key + value）
+// value 类型不确定（可能为对象/字符串/数字/布尔），第二参数校验器放行
+ipcMain.handle('store:set', createValidatedHandlerMulti<void>(
+  'store:set',
+  [ipcValidate.string(256), () => null],
+  async (_event, key, value) => {
   const store = await loadStore();
-  store[key] = value;
+  store[key as string] = value;
   await persistStore();
-});
+  },
+));
 
-ipcMain.handle('store:delete', async (_event, key: string) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('store:delete', createValidatedHandler<string, void>(
+  'store:delete',
+  ipcValidate.string(256),
+  async (key, _event) => {
   const store = await loadStore();
   if (key in store) {
     delete store[key];
     await persistStore();
   }
-});
+  },
+));
 
 // ============================================================
 // Phase 39：实验分支 / Hook IPC handler
@@ -1884,13 +2459,22 @@ ipcMain.handle('store:delete', async (_event, key: string) => {
 // --- 实验分支相关 ---
 
 // 列出所有实验分支
-ipcMain.handle('experiment:list', async (): Promise<ExperimentInfo[]> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('experiment:list', createValidatedHandler<undefined, ExperimentInfo[]>(
+  'experiment:list',
+  ipcValidate.none,
+  async () => {
   if (!engine) return [];
   return engine.listExperiments();
-});
+  },
+));
 
 // 采纳实验分支
-ipcMain.handle('experiment:adopt', async (_event, payload: { experimentId: string; confirmationToken?: string } | string): Promise<{ success: boolean; error?: string; requiresConfirmation?: boolean }> => {
+// Phase 95：用 createValidatedHandler 包装，外层做基础类型校验（string | object）
+ipcMain.handle('experiment:adopt', createValidatedHandler<{ experimentId: string; confirmationToken?: string } | string, { success: boolean; error?: string; requiresConfirmation?: boolean }>(
+  'experiment:adopt',
+  (args) => (typeof args === 'string' || (typeof args === 'object' && args !== null)) ? null : '参数必须是字符串或对象',
+  async (payload, _event) => {
   // G-F002：兼容旧调用（string）与新调用（对象含 confirmationToken）
   const { experimentId, confirmationToken } = typeof payload === 'string'
     ? { experimentId: payload, confirmationToken: undefined }
@@ -1914,10 +2498,15 @@ ipcMain.handle('experiment:adopt', async (_event, payload: { experimentId: strin
     return { success: false, error: '需要确认令牌', requiresConfirmation: true };
   }
   return engine.adoptExperiment(experimentId);
-});
+  },
+));
 
 // 丢弃实验分支
-ipcMain.handle('experiment:discard', async (_event, payload: { experimentId: string; confirmationToken?: string } | string): Promise<{ success: boolean; error?: string; requiresConfirmation?: boolean }> => {
+// Phase 95：用 createValidatedHandler 包装，外层做基础类型校验（string | object）
+ipcMain.handle('experiment:discard', createValidatedHandler<{ experimentId: string; confirmationToken?: string } | string, { success: boolean; error?: string; requiresConfirmation?: boolean }>(
+  'experiment:discard',
+  (args) => (typeof args === 'string' || (typeof args === 'object' && args !== null)) ? null : '参数必须是字符串或对象',
+  async (payload, _event) => {
   // G-F002：兼容旧调用（string）与新调用（对象含 confirmationToken）
   const { experimentId, confirmationToken } = typeof payload === 'string'
     ? { experimentId: payload, confirmationToken: undefined }
@@ -1941,33 +2530,49 @@ ipcMain.handle('experiment:discard', async (_event, payload: { experimentId: str
     return { success: false, error: '需要确认令牌', requiresConfirmation: true };
   }
   return engine.discardExperiment(experimentId);
-});
+  },
+));
 
 // 获取实验分支 diff
-ipcMain.handle('experiment:get-diff', async (_event, experimentId: string): Promise<{ diff: string; filesChanged: number; error?: string }> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('experiment:get-diff', createValidatedHandler<string, { diff: string; filesChanged: number; error?: string }>(
+  'experiment:get-diff',
+  ipcValidate.string(256),
+  async (experimentId, _event) => {
   if (typeof experimentId !== 'string' || experimentId.length === 0 || experimentId.length > 256) {
     return { diff: '', filesChanged: 0, error: '无效的参数' };
   }
   if (!engine) return { diff: '', filesChanged: 0, error: '引擎未初始化' };
   return engine.getExperimentDiff(experimentId);
-});
+  },
+));
 
 // --- Hook 相关 ---
 
 // 列出所有 Hook（模板 + 自定义）
-ipcMain.handle('hook:list', async (): Promise<HookInfo[]> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('hook:list', createValidatedHandler<undefined, HookInfo[]>(
+  'hook:list',
+  ipcValidate.none,
+  async () => {
   if (!engine) return [];
   return engine.listHooks();
-});
+  },
+));
 
 // 启用/禁用 Hook
-ipcMain.handle('hook:toggle', async (_event, payload: { hookId: string; enabled: boolean }): Promise<{ success: boolean; error?: string }> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('hook:toggle', createValidatedHandler<{ hookId: string; enabled: boolean }, { success: boolean; error?: string }>(
+  'hook:toggle',
+  ipcValidate.object(),
+  async (payload, _event) => {
   if (!payload || typeof payload.hookId !== 'string' || payload.hookId.length === 0 || payload.hookId.length > 256) {
     return { success: false, error: '无效的参数' };
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.toggleHook(payload.hookId, payload.enabled);
-});
+  },
+));
 
 // 创建自定义 Hook（模板模式或自定义模式）
 // F-029 修复：用 Zod schema 对完整 payload parse 替代手动 as 强制转换，
@@ -1989,7 +2594,11 @@ const hookCreateSchema = z.union([
     failBehavior: z.enum(['warn', 'block', 'silent']).optional(),
   }),
 ]);
-ipcMain.handle('hook:create', async (_event, payload: unknown): Promise<{ success: boolean; hookId?: string; error?: string }> => {
+// Phase 95：用 createValidatedHandler 包装，外层 ipcValidate.object 做基础类型校验
+ipcMain.handle('hook:create', createValidatedHandler<unknown, { success: boolean; hookId?: string; error?: string }>(
+  'hook:create',
+  ipcValidate.object(),
+  async (payload, _event) => {
   if (!payload || typeof payload !== 'object') {
     return { success: false, error: '无效的参数' };
   }
@@ -2001,19 +2610,29 @@ ipcMain.handle('hook:create', async (_event, payload: unknown): Promise<{ succes
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.createHook(parsed);
-});
+  },
+));
 
 // 删除自定义 Hook
-ipcMain.handle('hook:delete', async (_event, hookId: string): Promise<{ success: boolean; error?: string }> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('hook:delete', createValidatedHandler<string, { success: boolean; error?: string }>(
+  'hook:delete',
+  ipcValidate.string(256),
+  async (hookId, _event) => {
   if (typeof hookId !== 'string' || hookId.length === 0 || hookId.length > 256) {
     return { success: false, error: '无效的参数' };
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.deleteHook(hookId);
-});
+  },
+));
 
 // G-F002：确认令牌创建 IPC——UI 在执行破坏性操作前先调用此接口获取令牌
-ipcMain.handle('confirmation:create', (_event, operation: string, targetId: string): string => {
+// Phase 95：用 createValidatedHandlerMulti 包装（多参数：operation + targetId）
+ipcMain.handle('confirmation:create', createValidatedHandlerMulti<string>(
+  'confirmation:create',
+  [ipcValidate.string(64), ipcValidate.string(256)],
+  async (_event, operation, targetId) => {
   if (typeof operation !== 'string' || operation.length === 0 || operation.length > 64) {
     throw new Error('无效的 operation');
   }
@@ -2021,7 +2640,8 @@ ipcMain.handle('confirmation:create', (_event, operation: string, targetId: stri
     throw new Error('无效的 targetId');
   }
   return createConfirmation(operation, targetId);
-});
+  },
+));
 
 // ============================================================
 // Phase 47 Task 6：Checkpoint 时间轴 IPC handler
@@ -2030,16 +2650,25 @@ ipcMain.handle('confirmation:create', (_event, operation: string, targetId: stri
 
 // 列出当前项目的所有检查点（用于时间轴展示）
 // F-N026 修复：补 projectId 类型与长度校验
-ipcMain.handle('checkpoint:list', async (_event, projectId?: string) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('checkpoint:list', createValidatedHandler<string | undefined, unknown[]>(
+  'checkpoint:list',
+  ipcValidate.optionalString(256),
+  async (projectId, _event) => {
   if (projectId !== undefined && (typeof projectId !== 'string' || projectId.length === 0 || projectId.length > 256)) {
     return [];
   }
   if (!engine) return [];
   return engine.listCheckpoints(projectId);
-});
+  },
+));
 
 // 回滚到指定检查点（破坏性操作，UI 层需在调用前弹出确认对话框）
-ipcMain.handle('checkpoint:rollback', async (_event, payload: { checkpointId: string; confirmationToken?: string } | string): Promise<{ success: boolean; error?: string; requiresConfirmation?: boolean }> => {
+// Phase 95：用 createValidatedHandler 包装，外层做基础类型校验（string | object）
+ipcMain.handle('checkpoint:rollback', createValidatedHandler<{ checkpointId: string; confirmationToken?: string } | string, { success: boolean; error?: string; requiresConfirmation?: boolean }>(
+  'checkpoint:rollback',
+  (args) => (typeof args === 'string' || (typeof args === 'object' && args !== null)) ? null : '参数必须是字符串或对象',
+  async (payload, _event) => {
   // G-F002：兼容旧调用（string）与新调用（对象含 confirmationToken）
   const { checkpointId, confirmationToken } = typeof payload === 'string'
     ? { checkpointId: payload, confirmationToken: undefined }
@@ -2063,7 +2692,8 @@ ipcMain.handle('checkpoint:rollback', async (_event, payload: { checkpointId: st
     return { success: false, error: '需要确认令牌', requiresConfirmation: true };
   }
   return engine.rollbackCheckpoint(checkpointId);
-});
+  },
+));
 
 // ============================================================
 // Phase 73 Part C：Steering / Follow-up 双消息队列 IPC handler
@@ -2073,11 +2703,11 @@ ipcMain.handle('checkpoint:rollback', async (_event, payload: { checkpointId: st
 // 排队 follow-up 消息（fire-and-forget，无返回值）
 ipcMain.on('agent:followUp', (_event, content: string) => {
   if (typeof content !== 'string' || content.length === 0 || content.length > 10000) {
-    console.warn('[agent:followUp] 无效 content，调用被忽略');
+    logger.warn('[agent:followUp] 无效 content，调用被忽略', { content: typeof content });
     return;
   }
   if (!engine) {
-    console.warn('[agent:followUp] 引擎未初始化，调用被忽略');
+    logger.warn('[agent:followUp] 引擎未初始化，调用被忽略');
     return;
   }
   engine.followUp(content);
@@ -2087,7 +2717,7 @@ ipcMain.on('agent:followUp', (_event, content: string) => {
 // 无参数 handler，仅校验 engine 是否初始化
 ipcMain.on('agent:clearAllQueues', () => {
   if (!engine) {
-    console.warn('[agent:clearAllQueues] 引擎未初始化，调用被忽略');
+    logger.warn('[agent:clearAllQueues] 引擎未初始化，调用被忽略');
     return;
   }
   engine.clearAllQueues();
@@ -2096,36 +2726,51 @@ ipcMain.on('agent:clearAllQueues', () => {
 // Phase 73 Part C 修复：设置 follow-up 出队模式（逐条 / 全部）
 ipcMain.on('agent:setFollowUpMode', (_event, mode: 'all' | 'one-at-a-time') => {
   if (mode !== 'all' && mode !== 'one-at-a-time') {
-    console.warn('[agent:setFollowUpMode] 无效 mode，调用被忽略');
+    logger.warn('[agent:setFollowUpMode] 无效 mode，调用被忽略', { mode });
     return;
   }
   if (!engine) {
-    console.warn('[agent:setFollowUpMode] 引擎未初始化，调用被忽略');
+    logger.warn('[agent:setFollowUpMode] 引擎未初始化，调用被忽略');
     return;
   }
   engine.setFollowUpMode(mode);
 });
 
 // 查询队列状态（UI 展示用）
-ipcMain.handle('agent:queueStatus', async (): Promise<import('../shared/ipc-types.js').AgentQueueStatus> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('agent:queueStatus', createValidatedHandler<undefined, import('../shared/ipc-types.js').AgentQueueStatus>(
+  'agent:queueStatus',
+  ipcValidate.none,
+  async () => {
   if (!engine) return { followUp: 0 };
   return engine.getQueueStatus();
-});
+  },
+));
 
 // 查询 follow-up 队列内容（UI 列表展示 + 单条删除用）
-ipcMain.handle('agent:getFollowUpQueue', async (): Promise<import('../shared/ipc-types.js').FollowUpItem[]> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('agent:getFollowUpQueue', createValidatedHandler<undefined, import('../shared/ipc-types.js').FollowUpItem[]>(
+  'agent:getFollowUpQueue',
+  ipcValidate.none,
+  async () => {
   if (!engine) return [];
   return engine.getFollowUpQueue();
-});
+  },
+));
 
 // 删除指定索引的 follow-up 消息（UI 单条删除）
-ipcMain.handle('agent:removeFollowUp', async (_event, index: number): Promise<boolean> => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('agent:removeFollowUp', createValidatedHandler<number, boolean>(
+  'agent:removeFollowUp',
+  ipcValidate.number(0, 1000000),
+  async (index, _event) => {
   if (!Number.isInteger(index) || index < 0) {
     return false;
   }
   if (!engine) return false;
   return engine.removeFollowUp(index);
-});
+  },
+));
 
 // ============================================================
 // Phase 77：运行回放与评分卡 IPC handler
@@ -2134,30 +2779,45 @@ ipcMain.handle('agent:removeFollowUp', async (_event, index: number): Promise<bo
 
 // 列出磁盘上的 Trace 会话（按 startTime 倒序）
 // F-N026 修复：补 limit 数值范围校验
-ipcMain.handle('trace:list-sessions', async (_event, limit?: number) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('trace:list-sessions', createValidatedHandler<number | undefined, unknown[]>(
+  'trace:list-sessions',
+  ipcValidate.optionalNumber(1, 1000),
+  async (limit, _event) => {
   if (limit !== undefined && (typeof limit !== 'number' || !Number.isFinite(limit) || limit < 1 || limit > 1000)) {
     return [];
   }
   if (!engine) return [];
   return engine.listTraceSessions(limit);
-});
+  },
+));
 
 // 回放指定会话，返回时间线事件；传入 step 时仅返回该步骤段落
 // F-N026 修复：补 sessionId 长度上限 + step 数值校验
-ipcMain.handle('trace:replay', async (_event, sessionId: string, step?: number) => {
+// Phase 95：用 createValidatedHandlerMulti 包装（多参数：sessionId + step?）
+ipcMain.handle('trace:replay', createValidatedHandlerMulti<unknown[]>(
+  'trace:replay',
+  [ipcValidate.string(128), ipcValidate.optionalNumber(0, 100000)],
+  async (_event, sessionId, step) => {
   if (typeof sessionId !== 'string' || sessionId.length === 0 || sessionId.length > 128) return [];
   if (step !== undefined && (typeof step !== 'number' || !Number.isFinite(step) || step < 0 || step > 100000)) return [];
   if (!engine) return [];
   return engine.replayTrace(sessionId, step);
-});
+  },
+));
 
 // 生成指定会话的评分卡
 // F-N026 修复：补 sessionId 长度上限
-ipcMain.handle('trace:scorecard', async (_event, sessionId: string) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('trace:scorecard', createValidatedHandler<string, unknown>(
+  'trace:scorecard',
+  ipcValidate.string(128),
+  async (sessionId, _event) => {
   if (typeof sessionId !== 'string' || sessionId.length === 0 || sessionId.length > 128) return null;
   if (!engine) return null;
   return engine.generateTraceScorecard(sessionId);
-});
+  },
+));
 
 /**
  * G-F003：子 Agent 角色能力上限——每个角色允许的工具集合
@@ -2202,21 +2862,35 @@ function validateProfileTools(role: string, allowedTools: string[]): string[] {
 // fail-open：engine 未初始化时返回空/失败结果
 // ============================================================
 
-ipcMain.handle('profile:list', async () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('profile:list', createValidatedHandler<undefined, unknown[]>(
+  'profile:list',
+  ipcValidate.none,
+  async () => {
   if (!engine) return [];
   return engine.listProfiles();
-});
+  },
+));
 
 // 获取单个 Profile 详情（含 systemPrompt），供 UI 导入后回填 state
-ipcMain.handle('profile:get', async (_event, id: string) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('profile:get', createValidatedHandler<string, unknown>(
+  'profile:get',
+  ipcValidate.string(256),
+  async (id, _event) => {
   if (typeof id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(id)) {
     return null;
   }
   if (!engine) return null;
   return engine.getProfile(id);
-});
+  },
+));
 
-ipcMain.handle('profile:save', async (_event, rawPayload: unknown) => {
+// Phase 95：用 createValidatedHandler 包装，外层 ipcValidate.object 做基础类型校验
+ipcMain.handle('profile:save', createValidatedHandler<unknown, { success: boolean; error?: string; errors?: string[] }>(
+  'profile:save',
+  ipcValidate.object(),
+  async (rawPayload, _event) => {
   if (!engine) return { success: false, error: '引擎未初始化' };
   // TD-08：用 ipcGuard 统一参数校验
   // ProfileSavePayload 字段众多（systemPrompt 等），此处校验关键字段，
@@ -2262,18 +2936,28 @@ ipcMain.handle('profile:save', async (_event, rawPayload: unknown) => {
     return { success: false, error: toolErrors.join('; '), errors: toolErrors };
   }
   return engine.saveProfile(payload);
-});
+  },
+));
 
-ipcMain.handle('profile:delete', async (_event, id: string) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('profile:delete', createValidatedHandler<string, { success: boolean; error?: string }>(
+  'profile:delete',
+  ipcValidate.string(256),
+  async (id, _event) => {
   // F-002/F-034 修复：id 字符集校验（与 profiles/types.ts validateProfile 一致）
   if (typeof id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(id)) {
     return { success: false, error: '无效的参数' };
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.deleteProfile(id);
-});
+  },
+));
 
-ipcMain.handle('profile:duplicate', async (_event, id: string, newName: string) => {
+// Phase 95：用 createValidatedHandlerMulti 包装（多参数：id + newName）
+ipcMain.handle('profile:duplicate', createValidatedHandlerMulti<{ success: boolean; error?: string }>(
+  'profile:duplicate',
+  [ipcValidate.string(256), ipcValidate.string(256)],
+  async (_event, id, newName) => {
   // F-034 修复：参数校验——id 和 newName 必须是非空字符串且长度合理
   if (typeof id !== 'string' || id.length === 0 || id.length > 256 ||
       typeof newName !== 'string' || newName.length === 0 || newName.length > 256) {
@@ -2281,11 +2965,16 @@ ipcMain.handle('profile:duplicate', async (_event, id: string, newName: string) 
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.duplicateProfile(id, newName);
-});
+  },
+));
 
 // AgentProfile 导入：弹出文件选择对话框，让用户选择 SKILL.md 文件
 // 数据流：renderer → IPC profile:import → dialog.showOpenDialog → engine.importProfile → AgentProfileManager.importProfile
-ipcMain.handle('profile:import', async () => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('profile:import', createValidatedHandler<undefined, { success: boolean; error?: string }>(
+  'profile:import',
+  ipcValidate.none,
+  async () => {
   if (!engine) return { success: false, error: '引擎未初始化' };
   const result = await dialog.showOpenDialog({
     title: '导入 Agent Profile (SKILL.md)',
@@ -2299,7 +2988,8 @@ ipcMain.handle('profile:import', async () => {
     return { success: false, error: '用户取消选择' };
   }
   return engine.importProfile(result.filePaths[0]);
-});
+  },
+));
 
 // ============================================================
 // AgentProfile 版本管理 IPC handler
@@ -2309,16 +2999,25 @@ ipcMain.handle('profile:import', async () => {
 // ============================================================
 
 // 列出指定 Profile 的所有版本元数据（按时间倒序）
-ipcMain.handle('profile:list-versions', async (_event, profileId: string) => {
+// Phase 95：用 createValidatedHandler 包装，统一参数校验
+ipcMain.handle('profile:list-versions', createValidatedHandler<string, unknown[]>(
+  'profile:list-versions',
+  ipcValidate.string(256),
+  async (profileId, _event) => {
   if (typeof profileId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(profileId)) {
     return [];
   }
   if (!engine) return [];
   return engine.listProfileVersions(profileId);
-});
+  },
+));
 
 // 获取指定版本完整记录（含 snapshot）
-ipcMain.handle('profile:get-version', async (_event, profileId: string, versionId: string) => {
+// Phase 95：用 createValidatedHandlerMulti 包装（多参数：profileId + versionId）
+ipcMain.handle('profile:get-version', createValidatedHandlerMulti<unknown>(
+  'profile:get-version',
+  [ipcValidate.string(256), ipcValidate.string(128)],
+  async (_event, profileId, versionId) => {
   if (typeof profileId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(profileId)) {
     return null;
   }
@@ -2327,10 +3026,15 @@ ipcMain.handle('profile:get-version', async (_event, profileId: string, versionI
   }
   if (!engine) return null;
   return engine.getProfileVersion(profileId, versionId);
-});
+  },
+));
 
 // 回滚到指定版本（破坏性操作，UI 应在调用前获得用户确认）
-ipcMain.handle('profile:rollback', async (_event, profileId: string, versionId: string) => {
+// Phase 95：用 createValidatedHandlerMulti 包装（多参数：profileId + versionId）
+ipcMain.handle('profile:rollback', createValidatedHandlerMulti<{ success: boolean; error?: string }>(
+  'profile:rollback',
+  [ipcValidate.string(256), ipcValidate.string(128)],
+  async (_event, profileId, versionId) => {
   if (typeof profileId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(profileId)) {
     return { success: false, error: '无效的 profileId' };
   }
@@ -2339,12 +3043,17 @@ ipcMain.handle('profile:rollback', async (_event, profileId: string, versionId: 
   }
   if (!engine) return { success: false, error: '引擎未初始化' };
   return engine.rollbackProfile(profileId, versionId);
-});
+  },
+));
 
 // 比较两个版本的字段差异（用于 UI 展示 diff 视图）
+// Phase 95：用 createValidatedHandlerMulti 包装（多参数：profileId + fromVersionId + toVersionId）
 ipcMain.handle(
   'profile:diff-versions',
-  async (_event, profileId: string, fromVersionId: string, toVersionId: string) => {
+  createValidatedHandlerMulti<unknown[]>(
+    'profile:diff-versions',
+    [ipcValidate.string(256), ipcValidate.string(128), ipcValidate.string(128)],
+    async (_event, profileId, fromVersionId, toVersionId) => {
     if (typeof profileId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(profileId)) {
       return [];
     }
@@ -2356,13 +3065,18 @@ ipcMain.handle(
     }
     if (!engine) return [];
     return engine.diffProfileVersions(profileId, fromVersionId, toVersionId);
-  },
+    },
+  ),
 );
 
 // 比较当前 Profile 与指定历史版本
+// Phase 95：用 createValidatedHandlerMulti 包装（多参数：profileId + targetVersionId）
 ipcMain.handle(
   'profile:diff-current-with',
-  async (_event, profileId: string, targetVersionId: string) => {
+  createValidatedHandlerMulti<unknown[]>(
+    'profile:diff-current-with',
+    [ipcValidate.string(256), ipcValidate.string(128)],
+    async (_event, profileId, targetVersionId) => {
     if (typeof profileId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(profileId)) {
       return [];
     }
@@ -2371,7 +3085,8 @@ ipcMain.handle(
     }
     if (!engine) return [];
     return engine.diffProfileCurrentWith(profileId, targetVersionId);
-  },
+    },
+  ),
 );
 
 // ============================================================
@@ -2380,23 +3095,27 @@ ipcMain.handle(
 // fail-open：engine 未初始化时返回 idle 状态
 // ============================================================
 
-ipcMain.handle('session:get-status', async (): Promise<import('../shared/ipc-types.js').SessionStatus> => {
-  if (!engine) {
-    return {
-      title: '',
-      status: 'idle',
-      summary: '引擎未初始化',
-      knownFacts: [],
-      openQuestions: [],
-      todos: [],
-      nextAction: null,
-      tokenUsed: 0,
-      tokenBudget: 0,
-      updatedAt: new Date().toISOString(),
-    };
-  }
-  return engine.getSessionStatus();
-});
+ipcMain.handle('session:get-status', createValidatedHandler<undefined, import('../shared/ipc-types.js').SessionStatus>(
+  'session:get-status',
+  ipcValidate.none,
+  async () => {
+    if (!engine) {
+      return {
+        title: '',
+        status: 'idle',
+        summary: '引擎未初始化',
+        knownFacts: [],
+        openQuestions: [],
+        todos: [],
+        nextAction: null,
+        tokenUsed: 0,
+        tokenBudget: 0,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    return engine.getSessionStatus();
+  },
+));
 
 // ============================================================
 // Phase 96+ A3.3：实时费用 + 缓存命中率统计 IPC handler
@@ -2404,19 +3123,23 @@ ipcMain.handle('session:get-status', async (): Promise<import('../shared/ipc-typ
 //         → tracker.getStats / getSessionCost / cacheStatsTracker.getStats
 // fail-open：engine 未初始化时返回 zero 快照，避免渲染层 reject
 // ============================================================
-ipcMain.handle('stats:get-snapshot', async (): Promise<import('../shared/ipc-types.js').StatsSnapshot> => {
-  if (!engine) {
-    return {
-      tokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-      cost: { totalUsd: 0, byModel: {} },
-      cache: {
-        session: { hit: 0, miss: 0, total: 0, hitRate: 0 },
-        turn: { hit: 0, miss: 0, total: 0, hitRate: 0 },
-      },
-      budgetUsagePercent: 0,
-      activeModels: [],
-      updatedAt: new Date().toISOString(),
-    };
-  }
-  return engine.getStatsSnapshot();
-});
+ipcMain.handle('stats:get-snapshot', createValidatedHandler<undefined, import('../shared/ipc-types.js').StatsSnapshot>(
+  'stats:get-snapshot',
+  ipcValidate.none,
+  async () => {
+    if (!engine) {
+      return {
+        tokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        cost: { totalUsd: 0, byModel: {} },
+        cache: {
+          session: { hit: 0, miss: 0, total: 0, hitRate: 0 },
+          turn: { hit: 0, miss: 0, total: 0, hitRate: 0 },
+        },
+        budgetUsagePercent: 0,
+        activeModels: [],
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    return engine.getStatsSnapshot();
+  },
+));
