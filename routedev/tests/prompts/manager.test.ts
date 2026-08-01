@@ -126,14 +126,20 @@ describe('PromptTemplateManager', () => {
       const out = await m.render('main.system', {
         language: 'zh',
         autonomyMode: 'auto',
-        projectRules: 'rules here',
-        projectMemory: 'memory',
-        blackboard: 'bb',
-        availableTools: 'tools',
-        conversationContext: 'ctx',
+        projectRules: 'RULE: use code graph first',
+        projectMemory: 'DECISION: keep the public API stable',
+        availableTools: '- file_read: read a precise file range',
+        cwd: '/workspace/project',
+        taskShape: 'multi-step-impl',
       });
       expect(out).toContain('语言：zh');
-      expect(out).toContain('自主度：auto'); // Phase 30：模板用词从"自主模式"改为"自主度"
+      expect(out).toContain('自主度：auto');
+      expect(out).toContain('RULE: use code graph first');
+      expect(out).toContain('DECISION: keep the public API stable');
+      expect(out).toContain('- file_read: read a precise file range');
+      expect(out).toContain('工作目录：/workspace/project');
+      expect(out).not.toContain('Phase 94');
+      expect(out).not.toContain('以下分析可能不完整');
     });
 
     it('should replace missing variables with empty string', async () => {

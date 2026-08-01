@@ -13,6 +13,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { logger } from '../utils/logger.js';
 
 /** 单个 Gate 状态 */
 type GateStatus = 'pending' | 'passed' | 'failed' | 'skipped';
@@ -152,8 +153,7 @@ export class GoalGateManager {
       return this.gates;
     } catch (e) {
       // 读取或解析失败（ENOENT 是正常情况，文件尚未创建），返回 null
-      // eslint-disable-next-line no-console
-      console.warn(`[goal-gates] load: 读取/解析 gates 文件失败 ${this.gatesFile}: ${e instanceof Error ? e.message : String(e)}`);
+      logger.warn('load: 读取/解析 gates 文件失败', { file: this.gatesFile, error: e instanceof Error ? e.message : String(e) });
       return null;
     }
   }

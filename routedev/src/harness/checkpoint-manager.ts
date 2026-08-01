@@ -23,6 +23,8 @@ import type {
 } from './types.js';
 import { logger } from '../utils/logger.js';
 import { safeWriteJSON } from '../utils/safe-write.js';
+import { parseGoalPlan, GOAL_PLAN_SCHEMA_VERSION } from '../config/schemas/checkpoint.js';
+import { migrate, withSchemaVersion } from '../utils/migration.js';
 
 /** Git commit 消息前缀（用于区分自动检查点和用户提交） */
 const CHECKPOINT_PREFIX = '[routedev-checkpoint]';
@@ -417,11 +419,15 @@ export class CheckpointManager {
   /** 保存当前目标计划
    *
    *  V2-T11：使用原子写入（tmp + rename），防止写入过程中崩溃导致文件损坏
+   *
+   *  Phase 93 Task 8：写入 __schemaVersion 字段，供未来 migration 框架识别版本。
    */
   async saveGoalPlan(plan: GoalPlan): Promise<void> {
     try {
       await fs.mkdir(path.dirname(this.goalPlanPath), { recursive: true });
-      await safeWriteJSON(this.goalPlanPath, plan, { spaces: 2 });
+      // 标记当前 schema 版本，便于未来 load 时 migrate
+      const data = withSchemaVersion(plan, GOAL_PLAN_SCHEMA_VERSION);
+      await safeWriteJSON(this.goalPlanPath, data, { spaces: 2 });
       logger.debug('GoalPlan saved', { path: this.goalPlanPath });
     } catch (error) {
       logger.warn('Failed to save goal plan', {
@@ -430,11 +436,21 @@ export class CheckpointManager {
     }
   }
 
-  /** 加载上一次的目标计划 */
+  /** 加载上一次的目标计划
+   *
+   * Phase 93 Task 8：load 时先 migrate 升级到当前 schema 版本，再 parse 校验。
+   * 当前版本 1，无迁移函数；未来版本升级时在此处追加 migrations 数组。
+   */
   async loadGoalPlan(): Promise<GoalPlan | null> {
     try {
       const content = await fs.readFile(this.goalPlanPath, 'utf-8');
-      return JSON.parse(content) as GoalPlan;
+      const migrated = migrate(JSON.parse(content), {
+        currentVersion: GOAL_PLAN_SCHEMA_VERSION,
+        migrations: [], // 当前版本 1，无历史版本需要迁移
+        fallback: null,
+        caller: 'CheckpointManager.loadGoalPlan',
+      });
+      return parseGoalPlan(migrated);
     } catch (e) {
       // 目标计划文件不存在或损坏，降级返回 null（可能是首次启动）
       logger.warn('[checkpoint-manager] 加载目标计划失败', {

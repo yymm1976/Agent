@@ -6,6 +6,7 @@
 
 import type { AppConfig } from '../../shared/config-types.js';
 import { createGoalRunner } from '../../../src/runtime/goal-runner.js';
+import { computeEnabledPacks } from '../../../src/runtime/app-init.js';
 import type { GoalPlan, PlanStep } from '../../../src/agent/goal-types.js';
 // Phase 77：冷启动恢复——GoalRecoveryManager + IPC 数据类型
 import { GoalRecoveryManager } from '../../../src/runtime/goal-recovery.js';
@@ -176,6 +177,8 @@ export class GoalBridge {
         dualLoopOrchestratorRef: deps.dualLoopOrchestratorRef,
         dagEngine: deps.dagEngineRef.current ?? undefined,
         pathRouter: deps.pathRouter,
+        // Phase 94 Task 2：注入单点计算的 EnabledPacks，供 scheduler/recovery 读取
+        enabledPacks: computeEnabledPacks(config),
       });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -306,6 +309,8 @@ export class GoalBridge {
         dualLoopOrchestratorRef: deps.dualLoopOrchestratorRef,
         dagEngine: deps.dagEngineRef.current ?? undefined,
         pathRouter: deps.pathRouter,
+        // Phase 94 Task 2：注入单点计算的 EnabledPacks，供 scheduler/recovery 读取
+        enabledPacks: computeEnabledPacks(config),
       });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -404,7 +409,7 @@ export class GoalBridge {
       // goal 描述从 plan-revisions 元数据无法可靠获取，用 goalId 兜底（不影响检查效果）
       return await checker.check(currentPlan, { goal: goalId });
     } catch (err) {
-      console.warn('[Engine] checkOmissions fail-open:', err);
+      logger.warn('[Engine] checkOmissions fail-open', { error: err instanceof Error ? err.message : String(err) });
       return { ...EMPTY, summary: `检查失败: ${err instanceof Error ? err.message : String(err)}` };
     }
   }

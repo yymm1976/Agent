@@ -52,13 +52,16 @@ import type { AutonomyMode } from '../config/schema.js';
 import { logger } from '../utils/logger.js';
 import { GoalGateManager } from '../agent/goal-gates.js';
 
-// 各子模块工厂（运行期 import，confirm/scheduler/recovery 仅 import type GoalRunnerCtx，无运行期循环依赖）
+// Phase 94：共享类型 GoalRunnerCtx 和常量 MAX_CONTEXT_ITEMS 已移至 goal-runner-types.ts
+// 子模块从 goal-runner-types.ts import，core.ts 仅 re-export 保持外部引用兼容
+import type { GoalRunnerCtx } from './goal-runner-types.js';
+export type { GoalRunnerCtx } from './goal-runner-types.js';
+export { MAX_CONTEXT_ITEMS } from './goal-runner-types.js';
+
+// 各子模块工厂（运行期 import，Phase 94 后子模块不再反向 import core.ts 的值，无循环依赖）
 import { createConfirmFunctions } from './goal-runner-confirm.js';
 import { createSchedulerFunctions } from './goal-runner-scheduler.js';
 import { createRecoveryFunctions } from './goal-runner-recovery.js';
-
-/** 上下文文本/诊断片段截断长度上限（step.result / taskSignature / args JSON 等） */
-export const MAX_CONTEXT_ITEMS = 200;
 
 /** GoalRunner 依赖的外部对象（由 App.tsx 注入） */
 export interface GoalRunnerDeps {
@@ -167,54 +170,21 @@ export interface GoalRunnerDeps {
   kanObstacleChecker?: import('../skills/kan-obstacle-checker.js').KanObstacleChecker;
   quantitativeGate?: import('../agent/quantitative-gate.js').QuantitativeGate;
   classifyOperation?: (signal: import('../skills/operation-classifier.js').OperationSignal, sessionId: string) => import('../skills/operation-classifier.js').OperationClassification;
+  /**
+   * Phase 94 Task 2：单点计算的 Pack 功能矩阵（可选）
+   *
+   * 由 goal-bridge.ts 注入 computeEnabledPacks(config) 结果。
+   * 注入后，scheduler/recovery 子模块从 deps.enabledPacks 读取，替代 config.packs?.xxx?.enabled。
+   * 未注入时（CLI / test）fallback 到 config.packs?.xxx?.enabled，保持兼容。
+   */
+  enabledPacks?: import('./app-init.js').EnabledPacks;
 }
 
 /**
- * 共享上下文：在 createGoalRunner 中创建，传递给各子模块的函数工厂
+ * 创建目标运行器
  *
- * 包含：
- *   - deps：原始依赖注入（各模块按需解构使用）
- *   - 共享状态：emit / gid / gateManager / goalCfg / goalIntegration
- *   - 跨模块函数引用：createGoalRunner 组装后填充，各模块通过 ctx.xxx 调用
- *
- * 设计说明：原 goal-runner.ts 是单个 2000+ 行的闭包，所有函数共享 createGoalRunner
- * 作用域内的变量。拆分为多文件后，用 ctx 对象替代闭包作用域，行为完全等价。
+ * 共享上下文 GoalRunnerCtx 类型见 goal-runner-types.ts（Phase 94 拆出消除循环依赖）
  */
-export interface GoalRunnerCtx {
-  /** 原始依赖注入 */
-  deps: GoalRunnerDeps;
-  /** 结构化事件发射器（安全调用 onGoalEvent，CLI 端未注入时为 no-op） */
-  emit: (event: GoalEvent) => void;
-  /** Goal 唯一标识（Electron 端由 engine-bridge 注入；CLI 端用 nextId 生成临时 id） */
-  gid: string;
-  /** 验收门控管理器（Phase 21 Task 2：计划确认后冻结验收门控） */
-  gateManager: GoalGateManager;
-  /** Goal 配置缓存（config.goal） */
-  goalCfg: AppConfig['goal'];
-  /** Goal 集成开关缓存（config.goalIntegration） */
-  goalIntegration: AppConfig['goalIntegration'];
-  // F-023：currentGoalSpec 字段已移除（该字段永远为 null，无实际消费方）
-
-  // ===== 跨模块函数引用（createGoalRunner 中组装后填充） =====
-  /** 保存 plan 修订历史到 JSONL（confirm 模块） */
-  savePlanRevision: (beforeSteps: GoalStep[], afterSteps: GoalStep[], reason: string) => Promise<void>;
-  /** 处理 /goal 命令：解析目标、分解步骤、请求用户确认（confirm 模块） */
-  handleGoalCommand: (text: string) => Promise<void>;
-  /** 执行目标计划：逐步骤运行 Agent Loop，支持中断 + 检查点 + 压缩（scheduler 模块） */
-  executeGoalPlan: (plan: GoalPlan) => Promise<void>;
-  /** 验证目标完成度（LLM 验证）（recovery 模块） */
-  verifyPlan: (plan: GoalPlan) => Promise<boolean>;
-  /** 运行独立代码验证门（typecheck/lint/tests）（recovery 模块） */
-  runCompletionGate: (plan: GoalPlan) => Promise<import('../agent/completion-gate.js').GateResult | undefined>;
-  /** 旧迭代闭环 fallback（DualLoop 未启用或异常时使用）（recovery 模块） */
-  legacyIterativeLoop: (plan: GoalPlan) => Promise<void>;
-  /** DualLoop 双循环恢复（含 BoundedRecovery）（recovery 模块） */
-  runDualLoopPlan: (plan: GoalPlan, orchestrator: DualLoopOrchestrator) => Promise<boolean>;
-  /** 从持久化的 PersistedGoal 恢复执行（recovery 模块） */
-  resumeGoalPlan: (persistedGoal: PersistedGoal) => Promise<void>;
-}
-
-/** 创建目标运行器 */
 export function createGoalRunner(deps: GoalRunnerDeps) {
   const { onGoalEvent, goalId: depsGoalId, nextId, config } = deps;
 

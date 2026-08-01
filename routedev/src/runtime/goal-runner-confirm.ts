@@ -7,7 +7,7 @@
 //   - clarifyGoalIfNeeded：检测目标描述中的模糊参数，通过 ask_user 澄清
 //   - handleGoalCommand：处理 /goal 命令——解析目标、分解步骤、请求用户确认、触发执行
 
-import type { GoalRunnerCtx } from './goal-runner-core.js';
+import type { GoalRunnerCtx } from './goal-runner-types.js';
 import type { ILLMClient } from '../router/types.js';
 import type { GoalPlan, GoalStep } from '../agent/goal-types.js';
 // Phase 54 Task 5：自主度行为映射（auto/semi/manual → 具体行为开关）

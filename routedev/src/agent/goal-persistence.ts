@@ -24,6 +24,8 @@ import { safeWriteJSON } from '../utils/safe-write.js';
 // Phase 59：FivePartGoalSpec 类型已从 goal-prompt-builder.ts 移至 goal-types.ts
 import type { FivePartGoalSpec } from './goal-types.js';
 import type { ArchivedPlanVersion, PlanAttestation } from './goal-types.js';
+import { parsePersistedGoal, PERSISTED_GOAL_SCHEMA_VERSION } from '../config/schemas/goal-persistence.js';
+import { migrate, withSchemaVersion } from '../utils/migration.js';
 
 // ============================================================
 // 类型定义
@@ -89,11 +91,15 @@ export class GoalPersistence {
    * V2-T05 / V2-016：使用原子写入（tmp + rename），防止写入过程中崩溃导致文件损坏。
    * V2-T04：调用方在 step 状态变更后应调用本方法以触发持久化——
    *   原子写入确保每次调用都生成完整可读的 goal 文件，避免半写状态。
+   *
+   * Phase 93 Task 8：写入 __schemaVersion 字段，供未来 migration 框架识别版本。
    */
   async save(goal: PersistedGoal): Promise<void> {
     await fs.mkdir(this.goalsDir, { recursive: true });
     const filePath = this.goalFilePath(goal.id);
-    await safeWriteJSON(filePath, goal, { spaces: 2, fsync: false });
+    // 标记当前 schema 版本，便于未来 load 时 migrate
+    const data = withSchemaVersion(goal, PERSISTED_GOAL_SCHEMA_VERSION);
+    await safeWriteJSON(filePath, data, { spaces: 2, fsync: false });
     logger.debug('GoalPersistence.save', { id: goal.id, path: filePath });
   }
 
@@ -101,12 +107,21 @@ export class GoalPersistence {
    * 加载目标
    *
    * @returns 不存在时返回 null
+   *
+   * Phase 93 Task 8：load 时先 migrate 升级到当前 schema 版本，再 parse 校验。
+   * 当前版本 1，无迁移函数；未来版本升级时在此处追加 migrations 数组。
    */
   async load(goalId: string): Promise<PersistedGoal | null> {
     const filePath = this.goalFilePath(goalId);
     try {
       const raw = await fs.readFile(filePath, 'utf-8');
-      return JSON.parse(raw) as PersistedGoal;
+      const migrated = migrate(JSON.parse(raw), {
+        currentVersion: PERSISTED_GOAL_SCHEMA_VERSION,
+        migrations: [], // 当前版本 1，无历史版本需要迁移
+        fallback: null,
+        caller: 'GoalPersistence.load',
+      });
+      return parsePersistedGoal(migrated);
     } catch (err) {
       if (err instanceof Error && 'code' in err && (err as { code: string }).code === 'ENOENT') {
         return null;
@@ -269,7 +284,13 @@ export class GoalPersistence {
   private async tryReadGoalFile(filePath: string): Promise<PersistedGoal | null> {
     try {
       const raw = await fs.readFile(filePath, 'utf-8');
-      return JSON.parse(raw) as PersistedGoal;
+      const migrated = migrate(JSON.parse(raw), {
+        currentVersion: PERSISTED_GOAL_SCHEMA_VERSION,
+        migrations: [],
+        fallback: null,
+        caller: 'GoalPersistence.tryReadGoalFile',
+      });
+      return parsePersistedGoal(migrated);
     } catch (e) {
       // 读取或解析失败（ENOENT 或 JSON 损坏），返回 null
       logger.debug('[goal-persistence] tryReadGoalFile: 读取/解析失败', {

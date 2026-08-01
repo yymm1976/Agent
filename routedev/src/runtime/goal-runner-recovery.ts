@@ -11,7 +11,7 @@
 //   - getReviewerResult：调用 UnifiedReviewer 获取 reviewerResult（verifyPlan 辅助）
 //   - resumeGoalPlan：从持久化的 PersistedGoal 恢复执行（冷启动恢复）
 
-import type { GoalRunnerCtx } from './goal-runner-core.js';
+import type { GoalRunnerCtx } from './goal-runner-types.js';
 import type { GoalPlan, GoalPlanStatus, GoalStep, GoalEvent } from '../agent/goal-types.js';
 // Phase 55 Task 9：DualLoop + BoundedRecovery 替代迭代闭环
 import type { DualLoopParams } from '../agent/dual-loop-types.js';
@@ -26,7 +26,7 @@ import { GoalVerifier } from '../agent/goal-verifier.js';
 import { attestPlan } from '../agent/plan-attestation.js';
 import { notifyRoutingFallback } from './notification.js';
 import { logger } from '../utils/logger.js';
-import { MAX_CONTEXT_ITEMS } from './goal-runner-core.js';
+import { MAX_CONTEXT_ITEMS } from './goal-runner-types.js';
 
 /**
  * 创建恢复模块函数
@@ -508,7 +508,7 @@ export function createRecoveryFunctions(ctx: GoalRunnerCtx) {
       // 用 verifyClient 作为审查客户端（已路由到与内循环不同的模型），availableModels 从 router 获取
       // Phase 81 Task 4：packs.adversarial.enabled 门控（extended-pack，默认 false 退出装配）
       //   未启用时不注入 crossModelReviewer；enabled:true 恢复装配
-      ...((config.reviewerPolicy?.autoCrossModelForHighRisk && config.packs?.adversarial?.enabled === true)
+      ...((config.reviewerPolicy?.autoCrossModelForHighRisk && (ctx.deps.enabledPacks?.adversarial ?? config.packs?.adversarial?.enabled === true))
         ? {
             crossModelReviewer: new CrossModelReviewer(
               verifyClient,

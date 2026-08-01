@@ -9,7 +9,7 @@
 //   - executePlanWithDag：DAG 引擎执行路径（拓扑排序/分层并行/重试）
 //   - executePlanWithCompose：CompositionalRouter 跨领域任务分解执行路径
 
-import type { GoalRunnerCtx } from './goal-runner-core.js';
+import type { GoalRunnerCtx } from './goal-runner-types.js';
 import type { GoalPlan, GoalPlanStatus, GoalStep, GoalEvent } from '../agent/goal-types.js';
 import type { RoutingResult } from '../router/types.js';
 import type { RoutingRecord } from '../router/routing-history.js';
@@ -29,7 +29,7 @@ import { estimateTokens } from '../utils/token-estimate.js';
 import { renderGoalProgressText, renderGoalCompletionSummary, formatDuration } from './components/goal-progress.js';
 import { notifyRoutingFallback } from './notification.js';
 import { toCompletionStatus, type GateResult } from '../agent/completion-gate.js';
-import { MAX_CONTEXT_ITEMS } from './goal-runner-core.js';
+import { MAX_CONTEXT_ITEMS } from './goal-runner-types.js';
 import * as path from 'node:path';
 
 /**
@@ -168,7 +168,9 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       ? router.selectPath(plan.difficultyAssessment.level)
       : null;
     // F-012：goalAdvanced pack 未启用时强制 single，避免引入未装配的 dag/compose 路径
-    const mode = config.packs?.goalAdvanced?.enabled
+    // Phase 94 Task 2：优先从 deps.enabledPacks 读取（单点计算），fallback 到 config.packs（兼容）
+    const goalAdvancedEnabled = ctx.deps.enabledPacks?.goalAdvanced ?? config.packs?.goalAdvanced?.enabled;
+    const mode = goalAdvancedEnabled
       ? (config.goal?.executionRouter?.mode ?? 'single')
       : 'single';
     const route = difficultyRoute ? difficultyRoute.route : router.route(plan, {
