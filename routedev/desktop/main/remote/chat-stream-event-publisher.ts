@@ -19,6 +19,10 @@ export interface RemoteTurnContextInput extends Partial<RemoteTurnContext> {
   allowedToolNames?: string[];
   autonomyMode?: RemoteAutonomyMode;
   images?: RemoteImageInput[];
+  /** 自动化任务预授权能力白名单（read:<path> / write:<path> / run:<prefix> / tool:<name>） */
+  allowlist?: string[];
+  /** 自动化任务限定的工作区 id（透传至执行上下文，可为空） */
+  workspaceId?: string;
   /** Phase 97 Part A Task A4：触发来源透传（automation 调度 / remote 远程 / user 本地） */
   triggerSource?: import('../../../src/agent/execution-context.js').TriggerSource;
 }

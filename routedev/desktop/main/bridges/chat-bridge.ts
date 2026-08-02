@@ -26,6 +26,8 @@ import { TurnSnapshotManager } from '../../../src/harness/turn-snapshot.js';
 import { parseComposerReferences } from '../../../src/agent/context/composer-reference.js';
 // Phase 97 Part A Task A4：统一执行上下文（触发来源透传）
 import { createDefaultExecutionContext } from '../../../src/agent/execution-context.js';
+// Phase 97 Part F：自动化任务预授权白名单匹配（allowlist 前缀语义）
+import { isAllowedByAllowlist } from '../../../src/runtime/automation-scheduler.js';
 // Phase 97 Part I：轻量用户档案渲染
 import { renderUserProfile } from '../../../src/memory/user-profile.js';
 import type { SystemBlock } from '../../../src/agent/loop.js';
@@ -41,6 +43,34 @@ import {
 // auto 模式已由用户明确授权：除 ask_user 外不在桥接层重复确认。
 // 真正危险的操作仍由 PermissionEngine 与 SecurityChecker 的 allowed=false 硬拒绝。
 const VERIFY_REQUEST_PATTERN = /验证|测试|检查构建|运行构建|类型检查|\b(?:verify|test|typecheck|lint|build)\b/i;
+
+/**
+ * 自动化任务预授权判定：allowlist（read:/write:/run:/tool: 前缀条目）是否覆盖该工具调用。
+ * 能力候选从工具名与参数中的路径/命令字段推导；匹配复用 isAllowedByAllowlist 的前缀语义。
+ * 白名单外工具仍走正常确认流，危险操作仍由 PermissionEngine/SecurityChecker 硬拒绝。
+ */
+function isPreAuthorized(
+  toolName: string,
+  args: Record<string, unknown>,
+  allowlist: string[],
+): boolean {
+  const capabilities = [`tool:${toolName}`];
+  const pathKeys = ['path', 'filePath', 'target', 'source', 'destination'];
+  for (const key of pathKeys) {
+    const value = args?.[key];
+    if (typeof value === 'string' && value.length > 0) {
+      capabilities.push(`read:${value}`, `write:${value}`);
+    }
+  }
+  if (toolName === 'bash' || toolName === 'run_command') {
+    const command = args?.command ?? args?.cmd;
+    if (typeof command === 'string') {
+      const head = command.trim().split(/\s+/)[0];
+      if (head) capabilities.push(`run:${head}`);
+    }
+  }
+  return capabilities.some((cap) => isAllowedByAllowlist(allowlist, cap));
+}
 
 /**
  * Chat 领域桥接器
@@ -323,6 +353,8 @@ ${skillBlocks.join('\n')}
         // （automation 调度 / remote 远程 / user 本地；requestId 作为会话槽位）
         context: createDefaultExecutionContext(requestId, {
           triggerSource: remoteContext?.triggerSource ?? (remoteContext ? 'remote' : 'user'),
+          // 自动化任务限定的工作区（无则省略，保持本地会话语义）
+          ...(remoteContext?.workspaceId ? { workspaceId: remoteContext.workspaceId } : {}),
         }),
         // Phase 96+ B4：前缀缓存优化——拆分固定前缀与可变后缀为 systemBlocks
         // 固定前缀块（baseSystemPrompt）：会话内不变的内容（identity/core_principles/tool_protocol/...）
@@ -377,6 +409,12 @@ ${skillBlocks.join('\n')}
           const currentMode = remoteContext?.autonomyMode
             ?? this.ctx.config.autonomy.defaultMode;
           if (currentMode === 'auto' && toolName !== 'ask_user') {
+            return true;
+          }
+          // 自动化任务预授权：allowlist 非空且能力匹配时免确认（白名单而非 bypassPermissions——
+          // 白名单外工具仍走正常确认流，危险操作仍被 SecurityChecker 硬拒绝）
+          const allowlist = remoteContext?.allowlist;
+          if (allowlist && allowlist.length > 0 && isPreAuthorized(toolName, args, allowlist)) {
             return true;
           }
           return this.requestUserConfirmation(requestId, toolName, args, stream);

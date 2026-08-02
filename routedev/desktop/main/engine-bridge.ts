@@ -245,6 +245,9 @@ export class RouteDevEngine {
           await this.sendChat(task.prompt, {
             sessionId: `automation:${task.id}`,
             autonomyMode: task.permissionMode === 'auto' ? 'auto' : 'semi',
+            // 预授权白名单与限定工作区：白名单内能力免确认，工作区进入执行上下文
+            allowlist: task.allowlist,
+            workspaceId: task.workspaceId,
             // Phase 97 Part A Task A4：自动化调度触发来源透传
             triggerSource: 'automation',
           });
