@@ -20,8 +20,6 @@ export interface GraphNode {
   id: string;
   type: NodeType;
   content: string;
-  /** 预留字段，当前未使用。未来如需语义搜索可重新启用。 */
-  embedding?: number[];
   /** 被验证次数（用户确认或后续引用次数），用于排序代表节点 */
   validatedCount: number;
   createdAt: number;

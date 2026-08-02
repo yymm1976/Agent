@@ -96,9 +96,9 @@ export function setupAgentMiddleware(ctx: InitContext): {
   }
 
   // 4.2 QualitySignalMiddleware 接线（Implicit Feedback，freeze 层 F-02）
-  // Phase 81 Task 3：packs.trustGradient.enabled 门控 + enableImplicitFeedback 默认 false
+  // Phase 81 Task 3：enableImplicitFeedback 默认 false；trustGradient 已无条件 Core（TD-27）
   const qualityCfg = config.quality;
-  if (qualityCfg?.enableImplicitFeedback !== false && ctx.enabledPacks.trustGradient) {
+  if (qualityCfg?.enableImplicitFeedback !== false) {
     const qualityModulePath = '../agent/middleware/quality-signal.js';
     import(qualityModulePath)
       .then((mod: { QualitySignalMiddleware: new (opts?: unknown) => { getHandler: () => import('../agent/middleware.js').MiddlewareHandler } }) => {
@@ -122,9 +122,9 @@ export function setupAgentMiddleware(ctx: InitContext): {
   }
 
   // 4.3 ExpertisePromptMiddleware 接线（Experience Adaptation，freeze 层 F-06）
-  // Phase 81 Task 3：packs.trustGradient.enabled 门控
+  // trustGradient 已无条件 Core（TD-27），仅需 expertise 配置存在
   const expertiseCfg = config.expertise;
-  if (expertiseCfg && ctx.enabledPacks.trustGradient) {
+  if (expertiseCfg) {
     const expertiseManagerPath = '../config/expertise-manager.js';
     const expertiseMiddlewarePath = '../agent/middleware/expertise-prompt.js';
     Promise.all([

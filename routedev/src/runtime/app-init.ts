@@ -134,14 +134,12 @@ let globalHandlersRegistered = false;
  *
  * 设计原则：
  *   - 仅承载 packs?.xxx?.enabled 维度，不包含其他 config 字段的组合条件
- *   - trustGradient 在 Phase 79 后默认 Core，此处固定 true（仍保留字段以兼容现有读取）
+ *   - trustGradient 在 Phase 79 后无条件 Core（TD-27），不设 enabled 门控
  *   - 新增 Pack 时在此接口和 computeEnabledPacks 中追加字段
  */
 export interface EnabledPacks {
   /** 代码地图 Pack（codeMap engine + watchMode） */
   codeMap: boolean;
-  /** 信任梯度 Pack（Phase 79 后 Core，固定 true） */
-  trustGradient: boolean;
   /** 知识图谱高级算法 Pack（社区检测） */
   kgAdvanced: boolean;
   /** CCR 可逆压缩 Pack */
@@ -170,7 +168,6 @@ export interface EnabledPacks {
 export function computeEnabledPacks(config: AppConfig): EnabledPacks {
   return {
     codeMap: config.packs?.codeMap?.enabled === true,
-    trustGradient: true, // Phase 79 后 Core
     kgAdvanced: config.packs?.kgAdvanced?.enabled === true,
     ccrCompression: config.packs?.ccrCompression?.enabled === true,
     compose: config.packs?.compose?.enabled === true,

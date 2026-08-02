@@ -211,6 +211,37 @@ function escapeRegex(s: string): string {
 }
 
 /**
+ * 单遍提取文件中 import 语句引用的符号名（消费索引用）
+ *
+ * 覆盖与 isSymbolImportedInFiles 等价的三类形式：
+ *   - import { foo, bar as baz, type Qux } from '...'（取原名；`default as X` 取别名 X）
+ *   - import foo from '...'（默认导入）
+ *   - import { default as foo }（默认导入别名）
+ * 注意：`import * as ns` 无法静态解析具体符号名，与旧实现一致不索引。
+ */
+function extractImportedNames(content: string): Set<string> {
+  const names = new Set<string>();
+  // import { a, b as c, type D, default as E } from '...'
+  const named = /import\s+(?:type\s+)?\{([^}]*)\}\s+from/g;
+  let m: RegExpExecArray | null;
+  while ((m = named.exec(content)) !== null) {
+    for (const part of m[1].split(',')) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      const normalized = trimmed.replace(/^type\s+/, '').trim();
+      if (!normalized) continue;
+      const [orig, alias] = normalized.split(/\s+as\s+/);
+      // 原名是消费符号；`default as X` 消费的是别名 X
+      names.add((orig.trim() === 'default' && alias) ? alias.trim() : orig.trim());
+    }
+  }
+  // import foo from '...'（默认导入）
+  const def = /import\s+([\w$]+)\s+from/g;
+  while ((m = def.exec(content)) !== null) names.add(m[1]);
+  return names;
+}
+
+/**
  * 在文件列表中查找是否有 import 该符号的语句
  *
  * 匹配以下形式：
@@ -265,6 +296,9 @@ export function findSymbolConsumption(
  *
  * fail-open：单文件读取异常跳过，不阻塞整体扫描
  *
+ * 复杂度：单遍读取每个文件一次，构建 export 与 import 索引，
+ * 每个符号的消费判定为 O(1) 索引查询（原实现对每个 export 重扫全部文件）。
+ *
  * @param rootPath 项目根路径（默认为脚本所在目录的上一级）
  */
 export function detectDeadCode(rootPath: string = projectRoot): DeadCodeReport {
@@ -274,50 +308,72 @@ export function detectDeadCode(rootPath: string = projectRoot): DeadCodeReport {
   const srcFiles = SCAN_DIRS.flatMap(d => collectTsFiles(path.join(rootPath, d)));
   const testFiles = collectTsFiles(testsDir);
 
-  // 收集所有 export + 入口文件清单
-  const allExports: ExportItem[] = [];
+  // 单遍索引：exportsByFile 记录各文件导出；importRefs 记录符号 → 消费方文件集合
+  const exportsByFile = new Map<string, ExportItem[]>();
+  const importRefs = new Map<string, Set<string>>();
   const entryFiles: string[] = [];
+  const readContent = (file: string): string | null => {
+    try {
+      return fs.readFileSync(file, 'utf8');
+    } catch {
+      // fail-open：读取失败跳过
+      return null;
+    }
+  };
+  const indexImports = (file: string, content: string): void => {
+    for (const name of extractImportedNames(content)) {
+      let set = importRefs.get(name);
+      if (!set) {
+        set = new Set();
+        importRefs.set(name, set);
+      }
+      set.add(file);
+    }
+  };
 
   for (const file of srcFiles) {
     if (isEntryFile(file)) {
       entryFiles.push(path.relative(rootPath, file).replace(/\\/g, '/'));
     }
-    try {
-      const content = fs.readFileSync(file, 'utf8');
-      allExports.push(...extractExports(content, file));
-    } catch (err) {
-      // fail-open：输出错误，跳过此文件
-      console.error(`[warn] 读取失败 ${file}: ${(err as Error).message}`);
-    }
+    const content = readContent(file);
+    if (content === null) continue;
+    exportsByFile.set(file, extractExports(content, file));
+    indexImports(file, content);
+  }
+  for (const file of testFiles) {
+    const content = readContent(file);
+    if (content !== null) indexImports(file, content);
   }
 
-  // 检测每个 export 的消费情况
+  // 消费判定：仅查索引（排除定义文件自身；src 优先于 test 三态判定）
+  const srcSet = new Set(srcFiles);
+  const testSet = new Set(testFiles);
   const deadExports: DeadExport[] = [];
   const testOnlyExports: DeadExport[] = [];
+  let totalExports = 0;
 
-  for (const item of allExports) {
+  for (const [file, items] of exportsByFile) {
     // 入口文件 export 跳过（可能被外部消费）
-    if (isEntryFile(item.file)) continue;
-
-    const consumption = findSymbolConsumption(item.name, srcFiles, testFiles, item.file);
-
-    if (consumption === 'none') {
-      deadExports.push({
-        file: path.relative(rootPath, item.file).replace(/\\/g, '/'),
-        name: item.name,
-        type: item.kind,
-      });
-    } else if (consumption === 'test') {
-      testOnlyExports.push({
-        file: path.relative(rootPath, item.file).replace(/\\/g, '/'),
-        name: item.name,
-        type: item.kind,
-      });
+    if (isEntryFile(file)) continue;
+    for (const item of items) {
+      totalExports += 1;
+      const consumers = importRefs.get(item.name);
+      const consumedInSrc = consumers !== undefined
+        && [...consumers].some(f => f !== file && srcSet.has(f));
+      if (consumedInSrc) continue;
+      const consumedInTest = consumers !== undefined
+        && [...consumers].some(f => testSet.has(f));
+      const rel = path.relative(rootPath, file).replace(/\\/g, '/');
+      if (consumedInTest) {
+        testOnlyExports.push({ file: rel, name: item.name, type: item.kind });
+      } else {
+        deadExports.push({ file: rel, name: item.name, type: item.kind });
+      }
     }
   }
 
   return {
-    totalExports: allExports.length,
+    totalExports,
     deadExports,
     testOnlyExports,
     entryFiles,
