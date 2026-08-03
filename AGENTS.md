@@ -197,7 +197,9 @@ rtk proxy pnpm test   # 不压缩执行
 ```bash
 # 在 routedev 目录
 rtk err pnpm test
+rtk err pnpm test:desktop   # desktop 层 vitest（desktop/vitest.config.ts）
 rtk err pnpm typecheck
+rtk err pnpm typecheck:desktop
 rtk git status
 rtk git diff
 
@@ -237,117 +239,68 @@ rtk err <any-noisy-command>
 
 ---
 
-## 8. 当前工作状态交付快照（2026-08-01）
+## 8. 当前工作状态交付快照（2026-08-02）
 
-> 本节为跨 Harness / 跨会话交接而临时追加，保存当前进行中的工作状态。任务完成后可由后续维护者移除本节。
-> 计划文档：`报告/Proma借鉴落地计划-Phase97.md`。
+> 本节为跨 Harness / 跨会话交接而临时追加。上一版快照（2026-08-01，Phase 97 交接）已退役：Phase 97 全部完成并推送。
+> 新 Harness 接手第一步：读本节约 2 分钟，然后 `git status` + 读台账 `报告/RouteDev-综合审查去重与修复台账-2026-08-02.md`，确认未提交工作区后再动手。
 
-### 8.1 主线任务：Phase 97（Proma 借鉴落地）
+### 8.1 已完成并提交（HEAD = `092e488`，main 与 origin 同步）
 
-9 个 Part 渐进推进：A 统一执行上下文与事件生命周期 →（C 全局中断、D 工作区并行）→（B 联合回滚、E 子会话、G 输入框引用并行）→（F 自动化、H Agent Island），I 极简记忆穿插。
+| 批次 | 提交 | 内容 |
+|------|------|------|
+| Phase 97 落地（10 提交） | `ce5bfe3` 主提交 + 补丁（`9181116` config/schemas、`a19e31c` 远程契约测试、`9b2aa68` TaskMonitorPanel 测试等） | Part A-I 全部落地：统一执行上下文/事件生命周期、TurnSnapshot 联合回滚、全局中断队列、工作区能力边界、子会话、自动化调度+evolution、ComposerReference、Agent Island、极简记忆；k1-k5 接线 + u1-u3 UI + 双轴审查 |
+| 审计低风险子集 | `a30de25` fix(automation) + `092e488` refactor | 第 9 条安全缺口：executor 透传 allowlist/workspaceId + onConfirmTool 预授权判定；7 个无引用脚本入 `archive/scripts-once/`；detect-dead-code 单遍索引化；删 GraphNode.embedding；清 trustGradient 恒真门控 |
 
-**实现完成度（独立子 Agent 审查结论）：**
+用户已拍板：kernel 适配层与 automation-evolution 审批链**保留不删**（推翻审计报告第 4/5 条）。
 
-| Part | 内容 | 完成度 | 结论 |
-|------|------|--------|------|
-| A | 执行上下文/事件生命周期/Kernel | 2/3 | ⚠️ 类型层全落地，运行时链路休眠 |
-| B | TurnSnapshot 联合回滚 | 2/2 | ✅ 主链路完整，UI 入口缺 |
-| C | 全局中断队列 | 2/2 | ✅ 完整（60s 超时 + abort） |
-| D | 工作区能力边界 | 2/2 | ✅ 完整，配置段有偏差 |
-| E | 子会话可见性 | 2/2 | ⚠️ 主进程完整，renderer 零消费 |
-| F | 自动化调度 + 自我迭代 | 1/2 | ⚠️ 调度器完整，evolution 孤立 |
-| G | ComposerReference | 2/2 | ⚠️ 解析器完整，renderer 未接入 |
-| H | Agent Island | 2/2 | ✅ 完整 |
-| I | 极简记忆 | 3/3 | ⚠️ 记录侧完整，淘汰侧未接线 |
+### 8.2 当前未提交工作区（2026-08-02，另一会话的综合审查修复）
 
-**关键缺口（审查发现）：**
-- A3 AgentKernel 无生产实现（仅测试 MockKernel）——Critical
-- F2 automation-evolution 整个模块孤立（仅测试引用）——Critical
-- EngineEventV1 事件发射无 sink 调用方（`setEngineEventSink` 无消费者）——事件恒短路
-- AgentExecutionContext 触发来源未透传（恒为兜底 `'user'`）
-- 三组 IPC（composer / 子会话 / turn 回滚）主进程完整但 renderer 无调用方
+**48 个修改文件 + 一批新文件，全部未提交**，来源：`报告/RouteDev-综合审查去重与修复台账-2026-08-02.md`（R-01~R-10）。
 
-**已确认的处理决策（用户拍板）：**
-1. 两个 Critical 孤立模块：**全部补接线保留**（不删除）——kernel.ts 补 routedev-native 薄适配装配到 app-init；automation-evolution.ts 接入 scheduler 执行闭环
-2. 三组休眠 IPC 的 renderer UI：**本轮全做**——InputArea composer 引用提示（/ @ & ~ + 拖拽）、子会话面板、对话回滚入口
+| 编号 | 主题 | 关键文件 | 状态 |
+|------|------|----------|------|
+| R-01 | 远程安全边界（设备命名空间、session owner/ACL、reader/operator、审批归属、SSE 隔离、撤销） | `desktop/main/remote/{remote-service,gateway-server,remote-types}.ts`、`shared/remote-*.ts` | 已修复，双设备动态验证待 CI |
+| R-02 | 发布可信链路（签名、无签名禁更新、SHA-512 校验、checksum/SBOM/provenance） | `electron-builder.yml`、`desktop/main/updater.ts`、`electron-builder.release.yml`、`scripts/create-release-manifest.mjs` | 已落地，真实凭据待 CI |
+| R-03 | CI 与跨平台构建 | `.github/`（workflows）、`package.json` | 已落地，首次 CI 待跑 |
+| R-04 | 安全 fail-closed（realpath 异常分类、工具输出脱敏、工作区边界） | `src/tools/security-enhanced.ts`、`src/agent/context/tool-output-pipeline.ts` | 路径/输出已修复，workspace 动态验证待补 |
+| R-05 | 共享 loop 并发串线 → FIFO `AgentRunScheduler` | `src/agent/run-scheduler.ts`（新）、`desktop/main/bridges/chat-bridge.ts`、`src/agent/loop.ts` | 已修复（排队/abort/上限/超时），事件顺序待 CI |
+| R-06 | Kernel/EngineEventV1/Trace 生产执行链路 | `src/agent/kernel-native.ts`、`src/runtime/app-init.ts`、chat-bridge | 已落地（scheduler → ChatBridge → NativeAgentKernel → ReActAgentLoop），跨层一致性待动态验证 |
+| R-07 | Browser SSRF（逐跳重定向校验、Puppeteer 请求拦截） | `src/tools/builtin/browser.ts`、`code-search.ts` | 已修复，DNS rebinding 待 CI |
+| R-08 | Android 时间线本地游标与服务端 summary 混用 | `routedev-android/app/.../SessionRepository.kt`、`gradle.properties` | 已修复，Gradle 下载被网络阻塞（环境阻塞） |
+| R-09 | 默认权限 manual、SecretStore、远程 ACL | `src/config/defaults.ts`、`desktop/main/secret-store.ts`（新）、`src/agent/middleware/permission-middleware.ts` | 已落地，迁移矩阵/审计待 CI |
+| R-10 | 安全治理文档 | `routedev/SECURITY.md`、`docs/DATA_FLOW.md`、`docs/LICENSE_BOUNDARIES.md`、`docs/RELEASE_CHECKLIST_v5.0.md` | 已落地，性能基线仍为待办 |
 
-### 8.2 已完成的改动（全部未提交）
+**新增未跟踪文件**（属于 R-01~R-10）：`.github/`、`routedev/SECURITY.md`、`desktop/main/secret-store.ts`、`src/agent/run-scheduler.ts`、`docs/DATA_FLOW.md`、`docs/LICENSE_BOUNDARIES.md`、`docs/RELEASE_CHECKLIST_v5.0.md`、`electron-builder.release.yml`、`scripts/create-release-manifest.mjs`、`tests/agent/run-scheduler.test.ts`、`tests/desktop/secret-store.test.ts`、`tests/tools/browser-ssrf.test.ts`、台账报告。
 
-**Phase 97 本体：**
-- Part A：`src/agent/execution-context.ts`、`src/harness/event-types.ts`、`src/agent/kernel.ts`（接口，待接线）；loop.ts 发射 agent/turn/message 生命周期 + sequence
-- Part B：`src/harness/turn-snapshot.ts` TurnSnapshotManager（capture/restore，hash+边界校验）；chat-bridge 每 turn capture
-- Part C：`src/agent/interruption.ts` + `interruption-broker.ts`（submit/resolve/reject/reclaim/abort + 60s 超时）；renderer `useGlobalInterruptions.ts` 顶层挂载
-- Part D：`src/workspace/types.ts` + `manager.ts`（CRUD + validateAttachments + isPathAllowed 接入权限引擎）
-- Part E：`src/agents/subagent-registry.ts`、`desktop/main/bridges/agent-bridge.ts`、spawn-agent 携带 childSessionId、delegation 增加 permissionCeiling（执行期强制）
-- Part F：`src/runtime/automation-scheduler.ts`（cron/迁移/tick/runTask）+ `automation-evolution.ts`（待接线）
-- Part G：`src/agent/context/composer-reference.ts`（/ & ~ @ 前缀 + accessScope）；chat-bridge 结构化注入 systemBlocks
-- Part H：`desktop/main/agent-status-service.ts` + `AgentIsland.tsx`（常驻顶部轮询 agent:get-status）
-- Part I：`src/memory/user-profile.ts`、`hit-stat.ts`、`src/skills/coach.ts`；skill-lifecycle 增 suggestSkillFromWorkflows
-- 装配：`src/runtime/app-init-agent-loop.ts` / `app-init-agent-middleware.ts` / `app-init-agent-trust.ts`（由 app-init-agent.ts 调用）
+**不提交**：`.reasonix/`（工具状态）、根级 `tests/`（仅 `tests/runtime/.probe.txt` 临时探针）。
 
-**收尾修复：**
-1. preload/index.ts 两处重复 `agent` 段合并（follow-up + getStatus）
-2. desktop/main/index.ts Phase 97 handler 补 `async`；`chat:restore-turn` 修正 Multi 用法（1 个类型参数，handler 首参是 event）
-3. tests/harness/audit-logger.test.ts flaky 测试加 10ms 间隔
-4. **typecheck:desktop 存量错误清零**（46 → 0）：chat-bridge finalUsage 标注 TokenUsageInfo；config-bridge getModels 可选调用；index.ts `Electron.AppName`→`Parameters<typeof app.getPath>[0]`、isActive→isFocused、engine:start/stop/restart 改日志 stub；profile-bridge.test.ts 夹具补字段；gateway-server removeListener 类型；ProfileVersionPanel.test.tsx fieldChanges 对象化 + jest-dom import；useRouteDevStore `as unknown as GoalEvent`
-
-### 8.3 验证状态（截至 2026-08-01）
+### 8.3 验证状态（台账最新，2026-08-02）
 
 | 检查 | 结果 |
 |------|------|
-| `pnpm typecheck`（tsc --noEmit） | ✅ exit 0 |
-| `pnpm typecheck:desktop` | ✅ exit 0（存量错误已清零） |
-| `pnpm test` | ✅ 284 文件通过，3775 测试通过，160 跳过 |
+| `pnpm typecheck` / `pnpm typecheck:desktop` | ✅ 双绿 |
+| `pnpm test`（vitest run） | ✅ 287 文件通过，3808 测试通过，160 跳过 |
+| `pnpm test:desktop`（desktop/vitest.config.ts） | ✅ 10 文件 / 124 测试通过 |
+| Android Gradle 单测 | ⚠️ 环境阻塞（Gradle 下载源 `Unexpected end of file`） |
+| CI / 签名 / 双设备 / DNS rebinding / Puppeteer 页面请求 | ⚠️ 待动态验证 |
 
-注意：以上为收尾修复后状态；待办接线与 UI 改动完成后必须重跑全部验证。
+台账结论：P0/P1 未关闭前不视为生产就绪；「待动态验证/环境阻塞」项不得标记为通过。
 
-### 8.4 待办清单（按优先级）
+### 8.4 遗留事项（新 Harness 可选下一步）
 
-**Critical（补接线保留）：**
-- [ ] k1 kernel.ts 接线：补 routedev-native 薄适配（包装 ReActAgentLoop），装配到 `src/runtime/app-init.ts`，保证 getSessionState/abort 有生产消费点；更新 `tests/agent/kernel.test.ts`
-- [ ] k2 automation-evolution 接线：AutomationScheduler.runTask 后将结果转 AutomationFeedback → 定期 buildSuggestion → SuggestionApprovalQueue（人工审批后应用，不自动写）；更新测试
+1. **审查并提交 R-01~R-10 未提交工作区**（提交前先复核 48 文件 diff + 台账状态；注意 Android 测试环境阻塞项标注）
+2. 审计报告未做项（用户当时选择低风险子集，未拍板要不要做）：108 个 IPC handler 从 `desktop/main/index.ts` 迁入领域 bridge；Android `RouteDevApp.kt`（681 行）按任务/设置/时间线拆分
+3. 自动化审批队列 UI 入口（上一轮审查 should-fix：`SuggestionApprovalQueue` 无 UI 消费）
+4. 台账「待动态验证」清单在干净 CI 环境跑通并更新状态
 
-**Warning（代码层）：**
-- [ ] k3 EngineEventV1 sink 接通：给 loop.setEngineEventSink 找生产调用方（trace-collector 或 chat-bridge）；trace 携带 sequence/turnId
-- [ ] k4 AgentExecutionContext 透传：chat-bridge 传 'user'、automation executor 传 'automation'、delegation 传 'delegation'、remote 传 'remote'
-- [ ] k5 导出即死函数接入：evaluateBatchCompletion、isAllowedByAllowlist + allowlist 字段、validateUserProfile、HitStat.evaluateLowHits
+### 8.5 陷阱与注意事项
 
-**UI（本轮全做）：**
-- [ ] u1 InputArea 接入 composer 引用提示（/ @ & ~ 前缀 + 拖拽文件解析）
-- [ ] u2 子会话面板（listSubagents/getSubagent/stopSubagent）
-- [ ] u3 对话回滚入口（listTurnSnapshots/restoreTurn）
-
-**收尾：**
-- [ ] v1 重跑 pnpm typecheck / typecheck:desktop / pnpm test 全绿
-- [ ] v2 双轴代码审查（standards + spec）
-- [ ] 提交到 main 分支（当前领先 origin/main 94 提交未推送；用户要求提交时才提交）
-
-### 8.5 关键文件索引
-
-| 领域 | 文件 |
-|------|------|
-| 执行上下文 | `src/agent/execution-context.ts` |
-| 事件协议 | `src/harness/event-types.ts` |
-| Kernel 接口 | `src/agent/kernel.ts`（待接线） |
-| Turn 快照 | `src/harness/turn-snapshot.ts` |
-| 中断队列 | `src/agent/interruption.ts` / `src/agent/interruption-broker.ts` |
-| 工作区 | `src/workspace/types.ts` / `src/workspace/manager.ts` |
-| 子会话 | `src/agents/subagent-registry.ts` / `desktop/main/bridges/agent-bridge.ts` |
-| 自动化 | `src/runtime/automation-scheduler.ts` / `src/runtime/automation-evolution.ts`（待接线） |
-| 引用解析 | `src/agent/context/composer-reference.ts` |
-| Agent 状态 | `desktop/main/agent-status-service.ts` / `desktop/renderer/src/components/agent/AgentIsland.tsx` |
-| 记忆 | `src/memory/user-profile.ts` / `src/memory/hit-stat.ts` |
-| Skills 沉淀 | `src/skills/coach.ts` / `src/skills/skill-lifecycle.ts` |
-| 装配 | `src/runtime/app-init.ts` / `src/runtime/app-init-agent-loop.ts` 等 |
-
-### 8.6 陷阱与注意事项
-
-1. Zod schema preprocess 兜底：数组 schema 的 preprocess 兜底必须是 `[]` 而非 `{}`（已修复 automations 段）
+1. Zod schema preprocess 兜底：数组 schema 的 preprocess 兜底必须是 `[]` 而非 `{}`
 2. createValidatedHandlerMulti：只接受 1 个类型参数 `<TResult>`；handler 首参是 `event`
 3. createValidatedHandler：handler 必须返回 `Promise<TResult>`，同步回调要加 `async`
 4. BrowserWindow 没有 `isActive()`，用 `isFocused()`
 5. `Electron.AppName` 不存在，用 `Parameters<typeof app.getPath>[0]`
-6. git status：`main...origin/main [ahead 94]`，大量文件未提交；提交前确认范围
+6. **当前 main 与 origin 已同步**；工作区大量未提交改动（§8.2），提交前先按批次核对范围
 7. typecheck:desktop 输出很长，用 `Select-String -Pattern "error TS"` 过滤
-8. 死代码审查发现 `KernelBinding` 全仓零引用，接线时注意
+8. 自动化 executor 的 allowlist 预授权在 `chat-bridge.ts` `onConfirmTool`（`isPreAuthorized`），语义：白名单内免确认、白名单外走确认流、危险操作仍被硬拒绝
 9. 严格死代码原则：新增配置/模块/函数必须有消费点，孤立模块标 Critical 阻塞合入
