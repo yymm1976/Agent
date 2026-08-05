@@ -89,6 +89,7 @@ import type { AgentKernel } from '../agent/kernel.js';
 import { NativeAgentKernel } from '../agent/kernel-native.js';
 import { WorktreeTaskRunner } from '../harness/worktree-task-runner.js';
 import { summarizeToolsForPrompt } from '../prompts/manager.js';
+import { resolveVisibleTools } from '../tools/tool-surface-resolver.js';
 // Phase 97 Part F：自动化调度器类型
 import type { AutomationScheduler } from './automation-scheduler.js';
 import { AutomationScheduler as AutomationSchedulerImpl, migrateAutomationTasks } from './automation-scheduler.js';
@@ -542,11 +543,14 @@ export function createAppDependencies(
   // B-16：task worktree 隔离——ExperimentManager 注入真实 runner（worktree 内执行任务）
   // 仅当实验子系统存在且 kernel 可用时接线；依赖缺失时 runner 内部降级为失败结果（不抛异常）
   if (ctx.experimentManager) {
-    // P1：渲染真实可见工具摘要（提示中的工具列表与 schema 一致，消除空摘要冲突）
+    // P1 修复（复审）：工具摘要必须与真实 schema 一致——用 resolveVisibleTools
+    // 过滤后的可见面（hidden/mode/deferred 不可见），而非全部注册工具
+    // （此前多报工具：提示说有 browser/vfs_read 等，实际 schema 没有）
     let toolSummary: string | undefined;
     if (ctx.registry) {
+      const visible = resolveVisibleTools(ctx.registry.list(), { mode: 'coding' });
       toolSummary = summarizeToolsForPrompt(
-        ctx.registry.list().map((t) => ({
+        visible.map((t) => ({
           name: t.definition.name,
           category: t.definition.category ?? 'general',
         })),

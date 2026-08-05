@@ -119,10 +119,12 @@ export function toCompletionStatus(gateResult?: GateResult, executionSucceeded =
   // 不得宣称"已验证通过"（completed_verified/with_warnings），
   // 只能算"未验证完成"——Producer 与最终模型不得把超时描述成验证通过。
   if (gateResult.checks.some((check) => check.skipped)) return 'completed_unverified';
+  // P1 修复（复审）：没有任何检查执行过（含基础设施异常时构造的空 checks）=
+  // 验证未执行，必须优先于 warnings 判定——否则异常被误标为"带警告通过"
+  if (gateResult.checks.length === 0) return 'completed_unverified';
   if (gateResult.warnings?.length || gateResult.checks.some((check) => check.warnings?.length)) {
     return 'completed_with_warnings';
   }
-  if (gateResult.checks.length === 0) return 'completed_unverified';
   return 'completed_verified';
 }
 

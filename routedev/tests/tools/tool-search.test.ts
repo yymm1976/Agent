@@ -136,4 +136,42 @@ describe('B-01B tool_search 执行与提升', () => {
       expect(boost.names.size).toBe(0);
     });
   });
+
+  it('P0 回归（复审）：普通桌面 run 的 allowedToolNames 为空——tool_search 提升的工具下一轮直接进 schema（无静态 Set 否决）', async () => {
+    const registry = buildRegistry();
+    const boost = new TurnToolBoost();
+    const adapter = new ToolRegistryAdapter(registry, { execute: () => Promise.resolve({ success: true, output: 'x' }) } as never, {} as never);
+    adapter.setToolBoost(boost);
+    const tool = createToolSearchTool({ registry, boost });
+
+    // 第 1 轮：deferred 工具不可见（core 面）
+    let raw = adapter.getToolDefinitions().map((d) => d.name);
+    // 桌面场景：loop 的 allowedToolNames 为 null（修复后仅远程/自动化传硬白名单）
+    let round1Schema = raw; // loop 语义：allowedToolNamesSet 为 null 时不二次过滤
+    expect(round1Schema).not.toContain('web_search');
+
+    // 第 1 轮模型调用 tool_search('搜索') → 提升 web_search
+    await (tool.execute as (args: Record<string, unknown>) => Promise<{ output: string }>)({ query: '搜索' });
+    expect(boost.names.has('web_search')).toBe(true);
+
+    // 第 2 轮：adapter 每轮重新解析（含 boost）——web_search 必须进入 schema
+    raw = adapter.getToolDefinitions().map((d) => d.name);
+    const round2Schema = raw; // 无静态 Set 过滤
+    expect(round2Schema).toContain('web_search');
+    // 未提升的 deferred 仍不可见
+    expect(round2Schema).not.toContain('browser');
+  });
+
+  it('P0 回归（复审）：远程硬白名单仍生效——白名单外即使提升也不进 schema', () => {
+    const registry = buildRegistry();
+    const boost = new TurnToolBoost();
+    boost.add(['web_search']);
+    const adapter = new ToolRegistryAdapter(registry, { execute: () => Promise.resolve({ success: true, output: 'x' }) } as never, {} as never);
+    adapter.setToolBoost(boost);
+    // 远程 allowlist 只允许 file_read——loop 语义：allowedToolNamesSet 过滤 adapter 结果
+    const schema = adapter.getToolDefinitions().map((d) => d.name);
+    const allowedToolNamesSet = new Set(['file_read']);
+    const filtered = schema.filter((name) => allowedToolNamesSet.has(name));
+    expect(filtered).toEqual(['file_read']);
+  });
 });

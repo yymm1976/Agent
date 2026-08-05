@@ -49,6 +49,36 @@ import {
 const VERIFY_REQUEST_PATTERN = /验证|测试|检查构建|运行构建|类型检查|\b(?:verify|test|typecheck|lint|build)\b/i;
 
 /**
+ * 修复 8（复审）：DeepSeek 思考强度与输出预算的任务形状确定性映射
+ * （官方：普通请求 high，复杂 Agent 请求可用 max；多步实现/调查/失败重试取 max）
+ */
+function reasoningEffortForTaskShape(taskShape?: string): 'low' | 'high' | 'max' | undefined {
+  switch (taskShape) {
+    case 'multi-step-impl':
+    case 'investigation':
+      return 'max';
+    case 'qa':
+    case 'single-step':
+    default:
+      return 'high';
+  }
+}
+
+/** 修复 8：输出 token 预算按任务形状映射（多步/调查任务需要更长输出） */
+function maxTokensForTaskShape(taskShape?: string): number | undefined {
+  switch (taskShape) {
+    case 'multi-step-impl':
+      return 8192;
+    case 'investigation':
+      return 8192;
+    case 'qa':
+    case 'single-step':
+    default:
+      return undefined; // 保持 loop 默认 4096
+  }
+}
+
+/**
  * 自动化任务预授权判定：allowlist（read:/write:/run:/tool: 前缀条目）是否覆盖该工具调用。
  * 能力候选从工具名与参数中的路径/命令字段推导；匹配复用 isAllowedByAllowlist 的前缀语义。
  * B-03：git_op 按操作区分——`tool:git_op` 只预授权读操作（status/log/diff 等）；
@@ -214,7 +244,7 @@ export class ChatBridge {
     // 与 chat-runner.ts 顶部声明保持一致，确保删除 chat-runner 后 desktop 不丢失可观测性
     let hasTaskError = false;
     let accumulatedContent = '';
-    let accumulatedReasoning = '';
+
     let actualUserMessage = text;
     let routeDecision: RoutingResult | null = null;
     let trajectorySummary: TrajectorySummary | null = null;
@@ -361,12 +391,12 @@ ${skillBlocks.join('\n')}
           : undefined,
         boostedTools: boosted.size > 0 ? boosted : undefined,
       });
-      // B-01B：并入 tool_search 本回合提升的 deferred 工具（否则 loop 的
-      // allowedToolNames 过滤会把提升否决掉，tool_search 的"已临时启用"成为空头承诺）
-      const allowedToolNames = [
-        ...toolsForThisRun.map((tool) => tool.definition.name),
-        ...boosted,
-      ];
+      // P0 修复（复审）：allowedToolNames 只承载"硬白名单"语义（远程设备权限 /
+      // 自动化 allowlist / 用户显式限制）。普通桌面对话不传——工具可见性完全交给
+      // resolveVisibleTools + TurnToolBoost（每轮 adapter 重新解析）。
+      // 此前把"初始可见工具全集"传进去会导致 tool_search 中途提升的工具被
+      // loop 的静态 Set 过滤掉（提升成为空头承诺）。
+      const allowedToolNames = remoteContext?.allowedToolNames;
 
       // Phase 97 Part I Task I2：UserProfile 字段引用计数（fail-open，渲染前记一次）
       // 供低触发评估：档案长期未被引用时提示用户更新或停用
@@ -407,6 +437,10 @@ ${skillBlocks.join('\n')}
         // Phase 97 Part A Task A4：透传执行上下文——触发来源按调用方显式透传
         // （automation 调度 / remote 远程 / user 本地；requestId 作为会话槽位）
         context: executionContext,
+        // 修复 8（复审）：DeepSeek 思考强度按任务形状确定性映射（官方建议
+        // 复杂 Agent 任务用 max）——qa/单步实现 high，多步/调查/失败重试 max
+        reasoningEffort: reasoningEffortForTaskShape(classifyResult.taskShape),
+        maxTokens: maxTokensForTaskShape(classifyResult.taskShape),
         systemBlocks: [
           {
             type: 'text',
@@ -459,9 +493,6 @@ ${skillBlocks.join('\n')}
 
         case 'reasoning_delta':
           // 转发推理过程增量，供前端显示模型思考过程
-          // C3（P0 配套）：累积 reasoning——持久化到 conversationHistory，
-          // 重启恢复的续跑消息带 reasoning_content（DeepSeek V4 400 防御）
-          accumulatedReasoning += event.text;
           stream.emit({ type: 'reasoning_delta', reasoning: event.text });
           break;
         case 'thinking':
@@ -543,8 +574,11 @@ ${skillBlocks.join('\n')}
       tracker.record(finalUsage, { modelId: routeDecision.model.id, agentId: 'default', stepId: 'chat' });
       // Phase 96+ A3.3：缓存命中统计——在 tracker.record 之后同步更新 cacheStatsTracker
       // provider 取自 routeDecision.providerId（DeepSeek/OpenAI/Anthropic 等），归一化多 Provider 缓存字段
-      const cacheHit = finalUsage.cacheReadInputTokens ?? 0;
-      const cacheMiss = Math.max(0, finalUsage.inputTokens - cacheHit);
+      // P0 修复（复审）：DeepSeek 原生 prompt_cache_hit_tokens/miss_tokens 优先；
+      // Anthropic 的 cacheReadInputTokens 为回退（此前只读 Anthropic 字段，
+      // DeepSeek 真实缓存率被永远记成 hit=0/miss=全部）
+      const cacheHit = finalUsage.cacheHitTokens ?? finalUsage.cacheReadInputTokens ?? 0;
+      const cacheMiss = finalUsage.cacheMissTokens ?? Math.max(0, finalUsage.inputTokens - cacheHit);
       this.ctx.cacheStatsTracker?.record(cacheHit, cacheMiss, routeDecision.providerId ?? 'unknown');
       // CONCERN 修复：CircuitBreaker 接入——Agent Loop 成功完成时重置模型失败计数
       // 与 chat-runner.ts 内层 try 末尾的 recordModelSuccess 对齐
@@ -577,12 +611,10 @@ ${skillBlocks.join('\n')}
       const completionStatus = toCompletionStatus(gateResult, !hasTaskError);
 
       this.ctx.conversationHistory.push({ role: 'user', content: actualUserMessage });
-      this.ctx.conversationHistory.push({
-        role: 'assistant',
-        content: accumulatedContent,
-        // C3：推理内容随历史持久化——续跑/重启恢复时回传 reasoning_content
-        ...(accumulatedReasoning ? { reasoningContent: accumulatedReasoning } : {}),
-      });
+      // 仅持久化最终文本（DeepSeek 官方：无工具调用的最终 assistant reasoning
+      // 在下一轮可忽略；把全程 reasoning 拼接挂到最终消息是错误语义）。
+      // 完整工具轨迹持久化（assistant 推理+工具轮次 + tool_result 链）见技术债 TD-21。
+      this.ctx.conversationHistory.push({ role: 'assistant', content: accumulatedContent });
       if (this.ctx.conversationHistory.length > 20) {
         this.ctx.conversationHistory = this.ctx.conversationHistory.slice(-20);
       }

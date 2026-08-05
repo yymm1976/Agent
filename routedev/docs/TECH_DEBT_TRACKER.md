@@ -3,17 +3,48 @@
 > **用途：** 集中记录所有已知技术债，避免后续审查重复发现已排期项。
 > **审查员指引：** 报告 findings 前请先对照本表 §1，本表 §1 已清空，仅报告新发现的问题。
 > **维护规则：** 每轮审查后更新；修复完成的项移至 §3 历史区；新发现的项追加到 §1。
-> **最后更新：** 2026-07-29（Phase-95 完成，TD-07 / TD-20 已修复移至 §3）
+> **最后更新：** 2026-08-05（DeepSeek V4 复审——新增 TD-21~TD-24 活跃项）
 
 ---
 
-## 1. 活跃技术债清单（0 项）
+## 1. 活跃技术债清单（4 项）
 
 按优先级排序。ID 格式：`TD-<序号>`（本表内部 ID） + 历史报告 ID（如 G-011 / F-004）。
 
 | # | TD ID | 历史 ID | 优先级 | 类别 | 简述 | 解决 Phase | 触发来源 |
 |---|-------|---------|--------|------|------|-----------|----------|
-| — | — | — | — | — | _暂无活跃项_ | — | — |
+| 1 | TD-21 | DeepSeek V4 复审（2026-08-05） | P1 | 持久化 | Authoritative Event Log（L0 原始事件/L1 权威状态/L2 模型视图）——conversationHistory 仅存最终文本，工具轨迹/中间决策/失败路径不持久化，重启恢复只是摘要；JSONL 序列化已支持 reasoningContent，缺的是 ChatBridge 提供的消息链 | 未排期 | 复审报告 §六 |
+| 2 | TD-22 | DeepSeek V4 复审（2026-08-05） | P1 | 架构 | ReActAgentLoop 无状态化（RunState 收敛 current* 字段）——解除全局 FIFO 依赖，多 worktree/多会话并行需多 loop 实例；run-scheduler workspaceId 已预留 | 未排期 | 复审报告 §七 / 初评 §七 |
+| 3 | TD-23 | DeepSeek V4 复审（2026-08-05） | P2 | 评测 | Eval Level 2/3（真实仓库/Soak/恢复）+ 真实 DeepSeek V4 Flash API 基线（含 Tool Call 400 兼容测试）——环境阻塞：无 DEEPSEEK_API_KEY | 未排期 | 复审报告 §九 / 初评 §十 |
+| 4 | TD-24 | DeepSeek V4 复审（2026-08-05） | P2 | 协议 | Worktree Runner 未接入 Completion Gate——"无 error 事件即成功"缺少 escalation/maxIterations/测试通过/预期 Diff/Verifier finding 判定 | 未排期 | 复审报告 §四 |
+
+---
+
+## 2. 活跃技术债详情
+
+### TD-21 Authoritative Event Log（L0/L1/L2 三层）
+
+- **现状**：ChatBridge 每轮结束只向 conversationHistory 追加 user 最终消息 + assistant 最终文本，然后 `slice(-20)`；工具调用、工具结果、中间 reasoning、权限决策、Todo 演变全部丢弃。Trace（EngineEventV1）已记录 L0 原始事件，但无 L1 权威状态重建与 L2 模型视图分层；压缩只影响模型视图，不删除原始执行事实。
+- **目标**：L0 原始事件（user/assistant reasoning/tool calls/tool results/permission/edits/test logs/verifier findings）→ L1 权威状态（goal/phase/task graph/decisions/modified files/verification state/blockers）→ L2 模型视图（stable prefix + dynamic summary + 最近原始事件 + artifact refs + compacted history）。只允许压缩 L2。
+- **触发**：2026-08-05 DeepSeek V4 复审 §六（"重启后的长期历史仍未保留完整工具轨迹"）。
+
+### TD-22 ReActAgentLoop 无状态化（RunState）
+
+- **现状**：loop 持有 currentContext/currentTurnId/currentWorkspace/currentCapability/currentConfirmTool 等实例字段，NativeAgentKernel 显式互斥单会话运行；AgentRunScheduler 全局 FIFO 是承认此限制的临时措施。run-scheduler 已支持 workspaceId 键控（2026-08-05 修复 7），但并行仍受 loop 单例约束。
+- **目标**：`AgentRun { context; messages; toolSurface; permissionChannel; eventSequence; workspace; followUpQueue; usage }` → `loop.run(runState)` 无状态服务；调度器升级为同工作区写操作串行 / 不同 worktree 并行 / 只读 Explorer 并行。
+- **触发**：2026-08-05 DeepSeek V4 复审 §七 + 初评 §七。
+
+### TD-23 Eval Level 2/3 与真实模型基线
+
+- **现状**：12 个任务为零依赖小型 Node fixture（Level 1 smoke）；无真实 TypeScript/Java/Rust/Python 仓库任务、无长会话、无压缩后恢复、无崩溃恢复、无真实缓存率、无多轮重复统计方差；真实 DeepSeek V4 Flash 基线因缺 API key 未运行。
+- **目标**：Level 2 Repository Tasks（真实仓库 + 多文件 + 测试失败定位 + 重复运行统计方差）；Level 3 Soak（50-100 工具调用、超长日志、压缩、重启、网络中断、worktree、checkpoint 回滚），指标含任务成功率/工具 JSON 合法率/缓存命中率/tokens-per-success/p50-p95 延迟。
+- **触发**：2026-08-05 复审 §九 + 初评 §十。环境阻塞：无 DEEPSEEK_API_KEY。
+
+### TD-24 Worktree Runner 接入 Completion Gate
+
+- **现状**：WorktreeTaskRunner 无 error 事件即标记成功；不判定 escalation/maxIterations/测试是否通过/预期 Diff/Goal 满足/Verifier finding。CompletionGate 已有 toCompletionStatus 语义（超时/异常 = completed_unverified），未接入 worktree 路径。
+- **目标**：worktree run 结束后以 modifiedFiles + gate 结果产出成功判定；escalation/max_iterations 显式失败。
+- **触发**：2026-08-05 复审 §四。
 
 ---
 

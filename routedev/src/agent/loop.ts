@@ -133,6 +133,13 @@ export interface ReActRunParams {
    * worktree 路径，主工作区不被读写；缺省 = 工具层默认上下文）
    */
   workspace?: { workingDirectory: string; allowedDirectories: string[] };
+  /**
+   * 修复 8（复审）：DeepSeek 思考强度确定性映射（taskShape → effort），
+   * 由调用方（chat-bridge）按任务形状传入；未传时适配器默认 high
+   */
+  reasoningEffort?: 'low' | 'high' | 'max';
+  /** 修复 8：单次 LLM 调用最大输出 token（未传时保持 loop 默认 4096） */
+  maxTokens?: number;
   /** 工具调用确认回调（Phase 9 自主模式） */
   onConfirmTool?: ConfirmToolCallback;
   /** 模型调用成功回调 */
@@ -198,6 +205,9 @@ export class ReActAgentLoop {
   private currentCapability: import('../router/capability-resolver.js').CapabilityDecision | null = null;
   /** B-16（审查 I2 修复）：当前 run 的隔离工作区（worktree 实验时切换工具的 workingDirectory 与边界） */
   private currentWorkspace: { workingDirectory: string; allowedDirectories: string[] } | undefined;
+  /** 修复 8（复审）：当前 run 的思考强度与输出预算（taskShape 映射，run 期间生效） */
+  private currentReasoningEffort: 'low' | 'high' | 'max' | undefined;
+  private currentMaxTokens: number = 4096;
   /**
    * 压缩器（可选）：注入后在 ReAct 循环每轮迭代前检查 messages 的 token 数，
    * 超过阈值时调用 compressEnhanced 压缩，防止 messages 膨胀超出模型窗口
@@ -437,6 +447,9 @@ export class ReActAgentLoop {
       this.toolExecutor.resetBoost?.();
       // B-16（审查 I2 修复）：保存隔离工作区——worktree 实验时工具读写切换到 worktree
       this.currentWorkspace = params.workspace;
+      // 修复 8（复审）：保存任务形状映射的思考强度与输出预算
+      this.currentReasoningEffort = params.reasoningEffort;
+      this.currentMaxTokens = params.maxTokens ?? 4096;
       // B-14：解析模型运行时能力——缺失能力显式降级（无工具/串行/禁图像），run 期间生效
       this.currentCapability = resolveCapabilities(
         routeDecision.model.capabilities,
@@ -1198,7 +1211,9 @@ export class ReActAgentLoop {
       // Phase 55：透传 systemBlocks，LLM 客户端优先使用，未传时回退 systemPrompt
       systemBlocks,
       tools: effectiveToolDefs.length > 0 ? effectiveToolDefs : undefined,
-      maxTokens: 4096,
+      maxTokens: this.currentMaxTokens,
+      // 修复 8（复审）：任务形状映射的思考强度透传给适配器（DeepSeek 支持 max）
+      reasoningEffort: this.currentReasoningEffort,
       timeoutMs: this.config.llmTimeout,
       stream: true,
       // Phase 32 Task 2：透传 enableCache

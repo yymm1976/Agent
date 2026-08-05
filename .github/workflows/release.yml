@@ -11,7 +11,7 @@ permissions:
   attestations: write
 
 env:
-  NODE_VERSION: '20.x'
+  NODE_VERSION: '22.x'
   PNPM_VERSION: '11.7.0'
 
 jobs:

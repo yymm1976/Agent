@@ -361,6 +361,10 @@ export class RouteDevEngine {
         started = true;
         this.agentStatus.markRunning(sessionId, text.slice(0, 80));
         await this.chatBridge.sendChat(text, { ...remoteContext, schedulerSignal });
+      }, {
+        // 修复 7（复审）：真实接线 workspaceId——同一 worktree 的 run 排队相邻，
+        // 供审计/排序；并行仍需多 loop 实例（见 run-scheduler 注释）
+        workspaceId: remoteContext?.workspaceId,
       });
       this.agentStatus.markCompleted(sessionId);
     } catch (err) {
