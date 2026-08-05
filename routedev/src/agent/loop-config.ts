@@ -126,6 +126,13 @@ export interface ToolExecutorAdapter {
   /** 获取当前可用的工具定义（给 LLM 的 function calling schema） */
   getToolDefinitions(): LLMToolDefinition[];
 
+  /**
+   * P2（turn 隔离）：run 开始时重置回合级提升（tool_search boost）。
+   * 防止上一个 run 提升但未调用的工具泄漏到本次 run。
+   * 未实现时跳过（无提升机制的适配器兼容）。
+   */
+  resetBoost?(): void;
+
   /** 执行一个工具调用，返回结果文本
    *  如果工具不存在或执行失败，返回错误描述（不抛异常）
    *

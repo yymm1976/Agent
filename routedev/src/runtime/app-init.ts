@@ -88,6 +88,7 @@ import type { SubagentRegistry } from '../agents/subagent-registry.js';
 import type { AgentKernel } from '../agent/kernel.js';
 import { NativeAgentKernel } from '../agent/kernel-native.js';
 import { WorktreeTaskRunner } from '../harness/worktree-task-runner.js';
+import { summarizeToolsForPrompt } from '../prompts/manager.js';
 // Phase 97 Part F：自动化调度器类型
 import type { AutomationScheduler } from './automation-scheduler.js';
 import { AutomationScheduler as AutomationSchedulerImpl, migrateAutomationTasks } from './automation-scheduler.js';
@@ -541,6 +542,16 @@ export function createAppDependencies(
   // B-16：task worktree 隔离——ExperimentManager 注入真实 runner（worktree 内执行任务）
   // 仅当实验子系统存在且 kernel 可用时接线；依赖缺失时 runner 内部降级为失败结果（不抛异常）
   if (ctx.experimentManager) {
+    // P1：渲染真实可见工具摘要（提示中的工具列表与 schema 一致，消除空摘要冲突）
+    let toolSummary: string | undefined;
+    if (ctx.registry) {
+      toolSummary = summarizeToolsForPrompt(
+        ctx.registry.list().map((t) => ({
+          name: t.definition.name,
+          category: t.definition.category ?? 'general',
+        })),
+      );
+    }
     ctx.experimentManager.setExperimentRunner(
       new WorktreeTaskRunner({
         kernel: agentKernel,
@@ -549,9 +560,10 @@ export function createAppDependencies(
         classifier: ctx.classifier as never,
         modelRouter: ctx.modelRouter as never,
         prompts: ctx.prompts as never,
+        toolSummary,
       }),
     );
-    logger.info('B-16: worktree task runner wired', { cwd: ctx.cwd });
+    logger.info('B-16: worktree task runner wired', { cwd: ctx.cwd, hasToolSummary: !!toolSummary });
   }
 
   // ===== 合并所有子系统的返回值 =====

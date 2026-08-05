@@ -433,6 +433,8 @@ export class ReActAgentLoop {
       this.currentContext = params.context ?? this.currentContext ?? createDefaultExecutionContext(this.ctxMgr.traceCollector?.getSessionId() ?? 'session-unknown');
       // B-12：保存外层请求标识，turnId 优先复用（桌面/SSE timeline 与 Kernel/Trace 同源）
       this.engineTurnRequestId = params.requestId ?? null;
+      // P2（turn 隔离）：run 开始重置 tool_search 提升池——每个 run 从干净工具面开始
+      this.toolExecutor.resetBoost?.();
       // B-16（审查 I2 修复）：保存隔离工作区——worktree 实验时工具读写切换到 worktree
       this.currentWorkspace = params.workspace;
       // B-14：解析模型运行时能力——缺失能力显式降级（无工具/串行/禁图像），run 期间生效
@@ -715,7 +717,16 @@ export class ReActAgentLoop {
               for (const tc of result.toolCalls) {
                 assistantContent.push({ type: 'tool_use' as const, id: tc.id, name: tc.name, arguments: tc.arguments });
               }
-              messages.push({ role: 'assistant', content: assistantContent });
+              // P0 协议修复：工具轮次 reasoning 必须随 assistant 消息回传
+              // （DeepSeek V4 thinking 模式缺省则 API 400；无推理模型为空字符串，不带字段）
+              messages.push({
+                role: 'assistant',
+                // DeepSeek V4 要求工具调用 assistant 消息 content 非 null——空数组兜底为空文本
+                content: assistantContent.length > 0
+                  ? assistantContent
+                  : [{ type: 'text' as const, text: '' }],
+                ...(result.reasoning ? { reasoningContent: result.reasoning } : {}),
+              });
 
               // Phase 73 Part B：batch 级 sequential 检测
               const hasSequential = result.toolCalls.some(tc => {
@@ -1117,6 +1128,11 @@ export class ReActAgentLoop {
       // Phase 96 I-2 修复：session 结束时反馈 useful，强化召回记忆的 validatedCount
       // 避免知识图谱只增不减、computeConfidence 的时间衰减使记忆逐渐失去召回价值
       this.memIntegration.commitMemoryFeedback();
+      // P2（turn 隔离）：run 结束时清理当前 run 的隔离工作区与能力决策，
+      // 防止跨 run 泄漏（worktree 路径/降级决策不得影响下一次 run）
+      this.currentWorkspace = undefined;
+      this.currentCapability = null;
+      this.engineTurnRequestId = null;
     }
   }
 

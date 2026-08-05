@@ -254,3 +254,118 @@ describe('B-06 不同 schema 数量对输入 token 的影响', () => {
     expect(tokens[3].tokens).toBeGreaterThan(tokens[0].tokens * 2);
   });
 });
+
+// ============================================================
+// P0 协议修复：V4 thinking 模式工具轮次契约（2026-08 官方文档核实）
+// ============================================================
+
+describe('P0 DeepSeek V4 thinking 模式协议（reasoning 回传 / 参数注入 / 缓存字段）', () => {
+  beforeEach(() => mockCreate.mockReset());
+
+  it('P0-1. 工具轮次 assistant 消息带 reasoning_content 回传（400 防御）', async () => {
+    mockCreate.mockResolvedValue({
+      choices: [{ message: { role: 'assistant', content: '', tool_calls: [toolCall('c1', 'file_read', '{"path":"a.ts"}')] }, finish_reason: 'tool_calls' }],
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      model: 'deepseek-v4-flash',
+    });
+    const client = makeClient();
+
+    // 第一轮：带 reasoning 的 assistant 工具消息 + tool_result，组成第二轮请求
+    const round2Messages = [
+      { role: 'user', content: '读文件' },
+      {
+        role: 'assistant' as const,
+        content: [{ type: 'text' as const, text: '' }, { type: 'tool_use' as const, id: 'c1', name: 'file_read', arguments: { path: 'a.ts' } }],
+        reasoningContent: '用户需要读取 a.ts 的内容',
+      },
+      { role: 'user' as const, content: [{ type: 'tool_result' as const, toolUseId: 'c1', content: '文件内容', isError: false }] },
+    ];
+    await client.complete({ model: 'deepseek-v4-flash', messages: round2Messages });
+
+    // 请求体必须携带 reasoning_content（官方：缺失则 400）
+    const params = mockCreate.mock.calls[0][0];
+    const assistantMsg = params.messages.find((m: { role: string }) => m.role === 'assistant');
+    expect(assistantMsg.reasoning_content).toBe('用户需要读取 a.ts 的内容');
+    // 工具调用 assistant 消息 content 非 null（官方要求）
+    expect(assistantMsg.content).not.toBeNull();
+  });
+
+  it('P0-2. 字符串 content 的 assistant 消息同样回传 reasoning_content', async () => {
+    mockCreate.mockResolvedValue({
+      choices: [{ message: { role: 'assistant', content: 'ok', tool_calls: [] }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+      model: 'deepseek-v4-flash',
+    });
+    const client = makeClient();
+    await client.complete({
+      model: 'deepseek-v4-flash',
+      messages: [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: 'ok', reasoningContent: '思考过程' },
+      ],
+    });
+    const params = mockCreate.mock.calls[0][0];
+    const assistantMsg = params.messages.find((m: { role: string }) => m.role === 'assistant');
+    expect(assistantMsg.reasoning_content).toBe('思考过程');
+  });
+
+  it('P0-3. DeepSeekClient 默认注入 thinking enabled + reasoning_effort high（V4 官方要求）', async () => {
+    mockCreate.mockResolvedValue({
+      choices: [{ message: { role: 'assistant', content: 'ok', tool_calls: [] }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+      model: 'deepseek-v4-flash',
+    });
+    const client = makeClient();
+    await client.complete({ ...OPTIONS });
+
+    const params = mockCreate.mock.calls[0][0];
+    expect(params.thinking).toEqual({ type: 'enabled' });
+    expect(params.reasoning_effort).toBe('high');
+    // V4 thinking 模式拒绝 tool_choice——任何请求都不允许发送
+    expect(params.tool_choice).toBeUndefined();
+  });
+
+  it('P0-4. reasoningEffort 可覆盖（max 档位用于复杂任务）', async () => {
+    mockCreate.mockResolvedValue({
+      choices: [{ message: { role: 'assistant', content: 'ok', tool_calls: [] }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+      model: 'deepseek-v4-flash',
+    });
+    const client = makeClient();
+    await client.complete({ ...OPTIONS, reasoningEffort: 'max' });
+    expect(mockCreate.mock.calls[0][0].reasoning_effort).toBe('max');
+  });
+
+  it('P0-5. 流式 usage 解析 DeepSeek 原生缓存字段（hit/miss tokens）', async () => {
+    mockCreate.mockResolvedValue((async function* () {
+      yield {
+        choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }],
+        usage: {
+          prompt_tokens: 100, completion_tokens: 10, total_tokens: 110,
+          prompt_cache_hit_tokens: 60, prompt_cache_miss_tokens: 40,
+        },
+      };
+    })());
+    const client = makeClient();
+    const lines = await collectStream(client.stream({ ...OPTIONS }));
+    const usageLine = lines.find((l) => l.includes('"type":"usage"'));
+    expect(usageLine).toBeDefined();
+    expect(usageLine).toContain('"cacheHitTokens":60');
+    expect(usageLine).toContain('"cacheMissTokens":40');
+  });
+
+  it('P0-6. 非流式 usage 同样解析缓存字段', async () => {
+    mockCreate.mockResolvedValue({
+      choices: [{ message: { role: 'assistant', content: 'ok', tool_calls: [] }, finish_reason: 'stop' }],
+      usage: {
+        prompt_tokens: 100, completion_tokens: 10, total_tokens: 110,
+        prompt_cache_hit_tokens: 90, prompt_cache_miss_tokens: 10,
+      },
+      model: 'deepseek-v4-flash',
+    });
+    const client = makeClient();
+    const resp = await client.complete({ ...OPTIONS });
+    expect(resp.usage.cacheHitTokens).toBe(90);
+    expect(resp.usage.cacheMissTokens).toBe(10);
+  });
+});

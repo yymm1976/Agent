@@ -65,10 +65,27 @@ describe('B-02A 稳定/动态分区', () => {
     expect(a.dynamic).not.toBe(b.dynamic);
   });
 
-  it('无边界标记的模板（项目覆盖）全部视为稳定区', () => {
+  it('无边界标记的模板（项目覆盖）全部视为动态区（P1 缓存安全修正）', () => {
     const zones = splitPromptZones('没有标记的模板内容');
-    expect(zones.stable).toBe('没有标记的模板内容');
-    expect(zones.dynamic).toBe('');
+    // 无标记 = 无法证明前缀稳定 → 全部动态，绝不误判为缓存前缀
+    expect(zones.stable).toBe('');
+    expect(zones.dynamic).toBe('没有标记的模板内容');
+  });
+
+  it('P1: availableTools/autonomyMode 在动态区（不在稳定缓存前缀内）', async () => {
+    const manager = new PromptTemplateManager();
+    const zones = await manager.renderPromptZones('main.system', {
+      ...BASE_CONTEXT,
+      availableTools: '文件工具：file_read, file_write',
+      autonomyMode: 'auto',
+    });
+    // 工具面/自主度每轮变化——必须落在动态区，否则缓存前缀随工具面漂移
+    expect(zones.stable).not.toContain('file_read');
+    // session 块（语言/自主度/工作目录/任务形状）在边界之后
+    expect(zones.stable).not.toContain('工作目录');
+    expect(zones.dynamic).toContain('file_read');
+    expect(zones.dynamic).toContain('自主度：auto');
+    expect(zones.dynamic).toContain('工作目录');
   });
 });
 

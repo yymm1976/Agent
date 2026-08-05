@@ -56,6 +56,13 @@ export type MessageRole = 'system' | 'user' | 'assistant';
 export interface LLMMessage {
   role: MessageRole;
   content: string | ContentPart[];
+  /**
+   * P0 协议修复：本轮 assistant 的推理内容（DeepSeek V4 思考模式的
+   * reasoning_content）。工具调用轮次必须完整回传到后续请求，否则
+   * 官方 API 返回 400（见 api-docs.deepseek.com/guides/thinking_mode）。
+   * 适配器把它序列化为 provider 原生字段（如 reasoning_content）。
+   */
+  reasoningContent?: string;
 }
 
 // ============================================================
@@ -88,6 +95,12 @@ export interface TokenUsageInfo {
   // 缓存相关（部分模型支持）
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
+  /**
+   * DeepSeek 原生缓存字段（自动前缀缓存，官方返回
+   * prompt_cache_hit_tokens / prompt_cache_miss_tokens）
+   */
+  cacheHitTokens?: number;
+  cacheMissTokens?: number;
 }
 
 /** Token 预算配置（从 config 映射而来） */
@@ -206,6 +219,17 @@ export interface LLMRequestOptions {
   timeoutMs?: number;
   /** P2-10：是否启用 Prompt 缓存（Anthropic 使用 cache_control，OpenAI 使用 prompt_cache_key） */
   enableCache?: boolean;
+  /**
+   * DeepSeek V4 思考模式：显式开启 thinking（序列化为
+   * extra_body.thinking.type = enabled；官方文档要求 thinking 模式
+   * 下工具轮次 reasoning_content 必须回传）
+   */
+  thinkingEnabled?: boolean;
+  /**
+   * DeepSeek V4 思考强度（low | high | max；官方文档：
+   * 普通请求默认 high，复杂 Agent 请求可用 max）
+   */
+  reasoningEffort?: 'low' | 'high' | 'max';
   /**
    * V2-021 修复：可选的 AbortSignal，传递给底层 HTTP 请求，支持流式取消
    * OpenAI/Anthropic 客户端透传到 SDK 的 requestOptions.signal；

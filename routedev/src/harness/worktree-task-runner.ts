@@ -31,6 +31,12 @@ export interface WorktreeTaskRunnerDeps {
   classifier?: { classify(input: { query: string }): Promise<unknown> };
   modelRouter?: { route(result: unknown): Promise<{ model: { id: string }; providerId: string; originalTier: string }> };
   prompts?: { renderPromptZones(id: string, context: Record<string, unknown>): Promise<{ stable: string; dynamic: string }> };
+  /**
+   * P1：已渲染的可见工具摘要（装配方从工具注册表生成）。
+   * 提示中的工具列表必须与真实 schema 一致——空摘要会造成
+   * "工具列表是权威来源"与真实工具面的直接冲突（审查发现）。
+   */
+  toolSummary?: string;
 }
 
 /** 写入型工具：用于收集 worktree 内的修改文件（与 chat-bridge 口径一致） */
@@ -84,7 +90,7 @@ export class WorktreeTaskRunner implements ExperimentRunnerLike {
       const renderedZones = await prompts.renderPromptZones('main.system', {
         language: this.deps.config?.general?.language === 'zh-CN' ? '中文' : 'English',
         autonomyMode: 'auto',
-        availableTools: '',
+        availableTools: this.deps.toolSummary ?? '（未注入工具摘要——以工具 schema 为准）',
         projectRules: '',
         projectMemory: '',
         cwd: worktreePath,

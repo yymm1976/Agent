@@ -162,14 +162,29 @@ const CATALOG: ModelMeta[] = [
   },
 
   // ===== DeepSeek =====
+  // P0 修复：V4 系列为当前官方唯二模型（1M context / 384K 输出，2026-08 官方价格页核实）。
+  // 旧 deepseek-chat / deepseek-reasoner 已退役（官方模型列表不再包含），保留仅用于
+  // 历史配置兼容与明确退役提示。
   {
-    id: 'deepseek-chat', name: 'DeepSeek Chat', contextWindow: 64_000, maxOutputTokens: 8_192,
+    id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', contextWindow: 1_048_576, maxOutputTokens: 384_000,
+    capabilities: ['reasoning', 'code', 'fast', 'cheap', 'tool_use', 'streaming', 'parallel_tool_calls'],
+    cost: { input: 0.14, output: 0.28, cacheRead: 0.0028 },
+    aliases: ['deepseek-v4-flash-', 'deepseek-v4-flash-2507'],
+  },
+  {
+    id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindow: 1_048_576, maxOutputTokens: 384_000,
+    capabilities: ['reasoning', 'code', 'tool_use', 'streaming', 'parallel_tool_calls'],
+    cost: { input: 0.435, output: 0.87, cacheRead: 0.003625 },
+    aliases: ['deepseek-v4-pro-', 'deepseek-v4-pro-2507'],
+  },
+  {
+    id: 'deepseek-chat', name: 'DeepSeek Chat（已退役，2026-07 结束兼容期）', contextWindow: 64_000, maxOutputTokens: 8_192,
     capabilities: ['code', 'fast', 'cheap'],
     cost: { input: 0.27, output: 1.1, cacheRead: 0.027 },
     aliases: ['deepseek-chat-'],
   },
   {
-    id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', contextWindow: 64_000, maxOutputTokens: 32_768,
+    id: 'deepseek-reasoner', name: 'DeepSeek Reasoner（已退役，2026-07 结束兼容期）', contextWindow: 64_000, maxOutputTokens: 32_768,
     capabilities: ['reasoning', 'code'],
     cost: { input: 0.55, output: 2.19, cacheRead: 0.055 },
     aliases: ['deepseek-reasoner-', 'deepseek-r1'],

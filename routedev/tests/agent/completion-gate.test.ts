@@ -199,7 +199,7 @@ describe('CompletionGate (Phase 31 Task 6.4)', { timeout: 30000 }, () => {
       [undefined, true, 'completed_unverified'],
       [{ passed: true, checks: [] }, true, 'completed_unverified'],
       [{ passed: false, checks: [{ name: 'tests', ok: false, output: 'failed', duration: 1 }] }, true, 'verification_failed'],
-      [{ passed: true, checks: [{ name: 'tests', ok: false, skipped: true, output: 'timeout', duration: 1 }] }, true, 'completed_with_warnings'],
+      [{ passed: true, checks: [{ name: 'tests', ok: false, skipped: true, output: 'timeout', duration: 1 }] }, true, 'completed_unverified'],
       [{ passed: true, checks: [{ name: 'tests', ok: true, output: '', duration: 1 }] }, true, 'completed_verified'],
     ] as const)('映射 GateResult %#', (result, succeeded, expected) => {
       expect(toCompletionStatus(result, succeeded)).toBe(expected);
@@ -354,9 +354,17 @@ describe('Phase 92：项目脚本适配', () => {
 });
 
 describe('B-04 按变更类型自动验证', () => {
-  it('isDocOnlyChange：全部为文档/配置时返回 true', async () => {
+  it('isDocOnlyChange：全部为纯文档时返回 true', async () => {
     const { isDocOnlyChange } = await import('../../src/agent/completion-gate.js');
-    expect(isDocOnlyChange(['README.md', 'config.json', 'notes/yaml-config.yaml'])).toBe(true);
+    expect(isDocOnlyChange(['README.md', 'notes/design.txt', 'assets/logo.svg'])).toBe(true);
+  });
+
+  it('isDocOnlyChange：配置类扩展名（json/yaml/toml/lock）不再视为文档（P1 语义修正）', async () => {
+    const { isDocOnlyChange } = await import('../../src/agent/completion-gate.js');
+    // 配置/依赖/CI 文件承载构建语义，必须经过验证
+    expect(isDocOnlyChange(['config.json'])).toBe(false);
+    expect(isDocOnlyChange(['pnpm-lock.yaml'])).toBe(false);
+    expect(isDocOnlyChange(['package.json', 'tsconfig.json'])).toBe(false);
   });
 
   it('isDocOnlyChange：含代码文件时返回 false；空列表返回 false', async () => {
@@ -366,11 +374,11 @@ describe('B-04 按变更类型自动验证', () => {
     expect(isDocOnlyChange([])).toBe(false);
   });
 
-  it('仅文档/配置变更时跳过验证并返回说明（不跑命令）', async () => {
+  it('仅文档变更时跳过验证并返回说明（不跑命令）', async () => {
     const { createCompletionGate } = await import('../../src/agent/completion-gate.js');
     const gate = createCompletionGate();
     const result = await gate.verify({
-      modifiedFiles: ['README.md', 'config.json'],
+      modifiedFiles: ['README.md', 'docs/design.txt'],
       projectPath: process.cwd(),
     });
     expect(result.passed).toBe(true);

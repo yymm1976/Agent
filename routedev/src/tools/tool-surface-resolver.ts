@@ -28,6 +28,8 @@ export interface ToolSurfaceContext {
   deniedTools?: ReadonlySet<string>;
   /** 会话级白名单（远程 allowlist / 自动化 allowlist）；非空时只保留白名单内 */
   allowedTools?: ReadonlySet<string>;
+  /** B-01B + P2（单一真相源）：tool_search 本回合提升的 deferred 工具（提升后可见） */
+  boostedTools?: ReadonlySet<string>;
   /** qa 回合用户显式点名 MCP 时保留 MCP 工具（镜像旧行为） */
   mcpRequested?: boolean;
   /** core 工具数量上限（按注册顺序截断，默认不限） */
@@ -51,7 +53,8 @@ export function resolveVisibleTools<T extends ToolSurfaceEntry>(
     const def = tool.definition;
     if (def.exposure === 'hidden') return false;
     if (ctx.deniedTools?.has(def.name)) return false;
-    if (def.exposure === 'deferred') return false;
+    // B-01B：deferred 工具被 tool_search 提升后本回合可见
+    if (def.exposure === 'deferred' && !ctx.boostedTools?.has(def.name)) return false;
     if (def.exposure === 'mode' && (!def.modes || def.modes.length === 0)) return false;
     if (def.modes && def.modes.length > 0 && !def.modes.includes(mode)) return false;
     return true;

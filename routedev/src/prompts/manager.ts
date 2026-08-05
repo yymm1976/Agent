@@ -32,8 +32,10 @@ export const STABLE_ZONE_BOUNDARY = '<!-- STABLE_ZONE_BOUNDARY：此标记之上
 export function splitPromptZones(rendered: string): { stable: string; dynamic: string } {
   const index = rendered.indexOf(STABLE_ZONE_BOUNDARY);
   if (index < 0) {
-    // 项目/用户覆盖模板可能没有标记：保守处理——全部视为稳定区（与旧行为一致）
-    return { stable: rendered, dynamic: '' };
+    // 项目/用户覆盖模板可能没有标记：缓存安全优先——全部视为动态区。
+    // （旧行为是全部视为稳定区，会把项目路径/会话变量误判为缓存前缀；
+    //   DeepSeek 前缀缓存要求字节级稳定，误判会静默降低缓存命中率）
+    return { stable: '', dynamic: rendered };
   }
   return {
     stable: rendered.slice(0, index).trimEnd(),
@@ -120,8 +122,7 @@ const BUILTIN_TEMPLATES: Record<string, BuiltinTemplateDef> = {
 </execution_policy>
 
 <tool_protocol>
-以下列表是本轮可用工具的权威来源：
-{{availableTools}}
+本轮可用工具列表见动态区 <available_tools> 块（工具 schema 是调用的权威来源）。
 
 规则：
 - 只调用列表中存在的工具。选择能完成当前动作的最小、最明确工具，避免功能重叠的重复调用。
@@ -133,7 +134,7 @@ const BUILTIN_TEMPLATES: Record<string, BuiltinTemplateDef> = {
 </tool_protocol>
 
 <autonomy_behavior>
-当前自主度：{{autonomyMode}}
+当前自主度见动态区 <session> 块（每轮/每会话变化，不进缓存前缀）。
 
 - auto：对运行时允许的操作直接执行；硬拒绝与范围限制仍然有效。
 - semi：只读操作可直接执行，写入或执行类操作遵循确认策略。
@@ -170,6 +171,10 @@ const BUILTIN_TEMPLATES: Record<string, BuiltinTemplateDef> = {
 </project_memory>
 </project_context>
 
+<available_tools>
+{{availableTools}}
+</available_tools>
+
 <user_profile>
 {{userProfile}}
 </user_profile>
@@ -200,8 +205,7 @@ const BUILTIN_TEMPLATES: Record<string, BuiltinTemplateDef> = {
 </identity>
 
 <tool_protocol>
-以下列表是本轮可用工具的权威来源：
-{{availableTools}}
+本轮可用工具列表见动态区 <available_tools> 块（工具 schema 是调用的权威来源）。
 
 规则：
 - 只调用列表中存在的工具；选择能完成当前动作的最小、最明确工具。
@@ -213,7 +217,7 @@ const BUILTIN_TEMPLATES: Record<string, BuiltinTemplateDef> = {
 </tool_protocol>
 
 <autonomy>
-当前自主度：{{autonomyMode}}（auto 直接执行；manual 逐次确认；硬拒绝与范围限制始终有效）
+自主度档位见动态区 <session> 块（auto 直接执行；manual 逐次确认；硬拒绝与范围限制始终有效）
 </autonomy>
 
 <modification_protection>
@@ -243,6 +247,10 @@ const BUILTIN_TEMPLATES: Record<string, BuiltinTemplateDef> = {
 {{projectMemory}}
 </project_memory>
 </project_context>
+
+<available_tools>
+{{availableTools}}
+</available_tools>
 
 <user_profile>
 {{userProfile}}

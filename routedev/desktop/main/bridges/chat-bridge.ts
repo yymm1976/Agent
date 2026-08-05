@@ -214,6 +214,7 @@ export class ChatBridge {
     // 与 chat-runner.ts 顶部声明保持一致，确保删除 chat-runner 后 desktop 不丢失可观测性
     let hasTaskError = false;
     let accumulatedContent = '';
+    let accumulatedReasoning = '';
     let actualUserMessage = text;
     let routeDecision: RoutingResult | null = null;
     let trajectorySummary: TrajectorySummary | null = null;
@@ -348,6 +349,9 @@ ${skillBlocks.join('\n')}
       // 说明：deniedTools 参数当前无生产调用方传入（deny 工具在执行层由权限引擎拦截），
       // 调用方有权限结果时可传入以提前从 schema 剔除。
       // 实现/调查任务按默认 core 面运行；用户显式点名 MCP 时 QA 回合也保留 MCP（镜像旧行为）。
+      // P2（单一真相源）：boostedTools 直接进 resolver——渲染摘要与 adapter 的 schema
+      // 共用同一可见面规则（tool_search 提升的工具两处同时可见）
+      const boosted = deps.toolBoost?.names ?? new Set<string>();
       const toolsForThisRun = resolveVisibleTools(registeredTools, {
         mode: classifyResult.taskShape === 'qa' ? 'qa' : 'coding',
         taskShape: classifyResult.taskShape,
@@ -355,10 +359,10 @@ ${skillBlocks.join('\n')}
         allowedTools: remoteContext?.allowedToolNames
           ? new Set(remoteContext.allowedToolNames)
           : undefined,
+        boostedTools: boosted.size > 0 ? boosted : undefined,
       });
       // B-01B：并入 tool_search 本回合提升的 deferred 工具（否则 loop 的
       // allowedToolNames 过滤会把提升否决掉，tool_search 的"已临时启用"成为空头承诺）
-      const boosted = deps.toolBoost?.names ?? new Set<string>();
       const allowedToolNames = [
         ...toolsForThisRun.map((tool) => tool.definition.name),
         ...boosted,
@@ -455,6 +459,9 @@ ${skillBlocks.join('\n')}
 
         case 'reasoning_delta':
           // 转发推理过程增量，供前端显示模型思考过程
+          // C3（P0 配套）：累积 reasoning——持久化到 conversationHistory，
+          // 重启恢复的续跑消息带 reasoning_content（DeepSeek V4 400 防御）
+          accumulatedReasoning += event.text;
           stream.emit({ type: 'reasoning_delta', reasoning: event.text });
           break;
         case 'thinking':
@@ -570,7 +577,12 @@ ${skillBlocks.join('\n')}
       const completionStatus = toCompletionStatus(gateResult, !hasTaskError);
 
       this.ctx.conversationHistory.push({ role: 'user', content: actualUserMessage });
-      this.ctx.conversationHistory.push({ role: 'assistant', content: accumulatedContent });
+      this.ctx.conversationHistory.push({
+        role: 'assistant',
+        content: accumulatedContent,
+        // C3：推理内容随历史持久化——续跑/重启恢复时回传 reasoning_content
+        ...(accumulatedReasoning ? { reasoningContent: accumulatedReasoning } : {}),
+      });
       if (this.ctx.conversationHistory.length > 20) {
         this.ctx.conversationHistory = this.ctx.conversationHistory.slice(-20);
       }

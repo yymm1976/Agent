@@ -115,7 +115,11 @@ export function toCompletionStatus(gateResult?: GateResult, executionSucceeded =
   if (!executionSucceeded) return 'execution_failed';
   if (!gateResult) return 'completed_unverified';
   if (!gateResult.passed) return 'verification_failed';
-  if (gateResult.warnings?.length || gateResult.checks.some((check) => check.skipped || check.warnings?.length)) {
+  // P1 语义修正：任何检查因超时被跳过 = 验证未完整执行。
+  // 不得宣称"已验证通过"（completed_verified/with_warnings），
+  // 只能算"未验证完成"——Producer 与最终模型不得把超时描述成验证通过。
+  if (gateResult.checks.some((check) => check.skipped)) return 'completed_unverified';
+  if (gateResult.warnings?.length || gateResult.checks.some((check) => check.warnings?.length)) {
     return 'completed_with_warnings';
   }
   if (gateResult.checks.length === 0) return 'completed_unverified';
@@ -149,9 +153,13 @@ const OUTPUT_MAX_CHARS = 500;
 /**
  * B-04：文档/配置类变更扩展名（仅这类变更时跳过代码验证并说明）
  */
+/**
+ * P1 语义修正：文档/配置类变更扩展名（仅这类变更时跳过代码验证并说明）。
+ * .json/.yaml/.yml/.toml/.lock 从名单移除——这些经常承载构建配置、依赖、
+ * CI、Agent Profile 与权限策略，改动必须经过验证，不能按"文档"跳过。
+ */
 const DOC_ONLY_EXTENSIONS = new Set([
-  '.md', '.markdown', '.txt', '.json', '.yaml', '.yml', '.lock',
-  '.toml', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.pdf', '.gitignore', '.editorconfig',
+  '.md', '.markdown', '.txt', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.pdf', '.gitignore', '.editorconfig',
 ]);
 
 /**

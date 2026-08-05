@@ -184,12 +184,22 @@ export class OpenAIClient extends BaseLLMClient {
 
         // Usage（需要 stream_options: { include_usage: true }）
         if (chunk.usage) {
+          // DeepSeek 原生缓存字段（prompt_cache_hit_tokens / prompt_cache_miss_tokens）
+          const usageAny = chunk.usage as unknown as Record<string, unknown>;
+          const hitTokens = typeof usageAny.prompt_cache_hit_tokens === 'number'
+            ? usageAny.prompt_cache_hit_tokens
+            : undefined;
+          const missTokens = typeof usageAny.prompt_cache_miss_tokens === 'number'
+            ? usageAny.prompt_cache_miss_tokens
+            : undefined;
           yield {
             type: 'usage',
             usage: {
               inputTokens: chunk.usage.prompt_tokens,
               outputTokens: chunk.usage.completion_tokens,
               totalTokens: chunk.usage.total_tokens,
+              cacheHitTokens: hitTokens,
+              cacheMissTokens: missTokens,
             },
           };
         }
@@ -226,8 +236,9 @@ export class OpenAIClient extends BaseLLMClient {
 
   /**
    * 构建请求参数
+   * protected（B-14 原则：provider 特例只留在各自 adapter 的子类覆盖）
    */
-  private buildRequestParams(
+  protected buildRequestParams(
     options: LLMRequestOptions,
     stream: boolean,
   ): ChatCompletionCreateParams {
@@ -252,6 +263,15 @@ export class OpenAIClient extends BaseLLMClient {
 
     if (options.temperature !== undefined) {
       params.temperature = options.temperature;
+    }
+
+    // DeepSeek V4 思考模式参数（thinking.type 走 extra 字段；reasoning_effort 为标准字段）
+    // 由 DeepSeekClient 子类注入；其他 provider 不传（保持协议纯净）
+    if (options.thinkingEnabled) {
+      (params as Record<string, unknown>).thinking = { type: 'enabled' };
+    }
+    if (options.reasoningEffort) {
+      (params as Record<string, unknown>).reasoning_effort = options.reasoningEffort;
     }
 
     if (tools) {
@@ -306,7 +326,13 @@ export class OpenAIClient extends BaseLLMClient {
 
     for (const msg of messages) {
       if (typeof msg.content === 'string') {
-        result.push({ role: msg.role, content: msg.content } as ChatCompletionMessageParam);
+        // P0 协议修复：assistant 推理内容序列化为 provider 原生字段
+        // （DeepSeek V4 思考模式要求 reasoning_content 回传，否则 400）
+        const base = { role: msg.role, content: msg.content } as Record<string, unknown>;
+        if (msg.role === 'assistant' && msg.reasoningContent) {
+          base.reasoning_content = msg.reasoningContent;
+        }
+        result.push(base as unknown as ChatCompletionMessageParam);
       } else if (Array.isArray(msg.content)) {
         // 多模态内容：分离 tool_use / tool_result / text / image
         const textParts: string[] = [];
@@ -349,20 +375,31 @@ export class OpenAIClient extends BaseLLMClient {
 
         // 1) 如果有 tool_calls：生成 role: assistant 消息（含 tool_calls）
         if (toolCalls.length > 0) {
-          // OpenAI 要求 assistant 消息有 content 字段（可为 null）
-          const assistantContent = textParts.length > 0 ? textParts.join('\n') : null;
-          const assistantMsg = {
+          // OpenAI 要求 assistant 消息有 content 字段（可为 null），但 DeepSeek V4
+          // thinking 模式要求工具调用 assistant 消息 content 非 null——用空字符串兜底
+          const assistantContent = textParts.length > 0
+            ? textParts.join('\n')
+            : (msg.reasoningContent ? '' : '');
+          const assistantMsg: Record<string, unknown> = {
             role: 'assistant' as const,
             content: assistantContent,
             tool_calls: toolCalls,
           };
-          result.push(assistantMsg as ChatCompletionMessageParam);
+          // P0 协议修复：工具轮次 reasoning_content 必须回传（DeepSeek 400 防御）
+          if (msg.reasoningContent) {
+            assistantMsg.reasoning_content = msg.reasoningContent;
+          }
+          result.push(assistantMsg as unknown as ChatCompletionMessageParam);
         } else if (textParts.length > 0 || imageParts.length > 0) {
           // 2) 普通多模态消息（text + image）
           const content: unknown[] = [];
           for (const t of textParts) content.push({ type: 'text', text: t });
           for (const img of imageParts) content.push(img);
-          result.push({ role: msg.role, content } as ChatCompletionMessageParam);
+          const base: Record<string, unknown> = { role: msg.role, content };
+          if (msg.role === 'assistant' && msg.reasoningContent) {
+            base.reasoning_content = msg.reasoningContent;
+          }
+          result.push(base as unknown as ChatCompletionMessageParam);
         }
 
         // 3) tool_result 作为独立的 role: tool 消息（每个 tool_result 一条消息）
@@ -404,16 +441,26 @@ export class OpenAIClient extends BaseLLMClient {
 
   /**
    * 提取 Token 使用信息
+   * DeepSeek 原生缓存字段（prompt_cache_hit_tokens / prompt_cache_miss_tokens）
    */
   private extractUsage(response: ChatCompletion): TokenUsageInfo {
     const usage = response.usage;
     if (!usage) {
       return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     }
+    const usageAny = usage as unknown as Record<string, unknown>;
+    const hitTokens = typeof usageAny.prompt_cache_hit_tokens === 'number'
+      ? usageAny.prompt_cache_hit_tokens
+      : undefined;
+    const missTokens = typeof usageAny.prompt_cache_miss_tokens === 'number'
+      ? usageAny.prompt_cache_miss_tokens
+      : undefined;
     return {
       inputTokens: usage.prompt_tokens,
       outputTokens: usage.completion_tokens,
       totalTokens: usage.total_tokens,
+      cacheHitTokens: hitTokens,
+      cacheMissTokens: missTokens,
     };
   }
 

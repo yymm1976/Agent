@@ -98,4 +98,22 @@ describe('B-01A resolveVisibleTools', () => {
     const result = resolveVisibleTools(ALL, { mode: 'coding' });
     expect(result[0]).toBe(CORE_READ);
   });
+
+  it('P2: boostedTools 提升 deferred 工具（tool_search 提升后可见）', () => {
+    // 默认 deferred 不可见
+    expect(names(ALL, { mode: 'coding' })).not.toContain('web_search');
+    // 提升后可见
+    const boosted = names(ALL, { mode: 'coding', boostedTools: new Set(['web_search']) });
+    expect(boosted).toContain('web_search');
+    // hidden 工具即使提升也不可见
+    const boostedHidden = names(ALL, { mode: 'coding', boostedTools: new Set(['debug_probe']) });
+    expect(boostedHidden).not.toContain('debug_probe');
+    // 提升不改变白名单约束
+    const allowed = names(ALL, {
+      mode: 'coding',
+      boostedTools: new Set(['web_search']),
+      allowedTools: new Set(['file_read']),
+    });
+    expect(allowed).toEqual(['file_read']);
+  });
 });

@@ -6,6 +6,7 @@
 import type { ToolExecutorAdapter, ToolExecCallOptions } from '../agent/loop-config.js';
 import type { LLMToolDefinition } from '../router/types.js';
 import type { IToolRegistry, IToolExecutor, ToolExecutionContext } from './types.js';
+import { resolveVisibleTools } from './tool-surface-resolver.js';
 import type { TraceCollector } from '../harness/trace-collector.js';
 import type { TurnToolBoost } from './tool-search.js';
 import { logger } from '../utils/logger.js';
@@ -42,6 +43,11 @@ export class ToolRegistryAdapter implements ToolExecutorAdapter {
     this.boost = boost;
   }
 
+  /** P2（turn 隔离）：run 开始时清空提升池——防跨 run 泄漏 */
+  resetBoost(): void {
+    this.boost?.names.clear();
+  }
+
   /** Phase 34：注入 TraceCollector */
   setTraceCollector(trace: TraceCollector | null): void {
     this.trace = trace;
@@ -57,21 +63,15 @@ export class ToolRegistryAdapter implements ToolExecutorAdapter {
 
   /**
    * 生成给 LLM 的 function calling schema。
-   * B-01A/B-01B：按暴露元数据过滤——
-   *   - hidden：从不暴露
-   *   - mode：默认不暴露（内部模式工具，模式运行未启用前保持隐藏）
-   *   - deferred：默认不暴露；被 tool_search 提升（boost）时临时可见
-   * 未声明 exposure 的旧工具按 core 处理（兼容）。
+   * P2（单一真相源）：过滤收敛到 resolveVisibleTools——adapter 不再维护
+   * 第二套 hidden/mode/deferred 判定，与 chat-bridge 渲染共用同一规则
+   * （boost 提升的 deferred 工具经 boostedTools 参数进入可见面）。
    */
   getToolDefinitions(): LLMToolDefinition[] {
-    return this.registry.list()
-      .filter((tool) => {
-        const def = tool.definition;
-        if (def.exposure === 'hidden') return false;
-        if (def.exposure === 'mode') return false;
-        if (def.exposure === 'deferred' && !this.boost?.names.has(def.name)) return false;
-        return true;
-      })
+    return resolveVisibleTools(this.registry.list(), {
+      mode: 'coding',
+      boostedTools: this.boost?.names,
+    })
       .map(tool => ({
       name: tool.definition.name,
       description: tool.definition.description,

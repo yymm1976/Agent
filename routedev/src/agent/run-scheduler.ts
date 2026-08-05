@@ -14,6 +14,8 @@ export interface AgentRunSchedulerSnapshot {
   queuedAt: number;
   startedAt?: number;
   finishedAt?: number;
+  /** C2：工作区标识（同一 workspace 的 run 排队相邻，供审计/排序） */
+  workspaceId?: string;
 }
 
 interface QueueEntry {
@@ -23,6 +25,7 @@ interface QueueEntry {
   resolve: () => void;
   reject: (error: Error) => void;
   controller: AbortController;
+  workspaceId?: string;
 }
 
 const cancelledError = (id: string): Error => {
@@ -42,7 +45,14 @@ export class AgentRunScheduler {
     private readonly timeoutMs = 30 * 60 * 1000,
   ) {}
 
-  enqueue(id: string, run: (signal: AbortSignal) => Promise<void>): Promise<void> {
+  /**
+   * 排队一个 agent run。
+   * @param options.workspaceId 可选工作区标识——仅用于快照/排序/审计（同工作区 run
+   *   保持相邻）；注意：当前 ReActAgentLoop 是实例级单例（NativeAgentKernel 显式互斥），
+   *   不同 workspace 的 run 仍串行执行。真正的多 worktree 并行需要每 worktree 一个
+   *   loop 实例（未来架构，见 C2 记录）。
+   */
+  enqueue(id: string, run: (signal: AbortSignal) => Promise<void>, options?: { workspaceId?: string }): Promise<void> {
     if (this.active?.id === id || this.queue.some((entry) => entry.id === id)) {
       return Promise.reject(new Error(`Agent run already queued or running: ${id}`));
     }
@@ -51,7 +61,12 @@ export class AgentRunScheduler {
     }
 
     const queuedAt = Date.now();
-    this.states.set(id, { id, state: 'queued', queuedAt });
+    this.states.set(id, {
+      id,
+      state: 'queued',
+      queuedAt,
+      ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
+    });
     const promise = new Promise<void>((resolve, reject) => {
       this.queue.push({
         id,
@@ -60,6 +75,7 @@ export class AgentRunScheduler {
         resolve,
         reject,
         controller: new AbortController(),
+        ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
       });
     });
     void this.drain();
