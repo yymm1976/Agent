@@ -30,7 +30,7 @@
 
 ### TD-22 ReActAgentLoop 无状态化（RunState）
 
-- **现状**：loop 持有 currentContext/currentTurnId/currentWorkspace/currentCapability/currentConfirmTool 等实例字段，NativeAgentKernel 显式互斥单会话运行；AgentRunScheduler 全局 FIFO 是承认此限制的临时措施。run-scheduler 已支持 workspaceId 键控（2026-08-05 修复 7），但并行仍受 loop 单例约束。
+- **现状**：loop 持有 currentContext/currentTurnId/currentWorkspace/currentCapability/currentConfirmTool 等实例字段，NativeAgentKernel 显式互斥单会话运行；AgentRunScheduler 全局 FIFO 是承认此限制的临时措施。run-scheduler 已接入 workspaceId 元数据（2026-08-05 修复 7），调度仍为全局 FIFO（loop 单例约束），未做按 workspace 分组。
 - **目标**：`AgentRun { context; messages; toolSurface; permissionChannel; eventSequence; workspace; followUpQueue; usage }` → `loop.run(runState)` 无状态服务；调度器升级为同工作区写操作串行 / 不同 worktree 并行 / 只读 Explorer 并行。
 - **触发**：2026-08-05 DeepSeek V4 复审 §七 + 初评 §七。
 
@@ -45,12 +45,6 @@
 - **现状**：WorktreeTaskRunner 无 error 事件即标记成功；不判定 escalation/maxIterations/测试是否通过/预期 Diff/Goal 满足/Verifier finding。CompletionGate 已有 toCompletionStatus 语义（超时/异常 = completed_unverified），未接入 worktree 路径。
 - **目标**：worktree run 结束后以 modifiedFiles + gate 结果产出成功判定；escalation/max_iterations 显式失败。
 - **触发**：2026-08-05 复审 §四。
-
----
-
-## 2. 活跃技术债详情
-
-_暂无_
 
 ---
 

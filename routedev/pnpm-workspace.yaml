@@ -3,3 +3,7 @@
 allowBuilds:
   electron: true
   esbuild: true
+# pnpm 11+ 项目设置（原 .npmrc 的 enable-pre-post-scripts/save-exact/min-release-age 迁移至此）
+saveExact: true
+enablePrePostScripts: true
+minimumReleaseAge: 2880

@@ -65,6 +65,21 @@ const MESSAGE_WINDOW_THRESHOLD = 40;
 const MAX_FOLLOWUP_ITERATIONS = 100;
 
 /**
+ * P0（复审）：统一 usage 聚合——累加全部字段，避免新增字段（缓存 hit/miss、
+ * reasoning tokens 等）在 loop 汇总时再次遗漏。
+ * 未知字段用 ?? 0 归一，缺失侧不污染累计值。
+ */
+export function accumulateUsage(total: TokenUsageInfo, current: TokenUsageInfo): void {
+  total.inputTokens += current.inputTokens;
+  total.outputTokens += current.outputTokens;
+  total.totalTokens += current.totalTokens;
+  total.cacheHitTokens = (total.cacheHitTokens ?? 0) + (current.cacheHitTokens ?? 0);
+  total.cacheMissTokens = (total.cacheMissTokens ?? 0) + (current.cacheMissTokens ?? 0);
+  total.cacheReadInputTokens = (total.cacheReadInputTokens ?? 0) + (current.cacheReadInputTokens ?? 0);
+  total.cacheCreationInputTokens = (total.cacheCreationInputTokens ?? 0) + (current.cacheCreationInputTokens ?? 0);
+}
+
+/**
  * Phase 55：结构化 system block（支持 Anthropic cache_control: ephemeral）
  * agent 层单一数据源：worker-executor.ts 从此处 import 使用
  * 注意：src/router/types.ts 因避免 router→agent 反向依赖，使用结构等价的 inline 类型
@@ -140,6 +155,12 @@ export interface ReActRunParams {
   reasoningEffort?: 'low' | 'high' | 'max';
   /** 修复 8：单次 LLM 调用最大输出 token（未传时保持 loop 默认 4096） */
   maxTokens?: number;
+  /**
+   * P1 修复（复审）：回合级工具面上下文（mode/taskShape/mcpRequested）——
+   * 每轮 getToolDefinitions 透传，QA 回合的写工具不进 schema；
+   * 缺省按 coding 面解析
+   */
+  toolSurface?: import('../tools/tool-surface-resolver.js').ToolSurfaceContext;
   /** 工具调用确认回调（Phase 9 自主模式） */
   onConfirmTool?: ConfirmToolCallback;
   /** 模型调用成功回调 */
@@ -208,6 +229,8 @@ export class ReActAgentLoop {
   /** 修复 8（复审）：当前 run 的思考强度与输出预算（taskShape 映射，run 期间生效） */
   private currentReasoningEffort: 'low' | 'high' | 'max' | undefined;
   private currentMaxTokens: number = 4096;
+  /** P1 修复（复审）：当前 run 的工具面上下文（每轮 schema 解析透传） */
+  private currentToolSurface: import('../tools/tool-surface-resolver.js').ToolSurfaceContext | undefined;
   /**
    * 压缩器（可选）：注入后在 ReAct 循环每轮迭代前检查 messages 的 token 数，
    * 超过阈值时调用 compressEnhanced 压缩，防止 messages 膨胀超出模型窗口
@@ -450,6 +473,8 @@ export class ReActAgentLoop {
       // 修复 8（复审）：保存任务形状映射的思考强度与输出预算
       this.currentReasoningEffort = params.reasoningEffort;
       this.currentMaxTokens = params.maxTokens ?? 4096;
+      // P1 修复（复审）：保存回合级工具面上下文（QA 回合写工具不进 schema）
+      this.currentToolSurface = params.toolSurface;
       // B-14：解析模型运行时能力——缺失能力显式降级（无工具/串行/禁图像），run 期间生效
       this.currentCapability = resolveCapabilities(
         routeDecision.model.capabilities,
@@ -554,7 +579,7 @@ export class ReActAgentLoop {
           iteration++;
 
           // B-01B：每轮重新获取工具定义（拾取 tool_search 提升的 deferred 工具）
-          const rawToolDefs = this.config.toolsEnabled ? this.toolExecutor.getToolDefinitions() : [];
+          const rawToolDefs = this.config.toolsEnabled ? this.toolExecutor.getToolDefinitions(this.currentToolSurface) : [];
           const toolDefs = allowedToolNamesSet
             ? rawToolDefs.filter((tool) => allowedToolNamesSet!.has(tool.name))
             : rawToolDefs;
@@ -673,10 +698,10 @@ export class ReActAgentLoop {
               return;
             }
 
-            // 累加 usage
-            totalUsage.inputTokens += result.usage.inputTokens;
-            totalUsage.outputTokens += result.usage.outputTokens;
-            totalUsage.totalTokens += result.usage.totalTokens;
+            // 累加 usage——统一聚合所有字段（含 DeepSeek 原生缓存 hit/miss 与
+            // Anthropic cacheRead/cacheCreation；P0 修复：此前只累加 3 个基础字段，
+            // 缓存统计链路在 loop 汇总时丢失，ChatBridge 收到 undefined 记成 0 命中）
+            accumulateUsage(totalUsage, result.usage);
 
             trace?.recordLLMCall(routeDecision.model.id, result.usage, result.content.length, result.toolCalls.length);
 
@@ -1145,6 +1170,7 @@ export class ReActAgentLoop {
       // 防止跨 run 泄漏（worktree 路径/降级决策不得影响下一次 run）
       this.currentWorkspace = undefined;
       this.currentCapability = null;
+      this.currentToolSurface = undefined;
       this.engineTurnRequestId = null;
     }
   }

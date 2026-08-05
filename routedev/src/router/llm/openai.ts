@@ -30,6 +30,13 @@ import { logger } from '../../utils/logger.js';
  */
 export class OpenAIClient extends BaseLLMClient {
   readonly protocol = 'openai' as const;
+  /**
+   * P1 修复（复审）：DeepSeek 专属扩展参数开关——thinking/reasoning_effort
+   * 只在子类显式开启时发送（provider 特例留在适配器，B-14 原则）。
+   * 通用 OpenAI 兼容端点（Qwen/Ollama 等）默认不发送，即使调用方误传。
+   */
+  protected supportsThinking = false;
+  protected supportsReasoningEffort = false;
   private readonly client: OpenAI | null;
   /** 客户端是否就绪（apiKey 已配置） */
   private readonly _isReady: boolean;
@@ -265,12 +272,13 @@ export class OpenAIClient extends BaseLLMClient {
       params.temperature = options.temperature;
     }
 
-    // DeepSeek V4 思考模式参数（thinking.type 走 extra 字段；reasoning_effort 为标准字段）
-    // 由 DeepSeekClient 子类注入；其他 provider 不传（保持协议纯净）
-    if (options.thinkingEnabled) {
+    // DeepSeek V4 思考模式参数（thinking.type / reasoning_effort 为 DeepSeek 专属）。
+    // P1 修复（复审）：即使调用方误传，通用 OpenAI 兼容 client 也不发送——
+    // 由 DeepSeekClient 子类显式开启（其他端点如 Qwen/Ollama 可能拒绝未知参数）
+    if (this.supportsThinking && options.thinkingEnabled) {
       (params as Record<string, unknown>).thinking = { type: 'enabled' };
     }
-    if (options.reasoningEffort) {
+    if (this.supportsReasoningEffort && options.reasoningEffort) {
       (params as Record<string, unknown>).reasoning_effort = options.reasoningEffort;
     }
 

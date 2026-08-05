@@ -457,3 +457,35 @@ describe('NoOpToolExecutor', () => {
     expect(result).toContain('read_file');
   });
 });
+
+describe('P0 复审：accumulateUsage 统一聚合', () => {
+  it('累加基础字段与全部缓存字段（DeepSeek hit/miss + Anthropic read/creation）', async () => {
+    const { accumulateUsage } = await import('../../src/agent/loop.js');
+    const total = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+    accumulateUsage(total, {
+      inputTokens: 100, outputTokens: 20, totalTokens: 120,
+      cacheHitTokens: 60, cacheMissTokens: 40,
+    });
+    accumulateUsage(total, {
+      inputTokens: 200, outputTokens: 30, totalTokens: 230,
+      cacheHitTokens: 180, cacheMissTokens: 20,
+      cacheReadInputTokens: 5, cacheCreationInputTokens: 10,
+    });
+    expect(total.inputTokens).toBe(300);
+    expect(total.outputTokens).toBe(50);
+    expect(total.totalTokens).toBe(350);
+    expect(total.cacheHitTokens).toBe(240);
+    expect(total.cacheMissTokens).toBe(60);
+    expect(total.cacheReadInputTokens).toBe(5);
+    expect(total.cacheCreationInputTokens).toBe(10);
+  });
+
+  it('缺失缓存字段不污染累计值（undefined 按 0 处理）', async () => {
+    const { accumulateUsage } = await import('../../src/agent/loop.js');
+    const total = { inputTokens: 10, outputTokens: 5, totalTokens: 15, cacheHitTokens: 3 };
+    accumulateUsage(total, { inputTokens: 10, outputTokens: 5, totalTokens: 15 });
+    expect(total.cacheHitTokens).toBe(3);
+    // 缺失字段按 0 归一（不 NaN、不污染）
+    expect(total.cacheMissTokens).toBe(0);
+  });
+});

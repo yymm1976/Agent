@@ -35,6 +35,9 @@ export class DeepSeekClient extends OpenAIClient {
       apiKey: config.apiKey || process.env.DEEPSEEK_API_KEY || '',
       timeoutMs: config.timeoutMs,
     });
+    // P1 修复（复审）：显式开启 DeepSeek 专属扩展参数（thinking/reasoning_effort）
+    this.supportsThinking = true;
+    this.supportsReasoningEffort = true;
   }
 
   /**

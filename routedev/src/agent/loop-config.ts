@@ -123,8 +123,13 @@ export interface ToolExecCallOptions {
  *  Phase 96 P1-1：新增 callOptions 参数支持流式输出与取消
  */
 export interface ToolExecutorAdapter {
-  /** 获取当前可用的工具定义（给 LLM 的 function calling schema） */
-  getToolDefinitions(): LLMToolDefinition[];
+  /**
+   * 获取当前可用的工具定义（给 LLM 的 function calling schema）。
+   * P1 修复（复审）：接收回合级工具面上下文——adapter 不再硬编码 mode，
+   * QA 回合的写工具（file_write/shell_exec 等）不得进入 schema。
+   * 未传时按 coding 面解析（兼容旧调用方）。
+   */
+  getToolDefinitions(context?: import('../tools/tool-surface-resolver.js').ToolSurfaceContext): LLMToolDefinition[];
 
   /**
    * P2（turn 隔离）：run 开始时重置回合级提升（tool_search boost）。

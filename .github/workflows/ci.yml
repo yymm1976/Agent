@@ -12,6 +12,7 @@ permissions:
 env:
   NODE_VERSION: '22.x'
   PNPM_VERSION: '11.7.0'
+  HUSKY: '0'  # husky v9 在 CI 无需安装 git hooks（prepare 阶段直接退出）
 
 jobs:
   core:

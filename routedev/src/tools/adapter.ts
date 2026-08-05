@@ -66,11 +66,16 @@ export class ToolRegistryAdapter implements ToolExecutorAdapter {
    * P2（单一真相源）：过滤收敛到 resolveVisibleTools——adapter 不再维护
    * 第二套 hidden/mode/deferred 判定，与 chat-bridge 渲染共用同一规则
    * （boost 提升的 deferred 工具经 boostedTools 参数进入可见面）。
+   * P1 修复（复审）：mode 由调用方传入（QA 回合不含写工具），不再硬编码
+   * 'coding'——否则 qa 请求的 schema 仍含 file_write/shell_exec。
    */
-  getToolDefinitions(): LLMToolDefinition[] {
+  getToolDefinitions(context?: import('./tool-surface-resolver.js').ToolSurfaceContext): LLMToolDefinition[] {
     return resolveVisibleTools(this.registry.list(), {
-      mode: 'coding',
-      boostedTools: this.boost?.names,
+      mode: context?.mode ?? 'coding',
+      taskShape: context?.taskShape,
+      allowedTools: context?.allowedTools,
+      mcpRequested: context?.mcpRequested,
+      boostedTools: context?.boostedTools ?? this.boost?.names,
     })
       .map(tool => ({
       name: tool.definition.name,

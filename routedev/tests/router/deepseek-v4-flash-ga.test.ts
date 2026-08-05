@@ -368,4 +368,29 @@ describe('P0 DeepSeek V4 thinking 模式协议（reasoning 回传 / 参数注入
     expect(resp.usage.cacheHitTokens).toBe(90);
     expect(resp.usage.cacheMissTokens).toBe(10);
   });
+
+  it('P1 复审：其他 OpenAI 兼容 client 即使误传 effort 也不发送 thinking/reasoning_effort', async () => {
+    // QwenClient/OllamaClient 继承 OpenAIClient，未开启 provider 扩展开关——
+    // 调用方误传 reasoningEffort/thinkingEnabled 也必须被吞掉（端点可能拒绝未知参数）
+    const { QwenClient } = await import('../../src/router/llm/qwen-client.js');
+    mockCreate.mockResolvedValue({
+      choices: [{ message: { role: 'assistant', content: 'ok', tool_calls: [] }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+      model: 'qwen-max',
+    });
+    const qwen = new QwenClient({
+      providerId: 'qwen',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      apiKey: 'test',
+    });
+    await qwen.complete({
+      model: 'qwen-max',
+      messages: [{ role: 'user', content: 'hi' }],
+      reasoningEffort: 'max', // 误传
+      thinkingEnabled: true, // 误传
+    });
+    const params = mockCreate.mock.calls[0][0];
+    expect(params.reasoning_effort).toBeUndefined();
+    expect(params.thinking).toBeUndefined();
+  });
 });

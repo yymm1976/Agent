@@ -30,7 +30,7 @@
     "audit:prompt": "tsx scripts/audit-system-prompt.ts",
     "detect-dead-code": "node --import tsx/esm scripts/detect-dead-code.ts",
     "verify:slimdown": "tsx scripts/verify-slimdown.ts",
-    "prepare": "husky install",
+    "prepare": "husky",
     "commitlint": "commitlint --edit",
     "eval:baseline": "node --import tsx/esm scripts/run-harness-eval.mjs",
     "test:evals": "vitest run tests/evals"

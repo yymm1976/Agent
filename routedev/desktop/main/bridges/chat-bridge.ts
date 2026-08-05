@@ -79,6 +79,15 @@ function maxTokensForTaskShape(taskShape?: string): number | undefined {
 }
 
 /**
+ * P1 修复（复审）：reasoning_effort 只属于 DeepSeek——其他 OpenAI 兼容
+ * 端点（Qwen/Ollama/自定义）可能拒绝未知请求参数
+ */
+function isDeepSeekRoute(routeDecision: { providerId: string; model: { id: string } }): boolean {
+  return routeDecision.providerId.toLowerCase().includes('deepseek')
+    || routeDecision.model.id.toLowerCase().startsWith('deepseek-');
+}
+
+/**
  * 自动化任务预授权判定：allowlist（read:/write:/run:/tool: 前缀条目）是否覆盖该工具调用。
  * 能力候选从工具名与参数中的路径/命令字段推导；匹配复用 isAllowedByAllowlist 的前缀语义。
  * B-03：git_op 按操作区分——`tool:git_op` 只预授权读操作（status/log/diff 等）；
@@ -439,8 +448,23 @@ ${skillBlocks.join('\n')}
         context: executionContext,
         // 修复 8（复审）：DeepSeek 思考强度按任务形状确定性映射（官方建议
         // 复杂 Agent 任务用 max）——qa/单步实现 high，多步/调查/失败重试 max
-        reasoningEffort: reasoningEffortForTaskShape(classifyResult.taskShape),
+        // P1 修复（复审）：reasoning_effort 是 DeepSeek 专属字段——其他
+        // OpenAI 兼容端点（Qwen/Ollama 等）可能拒绝未知参数，必须限定
+        // DeepSeek 路由；maxTokens 映射对所有 provider 通用，保持无条件
+        reasoningEffort: isDeepSeekRoute(routeDecision)
+          ? reasoningEffortForTaskShape(classifyResult.taskShape)
+          : undefined,
         maxTokens: maxTokensForTaskShape(classifyResult.taskShape),
+        // P1 修复（复审）：回合级工具面上下文透传 loop——QA 回合的 schema
+        // 不含写工具（此前 adapter 硬编码 coding，qa 请求仍见 file_write 等）
+        toolSurface: {
+          mode: classifyResult.taskShape === 'qa' ? 'qa' : 'coding',
+          taskShape: classifyResult.taskShape,
+          mcpRequested: explicitlyRequestsMcp,
+          ...(remoteContext?.allowedToolNames
+            ? { allowedTools: new Set(remoteContext.allowedToolNames) }
+            : {}),
+        },
         systemBlocks: [
           {
             type: 'text',

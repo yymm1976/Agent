@@ -47,10 +47,10 @@ export class AgentRunScheduler {
 
   /**
    * 排队一个 agent run。
-   * @param options.workspaceId 可选工作区标识——仅用于快照/排序/审计（同工作区 run
-   *   保持相邻）；注意：当前 ReActAgentLoop 是实例级单例（NativeAgentKernel 显式互斥），
-   *   不同 workspace 的 run 仍串行执行。真正的多 worktree 并行需要每 worktree 一个
-   *   loop 实例（未来架构，见 C2 记录）。
+   * @param options.workspaceId 工作区标识——仅作为状态快照/审计元数据；
+   *   调度仍维持全局 FIFO（当前 ReActAgentLoop 是实例级单例，NativeAgentKernel
+   *   显式互斥，不同 workspace 的 run 无法并行）。真正的多 worktree 并行需要
+   *   每 worktree 一个 loop 实例（未来架构，见技术债 TD-22）。
    */
   enqueue(id: string, run: (signal: AbortSignal) => Promise<void>, options?: { workspaceId?: string }): Promise<void> {
     if (this.active?.id === id || this.queue.some((entry) => entry.id === id)) {
