@@ -393,4 +393,38 @@ describe('P0 DeepSeek V4 thinking 模式协议（reasoning 回传 / 参数注入
     expect(params.reasoning_effort).toBeUndefined();
     expect(params.thinking).toBeUndefined();
   });
+
+  it('P0 复审：usage-only 尾块（choices=[] 独立 chunk）在 finish_reason 后仍被读取', async () => {
+    // DeepSeek include_usage 正式帧结构：普通 chunk → finish_reason（usage:null）→ choices:[] usage 尾块
+    mockCreate.mockResolvedValue((async function* () {
+      yield { choices: [{ delta: { content: '你' }, finish_reason: null }] };
+      yield { choices: [{ delta: { content: '好' }, finish_reason: null }] };
+      yield { choices: [{ delta: {}, finish_reason: 'stop' }] }; // 无 usage
+      yield { choices: [], usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, prompt_cache_hit_tokens: 90, prompt_cache_miss_tokens: 10 } }; // usage 尾块
+    })());
+    const client = makeClient();
+    const lines = await collectStream(client.stream({ ...OPTIONS }));
+
+    // usage 事件必须存在且携带真实 hit/miss（此前提前 return 导致尾块被丢弃）
+    const usageLine = lines.find((l) => l.includes('"type":"usage"'));
+    expect(usageLine).toBeDefined();
+    expect(usageLine).toContain('"cacheHitTokens":90');
+    expect(usageLine).toContain('"cacheMissTokens":10');
+    // done 在最后（尾块读完才结束）
+    const doneIndex = lines.findIndex((l) => l.includes('"type":"done"'));
+    const usageIndex = lines.findIndex((l) => l.includes('"type":"usage"'));
+    expect(doneIndex).toBeGreaterThan(usageIndex);
+  });
+
+  it('P0 复审：DeepSeek 请求不携带 prompt_cache_key（缓存自动，官方无需自定义 key）', async () => {
+    mockCreate.mockResolvedValue({
+      choices: [{ message: { role: 'assistant', content: 'ok', tool_calls: [] }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+      model: 'deepseek-v4-flash',
+    });
+    const client = makeClient();
+    await client.complete({ ...OPTIONS, enableCache: true });
+    const params = mockCreate.mock.calls[0][0];
+    expect(params.prompt_cache_key).toBeUndefined();
+  });
 });

@@ -480,12 +480,27 @@ describe('P0 复审：accumulateUsage 统一聚合', () => {
     expect(total.cacheCreationInputTokens).toBe(10);
   });
 
-  it('缺失缓存字段不污染累计值（undefined 按 0 处理）', async () => {
+  it('缺失字段保持 undefined——不生成 0（避免遮蔽 ChatBridge 的 ?? 回退链）', async () => {
     const { accumulateUsage } = await import('../../src/agent/loop.js');
-    const total = { inputTokens: 10, outputTokens: 5, totalTokens: 15, cacheHitTokens: 3 };
+    const total = { inputTokens: 10, outputTokens: 5, totalTokens: 15 };
     accumulateUsage(total, { inputTokens: 10, outputTokens: 5, totalTokens: 15 });
-    expect(total.cacheHitTokens).toBe(3);
-    // 缺失字段按 0 归一（不 NaN、不污染）
-    expect(total.cacheMissTokens).toBe(0);
+    expect(total.cacheHitTokens).toBeUndefined();
+    expect(total.cacheMissTokens).toBeUndefined();
+  });
+
+  it('只有 Anthropic 字段时不生成 DeepSeek 字段（反之亦然）', async () => {
+    const { accumulateUsage } = await import('../../src/agent/loop.js');
+    // Anthropic 只返回 cacheReadInputTokens
+    const anthropic = { inputTokens: 10, outputTokens: 5, totalTokens: 15, cacheReadInputTokens: 1000 };
+    accumulateUsage(anthropic, { inputTokens: 10, outputTokens: 5, totalTokens: 15, cacheReadInputTokens: 500 });
+    expect(anthropic.cacheReadInputTokens).toBe(1500);
+    expect(anthropic.cacheHitTokens).toBeUndefined(); // 不得生成 0
+
+    // DeepSeek 只返回 cacheHitTokens/cacheMissTokens
+    const deepseek = { inputTokens: 100, outputTokens: 20, totalTokens: 120, cacheHitTokens: 60, cacheMissTokens: 40 };
+    accumulateUsage(deepseek, { inputTokens: 200, outputTokens: 30, totalTokens: 230, cacheHitTokens: 180, cacheMissTokens: 20 });
+    expect(deepseek.cacheHitTokens).toBe(240);
+    expect(deepseek.cacheMissTokens).toBe(60);
+    expect(deepseek.cacheReadInputTokens).toBeUndefined(); // 不得生成 0
   });
 });

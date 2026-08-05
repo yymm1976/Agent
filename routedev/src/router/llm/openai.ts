@@ -37,6 +37,11 @@ export class OpenAIClient extends BaseLLMClient {
    */
   protected supportsThinking = false;
   protected supportsReasoningEffort = false;
+  /**
+   * P1 修复（复审）：prompt_cache_key 仅由真正支持该参数的 client 开启
+   * （DeepSeek 缓存自动启用，官方明确无需自定义 key——不接受该参数）
+   */
+  protected supportsPromptCacheKey = false;
   private readonly client: OpenAI | null;
   /** 客户端是否就绪（apiKey 已配置） */
   private readonly _isReady: boolean;
@@ -144,6 +149,15 @@ export class OpenAIClient extends BaseLLMClient {
       // 并行工具的分片交错到达时会把后一工具的参数追加到前一工具，且 finish 只 end 最后一个。
       const toolAccum = new Map<number, { id: string; name: string; args: string }>();
 
+      // P0 修复（复审）：DeepSeek include_usage 模式下，完整 usage 可能位于
+      // finish_reason 之后的独立尾块（choices:[] + usage），[DONE] 前到达。
+      // 收到 finish_reason 只记录状态并发射 tool_call_end（一次），不 return——
+      // 继续读取 usage-only 尾块，流结束才发 done。
+      let pendingFinishReason: 'stop' | 'tool_use' | 'length' | 'error' | null = null;
+      let toolEndsEmitted = false;
+      // 最后一个 chunk 的 usage（优先于全零兜底传给 logResponse）
+      let lastUsage: { inputTokens: number; outputTokens: number; totalTokens: number } | null = null;
+
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta;
         const finishReason = chunk.choices[0]?.finish_reason;
@@ -153,9 +167,12 @@ export class OpenAIClient extends BaseLLMClient {
           yield { type: 'text_delta', text: delta.content };
         }
 
-        const reasoningDelta = (delta as Record<string, unknown>).reasoning_content
-          ?? (delta as Record<string, unknown>).reasoning
-          ?? (delta as Record<string, unknown>).thinking;
+        // 推理增量（delta 可能为 undefined——usage-only 尾块 choices 为空数组）
+        const reasoningDelta = delta
+          ? (delta as Record<string, unknown>).reasoning_content
+            ?? (delta as Record<string, unknown>).reasoning
+            ?? (delta as Record<string, unknown>).thinking
+          : undefined;
         if (typeof reasoningDelta === 'string' && reasoningDelta) {
           yield { type: 'reasoning_delta', text: reasoningDelta };
         }
@@ -199,43 +216,44 @@ export class OpenAIClient extends BaseLLMClient {
           const missTokens = typeof usageAny.prompt_cache_miss_tokens === 'number'
             ? usageAny.prompt_cache_miss_tokens
             : undefined;
+          const normalized = {
+            inputTokens: chunk.usage.prompt_tokens,
+            outputTokens: chunk.usage.completion_tokens,
+            totalTokens: chunk.usage.total_tokens,
+            cacheHitTokens: hitTokens,
+            cacheMissTokens: missTokens,
+          };
+          lastUsage = normalized;
           yield {
             type: 'usage',
-            usage: {
-              inputTokens: chunk.usage.prompt_tokens,
-              outputTokens: chunk.usage.completion_tokens,
-              totalTokens: chunk.usage.total_tokens,
-              cacheHitTokens: hitTokens,
-              cacheMissTokens: missTokens,
-            },
+            usage: normalized,
           };
         }
 
-        // 结束（B-06：遍历全部累积工具发送 tool_call_end，而非只发最后一个）
-        if (finishReason) {
-          for (const acc of toolAccum.values()) {
-            if (acc.id) {
-              yield { type: 'tool_call_end', toolCallId: acc.id };
+        // 结束信号：记录状态 + 发射 tool_call_end（一次），继续读 usage-only 尾块
+        if (finishReason && !pendingFinishReason) {
+          pendingFinishReason = this.mapFinishReason(finishReason);
+          if (!toolEndsEmitted) {
+            for (const acc of toolAccum.values()) {
+              if (acc.id) {
+                yield { type: 'tool_call_end', toolCallId: acc.id };
+              }
             }
+            toolEndsEmitted = true;
           }
-          yield {
-            type: 'done',
-            finishReason: this.mapFinishReason(finishReason),
-          };
-          this.logResponse(
-            options.model,
-            chunk.usage
-              ? {
-                  inputTokens: chunk.usage.prompt_tokens,
-                  outputTokens: chunk.usage.completion_tokens,
-                  totalTokens: chunk.usage.total_tokens,
-                }
-              : { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-            Date.now() - startTime,
-          );
-          return;
         }
       }
+
+      // 流结束（含 usage-only 尾块读完）：发 done + 日志
+      this.logResponse(
+        options.model,
+        lastUsage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        Date.now() - startTime,
+      );
+      yield {
+        type: 'done',
+        finishReason: pendingFinishReason ?? 'stop',
+      };
     } catch (err) {
       throw this.normalizeError(err, options.model);
     }
@@ -288,7 +306,9 @@ export class OpenAIClient extends BaseLLMClient {
 
     // P2-10：OpenAI 通过 prompt_cache_key 启用 Prompt 缓存
     // 同一 cache_key 的请求会复用前缀缓存，降低 token 消耗
-    if (options.enableCache) {
+    // P1 修复（复审）：DeepSeek 缓存自动启用、不接受自定义 key——
+    // 由 supportsPromptCacheKey 开关控制（默认 false，仅支持的 client 开启）
+    if (this.supportsPromptCacheKey && options.enableCache) {
       // 使用 model 名作为 cache key 的基础，确保同模型的请求复用缓存
       params.prompt_cache_key = `routedev-${options.model}`;
     }

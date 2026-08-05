@@ -70,11 +70,11 @@ export class ToolRegistryAdapter implements ToolExecutorAdapter {
    * 'coding'——否则 qa 请求的 schema 仍含 file_write/shell_exec。
    */
   getToolDefinitions(context?: import('./tool-surface-resolver.js').ToolSurfaceContext): LLMToolDefinition[] {
+    // P2 修复（复审）：完整转发 ToolSurfaceContext（deniedTools/maxCoreTools
+    // 此前遗漏——接口承诺与实现不一致；boostedTools 缺省回退到本 adapter 的 boost）
     return resolveVisibleTools(this.registry.list(), {
+      ...context,
       mode: context?.mode ?? 'coding',
-      taskShape: context?.taskShape,
-      allowedTools: context?.allowedTools,
-      mcpRequested: context?.mcpRequested,
       boostedTools: context?.boostedTools ?? this.boost?.names,
     })
       .map(tool => ({

@@ -69,14 +69,22 @@ const MAX_FOLLOWUP_ITERATIONS = 100;
  * reasoning tokens 等）在 loop 汇总时再次遗漏。
  * 未知字段用 ?? 0 归一，缺失侧不污染累计值。
  */
+/** 可选字段相加：两边都缺失才保持 undefined（不生成 0——0 会遮蔽 ChatBridge 的 ?? 回退链） */
+function addOptional(left: number | undefined, right: number | undefined): number | undefined {
+  if (left === undefined && right === undefined) return undefined;
+  return (left ?? 0) + (right ?? 0);
+}
+
 export function accumulateUsage(total: TokenUsageInfo, current: TokenUsageInfo): void {
   total.inputTokens += current.inputTokens;
   total.outputTokens += current.outputTokens;
   total.totalTokens += current.totalTokens;
-  total.cacheHitTokens = (total.cacheHitTokens ?? 0) + (current.cacheHitTokens ?? 0);
-  total.cacheMissTokens = (total.cacheMissTokens ?? 0) + (current.cacheMissTokens ?? 0);
-  total.cacheReadInputTokens = (total.cacheReadInputTokens ?? 0) + (current.cacheReadInputTokens ?? 0);
-  total.cacheCreationInputTokens = (total.cacheCreationInputTokens ?? 0) + (current.cacheCreationInputTokens ?? 0);
+  // P1 修复（复审）：缺失字段保持 undefined——Anthropic 只有 cacheReadInputTokens
+  // 时不得生成 cacheHitTokens:0（否则 ChatBridge 的 ?? 回退被 0 短路）
+  total.cacheHitTokens = addOptional(total.cacheHitTokens, current.cacheHitTokens);
+  total.cacheMissTokens = addOptional(total.cacheMissTokens, current.cacheMissTokens);
+  total.cacheReadInputTokens = addOptional(total.cacheReadInputTokens, current.cacheReadInputTokens);
+  total.cacheCreationInputTokens = addOptional(total.cacheCreationInputTokens, current.cacheCreationInputTokens);
 }
 
 /**
@@ -1172,6 +1180,10 @@ export class ReActAgentLoop {
       this.currentCapability = null;
       this.currentToolSurface = undefined;
       this.engineTurnRequestId = null;
+      // P1 修复（复审）：finally 清理 boost——Run A 提升但未调用的工具不得
+      // 残留在 boost 池，否则 Run B 的 ChatBridge 在进入 loop 前读取旧 boost
+      // 渲染 Prompt 摘要（与 loop 开始后 resetBoost 的真实 schema 不一致）
+      this.toolExecutor.resetBoost?.();
     }
   }
 

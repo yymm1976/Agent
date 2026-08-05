@@ -31,7 +31,14 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: routedev/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --reporter=append-only
+      - name: Print pnpm diagnostics
+        if: failure()
+        run: |
+          node --version
+          pnpm --version
+          pnpm config list
+          curl -sI https://registry.npmjs.org/ --max-time 10 | head -1
       - run: pnpm typecheck
       - run: pnpm test
 
@@ -55,7 +62,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: routedev/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --reporter=append-only
       - run: pnpm typecheck:desktop
       - run: pnpm test:desktop
       - run: pnpm build:electron
@@ -73,7 +80,7 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
-      - run: chmod +x ./gradlew && ./gradlew --no-daemon test lint assembleDebug
+      - run: chmod +x ./gradlew && ./gradlew --no-daemon test lint assembleDebug --stacktrace
 
   security:
     name: Dependency and secret checks
@@ -91,7 +98,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: routedev/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --reporter=append-only
       - run: pnpm audit --prod --audit-level=high
       - name: Reject obvious committed private keys
         working-directory: .

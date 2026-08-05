@@ -133,4 +133,59 @@ describe('P2 复审：tool_search 真实两轮 ReAct 端到端', () => {
     expect(events).toContain('result:web_search:ok');
     expect(events.some((e) => e.startsWith('done:'))).toBe(true);
   });
+
+  it('P1 复审：跨 Run boost 清理——Run A 提升未消费，Run B 从干净 boost 开始', async () => {
+    const registry = new ToolRegistry();
+    const boost = new TurnToolBoost();
+    registry.register(makeWebSearchTool() as never);
+    registry.register(createToolSearchTool({ registry, boost }));
+    const executor = new ToolExecutor(registry);
+    executor.setSecurityChecker({
+      checkFilePath: () => ({ allowed: true }),
+      checkCommand: () => ({ allowed: true }),
+      checkNetworkRequest: async () => ({ allowed: true }),
+    } as never);
+    const adapter = new ToolRegistryAdapter(registry, executor, {
+      workingDirectory: process.cwd(),
+      allowedDirectories: [process.cwd()],
+      environment: {},
+      timeoutMs: 30000,
+    } as never);
+    adapter.setToolBoost(boost);
+
+    // Run A：mock 模型第 1 轮调 tool_search（提升 web_search）后直接结束（不消费）
+    const clientA: ILLMClient = {
+      protocol: 'openai', providerId: 'deepseek', isReady: () => true,
+      complete: async () => ({ content: '', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, finishReason: 'stop', model: 'm' }),
+      stream: async function* () {
+        yield { type: 'tool_call_start', toolCall: { id: 'c1', name: 'tool_search' } };
+        yield { type: 'tool_call_delta', toolCallId: 'c1', argumentsDelta: '{"query":"搜索"}' };
+        yield { type: 'tool_call_end', toolCallId: 'c1' };
+        yield { type: 'usage', usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 } };
+        yield { type: 'done', finishReason: 'tool_use' };
+        // 第 2 轮：不再调用工具，直接结束
+        yield { type: 'text_delta', text: '完毕 ' };
+        yield { type: 'usage', usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 } };
+        yield { type: 'done', finishReason: 'stop' };
+      },
+    };
+    const loopA = new ReActAgentLoop(adapter as never, { toolsEnabled: true });
+    for await (const _e of loopA.run({
+      userMessage: '搜索一下',
+      llmClient: clientA,
+      routeDecision: makeRouteDecision(),
+      conversationHistory: [],
+      onConfirmTool: async () => true,
+    })) { /* 消费 */ }
+    // Run A 结束时 boost 必须被清理（finally resetBoost）
+    expect(boost.names.size).toBe(0);
+
+    // Run B：ChatBridge 语义——进入 loop 前读取 boost 渲染摘要；应无残留
+    const preRunBoost = [...boost.names];
+    expect(preRunBoost).not.toContain('web_search');
+
+    // Run B 首轮 schema（loop 开始前 adapter 视角）：无 web_search
+    const runBFirstSchema = adapter.getToolDefinitions({ mode: 'coding' }).map((d) => d.name);
+    expect(runBFirstSchema).not.toContain('web_search');
+  });
 });
