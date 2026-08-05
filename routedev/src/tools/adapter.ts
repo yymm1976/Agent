@@ -7,6 +7,7 @@ import type { ToolExecutorAdapter, ToolExecCallOptions } from '../agent/loop-con
 import type { LLMToolDefinition } from '../router/types.js';
 import type { IToolRegistry, IToolExecutor, ToolExecutionContext } from './types.js';
 import type { TraceCollector } from '../harness/trace-collector.js';
+import type { TurnToolBoost } from './tool-search.js';
 import { logger } from '../utils/logger.js';
 
 /** 结构化工具执行结果（P1-5 修复） */
@@ -23,6 +24,8 @@ export class ToolRegistryAdapter implements ToolExecutorAdapter {
   private context: ToolExecutionContext;
   /** Phase 34：可选 TraceCollector，用于记录工具调用 span */
   private trace: TraceCollector | null = null;
+  /** B-01B：回合级工具提升（tool_search 写入，getToolDefinitions 读取） */
+  private boost: TurnToolBoost | null = null;
 
   constructor(
     registry: IToolRegistry,
@@ -32,6 +35,11 @@ export class ToolRegistryAdapter implements ToolExecutorAdapter {
     this.registry = registry;
     this.executor = executor;
     this.context = context;
+  }
+
+  /** B-01B：注入回合级工具提升（app-init 与 tool_search 共享同一实例） */
+  setToolBoost(boost: TurnToolBoost | null): void {
+    this.boost = boost;
   }
 
   /** Phase 34：注入 TraceCollector */
@@ -47,8 +55,24 @@ export class ToolRegistryAdapter implements ToolExecutorAdapter {
     this.context = { ...this.context, requestConfirmation: callback };
   }
 
+  /**
+   * 生成给 LLM 的 function calling schema。
+   * B-01A/B-01B：按暴露元数据过滤——
+   *   - hidden：从不暴露
+   *   - mode：默认不暴露（内部模式工具，模式运行未启用前保持隐藏）
+   *   - deferred：默认不暴露；被 tool_search 提升（boost）时临时可见
+   * 未声明 exposure 的旧工具按 core 处理（兼容）。
+   */
   getToolDefinitions(): LLMToolDefinition[] {
-    return this.registry.list().map(tool => ({
+    return this.registry.list()
+      .filter((tool) => {
+        const def = tool.definition;
+        if (def.exposure === 'hidden') return false;
+        if (def.exposure === 'mode') return false;
+        if (def.exposure === 'deferred' && !this.boost?.names.has(def.name)) return false;
+        return true;
+      })
+      .map(tool => ({
       name: tool.definition.name,
       description: tool.definition.description,
       // 保留双断言：ToolParameterSchema 含字面量 type:'object'，与 Record<string, unknown>
@@ -71,7 +95,21 @@ export class ToolRegistryAdapter implements ToolExecutorAdapter {
     if (callOptions.signal) merged.signal = callOptions.signal;
     if (callOptions.onUpdate) merged.onUpdate = callOptions.onUpdate;
     if (callOptions.autonomyMode) merged.autonomyMode = callOptions.autonomyMode;
+    // B-16（审查 I2 修复）：隔离工作区覆盖——worktree 实验时工具按 worktree 路径读写，
+    // 目录边界同步切换（不切换 allowedDirectories 会导致工具在工作区边界内操作 worktree 路径而被拒）
+    if (callOptions.workspace) {
+      merged.workingDirectory = callOptions.workspace.workingDirectory;
+      merged.allowedDirectories = callOptions.workspace.allowedDirectories;
+    }
     return merged;
+  }
+
+  /**
+   * B-01B：被提升的 deferred 工具成功执行后从 boost 收回（消费即收回），
+   * 避免低频工具在被选中调用后仍常驻暴露。
+   */
+  private retireBoostedTool(toolName: string, isError: boolean): void {
+    if (!isError) this.boost?.names.delete(toolName);
   }
 
   async executeTool(
@@ -87,6 +125,7 @@ export class ToolRegistryAdapter implements ToolExecutorAdapter {
     const result = await this.executor.execute(toolName, args, ctx);
     const isError = !result.success;
     const output = result.success ? result.output : `[工具错误] ${toolName}: ${result.error ?? '未知错误'}`;
+    this.retireBoostedTool(toolName, isError);
     if (span && this.trace) {
       this.trace.recordToolResult(toolName, toolCallId, output, isError, true);
     }
@@ -115,6 +154,7 @@ export class ToolRegistryAdapter implements ToolExecutorAdapter {
     const result = await this.executor.execute(toolName, args, ctx);
     const isError = !result.success;
     const output = result.success ? result.output : `[工具错误] ${toolName}: ${result.error ?? '未知错误'}`;
+    this.retireBoostedTool(toolName, isError);
     if (span && this.trace) {
       this.trace.recordToolResult(toolName, toolCallId, output, isError, true);
     }

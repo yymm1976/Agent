@@ -60,7 +60,7 @@ import { buildForkedMessages } from './spawn-agent-utils.js';
 export class SpawnAgentTool implements ITool {
   readonly definition: ToolDefinition = {
     name: 'spawn_agent',
-    description: '当用户需要并行处理多个独立子任务、隔离上下文提高专注度时，使用此工具生成子 Agent。子 Agent 有独立的迭代空间，结果返回给主 Agent。',
+    description: '当任务可拆分为多个独立子任务、或需要隔离上下文时，使用此工具生成子 Agent（结果返回给主 Agent）。稳定角色：explore=只读探索（推荐用于调研代码库）、implement=读写实现、review=只读审查。不要为单文件修改或一步可完成的任务 spawn——直接执行更快。',
     parameters: {
       type: 'object',
       properties: {
@@ -74,8 +74,8 @@ export class SpawnAgentTool implements ITool {
         },
         subagentType: {
           type: 'string',
-          enum: ['general', 'researcher', 'coder', 'reviewer', 'advisor', 'review-plan', 'planner'],
-          description: '子 Agent 类型，决定可用工具集。general=全部工具（除 spawn_agent），researcher=只读检索，coder=读写执行，reviewer=只读审查+写审查报告，advisor=无工具（仅单次 LLM 调用，用于 /BTW 临时问答），review-plan=Pre-flight plan review，planner=PM/架构师（拆需求+出设计方案，可写 context/ 文件）。默认 general。',
+          enum: ['explore', 'implement', 'review', 'general', 'researcher', 'coder', 'reviewer', 'advisor', 'review-plan', 'planner'],
+          description: '子 Agent 类型，决定可用工具集。推荐 3 个稳定角色：explore=只读探索（默认只读，无 ask_user/写入工具，调研代码库用）、implement=读写实现、review=只读审查+写审查报告。旧角色保留兼容：general=全部工具（除 spawn_agent）、researcher=只读检索、coder=读写执行、reviewer=只读审查、advisor=无工具、review-plan=plan review、planner=PM/架构师。默认 explore。',
         },
         maxIterations: {
           type: 'number',
@@ -87,10 +87,10 @@ export class SpawnAgentTool implements ITool {
         },
         model: {
           type: 'string',
-          description: '必填。指定 subagent 使用的模型 ID（Phase 75-A3）。传 "inherit"=继承 AgentProfile.modelId；传具体 model id（如 "gpt-4o-mini"）=使用该模型。强制必填以避免静默继承最贵模型。',
+          description: '可选。指定 subagent 使用的模型 ID。缺省或传 "inherit"=继承父 Agent 模型；传具体 model id（如 "gpt-4o-mini"）=使用该模型。',
         },
       },
-      required: ['description', 'prompt', 'model'],
+      required: ['description', 'prompt'],
     },
     requiresApproval: true,
     category: 'system',
@@ -142,20 +142,20 @@ export class SpawnAgentTool implements ITool {
         errors.push('maxIterations 必须是 1 到 100 之间的整数');
       }
     }
-    if (args.subagentType !== undefined && !['general', 'researcher', 'coder', 'reviewer', 'advisor', 'review-plan', 'planner'].includes(args.subagentType as string)) {
-      errors.push('subagentType 必须是 general/researcher/coder/reviewer/advisor/review-plan/planner 之一');
+    if (args.subagentType !== undefined && !['explore', 'implement', 'review', 'general', 'researcher', 'coder', 'reviewer', 'advisor', 'review-plan', 'planner'].includes(args.subagentType as string)) {
+      errors.push('subagentType 必须是 explore/implement/review/general/researcher/coder/reviewer/advisor/review-plan/planner 之一');
     }
     if (args.isolated !== undefined && typeof args.isolated !== 'boolean') {
       errors.push('isolated 必须是布尔值');
     }
-    // Phase 75-A3：model 字段校验（必填，字符串）
-    if (args.model === undefined) {
-      errors.push('缺少必需参数: model（必须显式指定 model id 或 "inherit"）');
-    } else if (typeof args.model !== 'string') {
-      errors.push('model 必须是字符串（model id 或 "inherit"）');
-    } else if (!ALLOWED_MODEL_PATTERN.test(args.model)) {
-      // 安全加固：model 字段白名单校验，防止注入非法字符
-      errors.push('model 格式非法（仅允许字母、数字、点、下划线、短横线，长度 1-64）');
+    // B-05A：model 字段可选（缺省 = inherit 继承父 Agent 模型）；有值时校验格式
+    if (args.model !== undefined) {
+      if (typeof args.model !== 'string') {
+        errors.push('model 必须是字符串（model id 或 "inherit"）');
+      } else if (!ALLOWED_MODEL_PATTERN.test(args.model)) {
+        // 安全加固：model 字段白名单校验，防止注入非法字符
+        errors.push('model 格式非法（仅允许字母、数字、点、下划线、短横线，长度 1-64）');
+      }
     }
     // 安全加固：allowedTools 数组校验（若调用方提供，校验格式与数量）
     if (args.allowedTools !== undefined) {
@@ -191,8 +191,8 @@ export class SpawnAgentTool implements ITool {
     const params: SpawnAgentParams = {
       description,
       prompt,
-      // Phase 75-A3：model 必填，schema 已强制校验，未传会在 validateArgs 被拒绝
-      model: args.model as string,
+      // B-05A：model 可选，缺省继承父 Agent 模型（显式传 'inherit' 语义相同）
+      model: typeof args.model === 'string' ? args.model : 'inherit',
     };
     if (args.subagentType !== undefined) {
       params.subagentType = args.subagentType as SubagentType;

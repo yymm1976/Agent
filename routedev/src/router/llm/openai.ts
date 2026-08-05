@@ -132,9 +132,10 @@ export class OpenAIClient extends BaseLLMClient {
           : undefined;
       const stream = await this.client.chat.completions.create(params, requestOptions) as AsyncIterable<ChatCompletionChunk>;
 
-      let currentToolId = '';
-      let currentToolName = '';
-      let currentToolArgs = '';
+      // B-06：并行工具调用按 tool_call index 分别累积（OpenAI 流式规范：
+      // 增量分片与首片共享同一 index）。旧实现用单一 currentToolId 状态机，
+      // 并行工具的分片交错到达时会把后一工具的参数追加到前一工具，且 finish 只 end 最后一个。
+      const toolAccum = new Map<number, { id: string; name: string; args: string }>();
 
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta;
@@ -152,27 +153,29 @@ export class OpenAIClient extends BaseLLMClient {
           yield { type: 'reasoning_delta', text: reasoningDelta };
         }
 
-        // 工具调用增量
+        // 工具调用增量（B-06：index-keyed 合并）
         if (delta?.tool_calls) {
           for (const toolCall of delta.tool_calls) {
+            const index = (toolCall as { index?: number }).index ?? 0;
+            const acc = toolAccum.get(index) ?? { id: '', name: '', args: '' };
+            toolAccum.set(index, acc);
             if (toolCall.id) {
-              // 新工具调用开始
-              if (currentToolId) {
-                yield { type: 'tool_call_end', toolCallId: currentToolId };
+              // B-06：重复 id（同 index 续片）不重复发射 start，保证幂等
+              const isNew = acc.id === '' || acc.id !== toolCall.id;
+              acc.id = toolCall.id;
+              acc.name = toolCall.function?.name || acc.name;
+              if (isNew) {
+                yield {
+                  type: 'tool_call_start',
+                  toolCall: { id: acc.id, name: acc.name },
+                };
               }
-              currentToolId = toolCall.id;
-              currentToolName = toolCall.function?.name || '';
-              currentToolArgs = '';
-              yield {
-                type: 'tool_call_start',
-                toolCall: { id: toolCall.id, name: currentToolName },
-              };
             }
             if (toolCall.function?.arguments) {
-              currentToolArgs += toolCall.function.arguments;
+              acc.args += toolCall.function.arguments;
               yield {
                 type: 'tool_call_delta',
-                toolCallId: currentToolId,
+                toolCallId: acc.id,
                 argumentsDelta: toolCall.function.arguments,
               };
             }
@@ -191,10 +194,12 @@ export class OpenAIClient extends BaseLLMClient {
           };
         }
 
-        // 结束
+        // 结束（B-06：遍历全部累积工具发送 tool_call_end，而非只发最后一个）
         if (finishReason) {
-          if (currentToolId) {
-            yield { type: 'tool_call_end', toolCallId: currentToolId };
+          for (const acc of toolAccum.values()) {
+            if (acc.id) {
+              yield { type: 'tool_call_end', toolCallId: acc.id };
+            }
           }
           yield {
             type: 'done',

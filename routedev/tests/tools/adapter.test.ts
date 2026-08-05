@@ -73,4 +73,34 @@ describe('ToolRegistryAdapter', () => {
     expect(adapter.hasTool('file_read')).toBe(true);
     expect(adapter.hasTool('nonexistent')).toBe(false);
   });
+
+  it('B-16: workspace 隔离——callOptions.workspace 覆盖工作目录与目录边界（审查 I2 修复）', async () => {
+    // 用一个记录实际执行上下文的假工具验证合并行为
+    let seenWorkingDirectory = '';
+    let seenAllowed: string[] = [];
+    const captureTool = {
+      definition: {
+        name: 'capture_cwd',
+        description: 'capture',
+        parameters: { type: 'object', properties: {}, required: [] as string[] },
+      },
+      validateArgs: () => ({ valid: true, errors: [] as string[] }),
+      async execute(_args: Record<string, unknown>, ctx: ToolExecutionContext) {
+        seenWorkingDirectory = ctx.workingDirectory;
+        seenAllowed = [...ctx.allowedDirectories];
+        return { success: true, output: 'ok' };
+      },
+    };
+    const registry = new ToolRegistry();
+    registry.register(captureTool as never);
+    const executor = makeExecutor(registry);
+    const adapter = new ToolRegistryAdapter(registry, executor, context);
+
+    await adapter.executeTool('capture_cwd', 'call-1', {}, {
+      workspace: { workingDirectory: 'C:/worktrees/exp-9', allowedDirectories: ['C:/worktrees/exp-9'] },
+    });
+
+    expect(seenWorkingDirectory).toBe('C:/worktrees/exp-9');
+    expect(seenAllowed).toEqual(['C:/worktrees/exp-9']);
+  });
 });

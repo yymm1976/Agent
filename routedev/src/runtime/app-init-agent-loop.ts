@@ -18,6 +18,17 @@
 
 import type { ClassificationResult, RoutingResult, ScenarioTier } from '../router/types.js';
 import type { DualLoopOrchestrator } from '../agent/dual-loop-orchestrator.js';
+import { createRequire } from 'node:module';
+
+// B-17：宿主 RouteDev 版本（供扩展治理校验；读取失败时降级为不校验——fail-open）
+const require_ = createRequire(import.meta.url);
+let HOST_VERSION: string | undefined;
+try {
+  const pkg = require_('../../package.json') as { version?: unknown };
+  HOST_VERSION = typeof pkg.version === 'string' ? pkg.version : undefined;
+} catch {
+  HOST_VERSION = undefined;
+}
 import type { DagEngine } from '../agent/workflow/dag-engine.js';
 import type {
   SpawnAgentFunction,
@@ -25,6 +36,7 @@ import type {
   SubagentType,
   DelegationIntegrationDeps,
 } from '../tools/builtin/spawn-agent.js';
+import { createListAgentsTool, createStopAgentTool } from '../tools/builtin/subagent-control.js';
 
 import { PathRouter } from '../agent/path-router.js';
 import { GoalAuditor } from '../agent/goal-audit.js';
@@ -112,6 +124,17 @@ export function setupAgentLoop(
   // 无论多 Agent 开关是否启用都装配：UI 侧子会话列表需要稳定的查询入口
   const subagentRegistry = new SubagentRegistry();
   ctx.subagentRegistry = subagentRegistry;
+  // B-11：子会话生命周期审计（spawn/completed/failed/aborted 留痕，不阻断主流程）
+  subagentRegistry.subscribe((record) => {
+    logger.info('subagent lifecycle', {
+      childSessionId: record.childSessionId,
+      parentSessionId: record.parentSessionId,
+      status: record.status,
+      subagentType: record.subagentType,
+      description: record.description.slice(0, 60),
+      elapsedMs: record.completedAt && record.createdAt ? record.completedAt - record.createdAt : undefined,
+    });
+  });
 
   // Phase 34：注入 TraceCollector，记录 LLM 调用与循环事件
   // setTraceCollector 接受 null 不接受 undefined，用 ?? null 转换
@@ -542,6 +565,11 @@ export function setupAgentLoop(
       delegationScoreCardCollector = scoreCardCollector;
     }
     registry!.register(new SpawnAgentTool(spawnAgentFn));
+    // B-05B：子 Agent 生命周期工具（复用 SubagentRegistry，不创建另一管理器）
+    if (subagentRegistry) {
+      registry!.register(createListAgentsTool(subagentRegistry));
+      registry!.register(createStopAgentTool(subagentRegistry));
+    }
   }
 
   // ===== Phase 41/42：tree-sitter 代码地图引擎预热（fail-open） =====
@@ -879,7 +907,7 @@ export function setupAgentLoop(
         const anthropicSkillsDir = path.join(cwd, anthropicMod.AnthropicSkillsLoader.SKILLS_DIR_NAME);
         if (existsSync(anthropicSkillsDir)) {
           try {
-            const anthropicLoader = new anthropicMod.AnthropicSkillsLoader(integrityManifest);
+            const anthropicLoader = new anthropicMod.AnthropicSkillsLoader(integrityManifest, HOST_VERSION);
             const autoEnable = config.import?.anthropicSkillsAutoEnable ?? false;
             const loadResult = await anthropicLoader.load(cwd, { autoEnable });
             logger.info('Anthropic skills loaded', {

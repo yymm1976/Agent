@@ -28,6 +28,91 @@ import type { CompactPromptEngine } from './memory/compact-prompt-engine.js';
 import type { SessionMemoryStore, SessionMemory } from './memory/session-memory-store.js';
 
 /**
+ * B-07：压缩后恢复清单（由调用方在压缩后注入为紧凑文本；路径再次经过 workspace boundary）
+ */
+export interface CompactionRecovery {
+  /** 最近读取的文件路径（file_read/file_search 等） */
+  readFiles: string[];
+  /** 最近修改的文件路径（file_write/file_edit） */
+  modifiedFiles: string[];
+  /** 消息中的图片引用数 */
+  imageCount: number;
+  /** 未完成 Todo 动作摘要（todo_write 的 action） */
+  todoItems: string[];
+  /** 提取耗时 */
+  elapsedMs: number;
+}
+
+const READ_TOOLS = new Set(['file_read', 'file_search', 'list_directory']);
+const WRITE_TOOLS = new Set(['file_write', 'file_edit']);
+
+/** 从消息中提取恢复上下文（纯函数；只读扫描，不修改消息） */
+export function extractRecoveryContext(messages: readonly LLMMessage[]): CompactionRecovery {
+  const startedAt = Date.now();
+  const readFiles: string[] = [];
+  const modifiedFiles: string[] = [];
+  const todoItems: string[] = [];
+  let imageCount = 0;
+  const pushPath = (list: string[], value: unknown): void => {
+    if (typeof value === 'string' && value.trim().length > 0 && list.length < 8) {
+      list.push(value);
+    }
+  };
+  for (const msg of messages) {
+    const parts = Array.isArray(msg.content) ? msg.content : [];
+    for (const part of parts) {
+      if (part.type === 'tool_use') {
+        if (READ_TOOLS.has(part.name)) {
+          pushPath(readFiles, part.arguments.path ?? part.arguments.pattern);
+        } else if (WRITE_TOOLS.has(part.name)) {
+          pushPath(modifiedFiles, part.arguments.path);
+        } else if (part.name === 'todo_write') {
+          const action = part.arguments.action;
+          if (typeof action === 'string' && action.trim().length > 0 && todoItems.length < 8) {
+            todoItems.push(action);
+          }
+        }
+      } else if (part.type === 'image') {
+        imageCount += 1;
+      }
+    }
+  }
+  return {
+    readFiles,
+    modifiedFiles,
+    imageCount,
+    todoItems,
+    elapsedMs: Date.now() - startedAt,
+  };
+}
+
+/**
+ * B-07：有效 turn boundary 修复——删除"孤儿 tool_result"（其 tool_use 已被压缩掉）。
+ * 禁止在 tool_call/tool_result 对中间切断：宁可丢弃孤立结果，不留下半截对。
+ * 返回 { messages, removed }。
+ */
+export function repairTurnBoundary(messages: readonly LLMMessage[]): { messages: LLMMessage[]; removed: number } {
+  let removed = 0;
+  const result: LLMMessage[] = [];
+  for (const msg of messages) {
+    const parts = Array.isArray(msg.content) ? msg.content : [];
+    const hasOrphanResult = parts.some(
+      (p) => p.type === 'tool_result' && !result.some(
+        (kept) => Array.isArray(kept.content) && kept.content.some(
+          (k) => k.type === 'tool_use' && k.id === p.toolUseId,
+        ),
+      ),
+    );
+    if (hasOrphanResult) {
+      removed += 1;
+      continue;
+    }
+    result.push(msg);
+  }
+  return { messages: result, removed };
+}
+
+/**
  * 压缩边界标记
  *
  * 借鉴 Claude Code 的 headUuid / anchorUuid / tailUuid 三元组
@@ -91,6 +176,8 @@ export interface CompactionResult {
   /** B12：L5 摘要是否失败（true 表示 summarize 抛错或未提供，已降级到 L4 结果） */
   summaryFailed?: boolean;
   ccr?: CCRMarker;
+  /** B-07：压缩后恢复清单（最近读取/修改文件、图片数、未完成 Todo） */
+  recovery?: CompactionRecovery;
 }
 
 /** 压缩配置 */
@@ -369,6 +456,20 @@ export class ContextCompactor {
         ? this.config.ccrCache?.buildMarker(ccrRecord.hash, messages.length, current.length)
         : undefined;
 
+      // B-07：有效 turn boundary——压缩后删除孤儿 tool_result（其 tool_use 已被压缩掉），
+      // 禁止在 tool_call/tool_result 对中间切断（L2/L4/L5 都可能制造孤儿结果）
+      const boundaryRepair = repairTurnBoundary(current);
+      if (boundaryRepair.removed > 0) {
+        current = boundaryRepair.messages;
+        logger.info('ContextCompactor: B-07 turn boundary repaired', {
+          removedOrphanResults: boundaryRepair.removed,
+        });
+      }
+
+      // B-07：压缩前提取恢复上下文（最近读取/修改文件、图片、未完成 Todo），
+      // 供调用方在压缩后注入紧凑恢复清单（不恢复完整工具输出；路径再次经过 workspace boundary）
+      const recovery = extractRecoveryContext(messages);
+
       // B12：判断 summaryFailed（L5 触发但未生成摘要）
       const summaryFailed = maxStageReached === 5 && !summary;
 
@@ -442,6 +543,8 @@ export class ContextCompactor {
           boundary,
           summaryFailed,
           ccr,
+          // B-07：压缩后恢复清单（最近读取/修改文件、图片数、未完成 Todo）
+          recovery,
         },
       };
     } catch (err) {

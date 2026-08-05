@@ -330,4 +330,87 @@ describe('AnthropicSkillsLoader', () => {
     expect(result.loaded[0]!.tags).toEqual(['test', 'quality']);
     expect(result.loaded[0]!.content).toContain('生成单元测试');
   });
+
+  // ------------------------------------------------------------
+  // B-17：扩展治理——minRouteDevVersion/capabilityVersion 校验与过滤
+  // ------------------------------------------------------------
+  it('B-17: minRouteDevVersion 高于宿主时 skill 被过滤并记入 errors', async () => {
+    projectRoot = await makeTempProjectRoot();
+    loader = new AnthropicSkillsLoader(undefined, '4.9.0');
+    await writeSkillMd(projectRoot, 'future-skill', {
+      name: 'future-skill',
+      description: '需要未来版本',
+      version: '1.0.0',
+      author: 't',
+      tags: [],
+      minRouteDevVersion: '99.0.0',
+    }, '内容');
+
+    const result = await loader.load(projectRoot, { autoEnable: false });
+    expect(result.loaded).toHaveLength(0);
+    expect(result.errors.some((e) => e.error.includes('governance rejected'))).toBe(true);
+  });
+
+  it('B-17: capabilityVersion 不受支持时被过滤，兼容 skill 正常加载（故障隔离）', async () => {
+    projectRoot = await makeTempProjectRoot();
+    loader = new AnthropicSkillsLoader(undefined, '4.9.0');
+    await writeSkillMd(projectRoot, 'bad-skill', {
+      name: 'bad-skill',
+      description: '能力版本 2',
+      version: '1.0.0',
+      author: 't',
+      tags: [],
+      capabilityVersion: '2',
+    }, '内容');
+    await writeSkillMd(projectRoot, 'good-skill', {
+      name: 'good-skill',
+      description: '兼容',
+      version: '1.0.0',
+      author: 't',
+      tags: [],
+      capabilityVersion: '1',
+    }, '内容');
+
+    const result = await loader.load(projectRoot, { autoEnable: false });
+    expect(result.loaded).toHaveLength(1);
+    expect(result.loaded[0]!.name).toBe('good-skill');
+    // 坏 skill 不影响好 skill 加载（故障隔离）
+    expect(result.errors.some((e) => e.error.includes('governance rejected'))).toBe(true);
+  });
+
+  it('B-17: 兼容 skill 携带 governance 元数据（权限清单）', async () => {
+    projectRoot = await makeTempProjectRoot();
+    loader = new AnthropicSkillsLoader(undefined, '4.9.0');
+    await writeSkillMd(projectRoot, 'perm-skill', {
+      name: 'perm-skill',
+      description: '带权限声明',
+      version: '1.0.0',
+      author: 't',
+      tags: [],
+      permissions: { files: ['src/**'], network: false, env: ['HOME'] },
+    }, '内容');
+
+    const result = await loader.load(projectRoot, { autoEnable: false });
+    expect(result.loaded).toHaveLength(1);
+    expect(result.loaded[0]!.governance?.ok).toBe(true);
+    expect(result.loaded[0]!.governance?.permissions.env).toEqual(['HOME']);
+    expect(result.loaded[0]!.governance?.permissions.network).toBe(false);
+  });
+
+  it('B-17: 未注入宿主版本时不校验（fail-open，存量行为不变）', async () => {
+    projectRoot = await makeTempProjectRoot();
+    // loader 不传 hostVersion
+    await writeSkillMd(projectRoot, 'future-skill', {
+      name: 'future-skill',
+      description: '需要未来版本',
+      version: '1.0.0',
+      author: 't',
+      tags: [],
+      minRouteDevVersion: '99.0.0',
+    }, '内容');
+
+    const result = await loader.load(projectRoot, { autoEnable: false });
+    expect(result.loaded).toHaveLength(1);
+    expect(result.loaded[0]!.governance).toBeUndefined();
+  });
 });

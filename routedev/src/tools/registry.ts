@@ -2,7 +2,7 @@
 // 工具注册表：管理所有已注册的工具
 // 实现 IToolRegistry 接口
 
-import type { ITool, IToolRegistry } from './types.js';
+import type { ITool, IToolRegistry, ToolExposureMeta } from './types.js';
 import type { LLMToolDefinition } from '../router/types.js';
 import { logger } from '../utils/logger.js';
 
@@ -12,10 +12,13 @@ export class ToolRegistry implements IToolRegistry {
   /**
    * 注册工具
    * 默认拒绝重复注册，调用方必须显式传入 forceOverwrite=true 才能覆盖
+   * B-01A：meta 在注册时合并到工具定义的拷贝（Object.create 包装保留类实例方法），
+   * 供类式工具附加 exposure/modes/readOnly 元数据，无需改动工具类文件。
    * @param tool 要注册的工具
    * @param forceOverwrite 是否强制覆盖（默认 false，避免插件或重复初始化静默覆盖工具）
+   * @param meta 注册时附加的模型可见性元数据（可选）
    */
-  register(tool: ITool, forceOverwrite = false): void {
+  register(tool: ITool, forceOverwrite = false, meta?: ToolExposureMeta): void {
     const name = tool.definition.name;
     if (this.tools.has(name)) {
       if (!forceOverwrite) {
@@ -27,10 +30,17 @@ export class ToolRegistry implements IToolRegistry {
         requiresApproval: tool.definition.requiresApproval,
       });
     }
-    this.tools.set(name, tool);
+    // 有 meta 时包装：原型继承原工具（保留 execute 等方法），仅遮蔽合并后的 definition
+    const entry: ITool = meta
+      ? Object.assign(Object.create(tool) as ITool, {
+          definition: { ...tool.definition, ...meta },
+        })
+      : tool;
+    this.tools.set(name, entry);
     logger.debug(`Tool registered: ${name}`, {
       category: tool.definition.category,
       requiresApproval: tool.definition.requiresApproval,
+      exposure: entry.definition.exposure,
     });
   }
 

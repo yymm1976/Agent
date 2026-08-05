@@ -140,7 +140,13 @@ function setupBridge(options: SetupOptions = {}) {
       // Phase 70：模型切换时同步更新 AutoCompactGuardian 的 contextWindow
       updateAutoCompactContextWindow: vi.fn(),
     },
-    prompts: { render: options.promptRender ?? (async () => '') },
+    prompts: {
+      render: options.promptRender ?? (async () => ''),
+      // B-02A：ChatBridge 改用 renderPromptZones；桩通过 render 透传并返回稳定/动态分区
+      renderPromptZones: options.promptRender
+        ? async (id: string, ctx: unknown) => ({ stable: await options.promptRender!(id, ctx), dynamic: '' })
+        : async () => ({ stable: '', dynamic: '' }),
+    },
     trace: {
       startSession: vi.fn(),
       summarizeTrajectory: () => ({ stepCount: 0, keyDecisions: [], fileChanges: [] }),
@@ -195,9 +201,9 @@ function setupBridge(options: SetupOptions = {}) {
 describe('ChatBridge 集成测试 (Phase 79 Task 1)', () => {
 
   describe('系统提示词上下文', () => {
-    it('注入项目指令、项目记忆与工具用途，而不只传工具名称', async () => {
+    it('注入项目指令与项目记忆；工具只保留能力组摘要（描述仅存在于 schema，B-02A）', async () => {
       const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'chat-prompt-context-'));
-      const promptRender = vi.fn(async () => '');
+      const promptRender = vi.fn(async (_id: string, _ctx: unknown) => '');
       await fs.writeFile(
         path.join(cwd, 'AGENTS.md'),
         '# Project Instructions\nUse the indexed graph before editing.',
@@ -230,13 +236,17 @@ describe('ChatBridge 集成测试 (Phase 79 Task 1)', () => {
         expect(promptRender).toHaveBeenCalledWith(
           'main.system',
           expect.objectContaining({
-            availableTools: expect.stringContaining(
-              '- file_read: Read a precise range from a text file.',
-            ),
+            // B-02A：工具名分组摘要（不含逐工具描述——描述只存在于 function calling schema）
+            availableTools: expect.stringContaining('file_read'),
             projectRules: expect.stringContaining('Use the indexed graph before editing.'),
             projectMemory: expect.stringContaining('Always run the focused test.'),
           }),
         );
+        // 工具描述不再注入系统提示
+        const mainSystemCall = promptRender.mock.calls.find((call) => call[0] === 'main.system');
+        expect(mainSystemCall?.[1]).toBeDefined();
+        const availableToolsArg = (mainSystemCall![1] as { availableTools?: string }).availableTools ?? '';
+        expect(availableToolsArg).not.toContain('Read a precise range');
       } finally {
         await fs.rm(cwd, { recursive: true, force: true });
       }

@@ -352,3 +352,56 @@ describe('Phase 92：项目脚本适配', () => {
     });
   });
 });
+
+describe('B-04 按变更类型自动验证', () => {
+  it('isDocOnlyChange：全部为文档/配置时返回 true', async () => {
+    const { isDocOnlyChange } = await import('../../src/agent/completion-gate.js');
+    expect(isDocOnlyChange(['README.md', 'config.json', 'notes/yaml-config.yaml'])).toBe(true);
+  });
+
+  it('isDocOnlyChange：含代码文件时返回 false；空列表返回 false', async () => {
+    const { isDocOnlyChange } = await import('../../src/agent/completion-gate.js');
+    expect(isDocOnlyChange(['README.md', 'src/index.ts'])).toBe(false);
+    expect(isDocOnlyChange(['no-extension-file'])).toBe(false);
+    expect(isDocOnlyChange([])).toBe(false);
+  });
+
+  it('仅文档/配置变更时跳过验证并返回说明（不跑命令）', async () => {
+    const { createCompletionGate } = await import('../../src/agent/completion-gate.js');
+    const gate = createCompletionGate();
+    const result = await gate.verify({
+      modifiedFiles: ['README.md', 'config.json'],
+      projectPath: process.cwd(),
+    });
+    expect(result.passed).toBe(true);
+    expect(result.checks).toEqual([]);
+    expect(result.warnings?.[0]).toContain('跳过');
+  });
+
+  it('includeTests=false 时 tests 检查标记 skipped（不运行全量测试）', async () => {
+    const { createCompletionGate } = await import('../../src/agent/completion-gate.js');
+    const gate = createCompletionGate();
+    const result = await gate.verify({
+      modifiedFiles: ['src/index.ts'],
+      projectPath: process.cwd(), // 本仓库有 vitest.config.ts → hasTestConfig true
+      includeTests: false,
+    });
+    const testsCheck = result.checks.find((c) => c.name === 'tests');
+    expect(testsCheck).toBeDefined();
+    expect(testsCheck!.skipped).toBe(true);
+    expect(testsCheck!.output).toContain('未运行');
+    // 注意：typecheck 是否通过取决于运行环境，此处只断言 tests 检查的 skipped 语义
+  });
+
+  it('includeTests 缺省时仍运行 tests（兼容旧调用方）', async () => {
+    const { createCompletionGate } = await import('../../src/agent/completion-gate.js');
+    const gate = createCompletionGate();
+    const result = await gate.verify({
+      modifiedFiles: ['src/index.ts'],
+      projectPath: process.cwd(),
+    });
+    const testsCheck = result.checks.find((c) => c.name === 'tests');
+    expect(testsCheck).toBeDefined();
+    expect(testsCheck!.skipped).not.toBe(true);
+  });
+});

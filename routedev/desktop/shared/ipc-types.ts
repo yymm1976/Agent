@@ -66,6 +66,10 @@ export type {
 import type { CompletionStatus } from '../../src/agent/completion-gate.js';
 export type { CompletionStatus } from '../../src/agent/completion-gate.js';
 
+// B-13：检查点差异（恢复前预览）
+import type { CheckpointDiff } from '../../src/harness/types.js';
+export type { CheckpointDiff } from '../../src/harness/types.js';
+
 // Token Profile 快照
 import type { TokenProfileSnapshot } from '../../src/agent/token-profiler.js';
 export type { TokenProfileSnapshot } from '../../src/agent/token-profiler.js';
@@ -1014,7 +1018,28 @@ export interface RouteDevAPI {
   // ===== Checkpoint =====
   checkpoint: {
     list: (projectId?: string) => Promise<CheckpointInfo[]>;
-    rollback: (checkpointId: string) => Promise<{ success: boolean; error?: string }>;
+    /**
+     * B-13：回滚前预览差异（filesAdded/filesModified/filesDeleted + patch）
+     * 恢复范围可解释——UI 先展示改动，用户确认后再 rollback
+     */
+    previewDiff: (checkpointId: string) => Promise<CheckpointDiff | null>;
+    /**
+     * 回滚到指定检查点
+     * @param checkpointId 检查点 ID
+     * @param scope B-13 恢复范围：'files'（默认，仅文件）| 'files+session'（文件 + GoalPlan 会话快照）
+     * @param confirmationToken 破坏性操作确认令牌（已弹出的确认框回传）
+     */
+    rollback: (
+      checkpointId: string,
+      scope?: 'files' | 'files+session',
+      confirmationToken?: string,
+    ) => Promise<{ success: boolean; error?: string; requiresConfirmation?: boolean }>;
+  };
+
+  // ===== G-F002：破坏性操作确认令牌 =====
+  confirmation: {
+    /** 破坏性操作前获取一次性确认令牌（60s 有效；checkpoint:rollback 等操作携带回传） */
+    create: (operation: string, targetId: string) => Promise<string>;
   };
 
   // ===== Session 状态卡 =====

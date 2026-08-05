@@ -372,8 +372,18 @@ const api: RouteDevAPI = {
   checkpoint: {
     list: (projectId?: string) =>
       ipcRenderer.invoke('checkpoint:list', projectId) as Promise<import('../shared/ipc-types.js').CheckpointInfo[]>,
-    rollback: (checkpointId: string) =>
-      ipcRenderer.invoke('checkpoint:rollback', checkpointId) as Promise<{ success: boolean; error?: string }>,
+    // B-13：恢复前预览文件差异（filesAdded/Modified/Deleted + patch）
+    previewDiff: (checkpointId: string) =>
+      ipcRenderer.invoke('checkpoint:previewDiff', checkpointId) as Promise<import('../shared/ipc-types.js').CheckpointDiff | null>,
+    // B-13：scope 控制恢复范围；confirmationToken 由 confirmation:create 获取（G-F002）
+    rollback: (checkpointId: string, scope?: 'files' | 'files+session', confirmationToken?: string) =>
+      ipcRenderer.invoke('checkpoint:rollback', { checkpointId, scope, confirmationToken }) as Promise<{ success: boolean; error?: string; requiresConfirmation?: boolean }>,
+  },
+
+  // ===== G-F002：破坏性操作确认令牌（checkpoint:rollback / experiment:adopt / experiment:discard 前置） =====
+  confirmation: {
+    create: (operation: string, targetId: string) =>
+      ipcRenderer.invoke('confirmation:create', operation, targetId) as Promise<string>,
   },
 
   // ===== Session 状态卡 =====

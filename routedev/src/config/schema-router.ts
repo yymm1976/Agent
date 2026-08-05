@@ -28,9 +28,11 @@ export type UserPreference = z.infer<typeof UserPreferenceSchema>;
 
 // --- 提供商与模型配置 ---
 
-// 模型能力标签（用于路由选择）
+// 模型能力标签（用于路由选择 + B-14 运行时能力声明）
 export const ModelCapabilitySchema = z.enum([
   'reasoning', 'code', 'multimodal', 'fast', 'cheap',
+  // B-14：运行时能力声明——缺失时显式降级（无工具/串行/禁图像/非流式）
+  'tool_use', 'streaming', 'parallel_tool_calls',
 ]);
 export type ModelCapability = z.infer<typeof ModelCapabilitySchema>;
 
@@ -53,6 +55,8 @@ export const ModelConfigSchema = z.object({
   outputCostPerMillion: z.number().nonnegative().optional(),
   /** 缓存读取价格（美元/百万 token），Anthropic/OpenAI 等支持 prompt cache 的 provider 适用 */
   cacheReadCostPerMillion: z.number().nonnegative().optional(),
+  /** B-14：工具 schema 最大 token 预算（超出时 loop 显式提示降级；默认 4096） */
+  maxSchemaTokens: z.number().nonnegative().default(4096),
 });
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 

@@ -28,6 +28,7 @@ import type {
 import type { ReActConfig, ReActEvent, ToolExecutorAdapter, ConfirmToolCallback } from './loop-config.js';
 import { DEFAULT_REACT_CONFIG } from './loop-config.js';
 import { logger } from '../utils/logger.js';
+import { resolveCapabilities } from '../router/capability-resolver.js';
 import type { AgentMessage } from './message-types.js';
 import { defaultConvertToLlm } from './message-types.js';
 // Phase 97 Part A：统一事件协议与执行上下文
@@ -88,7 +89,21 @@ export interface CompactorLike {
   compressEnhanced(
     messages: LLMMessage[],
     options?: { force?: boolean; maxTokens?: number },
-  ): Promise<{ compressed: LLMMessage[] }>;
+  ): Promise<{
+    compressed: LLMMessage[];
+    // B-07：压缩统计（ContextCompactor 的 CompactionResult 与 ContextManager 的 CompressionEvent
+    // 字段名不同，统一为可选兼容形状）
+    result?: {
+      beforeTokens?: number;
+      afterTokens?: number;
+      maxStageReached?: number;
+      removedMessages?: number;
+      recovery?: import('./context-compaction.js').CompactionRecovery;
+      tokensBefore?: number;
+      tokensAfter?: number;
+      messagesCompressed?: number;
+    };
+  }>;
 }
 
 /** ReAct 循环运行参数 */
@@ -113,6 +128,11 @@ export interface ReActRunParams {
   systemBlocks?: SystemBlock[];
   /** 取消信号 */
   signal?: AbortSignal;
+  /**
+   * B-16：隔离工作区（worktree 实验时注入——工具执行的工作目录与目录边界切换到
+   * worktree 路径，主工作区不被读写；缺省 = 工具层默认上下文）
+   */
+  workspace?: { workingDirectory: string; allowedDirectories: string[] };
   /** 工具调用确认回调（Phase 9 自主模式） */
   onConfirmTool?: ConfirmToolCallback;
   /** 模型调用成功回调 */
@@ -168,10 +188,16 @@ export class ReActAgentLoop {
   private engineTurnEnded = false;
   /** Phase 97 Part A：当前 turn id */
   private currentTurnId: string | null = null;
+  /** B-12：外层请求/turn 标识（run 开始时保存；turnId 优先复用，保证 Kernel/桌面/SSE 跨层一致） */
+  private engineTurnRequestId: string | null = null;
   /** Phase 97 Part A：当前 message id */
   private currentMessageId: string | null = null;
   /** Phase 97 Part A：agent 结束原因（finally 发射 agent_end 用） */
   private engineEndReason: 'completed' | 'error' | 'cancelled' | 'max_iterations' = 'completed';
+  /** B-14：当前 run 的模型能力决策（run 开始时解析一次，run 期间生效） */
+  private currentCapability: import('../router/capability-resolver.js').CapabilityDecision | null = null;
+  /** B-16（审查 I2 修复）：当前 run 的隔离工作区（worktree 实验时切换工具的 workingDirectory 与边界） */
+  private currentWorkspace: { workingDirectory: string; allowedDirectories: string[] } | undefined;
   /**
    * 压缩器（可选）：注入后在 ReAct 循环每轮迭代前检查 messages 的 token 数，
    * 超过阈值时调用 compressEnhanced 压缩，防止 messages 膨胀超出模型窗口
@@ -257,7 +283,10 @@ export class ReActAgentLoop {
   private beginEngineTurn(input: string): void {
     if (!this.engineSink || !this.engineSeq) return;
     if (!this.engineTurnEnded) {
-      this.currentTurnId = `turn-${Date.now().toString(36)}-${this.engineSeq.next()}`;
+      // B-12：外层 requestId 存在时复用为 turnId——Kernel EngineEventV1 与桌面/SSE
+      // timeline 的 turn 标识同源；本地无 requestId 时退回时间戳生成
+      this.currentTurnId = this.engineTurnRequestId
+        ?? `turn-${Date.now().toString(36)}-${this.engineSeq.next()}`;
       this.emitEngineEvent({ type: 'turn_start', turnId: this.currentTurnId, payload: { input } });
     }
     this.currentMessageId = `msg-${Date.now().toString(36)}-${this.engineSeq.next()}`;
@@ -402,6 +431,22 @@ export class ReActAgentLoop {
     try {
       // Phase 97 Part A：设置执行上下文、初始化事件序列，发射 agent_start
       this.currentContext = params.context ?? this.currentContext ?? createDefaultExecutionContext(this.ctxMgr.traceCollector?.getSessionId() ?? 'session-unknown');
+      // B-12：保存外层请求标识，turnId 优先复用（桌面/SSE timeline 与 Kernel/Trace 同源）
+      this.engineTurnRequestId = params.requestId ?? null;
+      // B-16（审查 I2 修复）：保存隔离工作区——worktree 实验时工具读写切换到 worktree
+      this.currentWorkspace = params.workspace;
+      // B-14：解析模型运行时能力——缺失能力显式降级（无工具/串行/禁图像），run 期间生效
+      this.currentCapability = resolveCapabilities(
+        routeDecision.model.capabilities,
+        routeDecision.model.maxSchemaTokens,
+        { wantsTools: true, wantsImages: true, wantsParallelTools: true },
+      );
+      if (this.currentCapability.degradations.length > 0) {
+        logger.warn('Model capability degradation (explicit)', {
+          model: routeDecision.model.id,
+          degradations: this.currentCapability.degradations,
+        });
+      }
       this.engineSeq = new SequenceCounter();
       this.engineTurnEnded = false;
       this.engineEndReason = 'completed';
@@ -435,14 +480,10 @@ export class ReActAgentLoop {
         messages.push({ role: 'user', content: userMsgResult.skillFlowHint });
       }
 
-      // 获取可用工具定义
-      const rawToolDefs = this.config.toolsEnabled ? this.toolExecutor.getToolDefinitions() : [];
-      const allowedToolNames = params.allowedToolNames
-        ? new Set(params.allowedToolNames)
-        : null;
-      const toolDefs = allowedToolNames
-        ? rawToolDefs.filter((tool) => allowedToolNames.has(tool.name))
-        : rawToolDefs;
+      // B-01B：工具定义改为每轮迭代重新获取（原在 run 开头取一次）。
+      // tool_search 在同一回合内提升 deferred 工具后，下一轮模型即可看到并调用；
+      // 每轮 list+map 开销可忽略。
+      const allowedToolNamesSet = params.allowedToolNames ? new Set(params.allowedToolNames) : null;
 
       let iteration = 0;
       let consecutiveErrors = 0;
@@ -497,6 +538,12 @@ export class ReActAgentLoop {
           this.ctxMgr.drainSteeringIntoMessages(messages, 'next_iteration');
           iteration++;
 
+          // B-01B：每轮重新获取工具定义（拾取 tool_search 提升的 deferred 工具）
+          const rawToolDefs = this.config.toolsEnabled ? this.toolExecutor.getToolDefinitions() : [];
+          const toolDefs = allowedToolNamesSet
+            ? rawToolDefs.filter((tool) => allowedToolNamesSet!.has(tool.name))
+            : rawToolDefs;
+
           // 压缩检查：优先用上一轮 API 真实 inputTokens（含 system/tools），
           // 估算值会严重偏低，导致 552k/500k 仍不触发。
           if (this.compactor) {
@@ -513,7 +560,7 @@ export class ReActAgentLoop {
               if (decision.should || decision.action === 'warn') {
                 // warn 也尝试压缩：接近上限时主动减负，避免下一轮直接超窗
                 if (decision.should || tokensForDecision >= estimatedTokens) {
-                  const { compressed } = await this.compactor.compressEnhanced(messages);
+                  const { compressed, result } = await this.compactor.compressEnhanced(messages);
                   if (compressed.length < messages.length || compressed !== messages) {
                     messages.length = 0;
                     messages.push(...compressed);
@@ -523,6 +570,35 @@ export class ReActAgentLoop {
                       tokensBefore: tokensForDecision,
                       action: decision.action,
                       messagesAfter: compressed.length,
+                    });
+                    // B-07：压缩事件进 EngineEventV1（前后 token、删减类型、恢复项数、耗时）
+                    // 兼容两种压缩器字段命名（CompactionResult / CompressionEvent）
+                    const recovery = result?.recovery;
+                    // B-07：压缩后注入紧凑恢复清单（最近读取/修改文件、未完成 Todo），
+                    // 不恢复完整工具输出；路径由模型重新经过 workspace boundary 后再读取
+                    if (recovery && (recovery.readFiles.length > 0 || recovery.modifiedFiles.length > 0 || recovery.todoItems.length > 0)) {
+                      const lines: string[] = [];
+                      if (recovery.readFiles.length > 0) lines.push(`最近读取文件：${recovery.readFiles.join(', ')}`);
+                      if (recovery.modifiedFiles.length > 0) lines.push(`最近修改文件：${recovery.modifiedFiles.join(', ')}`);
+                      if (recovery.todoItems.length > 0) lines.push(`未完成待办：${recovery.todoItems.join('; ')}`);
+                      messages.push({
+                        role: 'system',
+                        content: `[压缩后恢复清单] ${lines.join('；')}（继续工作前用工具复核这些路径，路径需通过工作区边界校验）`,
+                      });
+                    }
+                    const recoveryItems = recovery
+                      ? recovery.readFiles.length + recovery.modifiedFiles.length + recovery.todoItems.length + recovery.imageCount
+                      : 0;
+                    this.emitEngineEvent({
+                      type: 'context_compacted',
+                      payload: {
+                        beforeTokens: result?.beforeTokens ?? result?.tokensBefore ?? tokensForDecision,
+                        afterTokens: result?.afterTokens ?? result?.tokensAfter ?? 0,
+                        stage: result?.maxStageReached ?? 0,
+                        removedMessages: result?.removedMessages ?? result?.messagesCompressed ?? 0,
+                        recoveryItems,
+                        elapsedMs: recovery?.elapsedMs ?? 0,
+                      },
                     });
                   }
                 }
@@ -647,7 +723,9 @@ export class ReActAgentLoop {
                 return mode === 'sequential';
               });
 
-              if (this.config.parallelToolExecution && !hasSequential && result.toolCalls.length > 1) {
+              // B-14：模型未声明 parallel_tool_calls 时显式降级为串行执行
+              if ((this.currentCapability?.parallelToolsEnabled ?? true)
+                && this.config.parallelToolExecution && !hasSequential && result.toolCalls.length > 1) {
                 // ===== 并行模式 =====
                 // 阶段1：串行权限校验 + 确认 + 中间件检查
                 const approvedCalls: typeof result.toolCalls = [];
@@ -738,8 +816,8 @@ export class ReActAgentLoop {
                         deltaBuffers[idx].push({ type: 'tool_call_delta', toolName: tc.name, toolCallId: tc.id, chunk });
                       };
                       return useStructured
-                        ? this.toolExecutor.executeToolStructured!(tc.name, tc.id, tc.arguments, { signal, onUpdate, autonomyMode: this.currentAutonomyMode })
-                        : this.toolExecutor.executeTool(tc.name, tc.id, tc.arguments, { signal, onUpdate, autonomyMode: this.currentAutonomyMode })
+                        ? this.toolExecutor.executeToolStructured!(tc.name, tc.id, tc.arguments, { signal, onUpdate, autonomyMode: this.currentAutonomyMode, workspace: this.currentWorkspace })
+                        : this.toolExecutor.executeTool(tc.name, tc.id, tc.arguments, { signal, onUpdate, autonomyMode: this.currentAutonomyMode, workspace: this.currentWorkspace })
                             .then(output => ({ output, isError: /\[工具错误\]|\[被拦截\]/.test(output) }));
                     }),
                   );
@@ -879,18 +957,25 @@ export class ReActAgentLoop {
                     isError = structured.isError;
                     // Phase 96 P2-10：图片结果作为独立 user 消息注入 ContentPart.image
                     // 放在 tool_result 之后，让 LLM 同时看到工具文本结果和图片
+                    // B-14：模型未声明 multimodal 时显式降级——图片不注入（避免协议不支持报错）
                     if (structured.images && structured.images.length > 0) {
-                      const imageParts: ContentPart[] = structured.images.map(img => ({
-                        type: 'image' as const,
-                        source: { type: 'base64' as const, mediaType: img.mediaType, data: img.data },
-                      }));
-                      messages.push({ role: 'user', content: imageParts });
+                      if (this.currentCapability?.imageInputEnabled ?? true) {
+                        const imageParts: ContentPart[] = structured.images.map(img => ({
+                          type: 'image' as const,
+                          source: { type: 'base64' as const, mediaType: img.mediaType, data: img.data },
+                        }));
+                        messages.push({ role: 'user', content: imageParts });
+                      } else {
+                        logger.warn('B-14 image degradation: image result suppressed for non-multimodal model', {
+                          toolName: toolCall.name,
+                        });
+                      }
                     }
                   } else {
                     const stream = this.createToolStream<string>(toolCall.name, toolCall.id);
                     const toolPromise = this.toolExecutor.executeTool(
                       toolCall.name, toolCall.id, toolCall.arguments,
-                      { signal, onUpdate: stream.onUpdate, autonomyMode: this.currentAutonomyMode },
+                      { signal, onUpdate: stream.onUpdate, autonomyMode: this.currentAutonomyMode, workspace: this.currentWorkspace },
                     );
                     toolResult = yield* stream.drain(toolPromise);
                     isError = /\[工具错误\]|\[被拦截\]/.test(toolResult);
@@ -1064,13 +1149,39 @@ export class ReActAgentLoop {
     // FIXME: as 断言，messages 实际为 LLMMessage[]，需显式适配函数
     const llmMessages = convertFn(messages as AgentMessage[]);
 
+    // B-14：模型未声明 tool_use 时显式降级——不传工具 schema（纯文本 run）
+    const toolsEnabled = this.currentCapability?.toolsEnabled ?? true;
+    let effectiveToolDefs = toolsEnabled ? toolDefs : [];
+    if (!toolsEnabled && toolDefs.length > 0) {
+      logger.warn('B-14 tool degradation: tools suppressed for model without tool_use', { modelId });
+    }
+    // B-14（审查 I3 修复）：streaming 能力缺失时显式记录——本循环唯一出口是流式调用，
+    // 无法切非流式；显式提示让调用方/日志可见，避免静默失败
+    if (!(this.currentCapability?.streamingEnabled ?? true)) {
+      logger.warn('B-14 streaming degradation: model 未声明 streaming，流式调用可能不被支持', { modelId });
+    }
+    // B-14：工具 schema 超过模型 maxSchemaTokens 预算时显式提示（数量裁剪由 ToolSurfaceBudget 负责）
+    const schemaBudget = this.currentCapability?.maxSchemaTokens ?? 4096;
+    if (effectiveToolDefs.length > 0) {
+      const schemaChars = JSON.stringify(effectiveToolDefs).length;
+      // 1 token ≈ 4 chars 的粗略换算
+      if (schemaChars > schemaBudget * 4) {
+        logger.warn('B-14 schema budget: tool schema exceeds model maxSchemaTokens', {
+          modelId,
+          schemaTokensEstimate: Math.ceil(schemaChars / 4),
+          budget: schemaBudget,
+          toolCount: effectiveToolDefs.length,
+        });
+      }
+    }
+
     const options: LLMRequestOptions = {
       model: modelId,
       messages: llmMessages,
       systemPrompt,
       // Phase 55：透传 systemBlocks，LLM 客户端优先使用，未传时回退 systemPrompt
       systemBlocks,
-      tools: toolDefs.length > 0 ? toolDefs : undefined,
+      tools: effectiveToolDefs.length > 0 ? effectiveToolDefs : undefined,
       maxTokens: 4096,
       timeoutMs: this.config.llmTimeout,
       stream: true,

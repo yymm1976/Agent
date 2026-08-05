@@ -147,12 +147,35 @@ const TEST_TIMEOUT = 120000; // 2 分钟
 const OUTPUT_MAX_CHARS = 500;
 
 /**
+ * B-04：文档/配置类变更扩展名（仅这类变更时跳过代码验证并说明）
+ */
+const DOC_ONLY_EXTENSIONS = new Set([
+  '.md', '.markdown', '.txt', '.json', '.yaml', '.yml', '.lock',
+  '.toml', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.pdf', '.gitignore', '.editorconfig',
+]);
+
+/**
+ * B-04：判断是否全部为文档/配置类变更。
+ * 空列表不算（保守）；全部命中才算。
+ */
+export function isDocOnlyChange(files: readonly string[]): boolean {
+  if (files.length === 0) return false;
+  return files.every((file) => {
+    const dot = file.lastIndexOf('.');
+    if (dot < 0) return false;
+    const ext = file.slice(dot).toLowerCase();
+    return DOC_ONLY_EXTENSIONS.has(ext);
+  });
+}
+
+/**
  * CompletionGate——独立代码验证门
  *
  * 在 GoalVerifier 之后运行，通过实际执行 typecheck/lint/tests 验证代码状态。
  * 不信任 LLM 的"已完成"判断。
  *
  * 超时视为 skipped 而非 failed，不阻断任务完成。
+ * B-04：仅文档/配置变更时跳过验证并说明；includeTests=false 时全量测试不运行（需显式要求）。
  */
 export class CompletionGate {
   constructor(private readonly config: CompletionGateConfig = DEFAULT_CONFIG) {}
@@ -162,20 +185,37 @@ export class CompletionGate {
    * @param params.modifiedFiles 修改的文件列表（用于相关测试运行）
    * @param params.projectPath 项目根路径
    * @param params.planDescription 计划描述（仅用于日志）
+   * @param params.includeTests 是否运行测试（B-04：高成本全量测试需显式用户要求或策略允许；缺省 true 兼容旧调用方）
    */
   async verify(params: {
     modifiedFiles: string[];
     projectPath: string;
     planDescription?: string;
+    includeTests?: boolean;
   }): Promise<GateResult> {
     const { modifiedFiles, projectPath } = params;
+    const includeTests = params.includeTests ?? true;
     const checks: GateCheck[] = [];
 
     logger.info('CompletionGate: starting verification', {
       projectPath,
       modifiedFilesCount: modifiedFiles.length,
+      includeTests,
       planDescription: params.planDescription?.slice(0, 100),
     });
+
+    // B-04：仅文档/配置变更——跳过代码验证并明确说明（不跑全量）
+    if (isDocOnlyChange(modifiedFiles)) {
+      const result: GateResult = {
+        passed: true,
+        checks: [],
+        warnings: [`仅文档/配置变更（${modifiedFiles.length} 个文件），跳过 typecheck/lint/tests 验证。`],
+      };
+      logger.info('CompletionGate: doc-only change, verification skipped', {
+        files: modifiedFiles,
+      });
+      return result;
+    }
 
     // 1. TypeScript 编译检查（如果有 tsconfig.json）
     if (existsSync(join(projectPath, 'tsconfig.json'))) {
@@ -194,9 +234,17 @@ export class CompletionGate {
       checks.push(await this.runLint(projectPath, modifiedFiles));
     }
 
-    // 3. 测试运行（如果项目有测试配置）
-    if (await this.hasTestConfig(projectPath)) {
+    // 3. 测试运行（B-04：includeTests=false 时只做小而相关的 typecheck/lint）
+    if (includeTests && (await this.hasTestConfig(projectPath))) {
       checks.push(await this.runTests(projectPath, modifiedFiles));
+    } else if (!includeTests && (await this.hasTestConfig(projectPath))) {
+      checks.push({
+        name: 'tests',
+        ok: false,
+        skipped: true,
+        output: '全量测试未运行（需显式要求或策略允许）',
+        duration: 0,
+      });
     }
 
     const passed = checks.every((c) => c.ok || c.skipped);

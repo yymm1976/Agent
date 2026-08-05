@@ -30,7 +30,13 @@ import type { AgentActivityStore } from '../../agents/activity-store.js';
 import type { TraceCollector } from '../../harness/trace-collector.js';
 
 /** 子 Agent 类型：决定可用工具集（白名单在 app-init.ts 中维护） */
-export type SubagentType = 'general' | 'researcher' | 'coder' | 'reviewer' | 'advisor' | 'review-plan' | 'planner';
+/**
+ * B-05A：对外暴露 3 个稳定角色 explore/implement/review；
+ * 旧 7 角色（general/researcher/coder/reviewer/advisor/review-plan/planner）保留兼容映射。
+ */
+export type SubagentType =
+  | 'explore' | 'implement' | 'review'
+  | 'general' | 'researcher' | 'coder' | 'reviewer' | 'advisor' | 'review-plan' | 'planner';
 
 /**
  * SubagentType → AgentRole 映射
@@ -45,6 +51,10 @@ export type SubagentType = 'general' | 'researcher' | 'coder' | 'reviewer' | 'ad
  *   - 'general' / 'advisor'：无对应 role，不使用 profile
  */
 export const SUBAGENT_TYPE_TO_ROLE: Partial<Record<SubagentType, AgentRole>> = {
+  // B-05A 稳定角色 → 既有 role 映射
+  explore: 'researcher',
+  implement: 'executor',
+  review: 'reviewer',
   researcher: 'researcher',
   coder: 'executor',
   reviewer: 'reviewer',
@@ -64,6 +74,10 @@ export const SUBAGENT_TYPE_TO_ROLE: Partial<Record<SubagentType, AgentRole>> = {
  */
 export const SUBAGENT_TOOL_WHITELIST: Record<SubagentType, Set<string>> = {
   general: new Set<string>(),  // 空集 = 全部工具（除 spawn_agent）
+  // B-05A 稳定角色：explore 默认只读（无 ask_user、无写入工具），implement 读写执行，review 只读审查+写审查报告
+  explore: new Set(['file_read', 'file_search', 'code_search', 'list_directory', 'web_search', 'web_fetch']),
+  implement: new Set(['file_read', 'file_write', 'file_edit', 'shell_exec', 'git_op']),
+  review: new Set(['file_read', 'code_search', 'list_directory', 'file_write']),
   researcher: new Set(['file_read', 'code_search', 'web_search', 'web_fetch', 'list_directory']),
   coder: new Set(['file_read', 'file_write', 'file_edit', 'shell_exec', 'git_op']),
   reviewer: new Set(['file_read', 'code_search', 'list_directory', 'file_write']),
@@ -169,14 +183,12 @@ export interface SpawnAgentParams {
   /** 是否使用独立上下文，默认 true */
   isolated?: boolean;
   /**
-   * 指定 subagent 使用的模型 ID。必填，强制 dispatch 时写明 model，
-   * 避免静默继承最贵模型（借鉴 Superpowers v6：一次 26 个 reviewer 全跑顶配的惨痛教训）。
+   * 指定 subagent 使用的模型 ID。B-05A 起改为可选（缺省 = 'inherit' 继承父 Agent 模型），
+   * 降低 Flash 模型的调用摩擦；显式传具体 model id 仍生效（如 'gpt-4o-mini'）。
    *
    * 取值语义：
-   *   - 'inherit'：明确选择继承 AgentProfile.modelId（推荐写法）
-   *   - 其他字符串：指定具体的 model id（如 'gpt-4o-mini'）
-   *
-   * Phase 75-A3 第二阶段已落地：字段强制必填，未传将由 Zod schema 拒绝工具调用。
+   *   - 'inherit'：继承父 Agent / AgentProfile 的模型（推荐写法）
+   *   - 其他字符串：指定具体的 model id
    */
   model: string;
   /**

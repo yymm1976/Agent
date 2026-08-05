@@ -157,8 +157,7 @@ function checkIP(ip: string): { allowed: boolean; reason: string } {
 /**
  * 获取最大重定向深度
  */
-export function getMaxRedirectDepth(): number {
-  return MAX_REDIRECT_DEPTH;
+export function getMaxRedirectDepth(): number {  return MAX_REDIRECT_DEPTH;
 }
 
 // ============================================================
@@ -270,6 +269,68 @@ interface BashSecurityResult {
 }
 
 /**
+ * B-08：子 shell / 命令替换内容递归检测。
+ * 提取 $(...)、(...)、反引号 内部命令并递归走完整安全检查（深度上限 3，防嵌套炸弹）。
+ * 返回拒绝结果或 null（内部安全）。
+ */
+function checkSubShellContent(command: string, depth: number): BashSecurityResult | null {
+  if (depth >= 3) return null;
+  const pattern = /\$\(([^)]*)\)|\(([^)]*)\)|`([^`]*)`/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(command)) !== null) {
+    const inner = (match[1] ?? match[2] ?? match[3] ?? '').trim();
+    if (!inner) continue;
+    const innerResult = checkBashSecurity(inner);
+    if (!innerResult.allowed) {
+      return {
+        allowed: false,
+        reason: `子 shell/命令替换内包含危险命令（${innerResult.reason}）`,
+        layer: 'subshell',
+      };
+    }
+    const nested = checkSubShellContent(inner, depth + 1);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+/**
+ * B-08：rm 危险目标归一化检测。
+ * 把 $HOME/${HOME}/~、//、/./、/x/../ 等折叠后判断是否指向根或主目录。
+ */
+function commandContainsDestructiveRmTarget(command: string): boolean {
+  const tokens = command.split(/\s+/).filter(Boolean);
+  for (const token of tokens) {
+    // 跳过命令名、flag、链接符与重定向符号
+    if (/^-/.test(token)) continue;
+    if (/^(rm|command|env)$/i.test(token)) continue;
+    if (/^\/.*\/(rm|rm\.exe)$/i.test(token)) continue;
+    if (/^[;&|<>]+$/.test(token)) continue;
+    if (/^(\d+)?[<>]$/.test(token)) continue;
+    if (token === '2>&1' || token === '1>&2' || token === '>/dev/null') continue;
+    if (isDestructiveRmTarget(token)) return true;
+  }
+  return false;
+}
+
+/** 单参数归一化判定：折叠后为 /、/* 或 ~（家目录）即危险 */
+function isDestructiveRmTarget(raw: string): boolean {
+  let normalized = raw.replace(/\$\{HOME\}/g, '~').replace(/\$HOME/g, '~');
+  if (normalized === '~' || normalized.startsWith('~/')) return true;
+  // 折叠 //、/./、/x/../（迭代折叠直到稳定；尾部 .. 上溯到根）
+  let prev = '';
+  while (prev !== normalized) {
+    prev = normalized;
+    normalized = normalized
+      .replace(/\/+/g, '/')
+      .replace(/\/\.(?=\/|$)/g, '')
+      .replace(/\/[^/.]+\/\.\.(?=\/|$)/g, '')
+      .replace(/\/\.\.(?=\/|$)/g, '/');
+  }
+  return normalized === '/' || normalized.startsWith('/*');
+}
+
+/**
  * 7 层 Bash 命令安全检查（借鉴 Claude Code bashSecurity.ts）
  *
  * 层级：
@@ -330,8 +391,8 @@ export function checkBashSecurity(command: string): BashSecurityResult {
     // rm -rf / 或 rm -rf /* 或 rm -rf / --no-preserve-root
     // 匹配 rm 后跟 -f 标志和 / 开头的参数（含 /* 和 /path）
     { pattern: /\brm\b(?=[\s\S]*\s-[a-zA-Z]*r)(?=[\s\S]*\s-[a-zA-Z]*f)[\s\S]*\s\/(\s|$|\*|--)/i, reason: 'rm -rf /（删除根目录）' },
-    // rm -rf . 或 rm -rf ..（删除当前/上级目录）
-    { pattern: /\brm\b(?=[\s\S]*\s-[a-zA-Z]*r)(?=[\s\S]*\s-[a-zA-Z]*f)[\s\S]*\s\.\.?(\/|\s|$)/i, reason: 'rm -rf . 或 ..（删除当前/上级目录）' },
+    // B-08 收窄：rm -rf . 或 rm -rf ..（独立 token 的当前/上级目录；./tmp 等相对路径不拦）
+    { pattern: /\brm\b(?=[\s\S]*\s-[a-zA-Z]*r)(?=[\s\S]*\s-[a-zA-Z]*f)[\s\S]*\s\.\.?(\s|$)/i, reason: 'rm -rf . 或 ..（删除当前/上级目录）' },
     // dd 写入设备文件（of= 可出现在任意位置）
     { pattern: /\bdd\b.*\bof=\/dev\//i, reason: 'dd 写入设备文件' },
     // mkfs 系列（格式化文件系统）
@@ -356,6 +417,17 @@ export function checkBashSecurity(command: string): BashSecurityResult {
     if (pattern.test(command)) {
       return { allowed: false, reason, layer: 'dangerous-command' };
     }
+  }
+
+  // B-08 Layer 4b：子 shell / 命令替换内容递归检测（$(...)、(...)、反引号）
+  // 绕过示例：$(rm -rf /)、(rm -rf /)、echo $(rm -rf /)
+  const subShellResult = checkSubShellContent(command, 0);
+  if (subShellResult) return subShellResult;
+
+  // B-08 Layer 4c：rm 危险目标归一化检测
+  // 绕过示例：rm -rf //、/./、/../、~、$HOME、${HOME}、/tmp/../..
+  if (/\brm\b/i.test(command) && commandContainsDestructiveRmTarget(command)) {
+    return { allowed: false, reason: 'rm 删除目标归一化后指向根/主目录（路径转义或变量绕过）', layer: 'dangerous-command' };
   }
 
   // Layer 5: 命令注入检测（基础版，已有 command-parser.ts 做更详细的 tokenize）

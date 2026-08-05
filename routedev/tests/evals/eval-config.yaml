@@ -1,0 +1,20 @@
+# B-00 评测固定配置（不读用户全局配置，保证基线可复现）
+# 用法：DEEPSEEK_API_KEY=sk-xxx node --import tsx/esm scripts/run-harness-eval.mjs
+# ${DEEPSEEK_API_KEY} 由 loadConfig 的环境变量替换阶段解析；未配置时 runner 输出 env-blocked 状态。
+providers:
+  - id: deepseek
+    name: DeepSeek
+    protocol: openai
+    baseUrl: https://api.deepseek.com/v1
+    apiKey: ${DEEPSEEK_API_KEY}
+    models:
+      - id: deepseek-v4-flash
+        name: DeepSeek V4 Flash GA
+        provider: deepseek
+        tier: simple
+        contextWindow: 131072
+        available: true
+router:
+  classifierModel: deepseek-v4-flash
+autonomy:
+  defaultMode: manual

@@ -28,7 +28,8 @@ export type EngineEventType =
   | 'approval_resolved'
   | 'todo_snapshot'
   | 'runtime_status'
-  | 'runtime_error';
+  | 'runtime_error'
+  | 'context_compacted';
 
 /** EngineEventV1 公共字段 */
 export interface EngineEventBase {
@@ -64,6 +65,18 @@ export interface ApprovalResolvedEvent extends EngineEventBase { type: 'approval
 export interface TodoSnapshotEvent extends EngineEventBase { type: 'todo_snapshot'; payload: { todos: unknown } }
 export interface RuntimeStatusEvent extends EngineEventBase { type: 'runtime_status'; payload: { status: string } }
 export interface RuntimeErrorEvent extends EngineEventBase { type: 'runtime_error'; payload: { error: string } }
+/** B-07：上下文压缩事件（前后 token、删减类型、恢复项数与耗时） */
+export interface ContextCompactedEvent extends EngineEventBase {
+  type: 'context_compacted';
+  payload: {
+    beforeTokens: number;
+    afterTokens: number;
+    stage: number;
+    removedMessages: number;
+    recoveryItems: number;
+    elapsedMs: number;
+  };
+}
 
 /** EngineEventV1 联合类型 */
 export type EngineEventV1 =
@@ -81,7 +94,8 @@ export type EngineEventV1 =
   | ApprovalResolvedEvent
   | TodoSnapshotEvent
   | RuntimeStatusEvent
-  | RuntimeErrorEvent;
+  | RuntimeErrorEvent
+  | ContextCompactedEvent;
 
 /**
  * 序列计数器：同一 turn 内 sequence 单调递增

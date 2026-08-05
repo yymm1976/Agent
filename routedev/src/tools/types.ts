@@ -19,6 +19,24 @@ interface ToolParameterSchema {
   required?: string[];
 }
 
+/**
+ * B-01A：注册时附加的模型可见性元数据（合并到定义拷贝，不改原工具对象）
+ */
+export interface ToolExposureMeta {
+  exposure?: ToolExposure;
+  modes?: string[];
+  readOnly?: boolean;
+}
+
+/**
+ * B-01A：模型可见性（模型可见工具面解析；未声明时按 'core' 处理，兼容旧工具）
+ * - 'core'：默认编码回合可见（常用工具）
+ * - 'mode'：仅在其声明 modes 匹配当前模式时可见（如 vfs/plan 内部工具）
+ * - 'deferred'：默认不可见，通过 tool_search（B-01B）按需暴露
+ * - 'hidden'：从不暴露给模型（内部/实验工具）
+ */
+export type ToolExposure = 'core' | 'mode' | 'deferred' | 'hidden';
+
 /** 工具定义 */
 export interface ToolDefinition {
   name: string;
@@ -28,6 +46,12 @@ export interface ToolDefinition {
   requiresApproval: boolean;
   /** 工具分类 */
   category: 'file' | 'shell' | 'git' | 'web' | 'search' | 'code' | 'system' | 'mcp';
+  /** B-01A：模型可见性（未声明 = 'core'） */
+  exposure?: ToolExposure;
+  /** B-01A：可见模式列表；未声明 = 所有模式可见 */
+  modes?: string[];
+  /** B-01A：只读工具标记（qa 只读回合 / explore 只读子 Agent 过滤用） */
+  readOnly?: boolean;
   /**
    * Phase 73 Part B：工具执行模式
    *   - 'sequential'：串行执行（有状态竞争的工具，如 ask_user/file_edit/shell_exec）
@@ -250,6 +274,12 @@ export interface ToolDef {
   category: ToolDefinition['category'];
   /** Phase 73 Part B：工具执行模式（未设置时默认 'parallel'） */
   executionMode?: ToolDefinition['executionMode'];
+  /** B-01A：模型可见性（透传到 ToolDefinition） */
+  exposure?: ToolExposure;
+  /** B-01A：可见模式列表（透传到 ToolDefinition） */
+  modes?: string[];
+  /** B-01A：只读标记（透传到 ToolDefinition） */
+  readOnly?: boolean;
   /** 参数校验：返回辨识联合，相比 { valid; errors } 支持 errorCode 与 behavior */
   validate?: (args: Record<string, unknown>) => ValidationResult;
   /** 兼容旧签名：返回 { valid; errors }。与 validate 二选一，validate 优先 */
@@ -292,6 +322,9 @@ export function buildTool(def: ToolDef): ITool {
       requiresApproval: def.requiresApproval,
       category: def.category,
       ...(def.executionMode ? { executionMode: def.executionMode } : {}),
+      ...(def.exposure ? { exposure: def.exposure } : {}),
+      ...(def.modes ? { modes: def.modes } : {}),
+      ...(def.readOnly !== undefined ? { readOnly: def.readOnly } : {}),
     },
     execute: def.execute,
     validateArgs: adaptValidate(def),
@@ -326,10 +359,13 @@ export interface IToolRegistry {
   /**
    * 注册工具
    * M1 修复：支持 forceOverwrite 参数控制重复注册行为
+   * B-01A：可选 meta 在注册时合并到工具定义的拷贝（不修改原工具对象），
+   * 用于给类式工具附加 exposure/modes/readOnly 元数据而无需改动工具类文件。
    * @param tool 要注册的工具
    * @param forceOverwrite 是否强制覆盖（默认 true；设为 false 时重复注册抛异常）
+   * @param meta 注册时附加的模型可见性元数据（可选）
    */
-  register(tool: ITool, forceOverwrite?: boolean): void;
+  register(tool: ITool, forceOverwrite?: boolean, meta?: ToolExposureMeta): void;
 
   /** 注销工具 */
   unregister(name: string): void;

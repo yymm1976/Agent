@@ -3,6 +3,8 @@
 // 权限：confirm（写操作）/ auto（读操作），实际由 PermissionEngine 规则控制
 // Phase 0c 修复后：权限统一由 PermissionEngine 中间件决策（原 PermissionChecker 已删除）
 // P2-14：增加 blame 操作，支持查看文件每行的最后修改者
+// B-03：读/写操作边界——`tool:git_op` 白名单只预授权读操作（status/log/diff/blame/show 等），
+//       commit/push/pull/prune 等写操作需显式 `tool:git_op:write`，见 src/tools/git-ops.ts
 
 import simpleGit, { type SimpleGit } from 'simple-git';
 import path from 'node:path';
@@ -11,14 +13,16 @@ import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '..
 export class GitOpTool implements ITool {
   readonly definition: ToolDefinition = {
     name: 'git_op',
-    description: '当用户需要执行 Git 操作（如查看状态、提交、推送、拉取、查看 diff 或 blame）时，使用此工具。支持 status/log/diff/add/commit/push/pull/blame/prune。',
+    description: '当用户需要执行 Git 操作时使用此工具。只读操作：status/log/diff/blame/show/branch（无需确认）；写操作：add/commit/push/pull/prune/merge/rebase/reset/checkout 等（需要确认）。',
     parameters: {
       type: 'object',
       properties: {
         operation: {
           type: 'string',
+          // 审查修复：enum 只暴露 execute() 实际支持的操作（与 switch 分支一致）；
+          // git-ops.ts 的读/写集合用于权限判定，可覆盖更广（未列操作 fail-closed 按写处理）
           enum: ['status', 'log', 'diff', 'add', 'commit', 'push', 'pull', 'blame', 'prune'],
-          description: 'Git 操作类型',
+          description: 'Git 操作类型（status/log/diff/blame 为只读；add/commit/push/pull/prune 为写操作需确认）',
         },
         args: {
           type: 'array',
@@ -34,6 +38,7 @@ export class GitOpTool implements ITool {
 
   validateArgs(args: Record<string, unknown>): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
+    // 与 schema enum 保持一致：只接受 execute() 支持的操作
     const validOps = ['status', 'log', 'diff', 'add', 'commit', 'push', 'pull', 'blame', 'prune'];
     if (!args.operation || typeof args.operation !== 'string') {
       errors.push('缺少必需参数: operation');

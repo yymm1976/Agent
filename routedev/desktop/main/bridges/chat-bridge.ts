@@ -33,6 +33,9 @@ import { renderUserProfile } from '../../../src/memory/user-profile.js';
 import type { SystemBlock } from '../../../src/agent/loop.js';
 import type { ReActRunParams } from '../../../src/agent/loop.js';
 import { loadProjectDoc, ProjectMemoryManager } from '../../../src/memory/project-memory.js';
+import { resolveVisibleTools } from '../../../src/tools/tool-surface-resolver.js';
+import { isGitWriteOperation } from '../../../src/tools/git-ops.js';
+import { summarizeToolsForPrompt } from '../../../src/prompts/manager.js';
 import type { EngineContext, EngineBridges } from './engine-context.js';
 import type { PlanEditRequestPayload } from '../../shared/ipc-types.js';
 import {
@@ -48,6 +51,8 @@ const VERIFY_REQUEST_PATTERN = /验证|测试|检查构建|运行构建|类型�
 /**
  * 自动化任务预授权判定：allowlist（read:/write:/run:/tool: 前缀条目）是否覆盖该工具调用。
  * 能力候选从工具名与参数中的路径/命令字段推导；匹配复用 isAllowedByAllowlist 的前缀语义。
+ * B-03：git_op 按操作区分——`tool:git_op` 只预授权读操作（status/log/diff 等）；
+ *       写操作（commit/push/pull/prune 等）需要显式 `tool:git_op:write`，否则走确认流。
  * 白名单外工具仍走正常确认流，危险操作仍由 PermissionEngine/SecurityChecker 硬拒绝。
  */
 function isPreAuthorized(
@@ -56,6 +61,13 @@ function isPreAuthorized(
   allowlist: string[],
 ): boolean {
   const capabilities = [`tool:${toolName}`];
+  if (toolName === 'git_op') {
+    // 写操作不因工具名共同预授权：需要显式 tool:git_op:write 条目
+    if (isGitWriteOperation(args?.operation)) {
+      capabilities.length = 0;
+      capabilities.push('tool:git_op:write');
+    }
+  }
   const pathKeys = ['path', 'filePath', 'target', 'source', 'destination'];
   for (const key of pathKeys) {
     const value = args?.[key];
@@ -330,21 +342,27 @@ ${skillBlocks.join('\n')}
       const projectPromptContext = await this.loadProjectPromptContext();
       const registeredTools = deps.registry.list();
       const explicitlyRequestsMcp = /\bmcp\b/i.test(actualUserMessage);
-      // 纯问答默认只暴露无需审批的工具，减少无关写入工具 schema。
-      // 实现/调查任务仍保留全量工具；用户明确点名 MCP 时也保留 MCP。
-      let toolsForThisRun = classifyResult.taskShape === 'qa'
-        ? registeredTools.filter((tool) =>
-            !tool.definition.requiresApproval
-            || (explicitlyRequestsMcp && tool.definition.category === 'mcp'),
-          )
-        : registeredTools;
-      if (remoteContext?.allowedToolNames) {
-        const remoteToolNames = new Set(remoteContext.allowedToolNames);
-        toolsForThisRun = toolsForThisRun.filter((tool) =>
-          remoteToolNames.has(tool.definition.name),
-        );
-      }
-      const allowedToolNames = toolsForThisRun.map((tool) => tool.definition.name);
+      // B-01A：模型可见工具面由 resolveVisibleTools 解析——
+      // 默认 coding 回合只暴露 core 工具（VFS/Plan 等 mode 工具与 deferred 低频工具不可见），
+      // QA 回合只保留免审批工具；远程白名单与暴露元数据逐层生效。
+      // 说明：deniedTools 参数当前无生产调用方传入（deny 工具在执行层由权限引擎拦截），
+      // 调用方有权限结果时可传入以提前从 schema 剔除。
+      // 实现/调查任务按默认 core 面运行；用户显式点名 MCP 时 QA 回合也保留 MCP（镜像旧行为）。
+      const toolsForThisRun = resolveVisibleTools(registeredTools, {
+        mode: classifyResult.taskShape === 'qa' ? 'qa' : 'coding',
+        taskShape: classifyResult.taskShape,
+        mcpRequested: explicitlyRequestsMcp,
+        allowedTools: remoteContext?.allowedToolNames
+          ? new Set(remoteContext.allowedToolNames)
+          : undefined,
+      });
+      // B-01B：并入 tool_search 本回合提升的 deferred 工具（否则 loop 的
+      // allowedToolNames 过滤会把提升否决掉，tool_search 的"已临时启用"成为空头承诺）
+      const boosted = deps.toolBoost?.names ?? new Set<string>();
+      const allowedToolNames = [
+        ...toolsForThisRun.map((tool) => tool.definition.name),
+        ...boosted,
+      ];
 
       // Phase 97 Part I Task I2：UserProfile 字段引用计数（fail-open，渲染前记一次）
       // 供低触发评估：档案长期未被引用时提示用户更新或停用
@@ -355,6 +373,27 @@ ${skillBlocks.join('\n')}
         permissionMode: remoteContext?.autonomyMode ?? config.autonomy.defaultMode,
         ...(remoteContext?.workspaceId ? { workspaceId: remoteContext.workspaceId } : {}),
       });
+      // Phase 96+ B4：前缀缓存优化——拆分固定前缀与可变后缀为 systemBlocks
+      // B-02A：稳定区（身份/执行纪律/工具协议，跨会话不变）打 cache_control，
+      // 动态区（项目规则/记忆/会话/任务形状）+ 路由决策作为独立块追加，
+      // 避免项目上下文与路由决策变化导致整个系统提示缓存失效。
+      // 工具参数只存在于 function calling schema；系统提示仅保留能力组摘要（不再复述描述）。
+      const renderedZones = await deps.prompts.renderPromptZones('main.system', {
+        language: config.general.language === 'zh-CN' ? '中文' : 'English',
+        autonomyMode: remoteContext?.autonomyMode ?? config.autonomy.defaultMode,
+        availableTools: summarizeToolsForPrompt(
+          toolsForThisRun.map((tool) => ({ name: tool.definition.name, category: tool.definition.category })),
+        ),
+        projectRules: projectPromptContext.projectRules,
+        projectMemory: projectPromptContext.projectMemory,
+        cwd: options.cwd,
+        // C3：传入 taskShape 让 <task_shape_guidance> 提示生效
+        // taskShape 仅 4 种值（single-step/multi-step-impl/investigation/qa），
+        // 相比 routeDecision 稳定；Anthropic ephemeral cache 5 分钟窗口内 4 种值都会被缓存
+        taskShape: classifyResult.taskShape ?? 'single-step',
+        // Phase 97 Part I：轻量用户档案进入系统提示词（空档案渲染为空，安全降级）
+        userProfile: renderUserProfile(config.userProfile ?? null),
+      });
       const runParams: ReActRunParams = {
         requestId,
         userMessage: actualUserMessage,
@@ -364,40 +403,15 @@ ${skillBlocks.join('\n')}
         // Phase 97 Part A Task A4：透传执行上下文——触发来源按调用方显式透传
         // （automation 调度 / remote 远程 / user 本地；requestId 作为会话槽位）
         context: executionContext,
-        // Phase 96+ B4：前缀缓存优化——拆分固定前缀与可变后缀为 systemBlocks
-        // 固定前缀块（baseSystemPrompt）：会话内不变的内容（identity/core_principles/tool_protocol/...）
-        //   → 打 cache_control: ephemeral，让 Anthropic/OpenAI 跨请求复用前缀缓存
-        // 可变后缀块（routeDecision + skillPromptSuffix）：每轮可能变化
-        //   → 不打 cache_control，作为独立 block 追加
-        // 收益：避免 routeDecision 变化导致整个 system prompt 缓存失效
         systemBlocks: [
           {
             type: 'text',
-            text: await deps.prompts.render('main.system', {
-              language: config.general.language === 'zh-CN' ? '中文' : 'English',
-              autonomyMode: remoteContext?.autonomyMode ?? config.autonomy.defaultMode,
-              availableTools: toolsForThisRun.map((tool) => {
-                const description = tool.definition.description
-                  .replace(/\s+/g, ' ')
-                  .trim()
-                  .slice(0, 240);
-                return `- ${tool.definition.name}: ${description || '未提供说明'}`;
-              }).join('\n') || '（无可用工具）',
-              projectRules: projectPromptContext.projectRules,
-              projectMemory: projectPromptContext.projectMemory,
-              cwd: options.cwd,
-              // C3：传入 taskShape 让 <task_shape_guidance> 提示生效
-              // taskShape 仅 4 种值（single-step/multi-step-impl/investigation/qa），
-              // 相比 routeDecision 稳定；Anthropic ephemeral cache 5 分钟窗口内 4 种值都会被缓存
-              taskShape: classifyResult.taskShape ?? 'single-step',
-              // Phase 97 Part I：轻量用户档案进入系统提示词（空档案渲染为空，安全降级）
-              userProfile: renderUserProfile(config.userProfile ?? null),
-            }),
+            text: renderedZones.stable,
             cache_control: { type: 'ephemeral' },
           },
           {
             type: 'text',
-            text: `当前路由决策：${routeDecision.model.id} (${routeDecision.originalTier})${skillPromptSuffix}`,
+            text: `${renderedZones.dynamic}\n\n当前路由决策：${routeDecision.model.id} (${routeDecision.originalTier})${skillPromptSuffix}`,
           },
           // Phase 97 Part G：结构化引用上下文——用户输入中的显式引用（文件/会话/任务）
           // 解析为结构化文本注入，而非把原始符号拼进 prompt
@@ -530,13 +544,17 @@ ${skillBlocks.join('\n')}
       modelRouter.recordModelSuccess(routeDecision.model.id);
 
       let gateResult: GateResult | undefined;
-      if (!hasTaskError && modifiedFiles.size > 0 && VERIFY_REQUEST_PATTERN.test(text)) {
+      // B-04：触发条件改为"本 turn 有文件修改"，不再依赖用户是否说出测试/构建关键词。
+      // 变更类型的最小验证由 CompletionGate 内部按项目配置探测（typecheck/lint）；
+      // 高成本全量测试仅在用户显式要求（命中验证关键词）时运行。
+      if (!hasTaskError && modifiedFiles.size > 0) {
         stream.emit({ type: 'progress', progress: { label: '正在验证代码', current: 2, total: 3 } });
         try {
           gateResult = await deps.completionGate.verify({
             modifiedFiles: [...modifiedFiles],
             projectPath: options.cwd,
             planDescription: text,
+            includeTests: VERIFY_REQUEST_PATTERN.test(text),
           });
           if (!gateResult.passed) {
             const failed = gateResult.checks.filter((check) => !check.ok && !check.skipped)

@@ -110,6 +110,11 @@ export interface ToolExecCallOptions {
   onUpdate?: (chunk: string) => void;
   /** 当前循环的自主度，透传给底层安全检查。 */
   autonomyMode?: 'auto' | 'semi' | 'manual';
+  /**
+   * B-16：隔离工作区（worktree 实验时覆盖工具执行上下文的工作目录与目录边界，
+   * 使文件/shell 工具在 worktree 内读写而非主工作区）
+   */
+  workspace?: { workingDirectory: string; allowedDirectories: string[] };
 }
 
 /** 工具执行适配器接口

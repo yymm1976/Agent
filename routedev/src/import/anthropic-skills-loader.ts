@@ -49,6 +49,13 @@ export interface LoadedSkill {
   origin: 'anthropic-skills' | 'claude-plugin';
   /** 是否自动启用（受 config.import.anthropicSkillsAutoEnable 控制） */
   autoEnable: boolean;
+  /** B-17：治理校验结果（hostVersion 未注入时不校验，本字段缺省） */
+  governance?: {
+    ok: boolean;
+    reason?: string;
+    /** 数据访问声明摘要（权限清单） */
+    permissions: { files: string[]; network: boolean; env: string[] };
+  };
 }
 
 /** 加载结果 */
@@ -84,9 +91,13 @@ export class AnthropicSkillsLoader {
   static readonly SKILL_FILE_NAME = 'SKILL.md';
   /** 依赖完整性校验清单（未注入时跳过校验） */
   private readonly integrityManifest?: IntegrityManifest;
+  /** B-17：宿主 RouteDev 版本（未注入时不启用治理校验） */
+  private readonly hostVersion?: string;
 
-  constructor(integrityManifest?: IntegrityManifest) {
+  constructor(integrityManifest?: IntegrityManifest, hostVersion?: string) {
     this.integrityManifest = integrityManifest;
+    // B-17：宿主 RouteDev 版本（注入后启用治理校验；未注入 = 不校验，fail-open）
+    this.hostVersion = hostVersion;
   }
 
   /**
@@ -182,7 +193,24 @@ export class AnthropicSkillsLoader {
           options.autoEnable,
         );
         if (skill) {
+          // B-17：治理校验不兼容的扩展不加载（fail-open：单个扩展不影响其他）
+          if (skill.governance && !skill.governance.ok) {
+            errors.push({ path: file, error: `governance rejected: ${skill.governance.reason ?? '未知原因'}` });
+            continue;
+          }
           loaded.push(skill);
+          // B-17（审查 I5 修复）：数据访问声明进审计日志——权限清单有真实消费点
+          // （UI/安全审计可见），而非仅解析后丢弃
+          if (skill.governance) {
+            const p = skill.governance.permissions;
+            logger.info('B-17 skill data-access declared', {
+              name: skill.name,
+              sourcePath: skill.sourcePath,
+              network: p.network,
+              env: p.env.length > 0 ? p.env : undefined,
+              files: p.files.length > 0 ? p.files : undefined,
+            });
+          }
           // 完整性校验：加载成功后 record
           if (this.integrityManifest) {
             try {
@@ -287,6 +315,25 @@ export class AnthropicSkillsLoader {
       name = parentDir || 'unnamed-skill';
     }
 
+    // B-17：治理校验——不兼容的扩展标记但保留（load() 过滤，scan 全量返回供 UI 展示）
+    let governance: LoadedSkill['governance'];
+    if (this.hostVersion) {
+      const { checkSkillCompatibility, describeSkillPermissions } = await import('../skills/governance.js');
+      const compat = checkSkillCompatibility(parsed.metadata, this.hostVersion);
+      governance = {
+        ok: compat.ok,
+        ...(compat.reason ? { reason: compat.reason } : {}),
+        permissions: describeSkillPermissions(parsed.metadata),
+      };
+      if (!compat.ok) {
+        logger.warn('B-17: skill rejected by governance', {
+          name,
+          file: filePath,
+          reason: compat.reason,
+        });
+      }
+    }
+
     return {
       name,
       description: parsed.metadata.description,
@@ -297,6 +344,7 @@ export class AnthropicSkillsLoader {
       sourcePath: path.resolve(filePath),
       origin,
       autoEnable,
+      ...(governance ? { governance } : {}),
     };
   }
 }

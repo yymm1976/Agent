@@ -18,6 +18,7 @@ import type { ClassificationResult } from './types.js';
 import type { ProviderConfig, ExecutionConfig } from '../config/schema.js';
 import type { PluginRegistry } from '../plugins/registry.js';
 import { TokenTracker } from './tracker.js';
+import { runtimeCapabilities } from './model-catalog.js';
 import { logger } from '../utils/logger.js';
 
 /** 模型定义（从配置推断） */
@@ -745,21 +746,30 @@ export class ModelRouter {
   /**
    * 转换为 ModelConfig
    * 修复：从 provider 配置中透传 name/capabilities/latencyMs/available/fallbackModelId 字段
+   * B-14：用户未显式声明运行时能力标签（tool_use/streaming/parallel_tool_calls）时，
+   * 从 model-catalog 合并内置默认；显式声明则完全尊重用户（含显式缺失→显式降级）。
    */
   private toModelConfig(model: ModelDefinition): ModelConfig {
     // 修复：从 provider 配置中读取完整字段，透传 name/capabilities/latencyMs/available/fallbackModelId
     const provider = this.providers.find(p => p.id === model.providerId);
     const providerModel = provider?.models?.find(m => m.id === model.id);
+    const declared = providerModel?.capabilities ?? [];
+    const hasRuntimeDeclaration = declared.some(c =>
+      c === 'tool_use' || c === 'streaming' || c === 'parallel_tool_calls');
+    const capabilities = hasRuntimeDeclaration
+      ? declared
+      : [...new Set([...declared, ...runtimeCapabilities(model.id)])];
     return {
       id: model.id,
       name: providerModel?.name ?? model.id,
       provider: model.providerId,
       tier: model.tier,
       contextWindow: providerModel?.contextWindow ?? 8192,
-      capabilities: providerModel?.capabilities ?? [],
+      capabilities,
       latencyMs: providerModel?.latencyMs ?? 0,
       available: providerModel?.available ?? true,
       fallbackModelId: providerModel?.fallbackModelId,
+      maxSchemaTokens: providerModel?.maxSchemaTokens ?? 4096,
     };
   }
 

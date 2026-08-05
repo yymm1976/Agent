@@ -131,7 +131,8 @@ function makeRouteDecision(): RoutingResult {
       provider: 'mock',
       tier: 'simple',
       contextWindow: 128000,
-      capabilities: [],
+      // B-14：声明运行时能力（并行测试依赖 parallel_tool_calls；真实模型经 router 从 catalog 合并）
+      capabilities: ['tool_use', 'streaming', 'parallel_tool_calls'],
       latencyMs: 0,
       available: true,
     },

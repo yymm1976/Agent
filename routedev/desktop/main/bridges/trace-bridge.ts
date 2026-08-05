@@ -5,7 +5,7 @@
 // 两者均属于 harness 层且方法量较少，合并为一个 bridge 避免文件过小。
 // fail-open：引擎未初始化或底层调用失败时返回空数组/null。
 
-import type { Checkpoint } from '../../../src/harness/types.js';
+import type { Checkpoint, CheckpointDiff, RollbackScope } from '../../../src/harness/types.js';
 // Phase 77：运行回放与评分卡——借鉴 HomeRail 的 hr replay / hr scorecard
 import type { TraceSession } from '../../../src/harness/trace-types.js';
 import { TraceReplayer, type TimelineEvent } from '../../../src/harness/trace-replayer.js';
@@ -43,15 +43,33 @@ export class TraceBridge {
   }
 
   /**
+   * B-13：回滚前预览检查点差异（恢复范围可解释——UI 先展示改动再确认）
+   * @param checkpointId 检查点 ID
+   * @returns 差异（filesAdded/Modified/Deleted + patch）；不存在或非 git 仓库时返回 null
+   */
+  async previewCheckpointDiff(checkpointId: string): Promise<CheckpointDiff | null> {
+    if (!this.ctx.deps) return null;
+    try {
+      return await this.ctx.deps.checkpointManager.diff(checkpointId);
+    } catch (err) {
+      logger.error('[Engine] previewCheckpointDiff failed', { error: err instanceof Error ? err.message : String(err) });
+      return null;
+    }
+  }
+
+  /**
    * 回滚到指定检查点
    * 注意：这是破坏性操作（git reset --hard），调用方（UI）必须在执行前获得用户确认
+   * B-13：scope 控制恢复范围——'files'（默认）仅文件；'files+session' 额外恢复 GoalPlan。
+   * 权限授权与远程 ACL 永不随回滚变化（底层 rollback 不接收权限数据）。
    * @param checkpointId 检查点 ID
+   * @param scope 恢复范围（默认 'files'）
    * @returns 回滚结果
    */
-  async rollbackCheckpoint(checkpointId: string): Promise<{ success: boolean; error?: string }> {
+  async rollbackCheckpoint(checkpointId: string, scope?: RollbackScope): Promise<{ success: boolean; error?: string }> {
     if (!this.ctx.deps) return { success: false, error: '引擎未初始化' };
     try {
-      const ok = await this.ctx.deps.checkpointManager.rollback(checkpointId);
+      const ok = await this.ctx.deps.checkpointManager.rollback(checkpointId, { scope });
       return { success: ok, error: ok ? undefined : '回滚失败（检查点不存在或工作区有未提交更改）' };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };

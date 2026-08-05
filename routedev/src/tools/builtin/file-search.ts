@@ -12,7 +12,7 @@ import { logger } from '../../utils/logger.js';
 export class FileSearchTool implements ITool {
   readonly definition: ToolDefinition = {
     name: 'file_search',
-    description: '当用户需要按文件名模式查找文件或按内容关键词搜索文件时，使用此工具。返回匹配的文件路径与行号。',
+    description: '按文件名模式（glob，如 *.ts）查找文件，或对文件内容做简单文本关键词匹配（非正则）。需要正则搜索代码实现位置时改用 code_search。返回匹配文件路径与行号。',
     parameters: {
       type: 'object',
       properties: {

@@ -64,6 +64,19 @@ export interface SkillMetadata {
   argumentHint?: string;
   /** P0-7：按文件路径自动激活的 glob 模式列表 */
   paths?: string[];
+  /** B-17：能力格式版本（SKILL.md 结构版本；缺省视为 '1'） */
+  capabilityVersion?: string;
+  /** B-17：最小 RouteDev 宿主版本（semver；低于此版本拒绝加载） */
+  minRouteDevVersion?: string;
+  /** B-17：数据访问声明（缺省 = 无网络/无环境变量读取/文件仅限工作区） */
+  permissions?: {
+    /** 文件访问 glob（省略 = 仅工作区内路径；显式列出可超出工作区） */
+    files?: string[];
+    /** 是否访问网络（缺省 false） */
+    network?: boolean;
+    /** 需要读取的环境变量名（缺省 = 不读取） */
+    env?: string[];
+  };
 }
 
 export interface ParsedSkill {
@@ -219,6 +232,31 @@ export class SkillMdParser {
     if (Array.isArray(metadata.paths) && metadata.paths.length > 0) {
       lines.push(`paths:\n  - ${metadata.paths.join('\n  - ')}`);
     }
+    // B-17：治理字段（存在时输出；缺省不输出，保持存量文件向后兼容）
+    if (metadata.capabilityVersion) {
+      lines.push(`capability-version: ${SkillMdParser.escapeYamlScalar(metadata.capabilityVersion)}`);
+    }
+    if (metadata.minRouteDevVersion) {
+      lines.push(`min-routedev-version: ${SkillMdParser.escapeYamlScalar(metadata.minRouteDevVersion)}`);
+    }
+    if (metadata.permissions) {
+      const p = metadata.permissions;
+      const hasDecl = (Array.isArray(p.files) && p.files.length > 0)
+        || p.network === true
+        || (Array.isArray(p.env) && p.env.length > 0);
+      if (hasDecl) {
+        lines.push('permissions:');
+        if (Array.isArray(p.files) && p.files.length > 0) {
+          lines.push(`  files:\n    - ${p.files.join('\n    - ')}`);
+        }
+        if (p.network === true) {
+          lines.push('  network: true');
+        }
+        if (Array.isArray(p.env) && p.env.length > 0) {
+          lines.push(`  env:\n    - ${p.env.join('\n    - ')}`);
+        }
+      }
+    }
 
     lines.push('---');
     const frontmatter = lines.join('\n');
@@ -258,6 +296,28 @@ export class SkillMdParser {
       SkillMdParser.asOptionalString(obj['argument-hint']);
     const paths = SkillMdParser.asOptionalStringArray(obj.paths);
 
+    // B-17：治理字段（kebab-case → camelCase 映射）
+    const capabilityVersion =
+      SkillMdParser.asOptionalString(obj.capabilityVersion) ??
+      SkillMdParser.asOptionalString(obj['capability-version']);
+    const minRouteDevVersion =
+      SkillMdParser.asOptionalString(obj.minRouteDevVersion) ??
+      SkillMdParser.asOptionalString(obj['min-routedev-version']);
+    let permissions: SkillMetadata['permissions'];
+    if (obj.permissions && typeof obj.permissions === 'object') {
+      const p = obj.permissions as Record<string, unknown>;
+      const files = SkillMdParser.asOptionalStringArray(p.files);
+      const env = SkillMdParser.asOptionalStringArray(p.env);
+      const network = p.network === true;
+      if (files || env || network) {
+        permissions = {
+          ...(files ? { files } : {}),
+          ...(network ? { network: true } : {}),
+          ...(env ? { env } : {}),
+        };
+      }
+    }
+
     return {
       name: SkillMdParser.asString(obj.name, 'unknown'),
       description: SkillMdParser.asString(obj.description, ''),
@@ -270,6 +330,10 @@ export class SkillMdParser {
       arguments: SkillMdParser.asArgumentDefs(obj.arguments),
       argumentHint,
       paths,
+      // B-17：治理字段（可选）
+      capabilityVersion,
+      minRouteDevVersion,
+      permissions,
     };
   }
 

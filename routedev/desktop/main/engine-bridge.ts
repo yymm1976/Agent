@@ -1089,11 +1089,19 @@ export class RouteDevEngine {
   }
 
   /**
+   * B-13：回滚前预览检查点差异（UI 先展示改动再请求确认）
+   */
+  previewCheckpointDiff(checkpointId: string): Promise<import('../../src/harness/types.js').CheckpointDiff | null> {
+    return this.traceBridge.previewCheckpointDiff(checkpointId);
+  }
+
+  /**
    * 回滚到指定检查点
    * 注意：这是破坏性操作（git reset --hard），调用方（UI）必须在执行前获得用户确认
+   * B-13：scope 控制恢复范围（'files' 默认 | 'files+session'）
    */
-  async rollbackCheckpoint(checkpointId: string): Promise<{ success: boolean; error?: string }> {
-    return this.traceBridge.rollbackCheckpoint(checkpointId);
+  async rollbackCheckpoint(checkpointId: string, scope?: import('../../src/harness/types.js').RollbackScope): Promise<{ success: boolean; error?: string }> {
+    return this.traceBridge.rollbackCheckpoint(checkpointId, scope);
   }
 
   // ============================================================

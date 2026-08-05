@@ -26,6 +26,12 @@ export interface Checkpoint {
   summary?: string;
   /** 统计信息 */
   stats?: { filesChanged: number; tokensUsed: number };
+  /**
+   * B-13：会话状态快照（创建时显式 captureSession 才写入）。
+   * 恢复范围可解释：默认回滚仅触及 Git 文件；显式选择「文件+会话」才恢复此快照。
+   * 注意：权限授权与远程 ACL 永不随 checkpoint 创建/回滚，本类型亦不含权限字段。
+   */
+  sessionSnapshot?: { goalPlan?: GoalPlan };
 }
 
 /**
@@ -77,7 +83,19 @@ export interface CreateCheckpointOptions {
   isAutoCreated?: boolean;
   /** 本次检查点累计的 token 用量（用于 stats.tokensUsed） */
   tokensUsed?: number;
+  /**
+   * B-13：创建时同时快照会话状态（GoalPlan）。
+   * 默认不开启——自动检查点不携带会话快照，「仅文件」回滚语义保持简单。
+   */
+  captureSession?: boolean;
 }
+
+/**
+ * B-13：回滚范围。
+ * - 'files'（默认）：仅 git reset 文件，绝不触碰会话/权限/ACL
+ * - 'files+session'：git reset + 恢复检查点创建时快照的 GoalPlan（无快照时仅文件）
+ */
+export type RollbackScope = 'files' | 'files+session';
 
 // 重新导出 GoalPlan 类型便于引用
 export type { GoalPlan };

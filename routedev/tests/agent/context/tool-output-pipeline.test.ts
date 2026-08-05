@@ -201,3 +201,74 @@ describe('ToolOutputPipeline', () => {
     expect(result.stages).not.toContain('content-router-skipped');
   });
 });
+
+describe('B-10 截断元数据与 offload receipt', () => {
+  it('未截断时 truncated=false 且 originalLength=keptLength', async () => {
+    const { ToolOutputPipeline } = await import('../../../src/agent/context/tool-output-pipeline.js');
+    const pipeline = new ToolOutputPipeline({
+      conciseThinkingEnabled: false,
+      offloadDir: '/tmp/rd-offload',
+    });
+    const result = await pipeline.process('file_read', '短输出');
+    expect(result.truncated).toBe(false);
+    expect(result.originalLength).toBe('短输出'.length);
+    expect(result.keptLength).toBe('短输出'.length);
+  });
+
+  it('concise-thinking 截断时 truncated=true 且 keptLength < originalLength', async () => {
+    const { ToolOutputPipeline } = await import('../../../src/agent/context/tool-output-pipeline.js');
+    const pipeline = new ToolOutputPipeline({
+      conciseThinkingEnabled: true,
+      offloadDir: '/tmp/rd-offload',
+    });
+    const big = 'x'.repeat(5000);
+    const result = await pipeline.process('shell_exec', big);
+    expect(result.truncated).toBe(true);
+    expect(result.originalLength).toBe(5000);
+    expect(result.keptLength).toBeLessThan(5000);
+    expect(result.output).toContain('已裁剪');
+  });
+
+  it('offload 路径产出 receipt（offloadedPath + size 引用）且 truncated=true', async () => {
+    const { mkdtempSync, rmSync, existsSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const offloadDir = mkdtempSync(join(tmpdir(), 'rd-offload-'));
+    try {
+      const { ToolOutputPipeline } = await import('../../../src/agent/context/tool-output-pipeline.js');
+      const pipeline = new ToolOutputPipeline({
+        conciseThinkingEnabled: false,
+        budgetEnabled: true,
+        offloadDir,
+        sessionId: 'sess-1',
+        maxChars: 100,
+      });
+      const big = 'y'.repeat(500);
+      const result = await pipeline.process('shell_exec', big);
+      expect(result.truncated).toBe(true);
+      expect(result.originalLength).toBe(500);
+      expect(result.offloadedPath).toBeDefined();
+      expect(existsSync(result.offloadedPath!)).toBe(true);
+      // receipt 引用可回读句柄
+      expect(result.output).toContain('persisted-output');
+      expect(result.output).toContain('size="500"');
+    } finally {
+      rmSync(offloadDir, { recursive: true, force: true });
+    }
+  });
+
+  it('sanitizer 失败时返回 withhold 标记而非原文（R-04/B-10 契约）', async () => {
+    const { ToolOutputPipeline } = await import('../../../src/agent/context/tool-output-pipeline.js');
+    const pipeline = new ToolOutputPipeline({
+      conciseThinkingEnabled: false,
+      offloadDir: '/tmp/rd-offload',
+      sanitizer: {
+        sanitize: () => { throw new Error('sanitizer boom'); },
+      } as never,
+    });
+    const result = await pipeline.process('shell_exec', 'secret output');
+    expect(result.output).toContain('withheld');
+    expect(result.output).not.toContain('secret output');
+    expect(result.stages).toContain('sanitizer-failed');
+  });
+});

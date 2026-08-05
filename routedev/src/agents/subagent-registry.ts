@@ -14,6 +14,9 @@
 /** 子会话状态 */
 export type SubagentStatus = 'running' | 'completed' | 'failed' | 'aborted';
 
+/** B-11：子会话生命周期审计监听器（spawn/状态变更/停止时通知） */
+export type SubagentRegistryListener = (record: SubagentRecord) => void;
+
 /** 子会话可见性记录 */
 export interface SubagentRecord {
   /** 子会话 ID（spawn 时生成，与 SubAgentSessionScope.sessionId 对齐格式） */
@@ -45,6 +48,26 @@ export class SubagentRegistry {
   private records = new Map<string, SubagentRecord>();
   /** childSessionId → AbortController（运行中可停止） */
   private abortControllers = new Map<string, AbortController>();
+  /** B-11：审计监听器（不阻塞主流程，异常 fail-open） */
+  private listeners = new Set<SubagentRegistryListener>();
+
+  /** B-11：订阅子会话生命周期事件；返回退订函数 */
+  subscribe(listener: SubagentRegistryListener): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+
+  private notify(record: SubagentRecord): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(record);
+      } catch (err) {
+        // 审计监听失败不阻断登记/更新（fail-open）
+        // eslint-disable-next-line no-console
+        console.error('[subagent-registry] listener failed', err);
+      }
+    }
+  }
 
   /** 登记新子会话，返回该会话的 AbortController（供执行器绑定中断信号） */
   register(record: Omit<SubagentRecord, 'createdAt'> & { createdAt?: number }): AbortController {
@@ -55,6 +78,7 @@ export class SubagentRegistry {
     this.records.set(rec.childSessionId, rec);
     const controller = new AbortController();
     this.abortControllers.set(rec.childSessionId, controller);
+    this.notify(rec);
     return controller;
   }
 
@@ -72,6 +96,7 @@ export class SubagentRegistry {
     if (patch.status && patch.status !== 'running') {
       this.abortControllers.delete(childSessionId);
     }
+    this.notify(rec);
   }
 
   /** 按 childSessionId 获取记录 */
@@ -99,6 +124,7 @@ export class SubagentRegistry {
       rec.completedAt = Date.now();
       this.abortControllers.delete(childSessionId);
     }
+    if (rec) this.notify(rec);
     return true;
   }
 }

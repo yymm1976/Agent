@@ -31,7 +31,9 @@
     "detect-dead-code": "node --import tsx/esm scripts/detect-dead-code.ts",
     "verify:slimdown": "tsx scripts/verify-slimdown.ts",
     "prepare": "husky install",
-    "commitlint": "commitlint --edit"
+    "commitlint": "commitlint --edit",
+    "eval:baseline": "node --import tsx/esm scripts/run-harness-eval.mjs",
+    "test:evals": "vitest run tests/evals"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.2",

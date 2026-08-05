@@ -5,6 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ReActAgentLoop } from '../../src/agent/loop.js';
 import type { ReActEvent, ToolExecutorAdapter } from '../../src/agent/loop-config.js';
+import type { EngineEventV1 } from '../../src/harness/event-types.js';
 import type {
   ILLMClient,
   LLMStreamEvent,
@@ -195,6 +196,37 @@ describe('ReActAgentLoop', () => {
 
       // 应该有 usage
       expect((doneEvent as { type: 'done'; usage: TokenUsageInfo }).usage.totalTokens).toBe(30);
+    });
+
+    it('B-12：外层 requestId 复用为 EngineEventV1 turnId（真实 loop 路径）', async () => {
+      const loop = new ReActAgentLoop(new NoOpToolExecutor());
+      const client = createMockTextClient('Hello world');
+      const decision = makeRouteDecision();
+      const requestId = 'req-contract-42';
+      const events: EngineEventV1[] = [];
+      loop.setEngineEventSink((e) => events.push(e));
+
+      for await (const _event of loop.run({
+        userMessage: 'Hi',
+        llmClient: client,
+        routeDecision: decision,
+        conversationHistory: [],
+        requestId,
+      })) {
+        // 消费流
+      }
+      loop.setEngineEventSink(null);
+
+      const starts = events.filter((e) => e.type === 'turn_start');
+      const ends = events.filter((e) => e.type === 'turn_end');
+      expect(starts.length).toBeGreaterThan(0);
+      expect(starts[0].turnId).toBe(requestId);
+      expect(ends[0].turnId).toBe(requestId);
+      expect(events[0].type).toBe('agent_start');
+      expect(events[events.length - 1].type).toBe('agent_end');
+      for (let i = 1; i < events.length; i += 1) {
+        expect(events[i].sequence).toBeGreaterThan(events[i - 1].sequence);
+      }
     });
   });
 

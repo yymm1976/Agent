@@ -16,6 +16,7 @@ import {
   type TopSymbolEntry,
 } from '../../code-map/database.js';
 import { logger } from '../../utils/logger.js';
+import { estimateTokens } from '../../utils/token-estimate.js';
 
 /** 输出字符硬上限，防止大仓库 repo_map 撑爆上下文 */
 const MAX_OUTPUT_CHARS = 8000;
@@ -41,6 +42,10 @@ export class RepoMapTool implements ITool {
           type: 'number',
           description: '每个文件最大签名数（默认 10；DB 路径固定 3）',
         },
+        budgetTokens: {
+          type: 'number',
+          description: '输出 token 预算（B-09：默认 1500；超出时按预算裁剪而非固定 8000 字符）',
+        },
       },
       required: [],
     },
@@ -55,6 +60,9 @@ export class RepoMapTool implements ITool {
     }
     if (args.maxSignaturesPerFile !== undefined && typeof args.maxSignaturesPerFile !== 'number') {
       errors.push('maxSignaturesPerFile 必须是数字');
+    }
+    if (args.budgetTokens !== undefined && (typeof args.budgetTokens !== 'number' || args.budgetTokens <= 0)) {
+      errors.push('budgetTokens 必须是正数');
     }
     return { valid: errors.length === 0, errors };
   }
@@ -95,7 +103,7 @@ export class RepoMapTool implements ITool {
       try {
         const dbResult = this.buildFromDB(dbPath, maxFiles);
         if (dbResult !== null) {
-          const clipped = this.clipOutput(dbResult.output);
+          const clipped = this.clipOutput(dbResult.output, this.resolveBudgetTokens(args.budgetTokens));
           return {
             success: true,
             output: clipped.output,
@@ -135,7 +143,7 @@ export class RepoMapTool implements ITool {
         };
       }
 
-      const clipped = this.clipOutput(renderRepoMap(entries, 400));
+      const clipped = this.clipOutput(renderRepoMap(entries, 400), this.resolveBudgetTokens(args.budgetTokens));
       return {
         success: true,
         output: clipped.output,
@@ -162,14 +170,32 @@ export class RepoMapTool implements ITool {
     return Math.min(Math.floor(raw), HARD_MAX_FILES);
   }
 
-  private clipOutput(output: string): { output: string; truncated: boolean } {
+  /** B-09：token 预算（默认 1500） */
+  private resolveBudgetTokens(raw?: unknown): number {
+    if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return 1500;
+    return Math.floor(raw);
+  }
+
+  /**
+   * B-09：token 预算感知裁剪。
+   * 预算默认 1500 token（约等于 Aider 的 repo map 预算量级）；
+   * 字符硬上限 8000 仍作为最终防线。裁剪点按字符比例估算，避免逐 token 扫描。
+   */
+  private clipOutput(output: string, budgetTokens: number): { output: string; truncated: boolean } {
     if (output.length <= MAX_OUTPUT_CHARS) {
       return { output, truncated: false };
     }
+    const tokens = estimateTokens(output);
+    if (tokens <= budgetTokens) {
+      return { output, truncated: false };
+    }
+    const sliceChars = Math.max(500, Math.floor(output.length * (budgetTokens / tokens)));
     return {
       output:
-        output.slice(0, MAX_OUTPUT_CHARS) +
-        `\n\n[...repo_map 已截断：共 ${output.length} 字符，仅显示前 ${MAX_OUTPUT_CHARS} 字符]`,
+        output.slice(0, sliceChars) +
+        `
+
+[...repo_map 已按 token 预算截断：共 ${tokens} token（预算 ${budgetTokens}），仅保留前 ${sliceChars} 字符]`,
       truncated: true,
     };
   }

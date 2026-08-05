@@ -246,6 +246,26 @@ export function lookupModelCost(modelId: string): ModelCostInfo | undefined {
   return lookupModelMeta(modelId)?.cost;
 }
 
+// ===== B-14：运行时能力声明 =====
+
+/** 内置模型默认具备的运行时能力（OpenAI 兼容协议均支持；catalog 条目已含 multimodal 标签） */
+export const RUNTIME_CAPABILITIES: readonly ModelCapability[] = [
+  'tool_use', 'streaming', 'parallel_tool_calls',
+];
+
+/**
+ * B-14：模型运行时能力（catalog 能力 + 运行时默认）。
+ * - catalog 覆盖的模型：catalog 标签 + 运行时默认（如 gpt-4o 含 multimodal）
+ * - catalog 未覆盖的模型（用户自定义/Ollama 等本地端点）：返回协议级默认——
+ *   OpenAI 兼容协议普遍支持工具/流式/并行；若某模型确实不支持，用户应在配置中
+ *   显式声明 capabilities 以触发显式降级（审查 I4 修复：避免存量配置静默禁工具）
+ */
+export function runtimeCapabilities(modelId: string): ModelCapability[] {
+  const meta = lookupModelMeta(modelId);
+  if (!meta) return [...RUNTIME_CAPABILITIES];
+  return [...new Set([...meta.capabilities, ...RUNTIME_CAPABILITIES])];
+}
+
 /**
  * Phase 96 P1-4：解析模型的最终定价
  *

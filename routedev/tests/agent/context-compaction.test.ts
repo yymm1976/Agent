@@ -41,6 +41,10 @@ describe('ContextCompactor', () => {
       const longText = makeLongText(2500);
       const messages: LLMMessage[] = [
         {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 't1', name: 'file_read', arguments: { path: 'x' } }],
+        },
+        {
           role: 'user',
           content: [
             { type: 'tool_result', toolUseId: 't1', content: longText, isError: false },
@@ -52,9 +56,12 @@ describe('ContextCompactor', () => {
         estimateTokens,
       });
       const { messages: result } = await compactor.compact(messages);
-      const parts = Array.isArray(result[0].content) ? result[0].content : [];
-      const toolResult = parts[0];
-      expect(toolResult.type).toBe('tool_result');
+      // B-07：结果按消息顺序保留，找到包含 tool_result 的消息再断言
+      const toolResultMsg = result.find((m) => Array.isArray(m.content) && m.content.some((p) => p.type === 'tool_result'));
+      expect(toolResultMsg).toBeDefined();
+      const parts = Array.isArray(toolResultMsg?.content) ? toolResultMsg.content : [];
+      const toolResult = parts.find((p) => p.type === 'tool_result');
+      expect(toolResult?.type).toBe('tool_result');
       if (toolResult.type === 'tool_result') {
         expect(toolResult.content.length).toBe(500 + '[...截断...]'.length + 500);
         expect(toolResult.content).toContain('[...截断...]');
@@ -163,10 +170,18 @@ describe('ContextCompactor', () => {
     it('应去重相同的 tool_result', async () => {
       const messages: LLMMessage[] = [
         {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 't1', name: 'file_read', arguments: { path: 'x' } }],
+        },
+        {
           role: 'user',
           content: [
             { type: 'tool_result', toolUseId: 't1', content: 'result', isError: false },
           ],
+        },
+        {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 't1', name: 'file_read', arguments: { path: 'x' } }],
         },
         {
           role: 'user',
@@ -181,9 +196,11 @@ describe('ContextCompactor', () => {
       });
       const { messages: result } = await compactor.compact(messages);
       // 合并后 1 条 user，去重后 1 个 tool_result
-      expect(result.length).toBe(1);
-      const parts = Array.isArray(result[0].content) ? result[0].content : [];
-      expect(parts.length).toBe(1);
+      // B-07：重复 tool_result 去重为 1 条，且 tool_use/tool_result 保持成对
+      const resultMsgs = result.filter((m) => Array.isArray(m.content) && m.content.some((p) => p.type === 'tool_result'));
+      expect(resultMsgs).toHaveLength(1);
+      const parts = Array.isArray(resultMsgs[0].content) ? resultMsgs[0].content : [];
+      expect(parts.filter((p) => p.type === 'tool_result')).toHaveLength(1);
     });
   });
 
@@ -312,5 +329,86 @@ describe('ContextCompactor', () => {
       const restored = ccrCache.retrieve(result.ccr!.hash);
       expect(restored).toEqual(messages);
     });
+  });
+});
+
+describe('B-07 压缩恢复与 turn boundary', async () => {
+  const { extractRecoveryContext, repairTurnBoundary } = await import('../../src/agent/context-compaction.js');
+
+  function toolUseMsg(id: string, name: string, args: Record<string, unknown>): LLMMessage {
+    return { role: 'assistant', content: [{ type: 'tool_use', id, name, arguments: args }] };
+  }
+  function toolResultMsg(id: string, text = 'ok'): LLMMessage {
+    return { role: 'user', content: [{ type: 'tool_result', toolUseId: id, content: text, isError: false }] };
+  }
+  function textMsg(role: 'user' | 'assistant' | 'system', text: string): LLMMessage {
+    return { role, content: text };
+  }
+
+  it('extractRecoveryContext：提取最近读取/修改文件、图片与 Todo', () => {
+    const messages: LLMMessage[] = [
+      toolUseMsg('t1', 'file_read', { path: 'src/a.ts' }),
+      toolUseMsg('t2', 'file_edit', { path: 'src/b.ts' }),
+      toolUseMsg('t3', 'todo_write', { action: '修复 a.ts' }),
+      { role: 'user', content: [{ type: 'image', source: { type: 'base64', mediaType: 'image/png', data: 'x' } }] },
+    ];
+    const recovery = extractRecoveryContext(messages);
+    expect(recovery.readFiles).toEqual(['src/a.ts']);
+    expect(recovery.modifiedFiles).toEqual(['src/b.ts']);
+    expect(recovery.todoItems).toEqual(['修复 a.ts']);
+    expect(recovery.imageCount).toBe(1);
+  });
+
+  it('extractRecoveryContext：忽略无关工具与空路径，清单有上限', () => {
+    const messages: LLMMessage[] = [
+      toolUseMsg('t1', 'shell_exec', { command: 'ls' }),
+      toolUseMsg('t2', 'file_read', { path: '' }),
+    ];
+    const recovery = extractRecoveryContext(messages);
+    expect(recovery.readFiles).toEqual([]);
+    expect(recovery.modifiedFiles).toEqual([]);
+  });
+
+  it('repairTurnBoundary：删除孤儿 tool_result（其 tool_use 已被压缩掉）', () => {
+    const messages: LLMMessage[] = [
+      textMsg('user', '旧问题'),
+      toolResultMsg('orphan-1'), // 无对应 tool_use
+      toolUseMsg('kept', 'file_read', { path: 'x' }),
+      toolResultMsg('kept'),
+    ];
+    const { messages: result, removed } = repairTurnBoundary(messages);
+    expect(removed).toBe(1);
+    expect(result.some((m) => Array.isArray(m.content) && m.content.some((p) => p.type === 'tool_result' && p.toolUseId === 'orphan-1'))).toBe(false);
+    // 完整的 tool_use/tool_result 对保留
+    expect(result.some((m) => Array.isArray(m.content) && m.content.some((p) => p.type === 'tool_use' && p.id === 'kept'))).toBe(true);
+  });
+
+  it('repairTurnBoundary：完整对不删除', () => {
+    const messages: LLMMessage[] = [
+      toolUseMsg('a', 'file_read', { path: 'x' }),
+      toolResultMsg('a'),
+      toolUseMsg('b', 'file_edit', { path: 'y' }),
+      toolResultMsg('b'),
+    ];
+    const { messages: result, removed } = repairTurnBoundary(messages);
+    expect(removed).toBe(0);
+    expect(result).toHaveLength(4);
+  });
+
+  it('compact() 输出 recovery 清单（强制压缩路径）', async () => {
+    // 构造大量消息强制走 L2+，验证 recovery 附加到结果
+    const messages: LLMMessage[] = [];
+    for (let i = 0; i < 30; i += 1) {
+      messages.push(toolUseMsg(`t${i}`, 'file_read', { path: `src/f${i}.ts` }));
+      messages.push(toolResultMsg(`t${i}`));
+    }
+    const compactor = new ContextCompactor({
+      targetTokens: 0, // 强制走完所有阶段
+      estimateTokens,
+    });
+    const { result } = await compactor.compact(messages);
+    expect(result.recovery).toBeDefined();
+    expect(result.recovery!.readFiles.length).toBeGreaterThan(0);
+    expect(result.recovery!.readFiles[0]).toBe('src/f0.ts');
   });
 });

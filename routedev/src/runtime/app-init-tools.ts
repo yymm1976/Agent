@@ -37,6 +37,9 @@ import { TodoStore } from '../tools/builtin/todo-store.js';
 import { NotesTool } from '../tools/builtin/notes-tool.js';
 import { NotesManager } from '../agent/memory/notes.js';
 import { createVFS } from '../agent/context/virtual-fs.js';
+import { TurnToolBoost, createToolSearchTool } from '../tools/tool-search.js';
+import { createDiagnosticsTool } from '../tools/builtin/diagnostics.js';
+import { createLspDiagnosticsTool } from '../tools/builtin/lsp-diagnostics.js';
 import { VfsReadTool, VfsWriteTool, VfsListTool, VfsDeleteTool } from '../agent/tools/vfs-tool.js';
 import { PlanState } from '../agent/context/plan-state.js';
 import { PlanGetTool, PlanSetTool, PlanUpdateStepTool, PlanAddStepTool, PlanRemoveStepTool } from '../agent/tools/plan-tool.js';
@@ -84,11 +87,10 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   const { config, cwd, trace, ccrCache, offloadSessionId, offloadRootDir } = ctx;
 
   // ===== 工具链 =====
-  // Phase 81 Task 1：工具默认注册收口——按 profile 档位注册
-  // - core（默认）：仅注册 ≤10 个核心工具，覆盖编程场景基础能力
-  // - full：兼容旧行为，注册全部工具（仅调试用）
-  const toolProfile = config.tools?.profile ?? 'core';
-  const isFullProfile = toolProfile === 'full';
+  // B-01B：工具全部始终注册，模型可见面由 exposure 元数据控制
+  // （core 默认可见；deferred 经 tool_search 提升；mode 仅特定模式可见；hidden 永不暴露）。
+  // 不再按 profile 档位注册（isFullProfile 已随 B-01B 删除——deferred 工具需在默认配置下
+  // 可被 tool_search 搜索并临时提升，否则搜索空池）。
 
   const registry = new ToolRegistry();
   // Phase 53 Task 7：提取 fileEditTool / fileWriteTool 实例，供 ConfigGuard 注入
@@ -110,6 +112,8 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   const todoStore = new TodoStore();
   registry.register(new TodoWriteTool(todoStore)); // todo_write
   registry.register(new AskUserTool());             // ask_user
+  // B-03：结构化诊断入口（typecheck/lint/test，复用项目既有命令）
+  registry.register(createDiagnosticsTool());       // diagnostics
 
   // --- 非 Core 工具的依赖对象（始终创建，供 agentLoop 注入） ---
   // P0-1：笔记工具需注入 NotesManager（observability 子系统已写入 trace，此处非空）
@@ -121,47 +125,49 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
   // Phase 71 Task E2：显式 plan 状态（复用 virtualFS，loop 通过 setPlanState 注入）
   const planState = new PlanState(virtualFS);
 
-  // --- 非 Core 工具（仅 full profile 注册，冷处理不删除源码） ---
-  if (isFullProfile) {
-    // web_search → standard-pack
-    registry.register(new WebSearchTool());
-    // Phase 34 Task 4：Repo Map 代码检索增强 → standard-pack
-    registry.register(new RepoMapTool());
-    // 短板 2 修复：代码地图查询工具 → standard-pack
-    registry.register(new CodeGraphQueryTool());
-    // P1-7：网页抓取工具 → standard-pack
-    registry.register(new WebFetchTool());
-    // [I-5] BrowserTool（P3.8）：动态 import 注册，避免静态解析失败 → standard-pack
-    const browserToolModulePath = '../tools/builtin/browser.js';
-    import(browserToolModulePath)
-      .then(({ BrowserTool }) => {
-        registry.register(new BrowserTool());
-        logger.debug('BrowserTool registered');
-      })
-      .catch((err) => { logger.warn('BrowserTool fail-open', { error: err instanceof Error ? err.message : String(err) }); });
-    // notes → standard-pack
-    registry.register(new NotesTool(notesManager));
-    // Phase 55 Task 9：CCR 取回工具 → standard-pack
-    // G-F016 修复：受 config.packs.ccrCompression.enabled 门控
-    if (config.ccrCompression?.enabled && config.packs?.ccrCompression?.enabled) {
-      // memory 子系统在 ccrCompression.enabled 时已写入 ccrCache，此处非空
-      registry.register(new CCRRetrieveTool(ccrCache!));
-    }
+  // --- 低频工具（B-01B：始终注册但 exposure:'deferred'，默认回合不可见） ---
+  // 修复：从 isFullProfile 块移出——tool_search 需要能搜索并临时提升它们；
+  // 若只在 full profile 注册，默认配置下 tool_search 会搜索空池（审查项）。
+  // 可见性由 exposure 元数据控制（adapter/resolver 过滤），注册本身无副作用。
+  registry.register(new WebSearchTool(), false, { exposure: 'deferred' });
+  // Phase 34 Task 4：Repo Map 代码检索增强
+  registry.register(new RepoMapTool(), false, { exposure: 'deferred' });
+  // 短板 2 修复：代码地图查询工具
+  registry.register(new CodeGraphQueryTool(), false, { exposure: 'deferred' });
+  // P1-7：网页抓取工具
+  registry.register(new WebFetchTool(), false, { exposure: 'deferred' });
+  // [I-5] BrowserTool（P3.8）：动态 import 注册，避免静态解析失败
+  const browserToolModulePath = '../tools/builtin/browser.js';
+  import(browserToolModulePath)
+    .then(({ BrowserTool }) => {
+      registry.register(new BrowserTool(), false, { exposure: 'deferred' });
+      logger.debug('BrowserTool registered');
+    })
+    .catch((err) => { logger.warn('BrowserTool fail-open', { error: err instanceof Error ? err.message : String(err) }); });
+  // notes
+  registry.register(new NotesTool(notesManager), false, { exposure: 'deferred' });
+  // B-09：轻量文件级类型诊断（tool_search 可发现）
+  registry.register(createLspDiagnosticsTool(), false, { exposure: 'deferred' });
+  // Phase 55 Task 9：CCR 取回工具（受配置门控）
+  // G-F016 修复：受 config.packs.ccrCompression.enabled 门控
+  if (config.ccrCompression?.enabled && config.packs?.ccrCompression?.enabled) {
+    // memory 子系统在 ccrCompression.enabled 时已写入 ccrCache，此处非空
+    registry.register(new CCRRetrieveTool(ccrCache!), false, { exposure: 'deferred' });
   }
 
-  // --- VFS / Plan 工具（Core，默认可用，无需 Pack 门控） ---
+  // --- VFS / Plan 工具（注册不变；B-01A 起标注模式可见性：默认回合不再暴露给模型） ---
   // G-F017 修复：对齐 CAPABILITY_LAYERS.md 为 Core，从 isFullProfile 块移出
-  // VFS 4 工具 → Core
-  registry.register(new VfsReadTool(virtualFS));
-  registry.register(new VfsWriteTool(virtualFS));
-  registry.register(new VfsListTool(virtualFS));
-  registry.register(new VfsDeleteTool(virtualFS));
-  // Plan 5 工具 → Core
-  registry.register(new PlanGetTool(planState));
-  registry.register(new PlanSetTool(planState));
-  registry.register(new PlanUpdateStepTool(planState));
-  registry.register(new PlanAddStepTool(planState));
-  registry.register(new PlanRemoveStepTool(planState));
+  // VFS 4 工具 → Core（仅 vfs 模式可见）
+  registry.register(new VfsReadTool(virtualFS), false, { exposure: 'mode', modes: ['vfs'], readOnly: true });
+  registry.register(new VfsWriteTool(virtualFS), false, { exposure: 'mode', modes: ['vfs'] });
+  registry.register(new VfsListTool(virtualFS), false, { exposure: 'mode', modes: ['vfs'], readOnly: true });
+  registry.register(new VfsDeleteTool(virtualFS), false, { exposure: 'mode', modes: ['vfs'] });
+  // Plan 5 工具 → Core（仅 plan 模式可见）
+  registry.register(new PlanGetTool(planState), false, { exposure: 'mode', modes: ['plan'], readOnly: true });
+  registry.register(new PlanSetTool(planState), false, { exposure: 'mode', modes: ['plan'] });
+  registry.register(new PlanUpdateStepTool(planState), false, { exposure: 'mode', modes: ['plan'] });
+  registry.register(new PlanAddStepTool(planState), false, { exposure: 'mode', modes: ['plan'] });
+  registry.register(new PlanRemoveStepTool(planState), false, { exposure: 'mode', modes: ['plan'] });
 
   // Phase 53 Task 7：ConfigGuard 注入（受 config.phase53Integration.configGuard.enabled 守护）
   // 启用后 file_edit / file_write 在执行前会检查是否弱化安全/治理配置
@@ -239,6 +245,10 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
     },
     timeoutMs: TOOL_EXECUTION_TIMEOUT_MS,
   });
+  // B-01B：回合级工具提升——tool_search 与 adapter 共享同一 boost 实例
+  const toolBoost = new TurnToolBoost();
+  adapter.setToolBoost(toolBoost);
+  registry.register(createToolSearchTool({ registry, boost: toolBoost }));
   // Phase 34：让工具执行通过 TraceCollector 记录 span
   // setTraceCollector 接受 null 不接受 undefined，用 ?? null 转换
   adapter.setTraceCollector(trace ?? null);
@@ -471,6 +481,8 @@ export function createToolSubsystem(ctx: InitContext): Partial<AppDependencies> 
     registry,
     mcpManager,
     toolExecutor,
+    // B-01B：回合级工具提升共享引用（chat-bridge 计算 allowedToolNames 时并入）
+    toolBoost,
     // Phase 94 Task 3：agentLoop 不再由 tools 子系统返回（创建迁移至 agent 子系统）
     // Phase 79 Task 4：暴露 permissionEngine 供 IPC tool:execute 复用权限校验
     permissionEngine,

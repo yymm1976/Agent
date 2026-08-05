@@ -87,6 +87,7 @@ import type { SubagentRegistry } from '../agents/subagent-registry.js';
 // Phase 97 Part A：内核插槽类型与 routedev-native 薄适配
 import type { AgentKernel } from '../agent/kernel.js';
 import { NativeAgentKernel } from '../agent/kernel-native.js';
+import { WorktreeTaskRunner } from '../harness/worktree-task-runner.js';
 // Phase 97 Part F：自动化调度器类型
 import type { AutomationScheduler } from './automation-scheduler.js';
 import { AutomationScheduler as AutomationSchedulerImpl, migrateAutomationTasks } from './automation-scheduler.js';
@@ -207,6 +208,8 @@ export interface AppDependencies {
   registry: ToolRegistry;
   mcpManager: MCPClientManager;
   toolExecutor: ToolExecutor;
+  /** B-01B：回合级工具提升共享引用（tool_search 写入，chat-bridge 计算可见工具时并入） */
+  toolBoost?: import('../tools/tool-search.js').TurnToolBoost;
   agentLoop: ReActAgentLoop;
   /** Phase 79 Task 4：权限引擎实例，供 IPC tool:execute 复用权限校验 */
   permissionEngine?: PermissionEngine;
@@ -506,6 +509,50 @@ export function createAppDependencies(
   const agentKernel = new NativeAgentKernel((ctx.agentLoop ?? agentDeps.agentLoop) as ReActAgentLoop, {
     trace: ctx.trace ?? null,
   });
+
+  // B-15（审查 C1 修复）：注册 ReActRunParams 工厂——kernel.run（EngineEventV1 流路径，
+  // headless JSONL 等消费方）依赖工厂把统一执行上下文翻译为 loop 参数。
+  // 与 eval runner / chat-bridge 的 runParams 构造同源：分类 → 路由 → 取客户端。
+  if (ctx.classifier && ctx.modelRouter) {
+    agentKernel.setParamsFactory(async (execCtx, input, signal) => {
+      const classifyResult = await ctx.classifier!.classify({ query: input });
+      const routeDecision = await ctx.modelRouter!.route(classifyResult);
+      const client = ctx.clientManager.get(routeDecision.providerId);
+      if (!client || !client.isReady()) {
+        throw new Error(`provider ${routeDecision.providerId} 不可用（params factory）`);
+      }
+      return {
+        requestId: execCtx.sessionId,
+        userMessage: input,
+        llmClient: client as never,
+        routeDecision: routeDecision as never,
+        conversationHistory: [],
+        context: execCtx,
+        signal,
+        autonomyMode: execCtx.permissionMode ?? 'auto',
+        onConfirmTool: async () => true,
+      } as never;
+    });
+    logger.info('B-15: kernel params factory registered (headless path ready)');
+  } else {
+    logger.warn('B-15: classifier/modelRouter 缺失，kernel.run（headless）路径不可用');
+  }
+
+  // B-16：task worktree 隔离——ExperimentManager 注入真实 runner（worktree 内执行任务）
+  // 仅当实验子系统存在且 kernel 可用时接线；依赖缺失时 runner 内部降级为失败结果（不抛异常）
+  if (ctx.experimentManager) {
+    ctx.experimentManager.setExperimentRunner(
+      new WorktreeTaskRunner({
+        kernel: agentKernel,
+        config: ctx.config as never,
+        clientManager: ctx.clientManager as never,
+        classifier: ctx.classifier as never,
+        modelRouter: ctx.modelRouter as never,
+        prompts: ctx.prompts as never,
+      }),
+    );
+    logger.info('B-16: worktree task runner wired', { cwd: ctx.cwd });
+  }
 
   // ===== 合并所有子系统的返回值 =====
   const merged = {

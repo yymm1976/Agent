@@ -11,6 +11,7 @@ import type { ReadTracker } from '../tools/read-tracker.js';
 import { logger } from '../utils/logger.js';
 // 任务1：接入 ComposePipeline，让 Compose 模式具备自动编排能力
 import { ComposePipeline } from './compose-pipeline.js';
+import { isGitWriteOperation } from '../tools/git-ops.js';
 
 /** 工作模式（蓝图第十二节） */
 export type WorkMode = 'build' | 'plan' | 'compose';
@@ -59,10 +60,7 @@ const SHELL_WRITE_KEYWORDS = [
   'docker ', 'kubectl ',
 ];
 
-/** git_op 中属于写操作的类型 */
-const GIT_WRITE_OPERATIONS = new Set([
-  'add', 'commit', 'push', 'pull', 'reset', 'checkout', 'merge', 'rebase',
-]);
+/** git_op 写操作边界：统一复用 src/tools/git-ops.ts（B-03 权威集合，未列操作 fail-closed 按写处理） */
 
 /** Compose 管线阶段顺序 */
 const COMPOSE_PHASES: ComposePhase[] = ['requirements', 'coding', 'testing', 'review'];
@@ -184,7 +182,7 @@ export class WorkModeController {
     // git_op：检查 operation 参数判断读写
     if (toolName === 'git_op') {
       const operation = (args.operation as string) ?? '';
-      if (GIT_WRITE_OPERATIONS.has(operation)) {
+      if (isGitWriteOperation(operation)) {
         return {
           allowed: false,
           reason: 'Plan mode 拦截 Git 写操作',

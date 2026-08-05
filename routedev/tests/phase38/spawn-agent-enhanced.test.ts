@@ -112,7 +112,7 @@ describe('Phase 38 Task 2: SpawnAgentTool 增强', () => {
       expect(props).toHaveProperty('subagentType');
       expect(props).toHaveProperty('maxIterations');
       expect(props).toHaveProperty('isolated');
-      expect(tool.definition.parameters.required).toEqual(['description', 'prompt', 'model']);
+      expect(tool.definition.parameters.required).toEqual(['description', 'prompt']); // B-05A：model 改为可选
       expect(tool.definition.requiresApproval).toBe(true);
     });
   });
@@ -384,5 +384,64 @@ describe('Phase 38 Task 2: SpawnAgentTool 增强', () => {
       // modifiedFiles 未提供时为 undefined
       expect(result.metadata?.modifiedFiles).toBeUndefined();
     });
+  });
+});
+
+describe('B-05A spawn_agent 简化', async () => {
+  const { SpawnAgentTool } = await import('../../src/tools/builtin/spawn-agent.js');
+  const { SUBAGENT_TOOL_WHITELIST, SUBAGENT_TYPE_TO_ROLE } = await import('../../src/tools/builtin/spawn-agent-types.js');
+
+  it('schema 只要求 description 与 prompt（model 可选）', () => {
+    const tool = new SpawnAgentTool((async () => ({ success: true, result: 'ok' })) as never);
+    const required = (tool.definition.parameters as { required: string[] }).required;
+    expect(required).toEqual(['description', 'prompt']);
+    const modelProp = (tool.definition.parameters as { properties: Record<string, unknown> }).properties.model;
+    expect(modelProp).toBeDefined();
+  });
+
+  it('不传 model 时校验通过且 execute 缺省 inherit', async () => {
+    let captured: unknown;
+    const tool = new SpawnAgentTool((async (params: unknown) => {
+      captured = params;
+      return { success: true, result: 'ok' };
+    }) as never);
+    const { valid, errors } = tool.validateArgs({ description: '探索任务', prompt: '探索 src 目录结构并汇报' });
+    expect(valid).toBe(true);
+    expect(errors).toEqual([]);
+    await tool.execute({ description: '探索任务', prompt: '探索 src 目录结构并汇报' }, {} as never);
+    expect((captured as { model: string }).model).toBe('inherit');
+  });
+
+  it('显式传 model 仍生效', async () => {
+    let captured: unknown;
+    const tool = new SpawnAgentTool((async (params: unknown) => {
+      captured = params;
+      return { success: true, result: 'ok' };
+    }) as never);
+    await tool.execute({ description: 'x', prompt: '详细任务说明', model: 'deepseek-v4-flash' }, {} as never);
+    expect((captured as { model: string }).model).toBe('deepseek-v4-flash');
+  });
+
+  it('非法 model 值仍被拒绝（安全加固保留）', () => {
+    const tool = new SpawnAgentTool((async () => ({ success: true, result: 'ok' })) as never);
+    const { valid } = tool.validateArgs({ description: 'x', prompt: '详细任务说明', model: 'bad model!' });
+    expect(valid).toBe(false);
+  });
+
+  it('explore 角色白名单只读且不含 ask_user/写入工具', () => {
+    const whitelist = SUBAGENT_TOOL_WHITELIST.explore;
+    expect(whitelist.has('file_read')).toBe(true);
+    expect(whitelist.has('file_write')).toBe(false);
+    expect(whitelist.has('file_edit')).toBe(false);
+    expect(whitelist.has('shell_exec')).toBe(false);
+    expect(whitelist.has('ask_user')).toBe(false);
+  });
+
+  it('implement/review 角色映射正确且 implement 可写', () => {
+    expect(SUBAGENT_TYPE_TO_ROLE.implement).toBe('executor');
+    expect(SUBAGENT_TYPE_TO_ROLE.review).toBe('reviewer');
+    expect(SUBAGENT_TOOL_WHITELIST.implement.has('file_write')).toBe(true);
+    expect(SUBAGENT_TOOL_WHITELIST.review.has('file_write')).toBe(true);
+    expect(SUBAGENT_TOOL_WHITELIST.review.has('shell_exec')).toBe(false);
   });
 });

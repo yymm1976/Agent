@@ -46,6 +46,55 @@ export function CheckpointTimeline({ projectId, showHeader = true }: CheckpointT
   const [confirmCheckpoint, setConfirmCheckpoint] = useState<CheckpointInfo | null>(null);
   const [rollingBack, setRollingBack] = useState(false);
   const [rollbackResult, setRollbackResult] = useState<{ success: boolean; message: string } | null>(null);
+  // B-13：恢复范围（仅文件 / 文件+会话）与差异预览
+  const [rollbackScope, setRollbackScope] = useState<'files' | 'files+session'>('files');
+  const [diffPreview, setDiffPreview] = useState<import('../../../shared/ipc-types.js').CheckpointDiff | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  /** 打开确认框：先获取确认令牌（G-F002）+ 预览文件差异（B-13） */
+  const openRollbackDialog = async (cp: CheckpointInfo) => {
+    setConfirmCheckpoint(cp);
+    setRollbackResult(null);
+    setDiffPreview(null);
+    setPreviewError(null);
+    setRollbackScope('files');
+    try {
+      const diff = await window.routedev.checkpoint.previewDiff(cp.id);
+      setDiffPreview(diff);
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : '差异预览失败');
+    }
+  };
+
+  /** 执行回滚 */
+  const handleRollback = async () => {
+    if (!confirmCheckpoint) return;
+    try {
+      setRollingBack(true);
+      setRollbackResult(null);
+      // G-F002：破坏性操作先取一次性确认令牌，随调用回传
+      const token = await window.routedev.confirmation.create('checkpoint:rollback', confirmCheckpoint.id);
+      const result = await window.routedev.checkpoint.rollback(confirmCheckpoint.id, rollbackScope, token);
+      if (result.success) {
+        setRollbackResult({ success: true, message: '回滚成功' });
+        setConfirmCheckpoint(null);
+        // 重新加载检查点列表（回滚后该检查点之后的检查点会被清理）
+        await loadCheckpoints();
+        setSelectedId(null);
+      } else if (result.requiresConfirmation) {
+        setRollbackResult({ success: false, message: result.error || '需要确认令牌，请重试' });
+      } else {
+        setRollbackResult({ success: false, message: result.error || '回滚失败' });
+      }
+    } catch (err) {
+      setRollbackResult({
+        success: false,
+        message: err instanceof Error ? err.message : '回滚失败',
+      });
+    } finally {
+      setRollingBack(false);
+    }
+  };
 
   /** 加载检查点列表 */
   const loadCheckpoints = useCallback(async () => {
@@ -166,7 +215,7 @@ export function CheckpointTimeline({ projectId, showHeader = true }: CheckpointT
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setConfirmCheckpoint(cp)}
+                onClick={() => openRollbackDialog(cp)}
                 className="h-7 gap-1.5 text-xs"
               >
                 <RotateCcw size={12} />
@@ -279,6 +328,63 @@ export function CheckpointTimeline({ projectId, showHeader = true }: CheckpointT
                   </p>
                 </div>
               </div>
+
+              {/* B-13：恢复范围选择——默认仅文件；「文件+会话」额外恢复 GoalPlan 快照 */}
+              <div className="flex items-center gap-3 rounded-lg bg-rd-surfaceHover px-3 py-2 text-xs">
+                <span className="shrink-0 text-rd-textSubtle">恢复范围</span>
+                <label className="flex items-center gap-1.5">
+                  <input
+                    type="radio"
+                    name="rollback-scope"
+                    checked={rollbackScope === 'files'}
+                    onChange={() => setRollbackScope('files')}
+                    className="accent-rd-primary"
+                  />
+                  仅文件
+                </label>
+                <label className="flex items-center gap-1.5">
+                  <input
+                    type="radio"
+                    name="rollback-scope"
+                    checked={rollbackScope === 'files+session'}
+                    onChange={() => setRollbackScope('files+session')}
+                    className="accent-rd-primary"
+                  />
+                  文件 + 会话
+                </label>
+                <span className="text-[11px] text-rd-textSubtle">
+                  权限授权与远程 ACL 永不随回滚变化
+                </span>
+              </div>
+
+              {/* B-13：差异预览（恢复前展示文件改动） */}
+              <div className="rounded-lg bg-rd-surfaceHover px-3 py-2 text-xs">
+                {previewError ? (
+                  <p className="text-rd-danger">差异预览失败：{previewError}</p>
+                ) : diffPreview ? (
+                  <div className="space-y-1">
+                    <p className="font-medium text-rd-textSubtle">本次回滚将影响的文件：</p>
+                    {diffPreview.filesAdded.length === 0 && diffPreview.filesModified.length === 0 && diffPreview.filesDeleted.length === 0 ? (
+                      <p className="text-rd-textMuted">无文件差异</p>
+                    ) : (
+                      <>
+                        {diffPreview.filesAdded.length > 0 && (
+                          <p className="text-rd-success">新增 {diffPreview.filesAdded.length}：{diffPreview.filesAdded.join(', ')}</p>
+                        )}
+                        {diffPreview.filesModified.length > 0 && (
+                          <p className="text-rd-text">修改 {diffPreview.filesModified.length}：{diffPreview.filesModified.join(', ')}</p>
+                        )}
+                        {diffPreview.filesDeleted.length > 0 && (
+                          <p className="text-rd-danger">删除 {diffPreview.filesDeleted.length}：{diffPreview.filesDeleted.join(', ')}</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-rd-textMuted">加载差异预览...</p>
+                )}
+              </div>
+
               {rollbackResult && !rollbackResult.success && (
                 <div className="flex items-center gap-2 rounded-lg bg-rd-danger/10 px-3 py-2 text-xs text-rd-danger">
                   <AlertCircle size={14} className="shrink-0" />

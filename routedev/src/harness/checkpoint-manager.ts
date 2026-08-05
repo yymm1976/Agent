@@ -125,6 +125,13 @@ export class CheckpointManager {
         },
       };
 
+      // B-13：显式 captureSession 时快照会话状态（GoalPlan）。
+      // 自动检查点默认不携带会话快照；权限/ACL 永不进入快照。
+      if (options.captureSession) {
+        const goalPlan = await this.loadGoalPlan();
+        if (goalPlan) checkpoint.sessionSnapshot = { goalPlan };
+      }
+
       // 先持久化 checkpoint（安全网优先——Checkpoint 创建不能被摘要生成阻塞）
       // 即使后续摘要生成失败/超时，checkpoint 本身已保存到磁盘
       this.checkpoints.push(checkpoint);
@@ -288,8 +295,13 @@ export class CheckpointManager {
    *  V2-T01：回滚前备份当前 metadata 文件，失败时从备份恢复
    *  V2-T18：splice（内存变更）→ saveMetadata（落盘）顺序已确认正确；
    *          失败时用备份恢复内存中的 checkpoints 数组
+   *
+   *  B-13：恢复范围可解释——
+   *  - scope 'files'（默认）：仅 git reset，不触碰会话状态
+   *  - scope 'files+session'：额外恢复检查点创建时快照的 GoalPlan（无快照时退化为仅文件）
+   *  - 权限授权与远程 ACL 永不随回滚变化：本方法不接收也不触碰任何权限/ACL 数据
    */
-  async rollback(checkpointId: string): Promise<boolean> {
+  async rollback(checkpointId: string, options?: { scope?: import('./types.js').RollbackScope }): Promise<boolean> {
     if (!this.isRepo) return false;
 
     const checkpoint = this.checkpoints.find(c => c.id === checkpointId);
@@ -358,6 +370,23 @@ export class CheckpointManager {
       // splice 返回被删除的元素，同时改变原数组
       const idx = this.checkpoints.indexOf(checkpoint);
       const removed = this.checkpoints.splice(idx + 1);
+
+      // B-13：显式选择「文件+会话」时才恢复会话快照（GoalPlan）；
+      // 无快照时静默跳过（退化为仅文件）。权限/ACL 不在此处也不在任何回滚路径出现。
+      if (options?.scope === 'files+session') {
+        const goalPlan = checkpoint.sessionSnapshot?.goalPlan;
+        if (goalPlan) {
+          await this.saveGoalPlan(goalPlan);
+          logger.info('Checkpoint rollback restored session snapshot (goal plan)', {
+            id: checkpointId,
+            goalId: goalPlan.id,
+          });
+        } else {
+          logger.info('Checkpoint rollback: files+session requested but no session snapshot, files only', {
+            id: checkpointId,
+          });
+        }
+      }
 
       await this.saveMetadata();
 

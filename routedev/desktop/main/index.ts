@@ -2693,15 +2693,28 @@ ipcMain.handle('checkpoint:list', createValidatedHandler<string | undefined, unk
   },
 ));
 
+// 回滚前预览检查点差异（B-13：恢复范围可解释——UI 先展示改动再请求确认）
+ipcMain.handle('checkpoint:previewDiff', createValidatedHandler<string, unknown>(
+  'checkpoint:previewDiff',
+  ipcValidate.optionalString(256),
+  async (checkpointId, _event) => {
+  if (typeof checkpointId !== 'string' || checkpointId.length === 0 || checkpointId.length > 256) {
+    return null;
+  }
+  if (!engine) return null;
+  return engine.previewCheckpointDiff(checkpointId);
+  },
+));
+
 // 回滚到指定检查点（破坏性操作，UI 层需在调用前弹出确认对话框）
 // Phase 95：用 createValidatedHandler 包装，外层做基础类型校验（string | object）
-ipcMain.handle('checkpoint:rollback', createValidatedHandler<{ checkpointId: string; confirmationToken?: string } | string, { success: boolean; error?: string; requiresConfirmation?: boolean }>(
+ipcMain.handle('checkpoint:rollback', createValidatedHandler<{ checkpointId: string; scope?: string; confirmationToken?: string } | string, { success: boolean; error?: string; requiresConfirmation?: boolean }>(
   'checkpoint:rollback',
   (args) => (typeof args === 'string' || (typeof args === 'object' && args !== null)) ? null : '参数必须是字符串或对象',
   async (payload, _event) => {
   // G-F002：兼容旧调用（string）与新调用（对象含 confirmationToken）
-  const { checkpointId, confirmationToken } = typeof payload === 'string'
-    ? { checkpointId: payload, confirmationToken: undefined }
+  const { checkpointId, scope, confirmationToken } = typeof payload === 'string'
+    ? { checkpointId: payload, scope: undefined, confirmationToken: undefined }
     : payload;
   // V3-004：破坏性操作审计日志
   auditDestructiveOperation('checkpoint:rollback', checkpointId);
@@ -2712,6 +2725,8 @@ ipcMain.handle('checkpoint:rollback', createValidatedHandler<{ checkpointId: str
   if (!ID_PATTERN.test(checkpointId)) {
     return { success: false, error: 'checkpointId 含非法字符' };
   }
+  // B-13：scope 白名单校验（'files' | 'files+session'），未知值按 'files' 处理
+  const validScope = scope === 'files+session' ? 'files+session' : 'files';
   // F5-1：confirmationToken 长度上限校验
   if (confirmationToken !== undefined && (typeof confirmationToken !== 'string' || confirmationToken.length > 256)) {
     return { success: false, error: '无效的 confirmationToken' };
@@ -2721,7 +2736,7 @@ ipcMain.handle('checkpoint:rollback', createValidatedHandler<{ checkpointId: str
   if (!confirmationToken || !consumeConfirmation(confirmationToken, 'checkpoint:rollback', checkpointId)) {
     return { success: false, error: '需要确认令牌', requiresConfirmation: true };
   }
-  return engine.rollbackCheckpoint(checkpointId);
+  return engine.rollbackCheckpoint(checkpointId, validScope);
   },
 ));
 

@@ -57,6 +57,12 @@ export interface ToolOutputResult {
   stages: string[];
   /** Phase 72 Task B2：ContentRouter 实际使用的压缩策略（仅 content-routing 阶段记录） */
   compressStrategy?: 'passthrough' | 'json-sampler' | 'code-ast-summary' | 'ksentence';
+  /** B-10：输出是否被截断（concise-thinking 裁剪或 offload 预览） */
+  truncated: boolean;
+  /** B-10：截断前原始长度 */
+  originalLength: number;
+  /** B-10：注入上下文的保留长度 */
+  keptLength: number;
 }
 
 /**
@@ -88,6 +94,13 @@ export class ToolOutputPipeline {
     const stages: string[] = [];
     let processed = result;
     let compressStrategy: ToolOutputResult['compressStrategy'];
+    // B-10：截断元数据（统一口径，供 UI 展示与审计）
+    const originalLength = result.length;
+    const meta = (output: string): { truncated: boolean; originalLength: number; keptLength: number } => ({
+      truncated: output.length < originalLength,
+      originalLength,
+      keptLength: output.length,
+    });
 
     // 阶段 1：Sanitizer 安全检查 + 脎敏
     if (this.options.sanitizer) {
@@ -157,6 +170,10 @@ export class ToolOutputPipeline {
           offloadedPath: offloadPath,
           stages,
           compressStrategy,
+          // offload 语义上即截断（内容被持久化、上下文只留预览），不按长度比较判定
+          truncated: true,
+          originalLength,
+          keptLength: processed.length,
         };
       } catch (err) {
         // 写入失败不阻断工具执行，降级到内存截断（fail-open）
@@ -174,6 +191,7 @@ export class ToolOutputPipeline {
       output: processed,
       stages,
       compressStrategy,
+      ...meta(processed),
     };
   }
 
