@@ -939,6 +939,15 @@ export interface RouteDevAPI {
       deviceId: string,
       scopes: import('./remote-protocol.js').RemoteDeviceScope[],
     ) => Promise<import('./remote-protocol.js').RemoteDevice | null>;
+    grantSessionAccess: (
+      sessionId: string,
+      deviceId: string,
+      access: import('./remote-protocol.js').RemoteSessionAccess,
+    ) => Promise<import('./remote-protocol.js').RemoteSessionDetail>;
+    revokeSessionAccess: (
+      sessionId: string,
+      deviceId: string,
+    ) => Promise<import('./remote-protocol.js').RemoteSessionDetail>;
   };
 
   // ===== MCP =====

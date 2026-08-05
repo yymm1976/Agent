@@ -25,7 +25,7 @@ import type {
   HookInfo,
 } from '../shared/ipc-types.js';
 import { AGENT_PROFILE_ROLES } from '../shared/ipc-types.js';
-import { loadConfig } from '../../src/config/loader.js';
+import { loadConfigWithSecrets } from './secret-store.js';
 import { saveConfig } from './config-store.js';
 import { RouteDevEngine } from './engine-bridge.js';
 import {
@@ -70,6 +70,7 @@ let remoteDeviceStore: RemoteDeviceStore | null = null;
 let remotePairingService: RemotePairingService | null = null;
 let remoteService: RouteDevRemoteService | null = null;
 let remoteGateway: RemoteGatewayServer | null = null;
+let remoteRevocationCleanup: (() => void) | null = null;
 // 系统托盘需保持全局引用，否则会被垃圾回收导致托盘消失
 let tray: Tray | null = null;
 // C2 修复：记录用户通过选择器授权过的工作目录集合
@@ -118,6 +119,9 @@ async function startRemoteGateway(config: AppConfig, currentEngine: RouteDevEngi
   remoteDeviceStore = new RemoteDeviceStore(deviceStorePath);
   await remoteDeviceStore.initialize();
   remoteService = new RouteDevRemoteService(currentEngine);
+  remoteRevocationCleanup = remoteDeviceStore.onRevoked((deviceId) => {
+    remoteService?.revokeDeviceAccess(deviceId);
+  });
   remotePairingService = new RemotePairingService(
     remoteDeviceStore,
     async (request, proposedScopes) => {
@@ -160,6 +164,8 @@ async function stopRemoteGateway(): Promise<void> {
     await remoteGateway?.close();
   } finally {
     remoteGateway = null;
+    remoteRevocationCleanup?.();
+    remoteRevocationCleanup = null;
     remoteService?.close();
     remoteService = null;
     remotePairingService = null;
@@ -167,7 +173,7 @@ async function stopRemoteGateway(): Promise<void> {
   }
 }
 
-function getRemoteGatewayStatus(config = loadConfig({
+function getRemoteGatewayStatus(config = loadConfigWithSecrets({
   globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH,
 })): RemoteGatewayStatus {
   return {
@@ -496,7 +502,7 @@ app.whenReady().then(async () => {
 
   // 初始化核心引擎（复用 CLI 的 App 依赖工厂）
   try {
-    const config = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+    const config = loadConfigWithSecrets({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
 
     // I12 修复：检测 modelId 为 'unconfigured' 的路由规则，给出友好提示而非崩溃
     const unconfiguredRules = config.router?.rules?.filter(
@@ -989,7 +995,7 @@ ipcMain.handle('config:get', createValidatedHandler<undefined, import('../../src
   'config:get',
   ipcValidate.none,
   async () => {
-  const config = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+  const config = loadConfigWithSecrets({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
   // F-N010 修复：对敏感字段脱敏后再返回渲染进程，防止 apiKey 泄露
   return maskSensitiveConfig(config);
   },
@@ -1149,7 +1155,7 @@ ipcMain.handle('config:save', createValidatedHandler<unknown, ConfigSaveResult>(
     return { success: false, error: err instanceof Error ? err.message : '无效的参数' };
   }
   // G-F001：安全配置弱化检测——比较新旧配置，拒绝弱化安全字段的保存
-  const oldConfig = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+  const oldConfig = loadConfigWithSecrets({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
   // 修复 Bug 2：首次配置场景跳过安全弱化检测
   // 场景：SetupWizard 跳过 / 首次配置，磁盘 config.yaml 不存在或 providers 为空
   // 此时 oldConfig = DEFAULT_CONFIG（含 13 条 filesystem deny 规则），
@@ -1189,7 +1195,7 @@ ipcMain.handle('config:save', createValidatedHandler<unknown, ConfigSaveResult>(
         isMaskedApiKey(config.webSearch.braveApiKey)
       ));
     if (hasMaskedKey) {
-      const diskConfig = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+      const diskConfig = loadConfigWithSecrets({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
       // 回填 providers 数组中的掩码 apiKey
       if (Array.isArray(config.providers) && Array.isArray(diskConfig.providers)) {
         config.providers = config.providers.map(p => {
@@ -1259,7 +1265,7 @@ ipcMain.handle('config:reload', createValidatedHandler<undefined, import('../../
   () => null, // 无参数 handler，无需参数校验
   async () => {
     try {
-      const cfg = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+      const cfg = loadConfigWithSecrets({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
       // 防御兜底：providers 为空时跳过 engine.reloadConfig，避免 createRouterSubsystem 抛错
       // 场景：用户清空所有 provider、或从 SetupWizard 跳过时保存了空 providers
       const hasProvider = Array.isArray(cfg.providers) && cfg.providers.length > 0;
@@ -1284,7 +1290,7 @@ ipcMain.handle('remote:status', async (): Promise<RemoteGatewayStatus> =>
   getRemoteGatewayStatus());
 
 ipcMain.handle('remote:restart', async (): Promise<RemoteGatewayStatus> => {
-  const config = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+  const config = loadConfigWithSecrets({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
   return restartRemoteGateway(config);
 });
 
@@ -1294,7 +1300,7 @@ ipcMain.handle('remote:stop', async (): Promise<RemoteGatewayStatus> => {
 });
 
 ipcMain.handle('remote:create-pairing', async (): Promise<RemotePairingView> => {
-  const config = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+  const config = loadConfigWithSecrets({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
   if (!remotePairingService || !remoteGateway) {
     throw new Error('请先开启并启动“手机远程连接”');
   }
@@ -1342,7 +1348,7 @@ ipcMain.handle('remote:update-device-scopes', async (_event, rawPayload: unknown
       return value;
     },
   })(rawPayload);
-  const config = loadConfig({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
+  const config = loadConfigWithSecrets({ globalConfigPath: process.env.ROUTEDEV_CONFIG_PATH });
   const validScopes = new Set<string>(REMOTE_DEVICE_SCOPES);
   const scopes = [...new Set(payload.scopes)].filter((scope): scope is RemoteDeviceScope => {
     if (!validScopes.has(scope)) return false;
@@ -1351,6 +1357,30 @@ ipcMain.handle('remote:update-device-scopes', async (_event, rawPayload: unknown
     return true;
   });
   return remoteDeviceStore?.updateScopes(payload.deviceId, scopes) ?? null;
+});
+
+ipcMain.handle('remote:grant-session-access', async (_event, rawPayload: unknown) => {
+  const payload = ipcGuard.object<{ sessionId: string; deviceId: string; access: 'reader' | 'operator' }>({
+    sessionId: ipcGuard.string(256),
+    deviceId: ipcGuard.string(256),
+    access: (value: unknown) => {
+      if (value !== 'reader' && value !== 'operator') throw new Error('无效的 session ACL');
+      return value;
+    },
+  })(rawPayload);
+  if (!remoteService) throw new Error('远程服务尚未启动');
+  const targetDevice = remoteDeviceStore?.get(payload.deviceId);
+  if (!targetDevice || targetDevice.revokedAt) throw new Error('目标设备未配对或已撤销');
+  return remoteService.grantSessionAccess(payload.sessionId, payload.deviceId, payload.access);
+});
+
+ipcMain.handle('remote:revoke-session-access', async (_event, rawPayload: unknown) => {
+  const payload = ipcGuard.object<{ sessionId: string; deviceId: string }>({
+    sessionId: ipcGuard.string(256),
+    deviceId: ipcGuard.string(256),
+  })(rawPayload);
+  if (!remoteService) throw new Error('远程服务尚未启动');
+  return remoteService.revokeSessionAccess(payload.sessionId, payload.deviceId);
 });
 
 // V3-007：command:execute 允许的命令白名单（大小写不敏感）

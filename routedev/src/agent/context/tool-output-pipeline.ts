@@ -103,10 +103,11 @@ export class ToolOutputPipeline {
         stages.push('sanitizer');
       } catch (err) {
         // 净化失败不阻断工具执行，返回原始结果（fail-open）
-        logger.warn('ToolResultSanitizer failed, returning raw result', {
+        logger.error('ToolResultSanitizer failed; raw result withheld', {
           toolName,
           error: String(err),
         });
+        processed = '[Tool output withheld: security sanitization failed]';
         stages.push('sanitizer-failed');
       }
     }

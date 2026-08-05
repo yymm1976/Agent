@@ -16,6 +16,7 @@ import type { AgentKernel, KernelBinding, KernelSessionState } from './kernel.js
 import type { AgentExecutionContext } from './execution-context.js';
 import type { EngineEventV1 } from '../harness/event-types.js';
 import type { ReActAgentLoop, ReActRunParams } from './loop.js';
+import type { ReActEvent } from './loop-config.js';
 
 /** ReActRunParams 工厂：把统一执行上下文翻译为 loop 所需参数（signal 由内核管理） */
 export type KernelRunParamsFactory = (
@@ -59,6 +60,65 @@ export class NativeAgentKernel implements AgentKernel {
   /** 注册 ReActRunParams 工厂（由装配 / 消费方注入；未注册时 run() 抛错） */
   setParamsFactory(factory: KernelRunParamsFactory | null): void {
     this.paramsFactory = factory;
+  }
+
+  /**
+   * Production desktop adapter path. It keeps the original ReAct event stream
+   * for ChatBridge while the same kernel-owned sink records EngineEventV1.
+   */
+  async *runReAct(ctx: AgentExecutionContext, params: ReActRunParams): AsyncIterable<ReActEvent> {
+    if (this.runningSessionId !== null) {
+      throw new Error(`NativeAgentKernel: ReActAgentLoop 正在执行会话 ${this.runningSessionId}`);
+    }
+    const controller = new AbortController();
+    const upstreamSignal = params.signal;
+    const abortFromUpstream = (): void => controller.abort();
+    if (upstreamSignal?.aborted) controller.abort();
+    else upstreamSignal?.addEventListener('abort', abortFromUpstream, { once: true });
+    const state: KernelSessionState = {
+      sessionId: ctx.sessionId,
+      running: true,
+      lastEventSequence: 0,
+      model: params.routeDecision.model.id,
+    };
+    const activeEntry = { controller, state };
+    this.active.set(ctx.sessionId, activeEntry);
+    if (params.requestId && params.requestId !== ctx.sessionId) {
+      this.active.set(params.requestId, activeEntry);
+    }
+    this.bindings.set(ctx.sessionId, {
+      sessionId: ctx.sessionId,
+      kernelId: this.id,
+      switchedAt: Date.now(),
+    });
+    if (this.pendingAborts.delete(ctx.sessionId) || (params.requestId && this.pendingAborts.delete(params.requestId))) {
+      controller.abort();
+    }
+    this.runningSessionId = ctx.sessionId;
+    const sink = (event: EngineEventV1): void => {
+      state.lastEventSequence = Math.max(state.lastEventSequence, event.sequence);
+      if (event.type === 'turn_start') state.currentTurnId = event.turnId;
+      if (event.type === 'turn_end') state.currentTurnId = undefined;
+      if (event.type === 'agent_start' && event.payload.model) state.model = event.payload.model;
+      try { this.trace?.recordEngineEvent(event); } catch { /* observability must not break execution */ }
+    };
+    this.loop.setEngineEventSink(sink);
+    try {
+      params.context = ctx;
+      params.signal = controller.signal;
+      for await (const event of this.loop.run(params)) yield event;
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      this.loop.setEngineEventSink(null);
+      upstreamSignal?.removeEventListener('abort', abortFromUpstream);
+      state.running = false;
+      this.runningSessionId = null;
+      this.active.delete(ctx.sessionId);
+      if (params.requestId && params.requestId !== ctx.sessionId) this.active.delete(params.requestId);
+      this.recent.set(ctx.sessionId, state);
+    }
   }
 
   /** 会话最近使用的内核绑定记录（供切换内核 / 会话元数据持久化） */

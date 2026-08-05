@@ -9,6 +9,8 @@ import {
   type RemoteSendMessageRequest,
   type RemoteSendMessageResponse,
   type RemoteSessionDetail,
+  type RemoteSessionAccess,
+  type RemoteSessionAclEntry,
   type RemoteSessionSummary,
   type RemoteSkill,
   type RemoteStopTaskRequest,
@@ -25,6 +27,12 @@ import type { EngineEventListener } from './engine-event-hub.js';
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGE_COUNT = 8;
+
+type RequiredSessionAccess = 'reader' | 'operator';
+
+function accessRank(access: RequiredSessionAccess | 'owner'): number {
+  return access === 'owner' ? 2 : access === 'operator' ? 1 : 0;
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -64,6 +72,7 @@ export class RouteDevRemoteService {
   private readonly sessions = new Map<string, RemoteSessionRecord>();
   private readonly clientSessions = new Map<string, string>();
   private readonly acceptedMessages = new Map<string, RemoteSendMessageResponse>();
+  private readonly approvals = new Map<string, { sessionId: string; turnId: string | null }>();
   private readonly unsubscribe: () => void;
 
   constructor(private readonly engine: RemoteEngine) {
@@ -85,15 +94,34 @@ export class RouteDevRemoteService {
   }
 
   subscribeEvents(
+    principal: RemotePrincipal,
     sessionId: string,
     listener: EngineEventListener,
   ): () => void {
+    requireScope(principal, 'sessions:read');
+    this.requireSessionAccess(principal, sessionId, 'reader');
     return this.engine.getEventHub().subscribe(listener, { sessionId });
+  }
+
+  private auditRemoteAction(
+    principal: RemotePrincipal,
+    action: string,
+    context: { sessionId?: string; turnId?: string; details?: Record<string, unknown> } = {},
+    result: 'success' | 'failure' | 'denied' = 'success',
+  ): void {
+    this.engine.auditRemoteAction?.(action, {
+      deviceId: principal.deviceId,
+      scopes: [...principal.scopes],
+      ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+      ...(context.turnId ? { turnId: context.turnId } : {}),
+      ...context.details,
+    }, result);
   }
 
   listSessions(principal: RemotePrincipal): RemoteSessionSummary[] {
     requireScope(principal, 'sessions:read');
     return [...this.sessions.values()]
+      .filter((session) => this.sessionAccess(principal, session) !== null)
       .map((session) => toSummary(this.refreshSequence(session)))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
@@ -103,8 +131,10 @@ export class RouteDevRemoteService {
     request: RemoteCreateSessionRequest,
   ): RemoteCreateSessionResponse {
     requireScope(principal, 'messages:send');
-    const existingId = this.clientSessions.get(request.clientSessionId);
+    const clientSessionKey = this.clientSessionKey(principal, request.clientSessionId);
+    const existingId = this.clientSessions.get(clientSessionKey);
     if (existingId) {
+      this.requireSessionAccess(principal, existingId, 'operator');
       return {
         session: this.getSessionInternal(existingId),
         clientSessionId: request.clientSessionId,
@@ -116,6 +146,8 @@ export class RouteDevRemoteService {
     const session: RemoteSessionRecord = {
       sessionId: randomUUID(),
       clientSessionId: request.clientSessionId,
+      ownerDeviceId: principal.deviceId,
+      acl: [],
       title: request.title?.trim() || '新对话',
       status: 'idle',
       createdAt: timestamp,
@@ -127,18 +159,20 @@ export class RouteDevRemoteService {
       latestResult: null,
     };
     this.sessions.set(session.sessionId, session);
-    this.clientSessions.set(request.clientSessionId, session.sessionId);
+    this.clientSessions.set(clientSessionKey, session.sessionId);
     this.engine.getEventHub().publish(
       session.sessionId,
       null,
       'session.created',
       { session: toSummary(this.refreshSequence(session)) },
     );
+    this.auditRemoteAction(principal, 'session_create', { sessionId: session.sessionId });
     return { session: this.getSessionInternal(session.sessionId), clientSessionId: request.clientSessionId };
   }
 
   getSession(principal: RemotePrincipal, sessionId: string): RemoteSessionDetail {
     requireScope(principal, 'sessions:read');
+    this.requireSessionAccess(principal, sessionId, 'reader');
     return this.getSessionInternal(sessionId);
   }
 
@@ -148,7 +182,7 @@ export class RouteDevRemoteService {
     afterSequence?: number,
   ): RemoteTimelineResponse {
     requireScope(principal, 'sessions:read');
-    this.getSessionInternal(sessionId);
+    this.requireSessionAccess(principal, sessionId, 'reader');
     return this.engine.getEventHub().journal.read(sessionId, { afterSequence });
   }
 
@@ -158,7 +192,7 @@ export class RouteDevRemoteService {
     afterEventId: string,
   ): RemoteTimelineResponse {
     requireScope(principal, 'sessions:read');
-    this.getSessionInternal(sessionId);
+    this.requireSessionAccess(principal, sessionId, 'reader');
     return this.engine.getEventHub().journal.read(sessionId, { afterEventId });
   }
 
@@ -168,11 +202,12 @@ export class RouteDevRemoteService {
     request: RemoteSendMessageRequest,
   ): RemoteSendMessageResponse {
     requireScope(principal, 'messages:send');
+    this.requireSessionAccess(principal, sessionId, 'operator');
     const session = this.getMutableSession(sessionId);
-    const idempotencyKey = `${sessionId}:${request.clientMessageId}`;
+    const idempotencyKey = `${principal.deviceId}:${sessionId}:${request.clientMessageId}`;
     const duplicate = this.acceptedMessages.get(idempotencyKey);
     if (duplicate) return { ...duplicate, duplicate: true };
-    if (session.status === 'running' || session.status === 'waiting_approval') {
+    if (session.status === 'queued' || session.status === 'running' || session.status === 'waiting_approval') {
       throw new RemoteServiceError('SESSION_BUSY', '该对话仍有任务在运行', 409, true);
     }
     if (!this.engine.isReady()) {
@@ -185,6 +220,9 @@ export class RouteDevRemoteService {
     const allowedToolNames = this.resolveTools(request.allowedToolNames, mcpServerIds);
     if (request.autonomyMode !== undefined) {
       requireScope(principal, 'autonomy:change');
+      if (!this.engine.getConfig().remote.allowAutonomyChange) {
+        throw new RemoteServiceError('SCOPE_DENIED', '远程 autonomy 切换未由桌面端启用', 403);
+      }
     }
 
     const turnId = randomUUID();
@@ -197,9 +235,19 @@ export class RouteDevRemoteService {
       duplicate: false,
     };
     this.acceptedMessages.set(idempotencyKey, response);
-    session.status = 'running';
+    session.status = 'queued';
     session.activeTurnId = turnId;
     session.updatedAt = acceptedAt;
+
+    this.engine.getEventHub().publish(sessionId, turnId, 'turn.queued', {
+      clientMessageId: request.clientMessageId,
+      position: 0,
+    });
+    this.auditRemoteAction(principal, 'message_send', {
+      sessionId,
+      turnId,
+      details: { autonomyMode: request.autonomyMode ?? null },
+    });
     if (session.title === '新对话') {
       session.title = request.text.trim().slice(0, 80) || '图片任务';
     }
@@ -213,6 +261,8 @@ export class RouteDevRemoteService {
       allowedToolNames,
       autonomyMode: request.autonomyMode,
       images: request.images,
+      deviceId: principal.deviceId,
+      triggerSource: 'remote',
     }).catch((error) => {
       const current = this.sessions.get(sessionId);
       if (!current || current.activeTurnId !== turnId) return;
@@ -233,12 +283,14 @@ export class RouteDevRemoteService {
     request: RemoteStopTaskRequest,
   ): void {
     requireScope(principal, 'tasks:stop');
+    this.requireSessionAccess(principal, sessionId, 'operator');
     const session = this.getMutableSession(sessionId);
     const turnId = request.turnId ?? session.activeTurnId;
     if (!turnId || session.activeTurnId !== turnId) {
       throw new RemoteServiceError('CONFLICT', '没有可停止的当前任务', 409);
     }
     this.engine.stopGeneration(turnId);
+    this.auditRemoteAction(principal, 'task_stop', { sessionId, turnId });
   }
 
   resolveApproval(
@@ -248,7 +300,26 @@ export class RouteDevRemoteService {
     payload?: unknown,
   ): void {
     requireScope(principal, 'approvals:resolve');
+    if (!this.engine.getConfig().remote.allowRemoteApprovals) {
+      throw new RemoteServiceError('SCOPE_DENIED', '远程审批未由桌面端启用', 403);
+    }
+    const approval = this.approvals.get(approvalId);
+    if (!approval) {
+      throw new RemoteServiceError('APPROVAL_EXPIRED', '审批不存在或已失效', 409);
+    }
+    this.requireSessionAccess(principal, approval.sessionId, 'operator');
+    if (approval.turnId) {
+      const session = this.getMutableSession(approval.sessionId);
+      if (session.activeTurnId !== approval.turnId) {
+        throw new RemoteServiceError('APPROVAL_EXPIRED', '审批不属于当前执行轮次', 409);
+      }
+    }
     this.engine.resolveToolConfirm(approvalId, approved, payload, 'android');
+    this.auditRemoteAction(principal, 'approval_resolve', {
+      sessionId: approval.sessionId,
+      ...(approval.turnId ? { turnId: approval.turnId } : {}),
+      details: { approvalId, approved },
+    });
   }
 
   listSkills(principal: RemotePrincipal): RemoteSkill[] {
@@ -310,8 +381,87 @@ export class RouteDevRemoteService {
     return session;
   }
 
+  private clientSessionKey(principal: RemotePrincipal, clientSessionId: string): string {
+    return `${principal.deviceId}:${clientSessionId}`;
+  }
+
+  private sessionAccess(
+    principal: RemotePrincipal,
+    session: RemoteSessionRecord,
+  ): 'owner' | RemoteSessionAccess | null {
+    if (session.ownerDeviceId === principal.deviceId) return 'owner';
+    return session.acl.find((entry) => entry.deviceId === principal.deviceId)?.access ?? null;
+  }
+
+  private requireSessionAccess(
+    principal: RemotePrincipal,
+    sessionId: string,
+    required: RequiredSessionAccess,
+  ): RemoteSessionRecord {
+    const session = this.getMutableSession(sessionId);
+    const actual = this.sessionAccess(principal, session);
+    if (actual === null || accessRank(actual) < accessRank(required)) {
+      throw new RemoteServiceError('SESSION_ACCESS_DENIED', '设备未获准访问该会话', 403);
+    }
+    return session;
+  }
+
+  /** Desktop-only control surface for explicitly granting a session to a paired device. */
+  grantSessionAccess(
+    sessionId: string,
+    deviceId: string,
+    access: RemoteSessionAccess,
+  ): RemoteSessionDetail {
+    const session = this.getMutableSession(sessionId);
+    const entry: RemoteSessionAclEntry = { deviceId, access, grantedAt: nowIso() };
+    session.acl = [...session.acl.filter((item) => item.deviceId !== deviceId), entry];
+    session.updatedAt = entry.grantedAt;
+    this.publishSessionUpdated(session);
+    this.engine.auditRemoteAction?.('session_acl_grant', { sessionId, deviceId, access });
+    return this.getSessionInternal(sessionId);
+  }
+
+  /** Desktop-only control surface for revoking a per-session grant. */
+  revokeSessionAccess(sessionId: string, deviceId: string): RemoteSessionDetail {
+    const session = this.getMutableSession(sessionId);
+    session.acl = session.acl.filter((item) => item.deviceId !== deviceId);
+    session.updatedAt = nowIso();
+    this.publishSessionUpdated(session);
+    this.engine.auditRemoteAction?.('session_acl_revoke', { sessionId, deviceId });
+    return this.getSessionInternal(sessionId);
+  }
+
+  /** Remove all per-session grants when a paired device is revoked. */
+  revokeDeviceAccess(deviceId: string): void {
+    for (const session of this.sessions.values()) {
+      const nextAcl = session.acl.filter((entry) => entry.deviceId !== deviceId);
+      if (nextAcl.length === session.acl.length) continue;
+      session.acl = nextAcl;
+      session.updatedAt = nowIso();
+      this.publishSessionUpdated(session);
+      this.engine.auditRemoteAction?.('device_acl_revoke', {
+        sessionId: session.sessionId,
+        deviceId,
+      });
+    }
+  }
+
   private getSessionInternal(sessionId: string): RemoteSessionDetail {
-    return { ...this.refreshSequence(this.getMutableSession(sessionId)) };
+    const session = this.refreshSequence(this.getMutableSession(sessionId));
+    return {
+      sessionId: session.sessionId,
+      title: session.title,
+      status: session.status,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      activeTurnId: session.activeTurnId,
+      lastSequence: session.lastSequence,
+      projectId: session.projectId,
+      projectName: session.projectName,
+      latestResult: session.latestResult,
+      ownerDeviceId: session.ownerDeviceId,
+      acl: session.acl.map((entry) => ({ ...entry })),
+    };
   }
 
   private refreshSequence(session: RemoteSessionRecord): RemoteSessionRecord {
@@ -415,10 +565,21 @@ export class RouteDevRemoteService {
       case 'assistant.text.delta':
         session.latestResult = `${session.latestResult ?? ''}${event.payload.text}`;
         break;
+      case 'turn.started':
+        session.status = 'running';
+        break;
+      case 'turn.queued':
+        session.status = 'queued';
+        break;
       case 'approval.required':
         session.status = 'waiting_approval';
+        this.approvals.set(event.payload.approval.approvalId, {
+          sessionId: session.sessionId,
+          turnId: event.turnId,
+        });
         break;
       case 'approval.resolved':
+        this.approvals.delete(event.payload.approvalId);
         if (session.activeTurnId) session.status = 'running';
         break;
       case 'turn.completed':

@@ -30,6 +30,7 @@ export const REMOTE_ERROR_CODES = [
   'PAIRING_INVALID',
   'SCOPE_DENIED',
   'SESSION_NOT_FOUND',
+  'SESSION_ACCESS_DENIED',
   'SESSION_BUSY',
   'SKILL_NOT_AVAILABLE',
   'MCP_NOT_AVAILABLE',
@@ -58,6 +59,7 @@ export type RemoteDeviceScope = typeof REMOTE_DEVICE_SCOPES[number];
 export const REMOTE_EVENT_TYPES = [
   'session.created',
   'session.updated',
+  'turn.queued',
   'turn.started',
   'assistant.text.delta',
   'assistant.reasoning.delta',
@@ -79,7 +81,7 @@ export const REMOTE_EVENT_TYPES = [
 
 export type RemoteEventType = typeof REMOTE_EVENT_TYPES[number];
 export type RemoteAutonomyMode = 'auto' | 'semi' | 'manual';
-export type RemoteSessionStatus = 'idle' | 'running' | 'waiting_approval' | 'completed' | 'failed';
+export type RemoteSessionStatus = 'idle' | 'queued' | 'running' | 'waiting_approval' | 'completed' | 'failed';
 export type RemoteTodoStatus = 'pending' | 'in_progress' | 'completed';
 
 export interface RemoteError {
@@ -167,6 +169,17 @@ export interface RemoteSessionDetail extends RemoteSessionSummary {
   projectId: string | null;
   projectName: string | null;
   latestResult: string | null;
+  /** Present on direct session reads; omitted from summary events. */
+  ownerDeviceId?: string;
+  acl?: RemoteSessionAclEntry[];
+}
+
+export type RemoteSessionAccess = 'reader' | 'operator';
+
+export interface RemoteSessionAclEntry {
+  deviceId: string;
+  access: RemoteSessionAccess;
+  grantedAt: string;
 }
 
 export interface RemoteCreateSessionRequest {
@@ -255,6 +268,7 @@ export interface RemoteApproval {
 export interface RemoteEventPayloadMap {
   'session.created': { session: RemoteSessionSummary };
   'session.updated': { session: RemoteSessionSummary };
+  'turn.queued': { clientMessageId: string; position: number };
   'turn.started': { clientMessageId: string; userText: string };
   'assistant.text.delta': { text: string };
   'assistant.reasoning.delta': { text: string; visibility: 'provider_returned' };

@@ -8,6 +8,7 @@ import { stringify as stringifyYaml } from 'yaml';
 import type { AppConfig } from '../shared/config-types.js';
 import { AppConfigSchema } from '../shared/config-types.js';
 import { getGlobalConfigPath } from '../../src/utils/paths.js';
+import { persistConfigSecrets } from './secret-store.js';
 
 /**
  * 获取配置文件路径（与 loadConfig 保持一致）
@@ -40,11 +41,11 @@ function cleanupStaleTempFiles(dir: string, baseName: string): void {
  * 在 saveConfig 写入新配置前调用，确保有一份上一版的完整备份可恢复
  * 备份失败不影响保存流程（新配置比旧备份更重要）
  */
-function backupConfig(filePath: string): void {
+function backupConfig(filePath: string, sanitizedYaml: string): void {
   try {
     if (fs.existsSync(filePath)) {
       const backupPath = `${filePath}.bak`;
-      fs.copyFileSync(filePath, backupPath);
+      fs.writeFileSync(backupPath, sanitizedYaml, { encoding: 'utf8', mode: 0o600 });
     }
   } catch {
     // 备份失败不中断保存流程
@@ -75,7 +76,8 @@ export async function saveConfig(config: AppConfig): Promise<void> {
   const filePath = resolveConfigPath();
   const dir = path.dirname(filePath);
   const baseName = path.basename(filePath);
-  const yaml = stringifyYaml(validatedConfig, { indent: 2, lineWidth: 120 });
+  const storedConfig = persistConfigSecrets(validatedConfig, filePath);
+  const yaml = stringifyYaml(storedConfig, { indent: 2, lineWidth: 120 });
 
   // 确保目录存在
   try {
@@ -89,7 +91,7 @@ export async function saveConfig(config: AppConfig): Promise<void> {
 
   // 备份当前配置（在写入新配置之前）
   // 如果备份失败，仅记录日志不中断保存流程（新配置比旧备份更重要）
-  backupConfig(filePath);
+  backupConfig(filePath, yaml);
 
   const errors: string[] = [];
 

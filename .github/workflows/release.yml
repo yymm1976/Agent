@@ -1,0 +1,99 @@
+name: RouteDev signed release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  NODE_VERSION: '20.x'
+  PNPM_VERSION: '11.7.0'
+
+jobs:
+  build:
+    name: Signed ${{ matrix.name }} release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            target: --win
+          - name: macOS
+            os: macos-latest
+            target: --mac
+          - name: Linux
+            os: ubuntu-latest
+            target: --linux
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: routedev
+    env:
+      CSC_LINK: ${{ matrix.name == 'Windows' && secrets.WINDOWS_CSC_LINK || secrets.MACOS_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ matrix.name == 'Windows' && secrets.WINDOWS_CSC_KEY_PASSWORD || secrets.MACOS_CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: routedev/pnpm-lock.yaml
+      - name: Require signing credentials
+        if: matrix.name != 'Linux'
+        shell: bash
+        run: |
+          test -n "$CSC_LINK" || { echo 'CSC_LINK is required for signed releases'; exit 1; }
+          test -n "$CSC_KEY_PASSWORD" || { echo 'CSC_KEY_PASSWORD is required for signed releases'; exit 1; }
+      - name: Require macOS notarization credentials
+        if: matrix.name == 'macOS'
+        shell: bash
+        run: |
+          test -n "$APPLE_ID" && test -n "$APPLE_APP_SPECIFIC_PASSWORD" && test -n "$APPLE_TEAM_ID" || {
+            echo 'Apple notarization credentials are required'; exit 1;
+          }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm typecheck:desktop
+      - run: pnpm test
+      - run: pnpm exec electron-vite build
+      - run: pnpm exec electron-builder --config electron-builder.release.yml ${{ matrix.target }} --publish never
+      - name: Generate checksums and provenance
+        shell: bash
+        run: node scripts/create-release-manifest.mjs
+      - name: Generate SBOM
+        shell: bash
+        run: pnpm dlx @cyclonedx/cyclonedx-npm --output-file release-v25/sbom.json --output-format JSON
+      - uses: actions/upload-artifact@v4
+        with:
+          name: routedev-release-${{ matrix.name }}
+          path: routedev/release-v25
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: routedev/release-v25/*
+
+  publish:
+    name: Publish release assets
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: routedev-release-*
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: artifacts/**

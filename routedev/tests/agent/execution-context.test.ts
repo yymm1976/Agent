@@ -29,7 +29,7 @@ describe('execution-context（统一 Agent 执行上下文）', () => {
     const ctx = createDefaultExecutionContext('sess-2');
     expect(ctx.triggerSource).toBe('user');
     expect(ctx.sessionId).toBe('sess-2');
-    expect(ctx.permissionMode).toBe('semi');
+    expect(ctx.permissionMode).toBe('manual');
     expect(ctx.attachedResources).toEqual([]);
     expect(ctx.workspaceId).toBeUndefined();
     expect(ctx.notificationTarget).toBeUndefined();

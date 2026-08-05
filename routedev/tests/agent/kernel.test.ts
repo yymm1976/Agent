@@ -64,7 +64,7 @@ describe('kernel（AgentKernel 内核接口抽象）', () => {
   it('默认执行上下文兜底：user 触发 + semi 权限', () => {
     const ctx = createDefaultExecutionContext('sess-2');
     expect(ctx.triggerSource).toBe('user');
-    expect(ctx.permissionMode).toBe('semi');
+    expect(ctx.permissionMode).toBe('manual');
   });
 
   it('getSessionState 返回状态快照', () => {

@@ -45,7 +45,7 @@ export function createDefaultExecutionContext(
   return {
     triggerSource: 'user',
     sessionId,
-    permissionMode: 'semi',
+    permissionMode: 'manual',
     attachedResources: [],
     ...overrides,
   };

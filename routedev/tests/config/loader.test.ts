@@ -25,7 +25,7 @@ describe('Config Loader', () => {
     expect(config.version).toBe(1);
     expect(config.general.language).toBe('zh-CN');
     expect(config.router.rules).toHaveLength(4);
-    expect(config.autonomy.defaultMode).toBe('semi');
+    expect(config.autonomy.defaultMode).toBe('manual');
   });
 
   it('should load and parse YAML config file', () => {

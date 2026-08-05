@@ -470,6 +470,7 @@ export class RemoteGatewayServer {
     deviceSessions.add(session);
     this.sseByDevice.set(principal.deviceId, deviceSessions);
     removeListener = this.options.service.subscribeEvents(
+      principal,
       sessionId,
       (event) => session.send(event),
     );

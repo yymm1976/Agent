@@ -90,7 +90,8 @@ describe('ToolOutputPipeline', () => {
       maxChars: 2000,
     });
     const result = await pipeline.process('read', 'content');
-    expect(result.output).toBe('content');
+    expect(result.output).toContain('Tool output withheld');
+    expect(result.output).not.toContain('content');
     expect(result.stages).toContain('sanitizer-failed');
   });
 

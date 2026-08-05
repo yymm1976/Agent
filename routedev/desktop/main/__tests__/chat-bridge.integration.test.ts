@@ -100,11 +100,13 @@ function setupBridge(options: SetupOptions = {}) {
     onToolConfirmRequest,
   });
 
+  const mockAgentLoopRun = options.agentLoopRun ?? defaultAgentLoopRun();
+
   // mock deps：覆盖 sendChat 调用链涉及的所有子系统
   ctx.deps = {
     registry: { list: () => options.registryTools ?? [] },
     agentLoop: {
-      run: options.agentLoopRun ?? defaultAgentLoopRun(),
+      run: mockAgentLoopRun,
       followUp: vi.fn(),
       clearAllQueues: vi.fn(),
       setFollowUpMode: vi.fn(),
@@ -112,7 +114,18 @@ function setupBridge(options: SetupOptions = {}) {
       getFollowUpQueue: () => [],
       removeFollowUp: () => false,
     },
-    skillsRouter: { route: () => [] },
+    // 生产 ChatBridge 只从 Kernel 进入 ReAct；测试 Kernel 显式适配原有
+    // mock loop，避免重新打开共享 loop 的生产旁路。
+    agentKernel: {
+      id: 'test-kernel',
+      runReAct: async function* (_context: unknown, params: Parameters<MockAgentLoopRun>[0]) {
+        yield* mockAgentLoopRun(params);
+      },
+      abort: vi.fn(async () => undefined),
+      listSessions: () => [],
+      getSessionState: () => undefined,
+    },
+    skillsRouter: { route: () => [], listStatuses: () => [] },
     contextManager: {
       shouldTriggerCheckpoint: () => null,
       triggerCheckpoint: vi.fn(),

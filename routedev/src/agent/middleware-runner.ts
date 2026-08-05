@@ -236,7 +236,7 @@ export class MiddlewareRunner {
       toolName,
       toolArgs,
       metadata: {
-        autonomyMode: autonomyMode ?? 'semi',
+        autonomyMode: autonomyMode ?? 'manual',
       },
     };
     try {

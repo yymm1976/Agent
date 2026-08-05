@@ -25,6 +25,43 @@ const MAX_BODY_BYTES = 1024 * 1024;
 // V3-023 修复：截图 buffer 大小上限（10MB），防止超大截图导致内存/IPC 过载
 const MAX_SCREENSHOT_SIZE = 10 * 1024 * 1024;
 
+const MAX_REDIRECTS = 5;
+
+async function fetchWithSafeRedirects(
+  initialUrl: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<{ response: Response; finalUrl: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let currentUrl = initialUrl;
+  try {
+    for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
+      const ssrfResult = await checkSSRF(currentUrl);
+      if (!ssrfResult.allowed) {
+        throw new Error(`SSRF redirect blocked: ${ssrfResult.reason}`);
+      }
+      const response = await fetch(currentUrl, {
+        ...init,
+        signal: controller.signal,
+        redirect: 'manual',
+      });
+      if (response.status < 300 || response.status >= 400) {
+        return { response, finalUrl: currentUrl };
+      }
+      const location = response.headers.get('location');
+      if (!location) return { response, finalUrl: currentUrl };
+      if (redirect === MAX_REDIRECTS) {
+        throw new Error(`too many redirects (maximum ${MAX_REDIRECTS})`);
+      }
+      currentUrl = new URL(location, currentUrl).toString();
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+  throw new Error('redirect resolution failed');
+}
+
 // ============================================================
 // Puppeteer 最小类型接口（F-026：替代 any，仅覆盖项目实际使用的 API）
 // puppeteer 是可选依赖，未安装时动态 import 会抛错，因此用自定义接口而非 @types/puppeteer
@@ -38,7 +75,13 @@ interface PuppeteerPage {
   screenshot(opts: unknown): Promise<Buffer>;
   waitForTimeout(ms: number): Promise<void>;
   close(): Promise<void>;
+  setRequestInterception(enabled: boolean): Promise<void>;
   on(event: string, handler: (...args: unknown[]) => void): void;
+}
+interface PuppeteerRequest {
+  url(): string;
+  abort(): Promise<void> | void;
+  continue(): Promise<void> | void;
 }
 interface PuppeteerBrowser {
   newPage(): Promise<PuppeteerPage>;
@@ -219,10 +262,7 @@ export class BrowserTool implements ITool {
         };
       }
 
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-      const response = await fetch(url, {
+      const { response, finalUrl } = await fetchWithSafeRedirects(url, {
         method: 'GET',
         headers: {
           'User-Agent': USER_AGENT,
@@ -230,11 +270,7 @@ export class BrowserTool implements ITool {
           'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
           ...headers,
         },
-        signal: controller.signal,
-        redirect: 'follow',
-      });
-
-      clearTimeout(timer);
+      }, timeoutMs);
 
       if (!response.ok) {
         return {
@@ -242,7 +278,7 @@ export class BrowserTool implements ITool {
           output: '',
           error: `HTTP ${response.status} ${response.statusText}`,
           durationMs: Date.now() - start,
-          metadata: { url, status: response.status },
+          metadata: { url: finalUrl, status: response.status },
         };
       }
 
@@ -270,7 +306,7 @@ export class BrowserTool implements ITool {
         output: result,
         durationMs: Date.now() - start,
         metadata: {
-          url,
+          url: finalUrl,
           status: response.status,
           totalBytes,
           returnedChars: textTruncated ? maxChars : text.length,
@@ -343,6 +379,25 @@ export class BrowserTool implements ITool {
       browser = await puppeteer!.launch({ headless: 'new' });
       const page = await browser.newPage();
       await page.setUserAgent(USER_AGENT);
+      await page.setRequestInterception(true);
+      page.on('request', (rawRequest) => {
+        const request = rawRequest as unknown as PuppeteerRequest;
+        let protocol: string;
+        try {
+          protocol = new URL(request.url()).protocol;
+        } catch {
+          void request.abort();
+          return;
+        }
+        if (protocol !== 'http:' && protocol !== 'https:') {
+          void request.abort();
+          return;
+        }
+        void checkSSRF(request.url()).then((result) => {
+          if (result.allowed) void request.continue();
+          else void request.abort();
+        }).catch(() => void request.abort());
+      });
 
       // 等待网络空闲或超时
       await page.goto(url, { waitUntil: 'networkidle2', timeout: timeoutMs });
@@ -422,21 +477,14 @@ export class BrowserTool implements ITool {
         };
       }
 
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-      const response = await fetch(url, {
+      const { response } = await fetchWithSafeRedirects(url, {
         method: 'GET',
         headers: {
           'User-Agent': USER_AGENT,
           Accept: 'text/html,application/xhtml+xml,text/plain,*/*',
           ...headers,
         },
-        signal: controller.signal,
-        redirect: 'follow',
-      });
-
-      clearTimeout(timer);
+      }, timeoutMs);
 
       if (!response.ok) {
         return {

@@ -234,7 +234,7 @@ export function createConfirmFunctions(ctx: GoalRunnerCtx) {
     // Phase 20：通过 StepEditor 让用户编辑计划步骤
     // Phase 54 Task 5：用自主度模式（auto/semi/manual）统一判定是否需要确认计划
     // 优先使用 autonomy.defaultMode；若用户显式设置 goal.requireConfirmation=false 则尊重该设置（向后兼容）
-    const autonomyMode = (config.autonomy?.defaultMode ?? 'semi') as AutonomyMode;
+    const autonomyMode = (config.autonomy?.defaultMode ?? 'manual') as AutonomyMode;
     const autonomyBehavior = AUTONOMY_BEHAVIOR[autonomyMode];
     // 向后兼容：goal.requireConfirmation === false 时强制跳过确认（即使 manual 模式）
     const skipPlanConfirmation = !autonomyBehavior.requirePlanConfirmation

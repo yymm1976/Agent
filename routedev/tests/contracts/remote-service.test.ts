@@ -13,8 +13,8 @@ import {
   type RemoteTurnContextInput,
 } from '../../desktop/main/remote/index.js';
 
-function principal(scopes: RemoteDeviceScope[]): RemotePrincipal {
-  return { deviceId: 'device-1', scopes: new Set(scopes) };
+function principal(scopes: RemoteDeviceScope[], deviceId = 'device-1'): RemotePrincipal {
+  return { deviceId, scopes: new Set(scopes) };
 }
 
 class FakeRemoteEngine implements RemoteEngine {
@@ -39,6 +39,10 @@ class FakeRemoteEngine implements RemoteEngine {
   getProjectInfo() { return { id: 'project-1', name: 'RouteDev', cwd: 'C:\\RouteDev' }; }
   getConfig(): AppConfig {
     return {
+      remote: {
+        allowAutonomyChange: true,
+        allowRemoteApprovals: true,
+      },
       mcp: {
         servers: [
           { id: 'connected', name: 'Connected', enabled: true, config: {} },
@@ -210,5 +214,69 @@ describe('RouteDevRemoteService', () => {
       clientMessageId: 'message-1',
       autonomyMode: 'auto',
     })).toThrowError(expect.objectContaining({ code: 'SCOPE_DENIED' }));
+  });
+
+  it('isolates sessions by device until the owner grants an ACL entry', () => {
+    const engine = new FakeRemoteEngine();
+    const service = new RouteDevRemoteService(engine);
+    const owner = principal([...fullPrincipal.scopes], 'owner-device');
+    const reader = principal(['sessions:read', 'messages:send'], 'reader-device');
+    const operator = principal(['sessions:read', 'messages:send', 'tasks:stop'], 'operator-device');
+    const sessionId = service.createSession(owner, { clientSessionId: 'isolated-session' }).session.sessionId;
+
+    expect(service.listSessions(reader)).toEqual([]);
+    expect(() => service.getSession(reader, sessionId))
+      .toThrowError(expect.objectContaining({ code: 'SESSION_ACCESS_DENIED' }));
+    expect(() => service.getTimeline(reader, sessionId))
+      .toThrowError(expect.objectContaining({ code: 'SESSION_ACCESS_DENIED' }));
+
+    service.grantSessionAccess(sessionId, 'reader-device', 'reader');
+    expect(service.getSession(reader, sessionId).sessionId).toBe(sessionId);
+    expect(() => service.sendMessage(reader, sessionId, {
+      text: 'no write',
+      clientMessageId: 'reader-write',
+    })).toThrowError(expect.objectContaining({ code: 'SESSION_ACCESS_DENIED' }));
+
+    service.grantSessionAccess(sessionId, 'operator-device', 'operator');
+    const accepted = service.sendMessage(operator, sessionId, {
+      text: 'operator write',
+      clientMessageId: 'operator-write',
+    });
+    expect(accepted.sessionId).toBe(sessionId);
+    service.stopTask(operator, sessionId, { turnId: accepted.turnId });
+    expect(engine.stopped).toContain(accepted.turnId);
+    expect(() => service.subscribeEvents(reader, sessionId, () => undefined)).not.toThrow();
+    service.revokeDeviceAccess('reader-device');
+    expect(() => service.getSession(reader, sessionId))
+      .toThrowError(expect.objectContaining({ code: 'SESSION_ACCESS_DENIED' }));
+  });
+
+  it('binds approvals to the originating session and rejects cross-session resolution', () => {
+    const engine = new FakeRemoteEngine();
+    const service = new RouteDevRemoteService(engine);
+    const owner = principal([...fullPrincipal.scopes], 'owner-device');
+    const other = principal(['sessions:read', 'approvals:resolve'], 'other-device');
+    const sessionId = service.createSession(owner, { clientSessionId: 'approval-session' }).session.sessionId;
+    const accepted = service.sendMessage(owner, sessionId, {
+      text: 'approval turn',
+      clientMessageId: 'approval-message',
+    });
+    const turnId = accepted.turnId;
+
+    engine.hub.publish(sessionId, turnId, 'approval.required', {
+      approval: {
+        approvalId: 'approval-1',
+        toolName: 'file_write',
+        summary: 'write file',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        canResolveRemotely: true,
+      },
+    });
+
+    expect(() => service.resolveApproval(other, 'approval-1', true))
+      .toThrowError(expect.objectContaining({ code: 'SESSION_ACCESS_DENIED' }));
+    service.grantSessionAccess(sessionId, 'other-device', 'operator');
+    service.resolveApproval(other, 'approval-1', true);
+    expect(engine.approvals).toEqual([{ id: 'approval-1', approved: true, origin: 'android' }]);
   });
 });

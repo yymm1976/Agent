@@ -3,6 +3,7 @@ import type {
   RemoteDeviceScope,
   RemoteErrorCode,
   RemoteSessionDetail,
+  RemoteSessionAclEntry,
   RemoteTool,
 } from '../../shared/remote-protocol.js';
 import type {
@@ -23,6 +24,11 @@ export interface RemoteEngine {
   getProjectInfo(): { id: string; name: string; cwd: string };
   getConfig(): AppConfig;
   getEventHub(): EngineEventHub;
+  auditRemoteAction?(
+    action: string,
+    details: Record<string, unknown>,
+    result?: 'success' | 'failure' | 'denied',
+  ): void;
   sendChat(text: string, context?: RemoteTurnContextInput): Promise<void>;
   stopGeneration(requestId?: string): void;
   resolveToolConfirm(
@@ -43,6 +49,8 @@ export interface RemoteEngine {
 
 export interface RemoteSessionRecord extends RemoteSessionDetail {
   clientSessionId: string;
+  ownerDeviceId: string;
+  acl: RemoteSessionAclEntry[];
 }
 
 export class RemoteServiceError extends Error {

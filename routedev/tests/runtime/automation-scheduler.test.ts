@@ -46,7 +46,7 @@ describe('migrateAutomationTasks（配置版本迁移）', () => {
     expect(migrated.length).toBe(1);
     expect(migrated[0]!.version).toBe(1);
     expect(migrated[0]!.allowlist).toEqual([]);
-    expect(migrated[0]!.permissionMode).toBe('semi');
+    expect(migrated[0]!.permissionMode).toBe('manual');
   });
 
   it('非法条目被过滤，非法 cron 回退默认', () => {

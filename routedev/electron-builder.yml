@@ -19,6 +19,8 @@ extraResources:
     filter: ['**/*']
 extraMetadata:
   main: out/main/index.js
+  routedevSignedRelease: false
+  routedevTrustedUpdateSource: false
 win:
   target:
     - target: nsis

@@ -181,6 +181,7 @@ export function getMaxRedirectDepth(): number {
 export function resolveSecurePath(
   resolved: string,
   allowedDirs: string[],
+  realpathFn: typeof fs.realpathSync = fs.realpathSync,
 ): { allowed: boolean; realPath: string; reason?: string } {
   // 先用 path.relative 检查逻辑路径
   const logicalAllowed = isPathInDirs(resolved, allowedDirs);
@@ -190,7 +191,7 @@ export function resolveSecurePath(
 
   // 文件存在时，解析真实路径（覆盖中间目录 symlink）
   try {
-    const realPath = fs.realpathSync(resolved);
+    const realPath = realpathFn(resolved);
     const realAllowed = isPathInDirs(realPath, allowedDirs);
     if (!realAllowed.allowed) {
       logger.warn('Symlink escape detected', {
@@ -206,9 +207,34 @@ export function resolveSecurePath(
     }
     return { allowed: true, realPath };
   } catch (err) {
-    logger.warn('Security check failed, fail-open', { error: err instanceof Error ? err.message : String(err) });
-    // 文件不存在（新建文件场景），跳过 realpath 检查
-    return { allowed: true, realPath: resolved };
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') {
+      // A new file is safe only when its nearest existing parent resolves inside
+      // an already-approved real directory. Missing parents are not accepted.
+      let parent = path.dirname(resolved);
+      while (parent !== path.dirname(parent)) {
+        try {
+          const realParent = realpathFn(parent);
+          const parentAllowed = isPathInDirs(realParent, allowedDirs);
+          return parentAllowed.allowed
+            ? { allowed: true, realPath: resolved }
+            : { allowed: false, realPath: resolved, reason: parentAllowed.reason };
+        } catch (parentError) {
+          if ((parentError as NodeJS.ErrnoException).code !== 'ENOENT') {
+            logger.warn('Security check failed closed for parent path', {
+              error: parentError instanceof Error ? parentError.message : String(parentError),
+            });
+            return { allowed: false, realPath: resolved, reason: 'parent realpath failed' };
+          }
+          parent = path.dirname(parent);
+        }
+      }
+    }
+    logger.warn('Security check failed closed', {
+      code,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { allowed: false, realPath: resolved, reason: 'realpath failed' };
   }
 }
 

@@ -40,7 +40,7 @@ export class PermissionMiddleware {
   /** 默认自主度模式（ctx.metadata.autonomyMode 缺失时使用） */
   private defaultMode: AutonomyMode;
 
-  constructor(permissionEngine: PermissionEngine, defaultMode: AutonomyMode = 'semi') {
+  constructor(permissionEngine: PermissionEngine, defaultMode: AutonomyMode = 'manual') {
     this.permissionEngine = permissionEngine;
     this.defaultMode = defaultMode;
   }

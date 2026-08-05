@@ -281,9 +281,13 @@ const api: RouteDevAPI = {
     createPairing: () => ipcRenderer.invoke('remote:create-pairing') as Promise<import('../shared/ipc-types.js').RemotePairingView>,
     listDevices: () => ipcRenderer.invoke('remote:list-devices') as Promise<import('../shared/remote-protocol.js').RemoteDevice[]>,
     revokeDevice: (deviceId: string) => ipcRenderer.invoke('remote:revoke-device', deviceId) as Promise<boolean>,
-    updateDeviceScopes: (deviceId, scopes) =>
-      ipcRenderer.invoke('remote:update-device-scopes', { deviceId, scopes }) as Promise<import('../shared/remote-protocol.js').RemoteDevice | null>,
-  },
+      updateDeviceScopes: (deviceId, scopes) =>
+        ipcRenderer.invoke('remote:update-device-scopes', { deviceId, scopes }) as Promise<import('../shared/remote-protocol.js').RemoteDevice | null>,
+      grantSessionAccess: (sessionId, deviceId, access) =>
+        ipcRenderer.invoke('remote:grant-session-access', { sessionId, deviceId, access }) as Promise<import('../shared/remote-protocol.js').RemoteSessionDetail>,
+      revokeSessionAccess: (sessionId, deviceId) =>
+        ipcRenderer.invoke('remote:revoke-session-access', { sessionId, deviceId }) as Promise<import('../shared/remote-protocol.js').RemoteSessionDetail>,
+    },
 
   // ===== MCP =====
   mcp: {

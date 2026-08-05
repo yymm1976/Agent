@@ -274,12 +274,12 @@ export function createRecoveryFunctions(ctx: GoalRunnerCtx) {
         systemPrompt: systemPromptRef.current,
         signal: stepAbort.signal,
         // 传递当前自主度模式给权限中间件
-        autonomyMode: (config.autonomy?.defaultMode ?? 'semi') as 'manual' | 'semi' | 'auto',
+        autonomyMode: (config.autonomy?.defaultMode ?? 'manual') as 'manual' | 'semi' | 'auto',
         onModelSuccess: modelId => modelRouter.recordModelSuccess(modelId),
         onModelFailure: modelId => modelRouter.recordModelFailure(modelId),
         onConfirmTool: async (toolName, args) => {
           // Phase 54 修复：自主度模式判定——auto/semi 直接批准
-          const mode = (config.autonomy?.defaultMode ?? 'semi') as AutonomyMode;
+          const mode = (config.autonomy?.defaultMode ?? 'manual') as AutonomyMode;
           if (!AUTONOMY_BEHAVIOR[mode].requireToolConfirmation && toolName !== 'ask_user') {
             return true;
           }

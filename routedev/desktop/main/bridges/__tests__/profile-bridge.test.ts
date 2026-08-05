@@ -82,15 +82,19 @@ function makeCtx(overrides: {
     diffProfiles:
       overrides.diffProfiles ??
       vi.fn(() => [{ field: 'name', before: 'A', after: 'B' }]),
+    diffCurrentWith: vi.fn(async (id: string, current: AgentProfile, versionId: string) => {
+      const target = await versionManager.loadVersion(id, versionId);
+      return target ? versionManager.diffProfiles(target.snapshot, current) : [];
+    }),
   };
 
   const profileManager = {
-    list: overrides.list ?? vi.fn(async () => [sampleProfile]),
-    get: overrides.get ?? vi.fn(async (id: string) => (id === 'p1' ? sampleProfile : null)),
+    listProfiles: overrides.list ?? vi.fn(async () => [sampleProfile]),
+    getProfile: overrides.get ?? vi.fn(async (id: string) => (id === 'p1' ? sampleProfile : null)),
     saveProfile: overrides.saveProfile ?? vi.fn(async () => undefined),
-    delete: overrides.delete ?? vi.fn(async () => undefined),
-    duplicate: overrides.duplicate ?? vi.fn(async () => ({ ...sampleProfile, id: 'p2' })),
-    import: overrides.import ?? vi.fn(async () => ({ ...sampleProfile, id: 'p3' })),
+    deleteProfile: overrides.delete ?? vi.fn(async () => undefined),
+    duplicateProfile: overrides.duplicate ?? vi.fn(async () => ({ ...sampleProfile, id: 'p2' })),
+    importProfile: overrides.import ?? vi.fn(async () => ({ ...sampleProfile, id: 'p3' })),
     rollback: overrides.rollback ?? vi.fn(async () => undefined),
     getVersionManager: vi.fn(() => versionManager),
   };
@@ -140,7 +144,7 @@ describe('ProfileBridge', () => {
         updatedAt: 1000,
       });
       expect(r.success).toBe(false);
-      expect(r.error).toMatch(/not initialized/i);
+      expect(r.error).toMatch(/未初始化|not initialized/i);
     });
 
     it('listVersions returns []', async () => {

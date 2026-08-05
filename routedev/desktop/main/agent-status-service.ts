@@ -22,7 +22,7 @@ import { logger } from '../../src/utils/logger.js';
 // ============================================================
 
 /** Agent 运行状态（唯一权威枚举） */
-export type AgentRunStatus = 'running' | 'waiting_interruption' | 'completed' | 'error';
+export type AgentRunStatus = 'queued' | 'running' | 'waiting_interruption' | 'completed' | 'error';
 
 /** 单个 session 的状态记录 */
 export interface AgentStatusRecord {
@@ -151,6 +151,11 @@ export class AgentStatusService {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  /** 标记 session 为运行中 */
+  markQueued(sessionId: string, title?: string): void {
+    this.upsert(sessionId, { status: 'queued', title });
   }
 
   /** 标记 session 为运行中 */

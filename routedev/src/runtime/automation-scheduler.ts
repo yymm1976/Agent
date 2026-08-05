@@ -114,7 +114,7 @@ export function migrateAutomationTasks(raw: unknown): AutomationTask[] {
         workspaceId: typeof item.workspaceId === 'string' ? item.workspaceId : undefined,
         permissionMode: item.permissionMode === 'manual' || item.permissionMode === 'semi' || item.permissionMode === 'auto'
           ? item.permissionMode
-          : 'semi',
+          : 'manual',
         // v1 旧配置：bypassPermissions 存在时收敛为 allowlist（白名单而非跳过权限）
         allowlist: Array.isArray(item.allowlist)
           ? item.allowlist.filter((a): a is string => typeof a === 'string')

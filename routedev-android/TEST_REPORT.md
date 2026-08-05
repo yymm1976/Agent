@@ -1,6 +1,6 @@
 # RouteDev Android 验证报告
 
-更新时间：2026-08-01
+更新时间：2026-08-02
 
 ## 本轮改动
 
@@ -25,7 +25,7 @@
 
 ## Android 验证状态
 
-本轮 Android 源码已修改，但尚未生成包含 LAN 模式的新版 APK。尝试执行 Gradle 单元测试时，构建机缺少 `com.android.application:9.2.1` 插件缓存，网络下载只返回 0 字节，因此不能把旧产物当作本轮交付物。
+本轮 Android 源码已修改，但尚未生成包含 LAN 模式的新版 APK。Gradle 9.4.1 已成功下载，且已加入 `android.overridePathCheck=true` 以兼容当前 Windows 中文路径；当前构建机没有 Android SDK API 36 与 Build Tools 36.0.0。临时 SDK 下载已验证可用，但安装组件需要接受 Google Android SDK 许可证，未代替用户确认，因此本轮没有继续安装或生成 APK。
 
 仓库中现有的 APK/AAB 哈希属于改动前构建，仅供追溯，不能用于验证本轮 LAN 配对：
 

@@ -500,8 +500,8 @@ export function createAppDependencies(
   );
 
   // 7. Phase 97 Part A Task A3：routedev-native 内核薄适配（kernel 插槽）
-  //    包装主 ReActAgentLoop 满足 AgentKernel 接口；EngineEventV1 sink 由 kernel.run 注入
-  //    （当前生产入口 sendChat 仍直连 agentLoop；kernel 作为未来 Pi/Claude SDK 的插槽）
+  //    生产入口统一由 ChatBridge 调用 kernel.runReAct；EngineEventV1 sink 由 kernel 注入
+  //    generic kernel.run 保留为显式的未来内核适配接口，不作为当前运行时旁路
   //    k3：装配时注入 trace，kernel 路径的 EngineEventV1 同步写入 trace（携带 sequence/turnId）
   const agentKernel = new NativeAgentKernel((ctx.agentLoop ?? agentDeps.agentLoop) as ReActAgentLoop, {
     trace: ctx.trace ?? null,

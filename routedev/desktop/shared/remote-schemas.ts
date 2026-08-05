@@ -23,6 +23,7 @@ export const RemoteEventTypeSchema = z.enum(REMOTE_EVENT_TYPES);
 export const RemoteAutonomyModeSchema = z.enum(['auto', 'semi', 'manual']);
 export const RemoteSessionStatusSchema = z.enum([
   'idle',
+  'queued',
   'running',
   'waiting_approval',
   'completed',
@@ -112,6 +113,12 @@ export const RemoteSessionDetailSchema = RemoteSessionSummarySchema.extend({
   projectId: identifierSchema.nullable(),
   projectName: z.string().nullable(),
   latestResult: z.string().nullable(),
+  ownerDeviceId: identifierSchema.optional(),
+  acl: z.array(z.object({
+    deviceId: identifierSchema,
+    access: z.enum(['reader', 'operator']),
+    grantedAt: timestampSchema,
+  }).passthrough()).optional(),
 }).passthrough();
 
 export const RemoteCreateSessionRequestSchema = z.object({
@@ -214,6 +221,10 @@ const eventEnvelope = <T extends string, P extends z.ZodTypeAny>(type: T, payloa
 export const RemoteEventEnvelopeSchema = z.discriminatedUnion('type', [
   eventEnvelope('session.created', z.object({ session: RemoteSessionSummarySchema }).passthrough()),
   eventEnvelope('session.updated', z.object({ session: RemoteSessionSummarySchema }).passthrough()),
+  eventEnvelope('turn.queued', z.object({
+    clientMessageId: identifierSchema,
+    position: z.number().int().nonnegative(),
+  }).passthrough()),
   eventEnvelope('turn.started', z.object({
     clientMessageId: identifierSchema,
     userText: z.string(),

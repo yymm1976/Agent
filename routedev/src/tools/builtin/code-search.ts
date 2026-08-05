@@ -102,10 +102,18 @@ export class CodeSearchTool implements ITool {
 
   private checkRipgrep(): Promise<boolean> {
     return new Promise((resolve) => {
-      const child = spawn('rg', ['--version'], {
-        stdio: ['ignore', 'ignore', 'ignore'],
-        windowsHide: true,
-      });
+      let child;
+      try {
+        child = spawn('rg', ['--version'], {
+          stdio: ['ignore', 'ignore', 'ignore'],
+          windowsHide: true,
+        });
+      } catch {
+        // 受限环境可能在 spawn 同步阶段抛出 EPERM；这不是搜索本身的失败，
+        // 交给下面的 JS 实现继续完成只读搜索。
+        resolve(false);
+        return;
+      }
       child.on('error', () => resolve(false));
       child.on('close', (code) => resolve(code === 0));
     });

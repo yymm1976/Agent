@@ -23,6 +23,7 @@ const TICK_INTERVAL_MS = 1000;
 
 /** 单条状态文本颜色（与主进程状态枚举一一对应） */
 const STATUS_STYLE: Record<AgentStatusRecord['status'], { color: string; bg: string; label: string }> = {
+  queued: { color: 'var(--rd-muted, #8b8fa3)', bg: 'rgba(139,143,163,0.10)', label: '排队中' },
   running: { color: 'var(--rd-primary, #7c6cf0)', bg: 'rgba(124,108,240,0.10)', label: '运行中' },
   waiting_interruption: { color: 'var(--rd-warning, #e8a13c)', bg: 'rgba(232,161,60,0.14)', label: '等待处理' },
   completed: { color: 'var(--rd-success, #34a853)', bg: 'rgba(52,168,83,0.10)', label: '已完成' },

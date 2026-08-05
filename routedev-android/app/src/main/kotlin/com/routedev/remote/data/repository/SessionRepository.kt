@@ -41,13 +41,18 @@ class SessionRepository(
 
     suspend fun refreshSessions() {
         val auth = requireCredentials()
-        dao.upsertSessions(api.sessions(auth).map(::toEntity))
+        // The server summary sequence is not the local ingestion cursor. Preserve
+        // the cursor and last event id so the next timeline refresh still fetches
+        // events that are missing from this device.
+        for (summary in api.sessions(auth)) {
+            dao.upsertSession(toEntity(summary, dao.session(summary.sessionId)))
+        }
         dao.trimTimeline()
     }
 
     suspend fun createSession(title: String?): String {
         val result = api.createSession(requireCredentials(), title)
-        dao.upsertSession(toEntity(result.session))
+        dao.upsertSession(toEntity(result.session, dao.session(result.session.sessionId)))
         return result.session.sessionId
     }
 
@@ -202,27 +207,27 @@ class SessionRepository(
     private fun requireCredentials(): DeviceCredentials =
         credentials() ?: error("尚未配对电脑")
 
-    private fun toEntity(session: SessionSummary) = SessionEntity(
+    private fun toEntity(session: SessionSummary, local: SessionEntity? = null) = SessionEntity(
         session.sessionId,
         session.title,
         session.status,
         session.createdAt,
         session.updatedAt,
         session.activeTurnId,
-        session.lastSequence,
-        null,
-        null,
+        local?.lastSequence ?: 0,
+        local?.lastEventId,
+        local?.latestResult,
     )
 
-    private fun toEntity(session: SessionDetail) = SessionEntity(
+    private fun toEntity(session: SessionDetail, local: SessionEntity? = null) = SessionEntity(
         session.sessionId,
         session.title,
         session.status,
         session.createdAt,
         session.updatedAt,
         session.activeTurnId,
-        session.lastSequence,
-        null,
+        local?.lastSequence ?: 0,
+        local?.lastEventId,
         session.latestResult,
     )
 }

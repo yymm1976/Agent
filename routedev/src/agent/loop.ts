@@ -93,6 +93,8 @@ export interface CompactorLike {
 
 /** ReAct 循环运行参数 */
 export interface ReActRunParams {
+  /** 外层请求/turn 标识，用于精确 abort，不改变事件 sessionId。 */
+  requestId?: string;
   /** 用户原始消息 */
   userMessage: string;
   /** LLM 客户端（已选定的 provider 对应的客户端） */
@@ -155,7 +157,7 @@ export class ReActAgentLoop {
    */
   private currentConfirmTool: ConfirmToolCallback | null = null;
   /** 当前 run() 期间的自主度模式（传递给权限中间件） */
-  private currentAutonomyMode: 'manual' | 'semi' | 'auto' = 'semi';
+  private currentAutonomyMode: 'manual' | 'semi' | 'auto' = 'manual';
   /** Phase 97 Part A：当前 run() 期间的执行上下文（run 开始时设置） */
   private currentContext: AgentExecutionContext | null = null;
   /** Phase 97 Part A：EngineEventV1 事件接收器（可选注入，不注入则不影响现有行为） */
@@ -392,7 +394,7 @@ export class ReActAgentLoop {
     // Phase 79 Task 5：保存当前确认回调，供子 Agent 通过 getCurrentConfirmTool() 委托确认
     this.currentConfirmTool = onConfirmTool ?? null;
     // 保存当前自主度模式，供权限中间件使用
-    this.currentAutonomyMode = params.autonomyMode ?? 'semi';
+      this.currentAutonomyMode = params.autonomyMode ?? 'manual';
 
     // C6 修复：触发 on-session-start 钩子
     await this.mwRunner.fireHookSafe('on-session-start', {});

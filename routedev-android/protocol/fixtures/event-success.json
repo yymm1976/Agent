@@ -239,5 +239,15 @@
     "sequence": 20,
     "type": "connection.notice",
     "payload": { "level": "warning", "message": "连接即将重试", "code": "RECONNECTING" }
+  },
+  {
+    "protocolVersion": 1,
+    "eventId": "event-21",
+    "timestamp": "2026-07-30T08:00:21.000Z",
+    "sessionId": "session-1",
+    "turnId": "turn-3",
+    "sequence": 21,
+    "type": "turn.queued",
+    "payload": { "clientMessageId": "message-3", "position": 0 }
   }
 ]

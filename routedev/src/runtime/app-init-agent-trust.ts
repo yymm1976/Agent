@@ -34,7 +34,7 @@ export function setupAgentTrust(
   // 注册顺序：在 QualitySignalMiddleware 之前（同步注册，避免动态 import 导致的延迟挂载），
   // 保证权限拦截优先于质量信号采集。
   if (permissionEngine) {
-    const autonomyMode = config.autonomy?.defaultMode ?? 'semi';
+    const autonomyMode = config.autonomy?.defaultMode ?? 'manual';
     const permissionMiddleware = new PermissionMiddleware(permissionEngine, autonomyMode);
     pluginSystem.middlewarePipeline.register('onActing', permissionMiddleware.getHandler());
     logger.info('PermissionMiddleware registered', {

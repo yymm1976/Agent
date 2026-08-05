@@ -119,7 +119,7 @@ export const AutomationConfigSchema = z.preprocess((v) => v ?? [], z.array(z.obj
   name: z.string().min(1).max(200),
   cron: z.string().min(1).max(64),
   workspaceId: z.string().max(128).optional(),
-  permissionMode: z.enum(['manual', 'semi', 'auto']).default('semi'),
+  permissionMode: z.enum(['manual', 'semi', 'auto']).default('manual'),
   // 预授权能力白名单（读/写指定工作区/执行测试等）；非 bypassPermissions
   allowlist: z.array(z.string().max(200)).default([]),
   prompt: z.string().max(10_000),

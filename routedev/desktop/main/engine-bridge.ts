@@ -48,6 +48,7 @@ import { aggregateSessionStatus } from '../../src/agent/session-status-aggregato
 import { sanitizeProcessEnv } from '../../src/security/env-filter.js';
 // Phase 97 Part H：常驻 Agent Island 状态聚合服务
 import { AgentStatusService, defaultAgentStatusPath } from './agent-status-service.js';
+import { AgentRunScheduler } from '../../src/agent/run-scheduler.js';
 
 // delegate bridge 与共享上下文
 import {
@@ -108,6 +109,8 @@ export class RouteDevEngine {
   private agentBridge: AgentBridge;
   // Phase 97 Part H：常驻 Agent Island 状态聚合服务（运行状态唯一权威源）
   private agentStatus: AgentStatusService;
+  /** One FIFO covers local, remote and automation sendChat calls. */
+  private readonly runScheduler = new AgentRunScheduler();
 
   constructor(config: AppConfig, options: EngineBridgeOptions) {
     this.ctx = new EngineContext(config, options);
@@ -244,7 +247,7 @@ export class RouteDevEngine {
         try {
           await this.sendChat(task.prompt, {
             sessionId: `automation:${task.id}`,
-            autonomyMode: task.permissionMode === 'auto' ? 'auto' : 'semi',
+            autonomyMode: task.permissionMode,
             // 预授权白名单与限定工作区：白名单内能力免确认，工作区进入执行上下文
             allowlist: task.allowlist,
             workspaceId: task.workspaceId,
@@ -309,6 +312,7 @@ export class RouteDevEngine {
    * 异步方法，调用方应 await 确保资源完全释放后再退出进程
    */
   async destroy(): Promise<void> {
+    this.runScheduler.clear();
     // G-004：中断并清除所有并发请求的 abortController
     this.ctx.clearAllAbortControllers();
     this.ctx.clearAllPendingConfirms();
@@ -348,15 +352,32 @@ export class RouteDevEngine {
     text: string,
     remoteContext?: import('./remote/chat-stream-event-publisher.js').RemoteTurnContextInput,
   ): Promise<void> {
-    // Phase 97 Part H：标记 session 运行中（主进程唯一权威状态源）
     const sessionId = remoteContext?.sessionId ?? 'desktop-local';
-    this.agentStatus.markRunning(sessionId, text.slice(0, 80));
+    const requestId = remoteContext?.turnId ?? `${sessionId}:${Date.now()}:${Math.random()}`;
+    let started = false;
+    this.agentStatus.markQueued(sessionId, text.slice(0, 80));
     try {
-      await this.chatBridge.sendChat(text, remoteContext);
+      await this.runScheduler.enqueue(requestId, async (schedulerSignal) => {
+        started = true;
+        this.agentStatus.markRunning(sessionId, text.slice(0, 80));
+        await this.chatBridge.sendChat(text, { ...remoteContext, schedulerSignal });
+      });
       this.agentStatus.markCompleted(sessionId);
     } catch (err) {
       // chatBridge.sendChat 内部已捕获错误并 emit，此处兜底（不向上抛）
-      this.agentStatus.markError(sessionId, err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      this.agentStatus.markError(sessionId, message);
+      // 排队阶段失败时 ChatBridge 尚未建立事件发布器，必须由调度边界
+      // 产生终态，否则远程客户端会永久停留在 queued。
+      if (!started && remoteContext?.sessionId && remoteContext.turnId) {
+        this.ctx.eventHub.publish(remoteContext.sessionId, remoteContext.turnId, 'turn.failed', {
+          error: {
+            code: 'SESSION_BUSY',
+            message,
+            retryable: true,
+          },
+        });
+      }
     }
     // 每轮结束后持久化快照，重启可重建
     this.agentStatus.persist();
@@ -365,6 +386,27 @@ export class RouteDevEngine {
   /** Ordered event fan-out and replay journal used by the remote gateway. */
   getEventHub(): import('./remote/engine-event-hub.js').EngineEventHub {
     return this.ctx.eventHub;
+  }
+
+  auditRemoteAction(
+    action: string,
+    details: Record<string, unknown>,
+    result: 'success' | 'failure' | 'denied' = 'success',
+  ): void {
+    try {
+      this.ctx.deps?.audit.log(
+        'channel_message_in',
+        `remote:${action}`,
+        details,
+        result,
+        typeof details.deviceId === 'string' ? `remote:${details.deviceId}` : 'remote',
+      );
+    } catch (error) {
+      logger.warn('[Engine] remote audit write failed', {
+        action,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   isReady(): boolean {
@@ -412,6 +454,7 @@ export class RouteDevEngine {
 
   /** 停止当前生成（供 IPC chat:stop 调用）；G-004：支持可选 requestId 精准中断 */
   stopGeneration(requestId?: string): void {
+    if (requestId) this.runScheduler.cancel(requestId);
     this.chatBridge.stopGeneration(requestId);
   }
 
@@ -722,7 +765,7 @@ export class RouteDevEngine {
       return { success: false, error: '权限引擎未初始化，拒绝执行（fail-closed）' };
     }
     try {
-      const mode = this.ctx.config.autonomy?.defaultMode ?? 'semi';
+      const mode = this.ctx.config.autonomy?.defaultMode ?? 'manual';
       const decision = permissionEngine.check(name, args, mode);
       if (decision.decision === 'deny') {
         // F-069 修复：记录权限拒绝审计日志

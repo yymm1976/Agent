@@ -12,7 +12,7 @@ export const AutonomyModeSchema = z.enum(['auto', 'semi', 'manual']);
 export type AutonomyMode = z.infer<typeof AutonomyModeSchema>;
 
 export const AutonomyConfigSchema = z.object({
-  defaultMode: AutonomyModeSchema.default('semi'),
+  defaultMode: AutonomyModeSchema.default('manual'),
   /** 无论什么模式下都自动批准的工具 pattern（如 ["file_read", "code_search"]） */
   autoApprovePatterns: z.array(z.string()).default([]),
   /** 确认超时时间（毫秒）。超时后按模式自动决定：auto/semi → 批准，manual → 拒绝 */
@@ -37,7 +37,7 @@ export const AUTONOMY_BEHAVIOR: Record<AutonomyMode, {
   auto: {
     requirePlanConfirmation: false,
     requireToolConfirmation: false,
-    requireHumanAcceptance: true,
+    requireHumanAcceptance: false,
   },
   // semi：半自动——需用户确认计划，工具调用自动批准，验收需人工确认
   semi: {

@@ -1,0 +1,12 @@
+extends: electron-builder.yml
+extraMetadata:
+  routedevSignedRelease: true
+  routedevTrustedUpdateSource: true
+win:
+  signAndEditExecutable: true
+mac:
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: true
+publish:
+  provider: github

@@ -31,6 +31,7 @@ import { isAllowedByAllowlist } from '../../../src/runtime/automation-scheduler.
 // Phase 97 Part I：轻量用户档案渲染
 import { renderUserProfile } from '../../../src/memory/user-profile.js';
 import type { SystemBlock } from '../../../src/agent/loop.js';
+import type { ReActRunParams } from '../../../src/agent/loop.js';
 import { loadProjectDoc, ProjectMemoryManager } from '../../../src/memory/project-memory.js';
 import type { EngineContext, EngineBridges } from './engine-context.js';
 import type { PlanEditRequestPayload } from '../../shared/ipc-types.js';
@@ -286,7 +287,12 @@ export class ChatBridge {
       }
 
       // G-004：按 requestId 绑定中断控制器到 Map，避免并发覆盖
-      this.ctx.setAbortController(requestId, new AbortController());
+      const requestController = new AbortController();
+      if (remoteContext?.schedulerSignal) {
+        if (remoteContext.schedulerSignal.aborted) requestController.abort();
+        else remoteContext.schedulerSignal.addEventListener('abort', () => requestController.abort(), { once: true });
+      }
+      this.ctx.setAbortController(requestId, requestController);
       let finalUsage: TokenUsageInfo = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
       // Skill 渐进披露：这里只注入匹配结果的元数据与来源路径。
@@ -344,18 +350,20 @@ ${skillBlocks.join('\n')}
       // 供低触发评估：档案长期未被引用时提示用户更新或停用
       this.recordUserProfileHit();
 
-      for await (const event of deps.agentLoop.run({
+      const executionContext = createDefaultExecutionContext(sessionId, {
+        triggerSource: remoteContext?.triggerSource ?? (remoteContext ? 'remote' : 'user'),
+        permissionMode: remoteContext?.autonomyMode ?? config.autonomy.defaultMode,
+        ...(remoteContext?.workspaceId ? { workspaceId: remoteContext.workspaceId } : {}),
+      });
+      const runParams: ReActRunParams = {
+        requestId,
         userMessage: actualUserMessage,
         llmClient: client,
         routeDecision,
         conversationHistory: this.ctx.conversationHistory,
         // Phase 97 Part A Task A4：透传执行上下文——触发来源按调用方显式透传
         // （automation 调度 / remote 远程 / user 本地；requestId 作为会话槽位）
-        context: createDefaultExecutionContext(requestId, {
-          triggerSource: remoteContext?.triggerSource ?? (remoteContext ? 'remote' : 'user'),
-          // 自动化任务限定的工作区（无则省略，保持本地会话语义）
-          ...(remoteContext?.workspaceId ? { workspaceId: remoteContext.workspaceId } : {}),
-        }),
+        context: executionContext,
         // Phase 96+ B4：前缀缓存优化——拆分固定前缀与可变后缀为 systemBlocks
         // 固定前缀块（baseSystemPrompt）：会话内不变的内容（identity/core_principles/tool_protocol/...）
         //   → 打 cache_control: ephemeral，让 Anthropic/OpenAI 跨请求复用前缀缓存
@@ -367,7 +375,7 @@ ${skillBlocks.join('\n')}
             type: 'text',
             text: await deps.prompts.render('main.system', {
               language: config.general.language === 'zh-CN' ? '中文' : 'English',
-              autonomyMode: config.autonomy.defaultMode,
+              autonomyMode: remoteContext?.autonomyMode ?? config.autonomy.defaultMode,
               availableTools: toolsForThisRun.map((tool) => {
                 const description = tool.definition.description
                   .replace(/\s+/g, ' ')
@@ -419,7 +427,12 @@ ${skillBlocks.join('\n')}
           }
           return this.requestUserConfirmation(requestId, toolName, args, stream);
         },
-      })) {
+      };
+      const kernel = deps.agentKernel;
+      if (!kernel.runReAct) {
+        throw new Error('AgentKernel 未提供生产 ReAct 适配路径');
+      }
+      for await (const event of kernel.runReAct(executionContext, runParams)) {
         switch (event.type) {
         case 'text_delta':
           accumulatedContent += event.text;

@@ -91,6 +91,24 @@ describe('SSRF 防护 (checkSSRF)', () => {
   });
 });
 
+describe('resolveSecurePath fail-closed error classification', () => {
+  it('rejects EACCES instead of treating the path as a new file', () => {
+    const realpath = () => {
+      throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    };
+    const result = resolveSecurePath(path.join(os.tmpdir(), 'blocked.txt'), [os.tmpdir()], realpath);
+    expect(result.allowed).toBe(false);
+  });
+
+  it('rejects ELOOP instead of allowing a symlink loop', () => {
+    const realpath = () => {
+      throw Object.assign(new Error('too many symbolic links'), { code: 'ELOOP' });
+    };
+    const result = resolveSecurePath(path.join(os.tmpdir(), 'loop.txt'), [os.tmpdir()], realpath);
+    expect(result.allowed).toBe(false);
+  });
+});
+
 // ============================================================
 // Symlink 真实路径解析
 // ============================================================

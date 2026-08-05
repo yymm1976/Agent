@@ -1,0 +1,879 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>RouteDev × Agent Harness 全景对比</title>
+  <style>
+    :root {
+      --bg: #0b0d0c;
+      --panel: #101412;
+      --panel-2: #151a17;
+      --ink: #f0f1e9;
+      --muted: #9ba39d;
+      --line: #2a312d;
+      --mint: #8df0bd;
+      --mint-dim: #3f8e68;
+      --amber: #eeb66c;
+      --red: #ec8377;
+      --blue: #7fb7ff;
+      --violet: #c29bff;
+      --max: 1480px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      line-height: 1.55;
+    }
+    a { color: var(--mint); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    a:hover { color: #c8ffdf; }
+    button, input, select { font: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+      outline: 2px solid var(--mint); outline-offset: 3px;
+    }
+    .shell { width: min(calc(100% - 40px), var(--max)); margin: 0 auto; }
+    .topline {
+      position: sticky; top: 0; z-index: 10;
+      background: rgba(11, 13, 12, .93);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(16px);
+    }
+    .nav { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .brand { display: flex; align-items: center; gap: 11px; font-size: 13px; letter-spacing: .13em; text-transform: uppercase; }
+    .brand-mark { width: 14px; height: 14px; background: var(--mint); transform: rotate(45deg); }
+    .navlinks { display: flex; gap: 20px; font-size: 13px; }
+    .navlinks a { color: var(--muted); text-decoration: none; }
+    .hero {
+      min-height: 78vh;
+      padding: 96px 0 64px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(300px, .55fr);
+      gap: 70px;
+      align-items: end;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow { color: var(--mint); letter-spacing: .14em; text-transform: uppercase; font-size: 12px; margin-bottom: 24px; }
+    h1 { max-width: 1000px; margin: 0; font-size: clamp(48px, 7.4vw, 116px); line-height: .91; letter-spacing: -.065em; font-weight: 700; }
+    .hero-copy { max-width: 680px; color: #c6ccc7; font-size: clamp(17px, 2vw, 22px); margin: 34px 0 0; }
+    .hero-meta { border-top: 1px solid var(--line); }
+    .metric { display: flex; justify-content: space-between; gap: 20px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+    .metric span { color: var(--muted); font-size: 13px; }
+    .metric strong { font-size: 24px; font-weight: 500; }
+    .notice { margin-top: 22px; color: var(--amber); font-size: 12px; }
+    section { padding: 86px 0; border-bottom: 1px solid var(--line); scroll-margin-top: 58px; }
+    .section-head { display: grid; grid-template-columns: 240px 1fr; gap: 36px; margin-bottom: 48px; }
+    .kicker { color: var(--mint); font-size: 12px; letter-spacing: .15em; text-transform: uppercase; }
+    h2 { margin: 0; max-width: 900px; font-size: clamp(34px, 5vw, 68px); line-height: 1; letter-spacing: -.045em; }
+    h3 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+    p { margin-top: 0; }
+    .lede { color: var(--muted); max-width: 860px; font-size: 17px; }
+    .method-grid { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+    .method { padding: 24px; min-height: 180px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .method b { display: block; color: var(--mint); font-size: 12px; letter-spacing: .13em; margin-bottom: 36px; }
+    .method p { color: #c1c7c2; margin: 0; }
+    .method small { display: block; margin-top: 12px; color: var(--muted); }
+    .architecture { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+    .arch-node { background: var(--panel); padding: 26px; min-height: 155px; position: relative; }
+    .arch-node:not(:last-child)::after { content: "→"; position: absolute; right: -12px; top: 54px; z-index: 2; color: var(--mint); font-size: 24px; }
+    .arch-node em { display: block; color: var(--mint); font-style: normal; font-size: 11px; letter-spacing: .12em; margin-bottom: 22px; }
+    .arch-node strong { display: block; font-size: 18px; }
+    .arch-node span { color: var(--muted); font-size: 13px; }
+    .truth-strip { margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); }
+    .truth { padding: 22px; background: var(--panel); }
+    .truth b { color: var(--mint); }
+    .truth p { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+    .viz-grid { display: grid; grid-template-columns: minmax(460px, .9fr) minmax(0, 1.1fr); gap: 44px; align-items: start; }
+    .radar-wrap { position: sticky; top: 82px; }
+    .radar-box { border: 1px solid var(--line); background: var(--panel); padding: 18px; }
+    canvas { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; }
+    .radar-note { color: var(--muted); font-size: 12px; margin: 12px 0 0; }
+    .picker { display: grid; gap: 8px; max-height: 630px; overflow: auto; padding-right: 6px; }
+    .pick {
+      display: grid; grid-template-columns: 24px 1fr auto; gap: 12px; align-items: center;
+      width: 100%; text-align: left; color: var(--ink); background: transparent;
+      border: 0; border-top: 1px solid var(--line); padding: 15px 6px; cursor: pointer;
+    }
+    .pick:last-child { border-bottom: 1px solid var(--line); }
+    .pick:hover { background: var(--panel); }
+    .pick input { accent-color: var(--mint); width: 16px; height: 16px; }
+    .pick small { display: block; color: var(--muted); margin-top: 2px; }
+    .pick.route { color: var(--mint); }
+    .legend { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 10px 18px; font-size: 12px; color: var(--muted); }
+    .legend i { display: inline-block; width: 10px; height: 10px; margin-right: 7px; }
+    .filters { display: grid; grid-template-columns: minmax(230px, 1fr) repeat(3, minmax(130px, .35fr)); gap: 10px; margin-bottom: 18px; }
+    .control { min-height: 44px; width: 100%; color: var(--ink); background: var(--panel); border: 1px solid var(--line); padding: 0 13px; }
+    .matrix-wrap { overflow-x: auto; border: 1px solid var(--line); }
+    table { width: 100%; min-width: 1120px; border-collapse: collapse; font-size: 13px; }
+    th { color: var(--muted); font-weight: 500; text-align: left; padding: 13px 12px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; }
+    td { padding: 13px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    tbody tr { cursor: pointer; }
+    tbody tr:hover { background: #121714; }
+    tbody tr.route { background: rgba(141, 240, 189, .07); }
+    .score { font-variant-numeric: tabular-nums; font-size: 18px; }
+    .mini-bars { display: flex; gap: 2px; align-items: end; height: 27px; }
+    .mini-bars i { display: block; width: 5px; background: var(--mint-dim); }
+    .pill { display: inline-flex; align-items: center; min-height: 22px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .pill.good { color: var(--mint); border-color: var(--mint-dim); }
+    .pill.warn { color: var(--amber); border-color: #77562f; }
+    .pill.closed { color: var(--red); border-color: #78413c; }
+    .details { margin-top: 24px; }
+    .detail {
+      border-top: 1px solid var(--line);
+      display: grid; grid-template-columns: 220px 1fr; gap: 28px;
+      padding: 28px 0;
+    }
+    .detail:last-child { border-bottom: 1px solid var(--line); }
+    .detail-name .index { color: var(--muted); font-size: 12px; }
+    .detail-name h3 { margin: 5px 0 9px; }
+    .detail-name .avg { color: var(--mint); font-size: 28px; }
+    .detail-body { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px 34px; }
+    .detail-body h4 { color: var(--muted); font-size: 11px; letter-spacing: .13em; text-transform: uppercase; margin: 0 0 8px; }
+    .detail-body p { color: #c7cdc8; font-size: 14px; margin: 0; }
+    .detail-body .borrow { border-left: 2px solid var(--mint); padding-left: 14px; }
+    .detail-body .avoid { border-left: 2px solid var(--amber); padding-left: 14px; }
+    .detail-links { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px 20px; font-size: 13px; }
+    .hidden { display: none !important; }
+    .roadmap { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+    .road-col { background: var(--panel); padding: 26px; }
+    .road-col header { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+    .road-col header b { font-size: 24px; }
+    .road-col header span { color: var(--muted); font-size: 12px; }
+    .road-item { padding: 20px 0; border-bottom: 1px solid var(--line); }
+    .road-item strong { display: block; margin-bottom: 7px; }
+    .road-item p { color: var(--muted); font-size: 13px; margin: 0; }
+    .road-item small { display: block; color: var(--mint); margin-top: 10px; }
+    .sources { columns: 3 280px; column-gap: 34px; }
+    .source { break-inside: avoid; padding: 13px 0; border-top: 1px solid var(--line); font-size: 13px; }
+    .source strong { display: block; }
+    .source span { color: var(--muted); }
+    .caveat { padding: 22px; border: 1px solid #77562f; color: #dfbd8e; background: rgba(238, 182, 108, .05); margin-bottom: 34px; }
+    footer { padding: 34px 0 60px; color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; gap: 30px; }
+    .noscript { color: var(--amber); padding: 20px; border: 1px solid var(--amber); }
+    @media (max-width: 980px) {
+      .hero { grid-template-columns: 1fr; min-height: auto; padding-top: 74px; }
+      .section-head { grid-template-columns: 1fr; gap: 14px; }
+      .method-grid { grid-template-columns: 1fr 1fr; }
+      .architecture { grid-template-columns: 1fr 1fr; }
+      .arch-node:nth-child(2)::after { display: none; }
+      .truth-strip, .roadmap { grid-template-columns: 1fr; }
+      .viz-grid { grid-template-columns: 1fr; }
+      .radar-wrap { position: static; }
+      .picker { max-height: 440px; }
+      .filters { grid-template-columns: 1fr 1fr; }
+      .detail { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 640px) {
+      .shell { width: min(calc(100% - 24px), var(--max)); }
+      .navlinks { display: none; }
+      .hero { padding: 56px 0 44px; gap: 44px; }
+      h1 { font-size: 49px; }
+      section { padding: 58px 0; }
+      .method-grid, .architecture { grid-template-columns: 1fr; }
+      .arch-node::after { display: none; }
+      .filters { grid-template-columns: 1fr; }
+      .detail-body { grid-template-columns: 1fr; }
+      .detail-links { grid-column: auto; }
+      .sources { columns: 1; }
+      footer { flex-direction: column; }
+    }
+    @media print {
+      .topline, .filters, .picker { display: none; }
+      body { background: #fff; color: #111; }
+      section, .hero { break-inside: avoid; }
+      .panel, .radar-box, .road-col, .method, .arch-node, .truth { color: #111; background: #fff; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topline">
+    <div class="shell nav">
+      <div class="brand"><span class="brand-mark"></span><span>RouteDev Observatory</span></div>
+      <nav class="navlinks" aria-label="页内导航">
+        <a href="#method">方法</a>
+        <a href="#radar">雷达</a>
+        <a href="#matrix">矩阵</a>
+        <a href="#roadmap">路线图</a>
+        <a href="#sources">来源</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="shell hero">
+      <div>
+        <div class="eyebrow">Agent Harness Landscape · 2026-08-04</div>
+        <h1>不是选冠军。<br>是找出下一步。</h1>
+        <p class="hero-copy">对 28 个 Agent Harness 与 RouteDev 进行十维比较：源码、执行内核、安全边界、上下文、模型适配、可扩展性、远程能力、观测性、体验与生产成熟度。结论偏向“可借鉴的工程机制”，不把热度当成质量。</p>
+      </div>
+      <aside class="hero-meta" aria-label="报告摘要">
+        <div class="metric"><span>纳入项目</span><strong>28</strong></div>
+        <div class="metric"><span>可检查源码</span><strong>24</strong></div>
+        <div class="metric"><span>评价维度</span><strong>10</strong></div>
+        <div class="metric"><span>主要证据</span><strong>官方源码</strong></div>
+        <div class="notice">28 个项目全部完成源码级复核：本轮（2026-08-04）补核 12 项并纠正许可、语言与机制结论（如 Kimi Code=MIT/TypeScript、OpenHarness=MIT/生产级 CLI、jcode=Rust、Kilo Code=MIT/opencode v2 重写）。<br><a href="RouteDev-Harness-借鉴优先级与DeepSeekV4FlashGA执行计划-2026-08-04.md">打开 DeepSeek V4 Flash GA 执行计划</a></div>
+      </aside>
+    </div>
+
+    <section id="method">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">01 · Method</div>
+          <div>
+            <h2>证据先分层，再做比较。</h2>
+            <p class="lede">官方仓库与官方文档用于确认事实；Issues、Discussions、Hacker News、Reddit 用于发现真实摩擦。社区声音只作为信号，不替代源码判断。闭源产品不因资料少而被猜测性打分。</p>
+          </div>
+        </div>
+        <div class="method-grid">
+          <article class="method"><b>A / PRIMARY</b><p>官方源码、架构文档、配置与发布记录。</p><small>事实权重最高</small></article>
+          <article class="method"><b>B / OPERATIONS</b><p>官方 Issues 与 Discussions：卡死、上下文、沙箱、回滚等运行问题。</p><small>偏差：问题页天然放大负面</small></article>
+          <article class="method"><b>C / COMMUNITY</b><p>HN、Reddit 与独立技术分析，观察口碑、采用动机和成本体验。</p><small>偏差：样本小、版本变化快</small></article>
+          <article class="method"><b>D / LOCAL</b><p>RouteDev 使用本地代码图与关键执行链证据，不把设计文档当作已经运行的能力。</p><small>动态 CI 结论不在本报告重跑</small></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">02 · RouteDev</div>
+          <div>
+            <h2>RouteDev 的基线不是一个 CLI。</h2>
+            <p class="lede">当前产品链路已形成桌面、远程、自动化共用的单入口执行面。比较时因此不能只看提示词与工具调用，也必须看排队、权限、事件、设备 ACL 与发布链。</p>
+          </div>
+        </div>
+        <div class="architecture" aria-label="RouteDev 生产执行链">
+          <div class="arch-node"><em>01 / SERIALIZE</em><strong>AgentRunScheduler</strong><span>全局 FIFO、排队取消、运行中 abort、上限与超时</span></div>
+          <div class="arch-node"><em>02 / BRIDGE</em><strong>ChatBridge</strong><span>本地、远程、自动化统一进入；组装执行上下文</span></div>
+          <div class="arch-node"><em>03 / KERNEL</em><strong>NativeAgentKernel</strong><span>统一会话状态、事件序列与中断来源</span></div>
+          <div class="arch-node"><em>04 / ACT</em><strong>ReActAgentLoop</strong><span>工具修复、压缩、记忆召回、最大迭代与后续队列</span></div>
+        </div>
+        <div class="truth-strip">
+          <div class="truth"><b>安全边界</b><p>PermissionEngine、工作区边界、远程 owner/ACL、设备 scope 与统一审计。</p></div>
+          <div class="truth"><b>事件事实源</b><p>EngineEventV1 → Trace/Event Hub → 桌面与远程事件，目标是跨层一致。</p></div>
+          <div class="truth"><b>当前约束</b><p>完整生产化修复仍有 CI、真实签名、双设备和 DNS rebinding 等动态验证项。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="radar">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">03 · Radar</div>
+          <div>
+            <h2>十维雷达，最多叠加四个项目。</h2>
+            <p class="lede">默认选择 RouteDev 与三种典型路线：成熟终端内核、IDE 自治代理、轻量基准代理。点击右侧项目即可切换。</p>
+          </div>
+        </div>
+        <div class="viz-grid">
+          <div class="radar-wrap">
+            <div class="radar-box"><canvas id="radarCanvas" width="760" height="760" aria-label="十维项目雷达图"></canvas></div>
+            <p class="radar-note">1–10 为相对工程成熟度判断；闭源/资料不足项目按可验证信息保守记分。它不表示模型本身能力。</p>
+            <div id="legend" class="legend"></div>
+          </div>
+          <div>
+            <div id="picker" class="picker" aria-label="选择雷达项目"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="matrix">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">04 · Matrix</div>
+          <div>
+            <h2>全量矩阵，按证据与用途筛选。</h2>
+            <p class="lede">总分只是十维均值。点击任意行可跳到该项目的逐项借鉴结论；“DeepSeek”表示适配友好度，不代表官方隶属。</p>
+          </div>
+        </div>
+        <div class="filters">
+          <input id="search" class="control" type="search" placeholder="搜索项目、技术路线、借鉴点…" aria-label="搜索">
+          <select id="statusFilter" class="control" aria-label="按源码状态筛选"><option value="">全部源码状态</option><option value="open">可检查源码</option><option value="limited">资料有限</option></select>
+          <select id="typeFilter" class="control" aria-label="按类型筛选"><option value="">全部形态</option><option>Terminal</option><option>IDE</option><option>Platform</option><option>Research</option><option>Desktop</option></select>
+          <select id="sort" class="control" aria-label="排序"><option value="score">总分降序</option><option value="security">安全边界</option><option value="context">上下文</option><option value="production">生产成熟度</option><option value="name">名称</option></select>
+        </div>
+        <div class="matrix-wrap">
+          <table>
+            <thead><tr><th>项目</th><th>形态</th><th>源码</th><th>许可</th><th>十维缩略</th><th>均值</th><th>DeepSeek</th><th>证据</th></tr></thead>
+            <tbody id="matrixBody"></tbody>
+          </table>
+        </div>
+        <div id="details" class="details"></div>
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">05 · Borrow</div>
+          <div>
+            <h2>借鉴不是复制功能，而是收敛机制。</h2>
+            <p class="lede">路线图按对当前任务完成率的直接影响排序：先缩小工具面、稳定提示词、自动验证和简化子 Agent，再补上下文与生产集成。</p>
+          </div>
+        </div>
+        <div class="roadmap">
+          <div class="road-col">
+            <header><b>NOW</b><span>P0 · 0–4 周</span></header>
+            <div class="road-item"><strong>模型可见工具面</strong><p>借鉴 Qwen Code、Codex 与 CodeWhale：按模式、模型能力和权限解析 8–12 个核心工具，低频能力通过 deferred tool / tool search 发现。</p><small>先降低选错工具与 schema token</small></div>
+            <div class="road-item"><strong>提示词去重 + 自动验证</strong><p>借鉴 Pi 的小而动态提示与 Aider 的修改后验证：工具参数只存在于 schema，代码写入后自动执行最小相关检查。</p><small>基础完成率优先</small></div>
+            <div class="road-item"><strong>Flash 子 Agent 与协议契约</strong><p>spawn_agent 只要求任务说明和 prompt，模型默认继承；Explore 只读。同时固定 DeepSeek GA 的 reasoning/tool-call 回归语料。</p><small>减少 Flash 调用摩擦</small></div>
+          </div>
+          <div class="road-col">
+            <header><b>NEXT</b><span>P1 · 4–8 周</span></header>
+            <div class="road-item"><strong>上下文恢复与大结果预算</strong><p>在现有五阶段压缩上恢复最近文件、图片和 Todo；统一工具输出截断、receipt 与上下文预算展示。</p><small>不另造压缩器</small></div>
+            <div class="road-item"><strong>权限与基础代码理解</strong><p>补 shell 语义防绕过、deny 优先、LSP diagnostics 与 token-budgeted repo map；以评测决定是否继续扩工具。</p><small>安全与基础能力并进</small></div>
+            <div class="road-item"><strong>事件与真实生产验收</strong><p>将 Kernel、Trace、桌面、SSE/Android timeline 做同序列断言，并完成双设备 ACL、SSRF、SecretStore 与 updater 动态测试。</p><small>关闭现有证据缺口</small></div>
+          </div>
+          <div class="road-col">
+            <header><b>LATER</b><span>P2/P3 · 8 周后</span></header>
+            <div class="road-item"><strong>恢复、无头与隔离</strong><p>实现可解释 checkpoint、versioned JSONL headless 协议和可选 worktree/容器后端，继续复用 EngineEventV1。</p><small>不替换本地轻量路径</small></div>
+            <div class="road-item"><strong>能力声明与扩展治理</strong><p>吸收 Goose/Continue 的能力表达，为 Provider、MCP 与 Skill 标注协议、权限、版本和降级路径。</p><small>不增加第二套配置 DSL</small></div>
+            <div class="road-item"><strong>协作型多代理：暂缓</strong><p>只有基础评测证明单 Agent 成为瓶颈后，才评估 OpenHarness/Trae 式角色协作；不引入无边界 swarm。</p><small>明确 YAGNI 门槛</small></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="sources">
+      <div class="shell">
+        <div class="section-head">
+          <div class="kicker">06 · Sources</div>
+          <div>
+            <h2>官方入口与社区样本。</h2>
+            <p class="lede">来源截至 2026-08-04。项目更新频繁，版本、许可证和仓库归属应在实施借鉴前再次核验。</p>
+          </div>
+        </div>
+        <div class="caveat">边界说明：Kimi Code 为新 TypeScript 仓库、承接旧 Python kimi-cli 谱系；Open Interpreter 为基于 Codex 的 Rust 重写版，其 harness profiles 是仓库内枚举+TOML 机制而非独立项目；OpenHarness 是 Claude Code 的 Python 移植（MIT），不是评测框架；MiMoCode 为 opencode 的派生 fork；MiniMax Code 当前官方仓库只收集问题，未提供运行时源码；DeepSeek 没有被当成一个独立开源 Harness。</div>
+        <div id="sourceList" class="sources"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="shell">
+    <span>RouteDev Agent Harness Landscape · 独立离线报告</span>
+    <span>评分可复核，事实链接可追溯，社区观点不等于项目结论。</span>
+  </footer>
+
+  <noscript><div class="shell noscript">此报告需要 JavaScript 绘制雷达图与筛选矩阵。</div></noscript>
+
+  <script>
+    var dims = ["源码透明","安全边界","上下文","执行工具","模型适配","交互体验","扩展能力","远程协作","可观测性","生产成熟"];
+    var items = [];
+    function add(name, type, status, license, runtime, deepseek, confidence, scores, summary, community, risk, borrow, avoid, official, discussion) {
+      items.push({
+        name: name, type: type, status: status, license: license, runtime: runtime,
+        deepseek: deepseek, confidence: confidence, scores: scores,
+        summary: summary, community: community, risk: risk, borrow: borrow, avoid: avoid,
+        official: official, discussion: discussion
+      });
+    }
+
+    add("RouteDev","Desktop","open","本地工程","TypeScript / Electron","原生路由","A", [8,8,8,8,9,8,8,9,9,6],
+      "桌面、远程与自动化共享 AgentRunScheduler → ChatBridge → NativeAgentKernel → ReActAgentLoop；有 PermissionEngine、设备 ACL、Trace、Memory、Checkpoint、子会话与模型路由。",
+      "本项不是社区口碑分，而是本地代码图与关键实现证据。现有综合审查台账仍把 CI、签名、双设备 ACL、Puppeteer 子请求与 DNS rebinding 列为待动态验证。",
+      "能力面已经宽，生产成熟度受跨平台发布和动态安全证据制约；继续扩功能会扩大验证债。",
+      "先收敛四项基础能力：模型可见工具面、稳定精简提示、修改后自动验证、低摩擦只读子 Agent；再补上下文、事件一致性与隔离执行。",
+      "暂不复制多代理 swarm、插件市场或第二套执行内核；先关闭生产验证链。",
+      "local://routedev","local://报告/RouteDev-综合审查去重与修复台账-2026-08-02.md");
+
+    add("OpenAI Codex CLI","Terminal","open","Apache-2.0","Rust / TypeScript","良好","A", [10,9,8,10,9,9,8,8,10,10],
+      "Rust 核心、CLI/TUI 与 app-server 分层，强调本地执行、审批和沙箱；协议层可支持不同客户端，是成熟的终端代理内核参照。",
+      "高采用度带来大量真实边界案例。官方 issue 仍能看到长任务、工具状态或特定环境卡住等问题，说明成熟产品也需要强制终止与状态诊断。",
+      "产品演进速度快，协议与配置面会变；不能照搬内部兼容层，也不能把品牌/模型能力误计为 harness 架构优势。",
+      "借鉴 app-server 的稳定事件协议、执行状态机、批准请求和客户端解耦；对 RouteDev 的 Kernel/Event Hub 做契约测试。",
+      "不复制所有 CLI 表面和兼容选项；RouteDev 的桌面优先与设备 ACL 是不同产品边界。",
+      "https://github.com/openai/codex","https://github.com/openai/codex/issues/18335");
+
+    add("OpenCode","Terminal","open","MIT","Go / TypeScript","优秀","A", [10,7,8,9,10,9,9,7,8,9],
+      "多模型、终端优先的开源 coding agent，客户端体验与 provider 选择面突出；仓库把服务、TUI、SDK 与生态整合在统一产品中。",
+      "社区认可其模型自由度与界面完成度；同时 subagent 或间歇性 hang 的 issue 表明并发代理和会话恢复仍是高风险区。",
+      "大生态面增加配置和状态组合；对 RouteDev 来说，直接追平 provider 数量的收益低于确保路由可解释。",
+      "借鉴 provider 抽象、TUI 信息密度、会话恢复与客户端/服务分离。",
+      "不复制未经严格边界定义的并发 subagent；RouteDev 应继续由全局调度器治理共享 loop。",
+      "https://github.com/anomalyco/opencode","https://github.com/anomalyco/opencode/issues/6573");
+
+    add("Reasonix","Terminal","open","MIT","Go","原生","A", [9,7,8,8,10,8,8,4,7,7],
+      "DeepSeek 导向的 Go 终端 agent，源码包含缓存前缀诊断、thinking/tool 流、上下文压缩、路径绑定工具和 LSP diagnostics；在 DeepSeek 社区有较高辨识度。",
+      "正面声音集中在 DeepSeek 适配和轻快体验；社区也出现跳过测试、工具纪律不稳定等反馈，说明原生适配不等于任务完成可靠性。",
+      "与单一模型行为耦合更深，模型版本变化可能放大维护成本；社区样本量小。",
+      "借鉴 DeepSeek thinking/tool 事件解析、prompt cache shape 回归、路径绑定工具和轻量 LSP diagnostics。",
+      "不把模型特例散落到主循环；应收口到 RouteDev 的模型适配器与路由策略。",
+      "https://github.com/esengine/DeepSeek-Reasonix","https://www.reddit.com/r/DeepSeek/comments/1u7ouf7/deepseek_with_reasonix_lots_of_skipping_tests/");
+
+    add("Open Interpreter","Terminal","open","Apache-2.0","Rust","良好","A", [10,8,8,9,9,8,8,5,7,8],
+      "已确认为基于 Codex 的 Rust 重写版（README 自述），许可由 AGPL 改为 Apache-2.0。源码确认：15+ 种 harness profile（枚举+目录化描述+按 provider/model 自动推荐）、原生沙箱（bwrap/seatbelt/landlock/windows）+ execpolicy 规则引擎、审批流、角色层叠与多 agent 编排、pre-sampling/auto/remote 压缩、rollout 持久化与 headless exec-server/SDK。",
+      "长期社区资产来自自然语言操作本机；新 Rust 栈尚在迁移期，旧版心智模型、配置和新架构之间存在认知成本。",
+      "Bazel 构建复杂度极高（MODULE.bazel 13k 行）；与 Codex 协议深度耦合；pip 分发已不存在。",
+      "借鉴 harness profile 抽象、模型指令模板版本化、原生沙箱+execpolicy 双层权限、角色 config 层叠、多 agent 编排与压缩体系。",
+      "不复制 Bazel 构建与 Codex 协议绑定，不把 profile 当独立产品或独立执行内核。",
+      "https://github.com/openinterpreter/openinterpreter","https://github.com/openinterpreter/openinterpreter/issues");
+
+    add("Pi","Terminal","open","MIT","TypeScript","良好","A", [10,6,9,8,9,8,10,3,8,8],
+      "极简而可扩展的终端 coding agent；SDK、extensions、compaction 与 session tree 是核心，允许用户在小内核上组合自己的工作流。",
+      "社区喜欢其低层次可塑性与少约束；讨论也指出扩展生态、会话语义和默认安全边界需要用户自己承担更多决策。",
+      "高自由度意味着治理外移；插件可以改变行为，生产环境需要额外的能力声明和审计。",
+      "重点借鉴按实际工具动态生成的极简系统提示、有效 turn boundary、compaction hook 与 session tree。",
+      "不把权限责任完全交给扩展作者，也不为所有实验性 hook 提供永久兼容。",
+      "https://github.com/badlogic/pi-mono","https://github.com/badlogic/pi-mono/discussions/1632");
+
+    add("Qwen Code","Terminal","open","Apache-2.0","TypeScript","优秀","A", [10,7,8,9,10,8,9,6,8,9],
+      "面向 Qwen 与多 provider 的成熟终端 coding agent。源码显示它按权限和运行模式延迟注册工具，具备 tool search、LSP、Notebook、worktree、结构化输出、只读 Explore 子 Agent、压缩恢复、checkpoint、hooks 与 headless 流。",
+      "社区与 issue 体现活跃迭代和广泛环境组合；相应地，配置、认证、provider 与平台差异会制造较多 triage 成本。",
+      "工具和配置矩阵很大；其关键不是全量暴露，而是注册前权限判断、deferred tool 和稳定分层。RouteDev 若只复制工具数量会恶化 Flash 选型。",
+      "优先借鉴模型可见工具解析、tool search、权限防绕过、压缩后最近文件/图片恢复、两字段 Agent 调用、只读 Explore、checkpoint/headless/遥测闭环。",
+      "不复制所有 provider 参数；RouteDev 应维持统一配置模型与显式能力探测。",
+      "https://github.com/QwenLM/qwen-code","https://github.com/QwenLM/qwen-code/issues/6821");
+
+    add("Cline","IDE","open","Apache-2.0","TypeScript / VS Code","优秀","A", [10,8,8,9,10,10,9,4,8,9],
+      "IDE 内高自治 coding agent 的代表，具有工具审批、浏览器、MCP、checkpoint 与 provider 自由度，用户可在每一步观察和控制。",
+      "用户认可透明的 diff 与控制感；上下文增长、checkpoint 恢复和大型任务成本是长期 issue 主题。",
+      "把完整代理状态放在 IDE 扩展里会增加恢复与升级复杂度；长上下文成本很容易失控。",
+      "借鉴 checkpoint 的用户心智、diff-first 审批和工具调用可视化。",
+      "不照搬无限会话堆积；RouteDev 应显示上下文预算并把 checkpoint 语义写清。",
+      "https://github.com/cline/cline","https://github.com/cline/cline/issues/4389");
+
+    add("Roo Code","IDE","open","Apache-2.0","TypeScript / VS Code","优秀","A", [10,8,8,9,10,10,10,5,8,8],
+      "从 Cline 生态发展出的多模式 IDE agent。源码确认：模式体系（DEFAULT_MODES+按模式工具组 getToolsForMode+自定义模式）、系统提示词分节组装（规则/能力/模式/技能）、约 25 个工具、checkpoint（RepoPerTaskCheckpointService+影子 Git）、condense 摘要压缩（5% 阈值触发）、Task 主循环。",
+      "社区赞赏模式化工作流和功能密度；condensing loop 等 issue 说明上下文压缩和状态机交互可能形成难诊断循环。",
+      "模式、配置和扩展表面过宽时，行为组合爆炸，测试成本高。",
+      "借鉴模式模板与任务角色的可见配置（含每模式工具白名单）、影子 Git checkpoint、condense 压缩。",
+      "不引入每个模式一套隐式权限或提示词分支；模式必须共享同一 Kernel 契约。",
+      "https://github.com/RooCodeInc/Roo-Code","https://github.com/RooCodeInc/Roo-Code/issues/8158");
+
+    add("Kilo Code","IDE","open","MIT","TypeScript / VS Code","优秀","A", [10,8,8,9,10,9,10,6,8,8],
+      "IDE、CLI 与 cloud 路线并行。源码确认：已基于 opencode v2 谱系重写（packages/opencode+core，fork 标记 kilocode_change），ask/debug/explore/orchestrator 等 agent 模式提示词、PermissionV2 规则集（allow/deny/ask+事件）、apply_patch/diagnostics/LSP 等工具、锚定摘要压缩+keep tokens、max-steps 强制提示、本地/容器双执行后端与 kilo-sandbox、kilo-gateway 团队/企业策略入口。",
+      "生态增长快、功能覆盖广；重写期 API 与谱系差异需要持续辨识。",
+      "产品面扩张会稀释核心执行可靠性；fork 谱系的差异需要持续辨识。",
+      "借鉴 agent 模式与每模式提示词、权限规则集与事件、锚定摘要压缩、沙箱执行后端、团队配置与网关入口。",
+      "不以功能清单竞争代替核心回归、事件一致性和权限证明。",
+      "https://github.com/Kilo-Org/kilocode","https://github.com/Kilo-Org/kilocode/issues");
+
+    add("OpenHands","Platform","open","MIT","Python / Docker","良好","A", [10,9,9,9,8,8,9,8,9,9],
+      "从研究型代理发展为完整软件开发平台，核心优势是 sandbox、事件流、runtime、web UI 与远程执行的体系化。",
+      "基准与研究影响力强，平台能力完整；issue 也持续暴露 Docker、资源、网络和 sandbox 边界的复杂性。",
+      "容器平台带来部署重量和运维面；不适合直接替换桌面本地快速路径。",
+      "借鉴 runtime 接口、事件流和可选 sandbox 后端，作为 RouteDev 高风险任务模式。",
+      "不把所有任务强制容器化，也不引入平台级多租户复杂度。",
+      "https://github.com/OpenHands/OpenHands","https://github.com/OpenHands/OpenHands/issues/12495");
+
+    add("Plandex","Terminal","open","MIT","Go","良好","A", [9,7,10,8,9,8,8,5,8,8],
+      "Go 实现的 plan/apply 型长任务 agent。源码确认：tell 流循环（tell_stream_main.go）、build 阶段 buildValidateLoop 校验-修复循环（失败后升级更强模型）、context packs 上下文选择、subtask 子任务、WillExecPlan hooks、Git 集成（branch/rewind/reject）。",
+      "长上下文与 review-first 工作流获得认可；较重的 plan/apply 心智模型不适合所有小任务。",
+      "计划层如果脱离实际执行事件，会产生文档正确、运行错误的双重状态。",
+      "借鉴 build 阶段自动校验-修复循环、context packs 上下文选择、多文件计划 diff 与提交前审查、subtask 子任务模型。",
+      "不增加第二套任务真相源；计划必须从 Kernel 事件与实际补丁派生。",
+      "https://github.com/plandex-ai/plandex","https://github.com/plandex-ai/plandex/issues");
+
+    add("Aider","Terminal","open","Apache-2.0","Python","优秀","A", [10,7,9,9,10,9,8,3,8,10],
+      "成熟的 Git 原生 pair programming CLI，以 repo map、可选 edit format、自动提交和模型基准积累见长。",
+      "社区长期认可其可靠编辑与 Git 集成；architect mode 和不同模型 edit format 的争论说明两阶段推理仍有一致性代价。",
+      "自动提交与工作树策略需要匹配用户习惯；为模型定制 edit format 容易形成维护矩阵。",
+      "借鉴 repo map、模型 edit-format 适配、编辑成功率评测和 Git 可恢复操作。",
+      "不默认替用户提交，也不让模型选择绕过 PermissionEngine。",
+      "https://github.com/Aider-AI/aider","https://news.ycombinator.com/item?id=44186556");
+
+    add("Goose","Desktop","open","Apache-2.0","Rust / TypeScript","良好","A", [10,8,8,9,9,8,10,6,8,9],
+      "现由 Agentic AI Foundation 管理，提供 CLI/Desktop、MCP extensions 与多 provider；Rust 核心和工具生态较成熟。",
+      "基金会治理和扩展生态是正面信号；社区讨论仍关注工具执行路径、provider 行为差异与扩展可靠性。",
+      "扩展能力越强，工具 schema、环境变量和权限传播越容易不一致。",
+      "借鉴 Toolshim 式工具兼容、扩展能力声明和基金会式中立治理。",
+      "不允许扩展绕过统一审计、SecretStore 或 workspace boundary。",
+      "https://github.com/aaif-goose/goose","https://github.com/aaif-goose/goose/discussions/4389");
+
+    add("SWE-agent","Research","open","MIT","Python","一般","A", [10,8,8,9,7,5,8,3,9,8],
+      "MIT、Python 研究型 agent，以 SWE-bench 可复现实验为核心。源码确认：bundle 化 ACI（默认仅 bash、str_replace_editor、submit 三个工具可见）、结构化 exit_status 失败分类、cost limit、每步 .traj 轨迹落盘与 replay、Docker 沙箱与命令 blocklist。",
+      "研究社区重视其基准可比性与轨迹；日常开发体验和低延迟交互不是主要目标。",
+      "循环无 max_steps 配置，靠退出分类终止；修改后无自动 lint/test 验证，仅提示词引导；模型可在容器内任意执行 bash。",
+      "借鉴 bundle 化 ACI 工具与 blocklist、exit_status 失败分类、轨迹落盘与 replay、cost limit 与 Docker 可复现环境。",
+      "不把 SWE-bench 单一分数当 RouteDev 产品质量代理，不复制无审批的全自动 bash 模式。",
+      "https://github.com/SWE-agent/SWE-agent","https://github.com/SWE-agent/SWE-agent/issues");
+
+    add("mini-swe-agent","Research","open","MIT","Python","一般","A", [10,6,7,8,7,5,8,2,8,8],
+      "用极少代码实现可运行的软件工程代理，强调可读、可复现和易于实验，是判断 Harness 最小必要内核的好参照。",
+      "社区和研究用途认可其简洁；其安全、交互和持久化能力本就不是完整产品目标。",
+      "极简代码不包含桌面产品所需的权限、恢复、远程与发布治理。",
+      "借鉴小内核、实验可复现和任务/模型/成本对照基线。",
+      "不把研究最小实现直接用于真实远程控制或高风险本机操作。",
+      "https://github.com/SWE-agent/mini-swe-agent","https://github.com/SWE-agent/mini-swe-agent/issues");
+
+    add("OpenHarness","Terminal","open","MIT","Python","良好","A", [10,8,8,8,8,7,9,6,8,7],
+      "HKUDS 开源的 Claude Code Python 移植（pyproject 自述），并非评测脚手架。源码确认：40 个内置工具+MCP 动态注册、完整权限模型（三模式/敏感路径硬拒/路径与命令规则）、约 4900 行 swarm 多 agent 编排、auto-compact 压缩与工具输出落盘、会话 JSON 快照 checkpoint、headless text/json/stream-json 输出。",
+      "15.2k stars，活跃但近期放缓（2026-06 后无新提交）；全仓库无任何 benchmark 基础设施。",
+      "swarm 编排模块约 5k 行复杂度高；依赖 Claude Code/Codex 订阅的 ohmo 聊天网关模式不建议照搬；维护节奏放缓。",
+      "借鉴权限模型（模式切换+敏感路径硬拒）、会话快照 checkpoint、自动压缩与工具输出落盘、headless 输出格式、多 agent 事件协议。",
+      "不引入其 swarm 全量实现与 ohmo 网关，不把它当评测脚手架，也不把模块化误当生产治理。",
+      "https://github.com/HKUDS/OpenHarness","https://github.com/HKUDS/OpenHarness/issues");
+
+    add("jcode","Terminal","open","MIT","Rust","良好","A", [9,7,8,8,9,9,8,4,7,8],
+      "已从 TypeScript 重写为大型 Rust 工作区（约 90 crates，TUI+app-core 服务端+swarm+harness API）。源码确认：约 30 个工具（含 discover 工具发现）、SplitSystemPrompt 静态/动态分区与 token 估算、512KB 工具输出截断、compaction、bash 破坏性命令门禁（jcode-command-risk）、会话恢复与 replay。",
+      "社区认可 TUI 与模型自由度；大型仓库长期稳定性与维护体量仍需观察。",
+      "架构体量已从轻量 TUI 演变为大型 monorepo，迁移与维护成本高；界面相似不代表协议兼容。",
+      "借鉴静态/动态提示词分区与 prompt cache 估算、工具发现（discover）、破坏性命令门禁、输出截断与回读、会话恢复/重放。",
+      "不复制 90 crates 的庞大架构，不追求第二套 TUI，不把视觉模仿当协议兼容。",
+      "https://github.com/1jehuang/jcode","https://www.reddit.com/r/ClaudeAI/comments/1r8z1dx/jcode_a_better_coding_agent_tui_harness_for/");
+
+    add("Continue","IDE","open","Apache-2.0","TypeScript","优秀","A", [10,8,8,8,10,9,10,6,8,9],
+      "IDE/CLI 开源平台。源码确认：agent loop 实际在 GUI 侧递归 thunk（streamNormalInput），core 为 IPC/LLM/工具执行层；chat/agent/plan 三种模式（非旧版角色）；9 个基础工具+按模型能力/开关解析；30+ context provider；自动剪枝+LLM 摘要压缩；CLI headless（-p/--format json）。",
+      "企业与个人配置能力是优势；快速演进的配置与扩展接口也会带来升级和兼容成本。",
+      "loop 与 IDE 前端耦合无法 headless 复用；CLI 子 agent 放开全部权限；无内置 lint/test；能力声明与 config 无版本化。",
+      "借鉴 context provider 生态、按模型能力解析工具管线、系统提示词分模式、CLI headless 与 subagent-as-tool。",
+      "不复制 GUI 持有 agent loop 的架构；不采用子 agent 全放开权限的做法；不复制重复的配置 DSL。",
+      "https://github.com/continuedev/continue","https://github.com/continuedev/continue/issues");
+
+    add("Kimi Code","Terminal","open","MIT","TypeScript","优秀","A", [10,8,9,9,10,8,8,6,8,8],
+      "Moonshot 新一代开源 coding agent：TypeScript/pnpm monorepo（旧 kimi-cli 为 Python，仓内附迁移工具）。源码确认：27 个默认工具+MCP、0.85 触发/50k 预留的自动压缩+第一人称交接摘要、manual/yolo/auto 权限模式与作用域规则、coder/explore/plan 子 agent 档案、Kimi 原生 builtin_function 协议适配、headless -p + stream-json、changesets 持续发布。",
+      "新仓库活跃度高，社区关注 Kimi 模型的长上下文与 coding 表现；hang issue 表明新旧迁移和长任务稳定性仍需观察。",
+      "DI/状态机/wire 事件回放等内部架构重量级；谱系切换容易造成文档、包名混乱。",
+      "借鉴模型原生协议适配层（vendor 注册+传输基座分离）、自动压缩与交接摘要、子 agent 档案、权限模式/规则、headless 与会话恢复。",
+      "不复制其重型内部架构，不把旧 kimi-cli 与新 kimi-code 重复计为两个竞品。",
+      "https://github.com/MoonshotAI/kimi-code","https://github.com/MoonshotAI/kimi-code/issues/1911");
+
+    add("Trae Agent","Research","open","MIT","Python","良好","A", [10,7,8,8,9,6,8,4,8,7],
+      "ByteDance 开源的通用软件工程 agent。源码确认：task_done 显式完成语义+must_patch git diff 校验、6 个默认工具（bash/两种编辑/sequentialthinking/task_done/CKG 代码知识图谱）、工具输出 16k 截断、结构化 trajectory JSON（记录无回放）、SWE-bench 系列 Docker 评测 runner、可选 Docker 隔离执行。",
+      "官方开源和研究可复现是优势；近 6 个月无新提交，处于低频维护。",
+      "无上下文压缩（原始消息累积）、无权限审批（宿主模式裸 bash）；evaluation 需 GB 级 Docker 镜像。",
+      "借鉴 trajectory JSON 双轨结构、工具三层边界（抽象/执行器/隔离执行器）、task_done 完成语义+diff 校验、SWE-bench 统一 runner 配置。",
+      "不直接引入另一套 Python agent runtime 与现有 TypeScript Kernel 并行，不复制无压缩的消息累积。",
+      "https://github.com/bytedance/trae-agent","https://github.com/bytedance/trae-agent/issues");
+
+    add("MiniMax Mini-Agent","Research","open","MIT","Python","优秀","A", [9,6,7,8,10,5,8,3,7,6],
+      "MiniMax 官方 teaching-level demo（文档自述）。源码确认：Anthropic/OpenAI 双兼容端点接入 M2.5（thinking 块持久化回传）、ReAct 单 agent 循环（max_steps 50）、bash/文件/笔记/技能工具+MCP、按 user 轮次分段的自动摘要压缩、SessionNote 跨会话记忆、ACP 桥接。",
+      "官方出处清晰，但社区验证与真实生产案例少；更适合当参考实现。",
+      "无权限层（裸 bash）、无子 Agent、无 checkpoint；skills 大量 vendored 自 Anthropic 官方，许可边界需核查。",
+      "借鉴 MiniMax 双协议接入与 thinking 持久化、按轮次分段摘要压缩、跨会话记忆工具。",
+      "不复制无权限的裸 bash 与单工具串行执行，不把 demo 默认安全假设带入桌面远程控制。",
+      "https://github.com/MiniMax-AI/Mini-Agent","https://github.com/MiniMax-AI/Mini-Agent/issues");
+
+    add("MiMoCode","Terminal","open","MIT","TypeScript","优秀","A", [9,7,8,8,10,7,8,4,8,7],
+      "XiaomiMiMo 开源 coding agent，实为 opencode 的派生 fork（LICENSE 保留上游版权），MiMo Auto 免费路由为默认渠道、多 provider 并存。源码确认：15 份按模型路由的系统提示词、按模型切换工具集（约 24 常开+flag）、actor 子 agent 动词化接口、allow/deny/ask 权限规则表落库、compaction 与 checkpoint、headless `mimo run`。",
+      "官方源码之外已有独立架构拆解，但更广泛的长期社区反馈仍少。",
+      "基础能力大量来自上游 opencode；MiMo Auto 免费通道有日落时间非可持续基础；默认提示词残留上游片段需去重。",
+      "借鉴分模型系统提示词路由、按模型切换工具集、actor 子 agent 接口、权限规则表落库、零配置冷启动。",
+      "不直接 fork opencode 的既有体量，不把 MiMo 特例渗透进通用消息与权限层。",
+      "https://github.com/XiaomiMiMo/MiMo-Code","https://gist.github.com/apnea/cc4c9ecafea99f67e16281b5b7e6fe45");
+
+    add("CodeWhale","Terminal","open","MIT","Rust","原生","A", [9,7,8,9,10,9,8,4,8,8],
+      "Hmbown/CodeWhale 是本报告采用的官方项目：Rust TUI、DeepSeek 原生思考/工具体验、会话与配置文档完整。",
+      "DeepSeek 社区常把它与 Reasonix、OpenCode 比较，正面信号是速度与原生体验；评价样本仍集中在模型爱好者社区。",
+      "存在相似命名仓库，来源识别容易出错；DeepSeek 优化可能降低通用性。",
+      "借鉴 ToolSurfaceBudget、deferred tool catalog、tool-call/context budget、DeepSeek thinking 事件和稳定前缀缓存设计。",
+      "不追求第二套 TUI 产品，也不让 thinking 内容直接成为控制流真相源。",
+      "https://github.com/Hmbown/CodeWhale","https://www.reddit.com/r/DeepSeek/comments/1tpz6k4/deepseek_tui_vs_reasonix/");
+
+    add("ZCode Agent","Terminal","limited","未核实","未公开","优秀","B", [3,5,7,7,9,8,6,3,5,6],
+      "官方文档描述 coding agent、子代理与终端工作流，但未找到可审查的完整运行时源码，因此只按公开能力表保守评估。",
+      "公开社区信号有限，且产品宣传、实际边界与版本变化难由源码交叉验证。",
+      "权限、遥测、上下文和执行边界不可独立审查。",
+      "只借鉴文档层面的子代理角色说明与用户入口设计，实施前需自己定义安全契约。",
+      "不复制不可验证的自治承诺，也不把 profile 名称误当成开源实现。",
+      "https://zcode.z.ai/en/docs/agents","https://zcode.z.ai/en/docs/subagents");
+
+    add("MiniMax Code","Terminal","limited","未核实","未公开","优秀","A", [2,5,7,7,10,8,5,3,4,6],
+      "官方 GitHub 仓库明确定位为问题收集入口，不包含可审查的产品运行时源码；与 MiniMax Mini-Agent 必须分开。",
+      "可通过 issue 观察用户问题，但不能据此还原安全和执行架构。",
+      "源码透明度不足，评分置信区间最大。",
+      "借鉴 issue 模板和用户问题分类；模型适配参考开源 Mini-Agent，而不是猜测闭源 Code 内核。",
+      "不把公开 issue 仓库写成开源 Harness，也不从产品行为反推内部实现。",
+      "https://github.com/MiniMax-AI/minimax-code","https://github.com/MiniMax-AI/minimax-code/issues");
+
+    add("Tencent CodeBuddy Code","IDE","limited","商业产品","未公开","良好","B", [2,6,7,7,8,9,7,6,5,8],
+      "官方文档提供 CLI 安装、命令与产品能力说明；完整 Harness 源码未公开。",
+      "企业生态与中文开发体验是可见优势，独立可复核的运行机制评价有限。",
+      "数据处理、权限执行和模型路由只能依据文档，不能做源码级结论。",
+      "借鉴中文 onboarding、命令参考和企业策略表达。",
+      "不复制无法验证的后台控制面；RouteDev 远程操作继续本地可审计。",
+      "https://www.codebuddy.cn/docs/cli/installation","https://staging-codebuddy.tencent.com/docs/cli/reference");
+
+    add("Baidu Comate","IDE","limited","商业产品","未公开","良好","B", [2,6,7,7,8,9,7,5,5,8],
+      "百度面向 IDE 与企业研发的智能编码产品，官方文档覆盖安装、功能与管理；运行时源码不可检查。",
+      "企业场景、中文知识与平台整合是主要正面信号；社区评价易混入模型质量与销售方案。",
+      "治理与数据边界缺少源码证据，不能与开源项目同置信度评分。",
+      "借鉴企业管理员视角、策略文档与数据边界说明。",
+      "不复制重平台控制面；先完成 RouteDev 自身 SECURITY、数据流与发布证明。",
+      "https://cloud.baidu.com/doc/COMATE/index.html","https://cloud.baidu.com/doc/COMATE/s/9mm5qvpb4");
+
+    function average(a) {
+      var total = a.reduce(function(sum, n) { return sum + n; }, 0);
+      return Math.round(total / a.length * 10) / 10;
+    }
+    function slug(s) {
+      return "p-" + s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    }
+    function elem(tag, className, textValue) {
+      var node = document.createElement(tag);
+      if (className) node.className = className;
+      if (textValue !== undefined) node.textContent = textValue;
+      return node;
+    }
+    function statusLabel(status) { return status === "open" ? "可检查源码" : "资料有限"; }
+    function statusClass(status) { return status === "open" ? "good" : "closed"; }
+    function deepClass(value) { return value === "原生" || value === "优秀" ? "good" : value === "一般" ? "warn" : ""; }
+
+    var colors = ["#8df0bd","#7fb7ff","#eeb66c","#c29bff"];
+    var selected = ["RouteDev","OpenAI Codex CLI","Cline","mini-swe-agent"];
+    var picker = document.getElementById("picker");
+    var legend = document.getElementById("legend");
+    var canvas = document.getElementById("radarCanvas");
+    var ctx = canvas.getContext("2d");
+
+    function renderPicker() {
+      picker.replaceChildren();
+      items.forEach(function(item) {
+        var label = elem("label", "pick" + (item.name === "RouteDev" ? " route" : ""));
+        var check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = selected.indexOf(item.name) >= 0;
+        check.setAttribute("aria-label", "在雷达图显示 " + item.name);
+        check.addEventListener("change", function() {
+          if (check.checked) {
+            if (selected.length >= 4) {
+              check.checked = false;
+              alert("雷达图最多同时比较 4 个项目。");
+              return;
+            }
+            selected.push(item.name);
+          } else {
+            selected = selected.filter(function(name) { return name !== item.name; });
+          }
+          drawRadar();
+          renderLegend();
+        });
+        var textBox = elem("span");
+        textBox.appendChild(elem("strong", "", item.name));
+        textBox.appendChild(elem("small", "", item.runtime + " · " + item.type));
+        label.appendChild(check);
+        label.appendChild(textBox);
+        label.appendChild(elem("span", "score", average(item.scores).toFixed(1)));
+        picker.appendChild(label);
+      });
+    }
+
+    function renderLegend() {
+      legend.replaceChildren();
+      selected.forEach(function(name, index) {
+        var row = elem("span");
+        var swatch = elem("i");
+        swatch.style.background = colors[index];
+        row.appendChild(swatch);
+        row.appendChild(document.createTextNode(name));
+        legend.appendChild(row);
+      });
+    }
+
+    function drawRadar() {
+      var w = canvas.width;
+      var h = canvas.height;
+      var cx = w / 2;
+      var cy = h / 2;
+      var radius = Math.min(w, h) * .335;
+      ctx.clearRect(0, 0, w, h);
+      ctx.lineWidth = 1;
+      ctx.font = "18px Segoe UI, Microsoft YaHei, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      for (var level = 2; level <= 10; level += 2) {
+        ctx.beginPath();
+        dims.forEach(function(dim, i) {
+          var angle = -Math.PI / 2 + i * Math.PI * 2 / dims.length;
+          var r = radius * level / 10;
+          var x = cx + Math.cos(angle) * r;
+          var y = cy + Math.sin(angle) * r;
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.closePath();
+        ctx.strokeStyle = level === 10 ? "#46504a" : "#252c28";
+        ctx.stroke();
+      }
+
+      dims.forEach(function(dim, i) {
+        var angle = -Math.PI / 2 + i * Math.PI * 2 / dims.length;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius);
+        ctx.strokeStyle = "#252c28";
+        ctx.stroke();
+        var labelRadius = radius + 55;
+        ctx.fillStyle = "#aeb6b0";
+        ctx.fillText(dim, cx + Math.cos(angle) * labelRadius, cy + Math.sin(angle) * labelRadius);
+      });
+
+      selected.forEach(function(name, si) {
+        var item = items.find(function(candidate) { return candidate.name === name; });
+        if (!item) return;
+        ctx.beginPath();
+        item.scores.forEach(function(score, i) {
+          var angle = -Math.PI / 2 + i * Math.PI * 2 / dims.length;
+          var r = radius * score / 10;
+          var x = cx + Math.cos(angle) * r;
+          var y = cy + Math.sin(angle) * r;
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.closePath();
+        ctx.fillStyle = colors[si] + "1f";
+        ctx.strokeStyle = colors[si];
+        ctx.lineWidth = name === "RouteDev" ? 4 : 2.5;
+        ctx.fill();
+        ctx.stroke();
+        item.scores.forEach(function(score, i) {
+          var angle = -Math.PI / 2 + i * Math.PI * 2 / dims.length;
+          var r = radius * score / 10;
+          ctx.beginPath();
+          ctx.arc(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r, name === "RouteDev" ? 5 : 3.5, 0, Math.PI * 2);
+          ctx.fillStyle = colors[si];
+          ctx.fill();
+        });
+      });
+    }
+
+    var searchInput = document.getElementById("search");
+    var statusFilter = document.getElementById("statusFilter");
+    var typeFilter = document.getElementById("typeFilter");
+    var sortSelect = document.getElementById("sort");
+    var matrixBody = document.getElementById("matrixBody");
+    var details = document.getElementById("details");
+
+    function matchingItems() {
+      var q = searchInput.value.trim().toLowerCase();
+      var filtered = items.filter(function(item) {
+        var text = [item.name,item.type,item.runtime,item.summary,item.community,item.borrow,item.avoid].join(" ").toLowerCase();
+        return (!q || text.indexOf(q) >= 0) &&
+          (!statusFilter.value || item.status === statusFilter.value) &&
+          (!typeFilter.value || item.type === typeFilter.value);
+      });
+      var sortKey = sortSelect.value;
+      filtered.sort(function(a, b) {
+        if (sortKey === "name") return a.name.localeCompare(b.name);
+        if (sortKey === "security") return b.scores[1] - a.scores[1] || average(b.scores) - average(a.scores);
+        if (sortKey === "context") return b.scores[2] - a.scores[2] || average(b.scores) - average(a.scores);
+        if (sortKey === "production") return b.scores[9] - a.scores[9] || average(b.scores) - average(a.scores);
+        return average(b.scores) - average(a.scores);
+      });
+      return filtered;
+    }
+
+    function renderMatrix() {
+      var visible = matchingItems();
+      matrixBody.replaceChildren();
+      details.replaceChildren();
+      visible.forEach(function(item) {
+        var tr = elem("tr", item.name === "RouteDev" ? "route" : "");
+        tr.tabIndex = 0;
+        tr.setAttribute("role", "link");
+        tr.setAttribute("aria-label", "查看 " + item.name + " 详情");
+        var nameCell = elem("td");
+        nameCell.appendChild(elem("strong", "", item.name));
+        nameCell.appendChild(elem("div", "", item.runtime));
+        tr.appendChild(nameCell);
+        tr.appendChild(elem("td", "", item.type));
+        var statusCell = elem("td");
+        statusCell.appendChild(elem("span", "pill " + statusClass(item.status), statusLabel(item.status)));
+        tr.appendChild(statusCell);
+        tr.appendChild(elem("td", "", item.license));
+        var barsCell = elem("td");
+        var bars = elem("div", "mini-bars");
+        bars.title = dims.map(function(dim, i) { return dim + " " + item.scores[i]; }).join(" / ");
+        item.scores.forEach(function(score) {
+          var bar = elem("i");
+          bar.style.height = String(score * 2.6) + "px";
+          bars.appendChild(bar);
+        });
+        barsCell.appendChild(bars);
+        tr.appendChild(barsCell);
+        tr.appendChild(elem("td", "score", average(item.scores).toFixed(1)));
+        var deepCell = elem("td");
+        deepCell.appendChild(elem("span", "pill " + deepClass(item.deepseek), item.deepseek));
+        tr.appendChild(deepCell);
+        tr.appendChild(elem("td", "", item.confidence));
+        var targetId = slug(item.name);
+        function go() { document.getElementById(targetId).scrollIntoView({behavior:"smooth", block:"start"}); }
+        tr.addEventListener("click", go);
+        tr.addEventListener("keydown", function(event) { if (event.key === "Enter" || event.key === " ") go(); });
+        matrixBody.appendChild(tr);
+        details.appendChild(makeDetail(item, visible.indexOf(item) + 1));
+      });
+    }
+
+    function makeDetail(item, index) {
+      var article = elem("article", "detail");
+      article.id = slug(item.name);
+      var side = elem("div", "detail-name");
+      side.appendChild(elem("span", "index", String(index).padStart(2, "0") + " / " + item.type));
+      side.appendChild(elem("h3", "", item.name));
+      side.appendChild(elem("span", "avg", average(item.scores).toFixed(1)));
+      side.appendChild(elem("div", "", "证据 " + item.confidence + " · " + statusLabel(item.status)));
+      article.appendChild(side);
+
+      var body = elem("div", "detail-body");
+      body.appendChild(detailBlock("官方事实", item.summary, ""));
+      body.appendChild(detailBlock("社区信号", item.community, ""));
+      body.appendChild(detailBlock("主要风险", item.risk, "avoid"));
+      body.appendChild(detailBlock("RouteDev 借鉴点", item.borrow, "borrow"));
+      body.appendChild(detailBlock("明确不复制", item.avoid, "avoid"));
+      var dimensions = dims.map(function(dim, i) { return dim + " " + item.scores[i]; }).join(" · ");
+      body.appendChild(detailBlock("十维评分", dimensions, ""));
+      var links = elem("div", "detail-links");
+      if (item.official.indexOf("local://") === 0) {
+        links.appendChild(elem("span", "", "本地证据：" + item.official.replace("local://", "")));
+      } else {
+        var officialLink = elem("a", "", "官方源码 / 文档 ↗");
+        officialLink.href = item.official; officialLink.target = "_blank"; officialLink.rel = "noreferrer";
+        links.appendChild(officialLink);
+      }
+      if (item.discussion.indexOf("local://") === 0) {
+        links.appendChild(elem("span", "", "本地台账：" + item.discussion.replace("local://", "")));
+      } else {
+        var discussionLink = elem("a", "", "社区 / 运行信号 ↗");
+        discussionLink.href = item.discussion; discussionLink.target = "_blank"; discussionLink.rel = "noreferrer";
+        links.appendChild(discussionLink);
+      }
+      body.appendChild(links);
+      article.appendChild(body);
+      return article;
+    }
+
+    function detailBlock(title, textValue, className) {
+      var block = elem("div", className || "");
+      block.appendChild(elem("h4", "", title));
+      block.appendChild(elem("p", "", textValue));
+      return block;
+    }
+
+    [searchInput,statusFilter,typeFilter,sortSelect].forEach(function(control) {
+      control.addEventListener(control.tagName === "INPUT" ? "input" : "change", renderMatrix);
+    });
+
+    function renderSources() {
+      var list = document.getElementById("sourceList");
+      items.forEach(function(item) {
+        var row = elem("div", "source");
+        row.appendChild(elem("strong", "", item.name));
+        if (item.official.indexOf("local://") === 0) {
+          row.appendChild(elem("span", "", item.official.replace("local://", "") + " · 本地代码证据"));
+        } else {
+          var link = elem("a", "", "官方入口");
+          link.href = item.official; link.target = "_blank"; link.rel = "noreferrer";
+          row.appendChild(link);
+          row.appendChild(document.createTextNode(" · "));
+          var discussion = elem("a", "", "社区样本");
+          discussion.href = item.discussion; discussion.target = "_blank"; discussion.rel = "noreferrer";
+          row.appendChild(discussion);
+        }
+        list.appendChild(row);
+      });
+    }
+
+    renderPicker();
+    renderLegend();
+    drawRadar();
+    renderMatrix();
+    renderSources();
+    window.addEventListener("resize", drawRadar);
+  </script>
+</body>
+</html>

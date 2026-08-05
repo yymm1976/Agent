@@ -1,40 +1,52 @@
-// desktop/main/updater.ts
-// 自动更新：仅在生产环境（app.isPackaged）启用，使用 electron-updater 检查并安装更新。
-
 import { app, dialog } from 'electron';
-// electron-updater 是 CommonJS 模块，ESM 环境下必须用默认导入再解构
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import electronUpdater from 'electron-updater';
-const { autoUpdater } = electronUpdater;
 import { logger } from '../../src/utils/logger.js';
 
-/**
- * 初始化自动更新
- * - 生产环境：检查更新、监听事件、下载完成后询问用户重启安装
- * - 开发环境：跳过（打印日志）
- */
+const { autoUpdater } = electronUpdater;
+
+/** Only packages explicitly marked by the release build may consume updates. */
+function isTrustedSignedBuild(): boolean {
+  try {
+    const metadata = JSON.parse(
+      fs.readFileSync(path.join(app.getAppPath(), 'package.json'), 'utf8'),
+    ) as { routedevSignedRelease?: boolean; routedevTrustedUpdateSource?: boolean };
+    return metadata.routedevSignedRelease === true
+      && metadata.routedevTrustedUpdateSource === true;
+  } catch {
+    return false;
+  }
+}
+
+async function verifyDownloadedChecksum(
+  downloadedFile: string,
+  info: { files?: Array<{ url: string; sha512: string }>; sha512?: string },
+): Promise<boolean> {
+  const filename = path.basename(downloadedFile);
+  const expected = info.files?.find((file) =>
+    path.basename(file.url.split('?')[0]) === filename)?.sha512 ?? info.sha512;
+  if (!expected) return false;
+  const actual = createHash('sha512')
+    .update(await fs.promises.readFile(downloadedFile))
+    .digest('base64');
+  return actual === expected;
+}
+
 export function initUpdater(): void {
-  // 开发环境或缺少更新配置文件时跳过（避免 ENOENT 错误）
-  if (!app.isPackaged || process.env.NODE_ENV === 'development') {
-    logger.info('[updater] 开发环境，跳过自动更新检查');
+  if (!app.isPackaged || process.env.NODE_ENV === 'development' || !isTrustedSignedBuild()) {
+    logger.info('[updater] unsigned, untrusted, or development build; automatic updates disabled');
     return;
   }
 
   try {
-    // V3-003 / V3-025 修复：改为手动下载，给用户确认机会（避免静默下载未签名更新）
     autoUpdater.autoDownload = false;
-    // 下载完成后不自动安装，由用户确认（退出时安装已下载的更新是安全的）
     autoUpdater.autoInstallOnAppQuit = true;
 
-    // TODO(V3-025): 项目目前未配置 code signing。发布生产构建前必须配置：
-    //   1. Windows: 配置 EV code signing certificate（CSC_LINK / CSC_KEY_PASSWORD）
-    //   2. macOS: 配置 Apple Developer ID 证书 + notarization
-    //   3. electron-updater 默认会校验 publisher name（若 signing 配置完成）
-    //   未签名状态下，autoDownload=false 是唯一的缓解措施（强制用户确认）
-
     autoUpdater.on('update-available', (info) => {
-      logger.info('[updater] 发现新版本', { version: info.version });
-      // V3-003：autoDownload=false 时，主动询问用户是否下载
-      dialog.showMessageBox({
+      logger.info('[updater] update available', { version: info.version });
+      void dialog.showMessageBox({
         type: 'info',
         title: 'RouteDev 更新',
         message: `发现新版本 ${info.version}`,
@@ -44,26 +56,42 @@ export function initUpdater(): void {
         cancelId: 1,
       }).then((result) => {
         if (result.response === 0) {
-          autoUpdater.downloadUpdate().catch((err: unknown) => {
-            logger.error('[updater] 下载更新失败', { error: err instanceof Error ? err.message : String(err) });
+          return autoUpdater.downloadUpdate().catch((error: unknown) => {
+            logger.error('[updater] update download failed', {
+              error: error instanceof Error ? error.message : String(error),
+            });
           });
         }
-      }).catch((err: unknown) => {
-        logger.error('[updater] 显示更新对话框失败', { error: err instanceof Error ? err.message : String(err) });
+        return undefined;
+      }).catch((error: unknown) => {
+        logger.error('[updater] update dialog failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
     });
 
     autoUpdater.on('update-not-available', (info) => {
-      logger.info('[updater] 当前为最新版本', { version: info.version });
+      logger.info('[updater] already up to date', { version: info.version });
     });
 
     autoUpdater.on('update-downloaded', async (info) => {
-      // V3-025：签名校验（electron-updater 在下载阶段已校验 code signature，
-      // 此处记录审计日志；若未配置签名，应在 release 前补齐）
-      logger.info('[updater] 更新已下载完成，校验签名中', { version: info.version });
-      // electron-updater 默认会校验 publisher name（若 signing 已配置）
-      // 此处仅记录审计日志，无法额外校验签名链（需 CA 证书）
-      logger.info('[updater] 更新签名校验通过，询问用户是否立即安装');
+      const checksumValid = await verifyDownloadedChecksum(info.downloadedFile, info);
+      if (!checksumValid) {
+        logger.error('[updater] downloaded update checksum mismatch; installation blocked', {
+          version: info.version,
+          file: path.basename(info.downloadedFile),
+        });
+        await dialog.showMessageBox({
+          type: 'error',
+          title: 'RouteDev 更新失败',
+          message: '更新包校验失败，已保留当前版本。',
+          detail: '请稍后重试或从可信发布页重新下载。',
+        });
+        return;
+      }
+      logger.info('[updater] downloaded update checksum verified; asking before installation', {
+        version: info.version,
+      });
       const result = await dialog.showMessageBox({
         type: 'info',
         title: 'RouteDev 更新',
@@ -73,21 +101,23 @@ export function initUpdater(): void {
         defaultId: 0,
         cancelId: 1,
       });
-      if (result.response === 0) {
-        autoUpdater.quitAndInstall();
-      }
+      if (result.response === 0) autoUpdater.quitAndInstall();
     });
 
-    autoUpdater.on('error', (err) => {
-      // V3-025：审计日志（记录更新失败详情，便于安全审计）
-      logger.error('[updater] 自动更新出错（审计日志）', { error: err instanceof Error ? err.message : String(err) });
+    autoUpdater.on('error', (error) => {
+      logger.error('[updater] update error', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
 
-    // 启动检查（异步，失败由 error 事件捕获）
-    autoUpdater.checkForUpdatesAndNotify().catch((err: unknown) => {
-      logger.error('[updater] 检查更新失败', { error: err instanceof Error ? err.message : String(err) });
+    void autoUpdater.checkForUpdatesAndNotify().catch((error: unknown) => {
+      logger.error('[updater] update check failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
-  } catch (err) {
-    logger.warn('[updater] 初始化失败，跳过自动更新', { error: err instanceof Error ? err.message : String(err) });
+  } catch (error) {
+    logger.warn('[updater] initialization failed; automatic updates disabled', {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }

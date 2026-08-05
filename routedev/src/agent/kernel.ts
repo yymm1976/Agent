@@ -8,6 +8,8 @@
 
 import type { EngineEventV1 } from '../harness/event-types.js';
 import type { AgentExecutionContext } from './execution-context.js';
+import type { ReActRunParams } from './loop.js';
+import type { ReActEvent } from './loop-config.js';
 
 /** 内核会话状态快照 */
 export interface KernelSessionState {
@@ -25,6 +27,8 @@ export interface AgentKernel {
   readonly id: string;
   /** 执行一次会话（用户输入 → 事件流），事件含完整生命周期与 sequence */
   run(ctx: AgentExecutionContext, input: string): AsyncIterable<EngineEventV1>;
+  /** Native adapter path used by the desktop stream bridge while preserving ReAct events. */
+  runReAct?(ctx: AgentExecutionContext, params: ReActRunParams): AsyncIterable<ReActEvent>;
   /** 中止指定会话 */
   abort(sessionId: string): Promise<void>;
   /** 读取会话当前状态（供 UI 重建与远程查询） */

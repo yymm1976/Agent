@@ -14,6 +14,10 @@ export interface RemoteTurnContext {
 }
 
 export interface RemoteTurnContextInput extends Partial<RemoteTurnContext> {
+  /** Device identity is carried into the execution/audit context for remote turns. */
+  deviceId?: string;
+  /** Internal scheduler signal; never serialized over the remote protocol. */
+  schedulerSignal?: AbortSignal;
   skillIds?: string[];
   mcpServerIds?: string[];
   allowedToolNames?: string[];
