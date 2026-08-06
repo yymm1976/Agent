@@ -80,11 +80,15 @@ export function createLLMClient(config: LLMClientConfig): ILLMClient {
   // 按 protocol 分发：处理 openai/openai-responses/anthropic/gemini 基础客户端
   switch (config.protocol) {
     case 'openai':
+      // P2 修复（复审方案 B）：官方 OpenAI Chat Completions 端点支持
+      // prompt_cache_key（enableCache 时发送）；DeepSeek 等缓存自动的
+      // provider 不传该 capability
       return new OpenAIClient({
         providerId: config.id,
         baseUrl: config.baseUrl,
         apiKey: config.apiKey,
         timeoutMs: config.timeoutMs,
+        capabilities: { promptCacheKey: true },
       });
     case 'openai-responses':
       // OpenAI Responses API 客户端（input/output items + instructions 模型）

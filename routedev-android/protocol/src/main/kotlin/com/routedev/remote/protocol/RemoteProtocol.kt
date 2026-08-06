@@ -43,6 +43,7 @@ enum class RemoteDeviceScope {
 enum class RemoteEventType {
     @SerialName("session.created") SESSION_CREATED,
     @SerialName("session.updated") SESSION_UPDATED,
+    @SerialName("turn.queued") TURN_QUEUED,
     @SerialName("turn.started") TURN_STARTED,
     @SerialName("assistant.text.delta") ASSISTANT_TEXT_DELTA,
     @SerialName("assistant.reasoning.delta") ASSISTANT_REASONING_DELTA,

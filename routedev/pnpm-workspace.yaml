@@ -3,6 +3,13 @@
 allowBuilds:
   electron: true
   esbuild: true
+  # 构建脚本显式决策（2026-08-06 复审：ERR_PNPM_IGNORED_BUILDS 修复）
+  # sharp：@xenova/transformers 本地嵌入的原生绑定，需要 install 脚本 → true
+  sharp: true
+  # puppeteer：browser 工具需要下载 Chromium，需要 install 脚本 → true
+  puppeteer: true
+  # protobufjs：onnx-proto 可选链的 pbjs 包装生成（主功能不需要）→ false
+  protobufjs: false
 # pnpm 11+ 项目设置（原 .npmrc 的 enable-pre-post-scripts/save-exact/min-release-age 迁移至此）
 saveExact: true
 enablePrePostScripts: true

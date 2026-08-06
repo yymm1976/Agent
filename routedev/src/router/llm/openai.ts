@@ -51,8 +51,15 @@ export class OpenAIClient extends BaseLLMClient {
     baseUrl: string;
     apiKey: string;
     timeoutMs?: number;
+    /**
+     * P2 修复（复审方案 B）：构造级能力配置——避免为每个 Provider 增加子类。
+     * 官方 OpenAI Chat Completions 端点支持 prompt_cache_key；DeepSeek 不支持
+     * （缓存自动）故不开启。thinking/reasoningEffort 仍由 DeepSeekClient 显式开启。
+     */
+    capabilities?: { promptCacheKey?: boolean };
   }) {
     super(config);
+    this.supportsPromptCacheKey = config.capabilities?.promptCacheKey === true;
     // 安全策略：apiKey 为空时不构造假客户端，避免运行时用 'placeholder' 调用 API 导致 401
     // 调用方应在调用前检查 isReady()，未就绪时跳过该客户端
     if (!config.apiKey) {
