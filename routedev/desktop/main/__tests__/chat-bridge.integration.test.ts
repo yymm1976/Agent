@@ -51,6 +51,7 @@ function makeRouteDecision(): RoutingResult {
       tier: 'simple',
       contextWindow: 4096,
       capabilities: [],
+      maxSchemaTokens: 4096,
       latencyMs: 0,
       available: true,
     },

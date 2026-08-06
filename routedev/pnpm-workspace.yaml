@@ -14,3 +14,16 @@ allowBuilds:
 saveExact: true
 enablePrePostScripts: true
 minimumReleaseAge: 2880
+
+# 供应链漏洞修复 overrides（2026-08-06 audit：pnpm 11 设置统一在 workspace yaml）
+# protobufjs：onnx 链 6.11.6 多个 critical/high（GHSA-xq3m-2v4x-88gg 等，修复 >=7.6.1）
+# js-yaml：electron-updater 依赖 4.2.0（修复 >=4.3.0）
+# fast-uri：MCP SDK>ajv 依赖 3.1.2（修复 >=3.1.5）
+# sharp：@xenova/transformers 依赖 0.32.6（修复 >=0.35.0）
+# ip-address：MCP SDK>express-rate-limit 依赖 10.2.0（修复 >=10.3.1）
+overrides:
+  protobufjs: ^7.6.1
+  js-yaml: ^4.3.0
+  fast-uri: ^3.1.5
+  sharp: ^0.35.0
+  ip-address: ^10.3.1

@@ -171,6 +171,7 @@ export function SetupWizard({ saveConfig }: SetupWizardProps) {
             tier: 'medium',
             contextWindow: 128000,
             capabilities: [],
+            maxSchemaTokens: 4096,
             latencyMs: 0,
             available: true,
           },

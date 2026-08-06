@@ -246,6 +246,7 @@ export const EMPTY_MODEL: ModelConfig = {
   provider: '',
   tier: 'medium',
   contextWindow: 128000,
+  maxSchemaTokens: 4096,
   capabilities: [],
   latencyMs: 0,
   available: true,

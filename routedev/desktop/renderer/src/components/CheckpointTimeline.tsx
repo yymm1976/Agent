@@ -116,32 +116,6 @@ export function CheckpointTimeline({ projectId, showHeader = true }: CheckpointT
     loadCheckpoints();
   }, [loadCheckpoints]);
 
-  /** 执行回滚 */
-  const handleRollback = async () => {
-    if (!confirmCheckpoint) return;
-    try {
-      setRollingBack(true);
-      setRollbackResult(null);
-      const result = await window.routedev.checkpoint.rollback(confirmCheckpoint.id);
-      if (result.success) {
-        setRollbackResult({ success: true, message: '回滚成功' });
-        setConfirmCheckpoint(null);
-        // 重新加载检查点列表（回滚后该检查点之后的检查点会被清理）
-        await loadCheckpoints();
-        setSelectedId(null);
-      } else {
-        setRollbackResult({ success: false, message: result.error || '回滚失败' });
-      }
-    } catch (err) {
-      setRollbackResult({
-        success: false,
-        message: err instanceof Error ? err.message : '回滚失败',
-      });
-    } finally {
-      setRollingBack(false);
-    }
-  };
-
   /** 渲染单个检查点节点 */
   const renderCheckpoint = (cp: CheckpointInfo, isLast: boolean) => {
     const isSelected = selectedId === cp.id;
