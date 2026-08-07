@@ -21,8 +21,23 @@ export interface OrderedRevision {
   id: string;
 }
 
+import { randomBytes } from 'node:crypto';
+
 /** 进程内单调计数器（模块级，跨 createOrderedRevision 调用递增） */
 let monotonicCounter = 0;
+
+/**
+ * A4 修复：fixed-width base36 编码——保证 id 字符串序与数值序一致。
+ * 变长编码在进位边界错序（'9' vs '10'：字典序 '10' < '9'）；fixed-width
+ * 前缀对齐后字符串比较 = 数值比较。36^10 ≈ 3.6e15 ms（远超 Date.now
+ * 1.7e12），36^6 ≈ 2.1e9（进程内单调计数足够）。
+ */
+const TS_WIDTH = 10;
+const SEQ_WIDTH = 6;
+
+function toFixedBase36(value: number, width: number): string {
+  return value.toString(36).padStart(width, '0');
+}
 
 /**
  * 创建新的 OrderedRevision。
@@ -31,9 +46,9 @@ let monotonicCounter = 0;
 export function createOrderedRevision(now: number = Date.now()): OrderedRevision {
   monotonicCounter += 1;
   const seq = monotonicCounter;
-  // 随机分量：跨进程/重启后同毫秒 id 不冲突（字符串序仍由前缀主导）
-  const rand = Math.floor(Math.random() * 0xffffff).toString(36);
-  const id = `${now.toString(36)}-${seq.toString(36)}-${rand}`;
+  // A4 修复：crypto 随机分量（不依赖 Math.random 做 identity collision protection）
+  const rand = randomBytes(4).toString('hex');
+  const id = `${toFixedBase36(now, TS_WIDTH)}-${toFixedBase36(seq, SEQ_WIDTH)}-${rand}`;
   return { wallTimeMs: now, sequence: seq, id };
 }
 

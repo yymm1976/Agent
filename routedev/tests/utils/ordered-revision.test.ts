@@ -43,4 +43,25 @@ describe('第九轮 OrderedRevision 原语', () => {
     const ids = new Set(Array.from({ length: 20 }, () => createOrderedRevision(now).id));
     expect(ids.size).toBe(20);
   });
+
+  it('A4 修复：id 字符串序与数值序一致（fixed-width 进位边界）', () => {
+    // 变长 base36 在进位边界错序：'9' vs '10'（字典序 '10' < '9'）、
+    // 'z' vs '10'（36 进制 z=35 → 10=36）。fixed-width 后字符串序 = 数值序。
+    const base = 1786123456789;
+    const revisions = [0, 9, 10, 35, 36, 1295, 1296, base].map((v) => createOrderedRevision(v));
+    for (let i = 1; i < revisions.length; i += 1) {
+      expect(revisions[i - 1].id < revisions[i].id).toBe(true);
+      expect(compareRevision(revisions[i - 1], revisions[i])).toBeLessThan(0);
+    }
+  });
+
+  it('A4 修复：id 定长前缀（timestamp 10 位 + sequence 6 位 base36）', () => {
+    const now = 1786123456789;
+    const a = createOrderedRevision(now);
+    const b = createOrderedRevision(now);
+    const [tsA, seqA] = a.id.split('-');
+    expect(tsA.length).toBe(10);
+    expect(seqA.length).toBe(6);
+    expect(seqA < b.id.split('-')[1]).toBe(true);
+  });
 });

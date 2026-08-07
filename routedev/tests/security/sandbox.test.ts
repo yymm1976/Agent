@@ -88,7 +88,8 @@ describe('CommandSandbox', () => {
     it('白名单匹配 basename（/usr/bin/node 也算匹配 node）', () => {
       const opts: SandboxOptions = { allowedCommands: ['node'] };
       expect(CommandSandbox.validateCommand('/usr/bin/node', opts).allowed).toBe(true);
-      expect(CommandSandbox.validateCommand('C:\\Program Files\\nodejs\\node.exe', opts).allowed).toBe(true);
+      // 字符串接口契约：含空格盘符路径需引号（与 shell 语义一致）；结构化接口支持裸路径
+      expect(CommandSandbox.validateCommand('"C:\\Program Files\\nodejs\\node.exe"', opts).allowed).toBe(true);
     });
 
     it('白名单为空数组时全部允许', () => {
@@ -434,6 +435,87 @@ describe('CommandSandbox', () => {
     it('fork bomb 仍由 regex defense-in-depth 拦截', () => {
       const opts: SandboxOptions = { allowedCommands: [] };
       expect(CommandSandbox.validateCommand(':(){:|:&};:', opts).allowed).toBe(false);
+    });
+  });
+
+  describe('A1 ExecutableIdentity V3：canonical 归一唯一权威', () => {
+    it('normalizeExecutableIdentity 统一 .exe/.cmd/.bat/.com 扩展（含 .com 补齐）', async () => {
+      const { normalizeExecutableIdentity } = await import('../../src/security/executable-identity.js');
+      expect(normalizeExecutableIdentity('node.exe').canonicalName).toBe('node');
+      expect(normalizeExecutableIdentity('npm.cmd').canonicalName).toBe('npm');
+      expect(normalizeExecutableIdentity('cmd.exe').canonicalName).toBe('cmd');
+      expect(normalizeExecutableIdentity('powershell.exe').canonicalName).toBe('powershell');
+      expect(normalizeExecutableIdentity('format.com').canonicalName).toBe('format');
+      expect(normalizeExecutableIdentity('C:\\Windows\\System32\\shutdown.exe').canonicalName).toBe('shutdown');
+      expect(normalizeExecutableIdentity('/usr/bin/node').canonicalName).toBe('node');
+    });
+
+    it('OLD→FAIL 场景：shutdown.exe / cmd.exe -c / powershell.exe -Command 危险策略拒绝', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      // shutdown.exe（此前 regex ^shutdown 不匹配带 .exe 与路径前缀）
+      expect(CommandSandbox.validateCommand('shutdown.exe -h now', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('C:\\Windows\\System32\\shutdown.exe -h now', opts).allowed).toBe(false);
+      // cmd.exe /c（此前 shell 解释器判定只认 'cmd'）
+      expect(CommandSandbox.validateCommand('cmd.exe /c echo hi', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('C:\\Windows\\System32\\cmd.exe /c echo hi', opts).allowed).toBe(false);
+      // powershell.exe -Command
+      expect(CommandSandbox.validateCommand('powershell.exe -Command Get-Process', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('pwsh.exe -Command Get-Process', opts).allowed).toBe(false);
+    });
+
+    it('format.com 归一为 format 后危险策略拒绝（此前 regex ^format 不匹配）', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      expect(CommandSandbox.validateCommand('format.com C:', opts).allowed).toBe(false);
+    });
+  });
+
+  describe('A2 rm 结构化 argv 策略', () => {
+    it('combined short flags 与 separated flags 等价拒绝', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      // combined
+      expect(CommandSandbox.validateCommand('rm -rf /', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('rm -fr /', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('rm -rfi /', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('rm -rvf /', opts).allowed).toBe(false);
+      // separated
+      expect(CommandSandbox.validateCommand('rm -r -f /', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('rm -f -r /', opts).allowed).toBe(false);
+      // long
+      expect(CommandSandbox.validateCommand('rm --recursive --force /', opts).allowed).toBe(false);
+      // -- 终止符
+      expect(CommandSandbox.validateCommand('rm -rf -- /', opts).allowed).toBe(false);
+      // 路径限定
+      expect(CommandSandbox.validateCommand('/bin/rm -r -f /', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('/usr/bin/rm --recursive --force /', opts).allowed).toBe(false);
+    });
+
+    it('target 归一化：/./、//、/x/.. 等价于根', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      expect(CommandSandbox.validateCommand('rm -rf /.', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('rm -rf /./', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('rm -rf //', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('rm -rf /etc/..', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('rm -rf $HOME', opts).allowed).toBe(false);
+    });
+
+    it('无 recursive/force 时普通 rm 不拦截（非破坏性语义）', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      expect(CommandSandbox.validateCommand('rm /tmp/old.txt', opts).allowed).toBe(true);
+      expect(CommandSandbox.validateCommand('rm -i /tmp/old.txt', opts).allowed).toBe(true);
+    });
+
+    it('同类检查：dd/mkfs/format/del/shutdown 的 path-qualified 与 flag 分离均拒绝', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      // dd 裸设备（路径限定 + 参数 of=/dev/）
+      expect(CommandSandbox.validateCommand('/usr/bin/dd if=/dev/zero of=/dev/sda', opts).allowed).toBe(false);
+      // mkfs 路径限定
+      expect(CommandSandbox.validateCommand('/sbin/mkfs.ext4 /dev/sda1', opts).allowed).toBe(false);
+      // format.com 路径限定
+      expect(CommandSandbox.validateCommand('C:\\Windows\\System32\\format.com C:', opts).allowed).toBe(false);
+      // del /f /s /q 分离 flag
+      expect(CommandSandbox.validateCommand('del /f /s /q C:\\evil', opts).allowed).toBe(false);
+      // shutdown 路径限定
+      expect(CommandSandbox.validateCommand('/sbin/shutdown -h now', opts).allowed).toBe(false);
     });
   });
 });

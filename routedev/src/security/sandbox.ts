@@ -21,6 +21,8 @@ import { logger } from '../utils/logger.js';
 import { auditPanel } from './audit-panel.js';
 // F-040：使用 parseCommand 正确解析带引号命令的首 token
 import { parseCommand } from '../tools/command-parser.js';
+import { normalizeExecutableIdentity } from './executable-identity.js';
+import { checkRmPolicy } from './destructive-policy.js';
 
 // ============================================================
 // 类型定义
@@ -150,6 +152,10 @@ function checkDangerousPolicy(
   const base = executableName.toLowerCase();
   const rawBase = firstToken.toLowerCase();
 
+  // A2：rm 结构化 argv 策略（combined/separated flags + target 归一）
+  const rmReason = checkRmPolicy(base, args);
+  if (rmReason) return rmReason;
+
   // 系统关机/重启类：basename 命中即拒绝（路径拼写无关）
   if (SHUTDOWN_COMMANDS.has(base)) {
     return '系统关机/重启命令（shutdown/reboot/halt/poweroff）';
@@ -200,32 +206,6 @@ function checkDangerousPolicy(
 // ============================================================
 // CommandSandbox 主类
 // ============================================================
-
-/** P0 复审：可执行名跨平台规范化（win32/posix basename 取短者） */
-function extractExecutableName(s: string): string {
-  const win = path.win32.basename(s);
-  const posix = path.posix.basename(s);
-  const candidate = win.length <= posix.length ? win : posix;
-  return candidate.toLowerCase();
-}
-
-/**
- * P0 复审：提取 executable identity token——
- * - 带引号路径：parseCommand 正确处理（"C:\Program Files
-ode.exe"）
- * - 无引号 Windows 盘符路径（结构化入口 command 即完整 executable）：
- *   整段视为 executable（spawn 语义），不按空格 tokenize
- * - 普通命令：parseCommand 首 token
- */
-function executableToken(command: string): string {
-  const raw = command.trim();
-  const quoted = (raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"));
-  // 盘符路径（C:\ 或 C:/）：未加引号时整段视为 executable（含空格不切分）
-  if (!quoted && /^[A-Za-z]:[\\/]/.test(raw)) {
-    return raw;
-  }
-  return parseCommand(command).command || raw;
-}
 
 export class CommandSandbox {
   private readonly options: Required<
@@ -483,10 +463,10 @@ export class CommandSandbox {
     // P0 修复（复审）：executable identity 只来自首 token——**移除整条命令的
     // basename 匹配**（cmdNameFromWhole）：`allowed:['node']` 时 `/tmp/evil /tmp/node`
     // 的 whole-basename 是 'node' → 放行，参数路径可冒充 executable（P0 安全绕过）。
-    const firstToken = executableToken(command);
-    const cmdNameFromFirst = extractExecutableName(firstToken);
+    const identity = normalizeExecutableIdentity(command);
+    const firstToken = identity.token;
+    const cmdNameFromFirst = identity.canonicalName;
     // 去掉 Windows 可执行文件扩展名（.exe / .cmd / .bat）
-    const stripExt = (s: string) => s.replace(/\.(exe|cmd|bat)$/i, '');
 
     // 2) 危险模式检测（对完整命令行匹配；fork bomb 等 regex 保留为 defense-in-depth）
     for (const pattern of DANGEROUS_PATTERNS) {
@@ -516,7 +496,7 @@ export class CommandSandbox {
       const matched = allowedLower.some(
         (c) =>
           c === cmdNameFromFirst ||
-          c === stripExt(cmdNameFromFirst) ||
+          c === cmdNameFromFirst ||
           c === firstToken.toLowerCase(),
       );
       if (!matched) {
@@ -534,7 +514,7 @@ export class CommandSandbox {
       const matched = blockedLower.some(
         (c) =>
           c === cmdNameFromFirst ||
-          c === stripExt(cmdNameFromFirst) ||
+          c === cmdNameFromFirst ||
           c === firstToken.toLowerCase(),
       );
       if (matched) {
@@ -581,10 +561,11 @@ export class CommandSandbox {
     if (!command || typeof command !== 'string' || command.trim() === '') {
       return { allowed: false, reason: '命令为空' };
     }
-    // executable identity：只看 command（spawn 的真实可执行文件）
-    const firstToken = executableToken(command);
-    const cmdName = extractExecutableName(firstToken);
-    const stripExt = (s: string) => s.replace(/\.(exe|cmd|bat)$/i, '');
+    // executable identity：只看 command（spawn 的真实可执行文件）——
+    // 结构化入口：command 即完整 executable（含空格路径不需要引号）
+    const identity = normalizeExecutableIdentity(command, { wholeAsExecutable: true });
+    const firstToken = identity.token;
+    const cmdName = identity.canonicalName;
 
     // 危险模式：对完整语义（command + args）匹配
     const full = args.length > 0 ? `${command} ${args.join(' ')}` : command;
@@ -608,7 +589,7 @@ export class CommandSandbox {
     if (allowed && allowed.length > 0) {
       const allowedLower = allowed.map((c) => c.toLowerCase());
       const matched = allowedLower.some(
-        (c) => c === cmdName || c === stripExt(cmdName) || c === firstToken.toLowerCase(),
+        (c) => c === cmdName || c === cmdName || c === firstToken.toLowerCase(),
       );
       if (!matched) {
         return {
@@ -623,7 +604,7 @@ export class CommandSandbox {
     if (blocked && blocked.length > 0) {
       const blockedLower = blocked.map((c) => c.toLowerCase());
       const matched = blockedLower.some(
-        (c) => c === cmdName || c === stripExt(cmdName) || c === firstToken.toLowerCase(),
+        (c) => c === cmdName || c === cmdName || c === firstToken.toLowerCase(),
       );
       if (matched) {
         return {

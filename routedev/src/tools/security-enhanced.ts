@@ -313,22 +313,8 @@ function commandContainsDestructiveRmTarget(command: string): boolean {
   return false;
 }
 
-/** 单参数归一化判定：折叠后为 /、/* 或 ~（家目录）即危险 */
-function isDestructiveRmTarget(raw: string): boolean {
-  let normalized = raw.replace(/\$\{HOME\}/g, '~').replace(/\$HOME/g, '~');
-  if (normalized === '~' || normalized.startsWith('~/')) return true;
-  // 折叠 //、/./、/x/../（迭代折叠直到稳定；尾部 .. 上溯到根）
-  let prev = '';
-  while (prev !== normalized) {
-    prev = normalized;
-    normalized = normalized
-      .replace(/\/+/g, '/')
-      .replace(/\/\.(?=\/|$)/g, '')
-      .replace(/\/[^/.]+\/\.\.(?=\/|$)/g, '')
-      .replace(/\/\.\.(?=\/|$)/g, '/');
-  }
-  return normalized === '/' || normalized.startsWith('/*');
-}
+/** A2：rm target 归一化唯一权威在 src/security/destructive-policy.ts——本文件复用 */
+import { isDestructiveRmTarget } from '../security/destructive-policy.js';
 
 /**
  * 7 层 Bash 命令安全检查（借鉴 Claude Code bashSecurity.ts）
