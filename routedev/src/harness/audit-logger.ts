@@ -13,6 +13,7 @@ import type {
   TrajectorySummary,
 } from './trace-types.js';
 import { logger } from '../utils/logger.js';
+import { createOrderedRevision } from '../utils/ordered-revision.js';
 import { getAppDataDir, ensureDir } from '../utils/paths.js';
 
 /** Phase 40 Task 3：质量元数据（附加到审计记录） */
@@ -83,8 +84,6 @@ export class AuditLogger {
   /** 上一条记录的 hash（链式） */
   private previousHash: string = GENESIS_HASH;
   private sessionId: string;
-  /** P0 复审：同进程内单调序号（同毫秒审计记录排序 tie-breaker） */
-  private seq = 0;
 
   constructor(sessionId: string, config?: Partial<AuditLoggerConfig>) {
     this.sessionId = sessionId;
@@ -104,9 +103,28 @@ export class AuditLogger {
     }
   }
 
-  /** Phase 53 Task 4：计算记录的 SHA-256 哈希 */
+  /**
+   * Phase 53 Task 4：计算记录的 SHA-256 哈希
+   * 第九轮复审（AuditEnvelope V2）：canonical serialization——覆盖全部
+   * 安全相关字段（eventId/sequence/sessionId/result/confirmation/
+   * qualityMetadata 此前缺失：攻击者改 result 或 sequence 后链仍验证通过）。
+   * JSON.stringify 的对象键序 = 字面量声明序（确定性），无需额外排序。
+   */
   private computeHash(record: AuditRecord, previousHash: string): string {
-    const data = `${record.timestamp}${record.agentId}${record.action}${record.target}${previousHash}${JSON.stringify(record.details)}`;
+    const data = JSON.stringify({
+      timestamp: record.timestamp,
+      eventId: record.eventId,
+      sequence: record.sequence,
+      sessionId: record.sessionId,
+      agentId: record.agentId,
+      action: record.action,
+      target: record.target,
+      result: record.result,
+      confirmation: record.confirmation,
+      qualityMetadata: (record as QualityAuditRecord).qualityMetadata,
+      details: record.details,
+      previousHash,
+    });
     return crypto.createHash('sha256').update(data).digest('hex');
   }
 
@@ -156,10 +174,12 @@ export class AuditLogger {
   ): void {
     if (!this.config.enabled) return;
 
+    // 第九轮复审：确定性顺序原语——eventId 可排序、sequence 单调
+    const rev = createOrderedRevision();
     const record: AuditRecord = {
-      timestamp: new Date().toISOString(),
-      // P0 复审：单调序号——同毫秒连续记录排序确定
-      sequence: ++this.seq,
+      timestamp: new Date(rev.wallTimeMs).toISOString(),
+      eventId: rev.id,
+      sequence: rev.sequence,
       sessionId: this.sessionId,
       action,
       agentId,
@@ -385,7 +405,9 @@ export class AuditLogger {
     ensureDir(dayDir);
 
     // Phase 53 Task 4：哈希链启用时，附加 previousHash + hash 字段
-    let recordToWrite: AuditRecord | HashChainRecord = record;
+    // 第九轮复审（AuditEnvelope V2 事务性）：先持久化、成功后才推进内存 chain head。
+    // 此前先推进 previousHash 再 append——append 失败时内存链指向不存在的 B，
+    // 下一条 C 写 previousHash=B 但磁盘无 B，链永久断裂（A → [B missing] → C）。
     if (this.chainConfig.enabled) {
       const hash = this.computeHash(record, this.previousHash);
       const chainRecord: HashChainRecord = {
@@ -393,13 +415,20 @@ export class AuditLogger {
         previousHash: this.previousHash,
         hash,
       };
-      this.previousHash = hash; // 更新链指针
-      recordToWrite = chainRecord;
+      try {
+        fsSync.appendFileSync(filePath, JSON.stringify(chainRecord) + '\n', 'utf-8');
+        this.previousHash = hash; // 持久化成功才 commit chain head
+      } catch (err) {
+        logger.warn('AuditLogger: write failed (chain head not advanced)', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return;
     }
 
     // 同步写入保证测试可读性；生产环境可换 appendFile
     try {
-      fsSync.appendFileSync(filePath, JSON.stringify(recordToWrite) + '\n', 'utf-8');
+      fsSync.appendFileSync(filePath, JSON.stringify(record) + '\n', 'utf-8');
     } catch (err) {
       logger.warn('AuditLogger: write failed', {
         error: err instanceof Error ? err.message : String(err),

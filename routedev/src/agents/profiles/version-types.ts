@@ -20,8 +20,15 @@ export interface FieldChange {
 export interface VersionMeta {
   versionId: string;
   profileId: string;
-  /** 创建时间戳（ms） */
+  /** 创建时间戳（ms）——展示用；排序以 revision 为准 */
   timestamp: number;
+  /**
+   * 第九轮复审：单调版本号（同 profile 内递增，唯一排序键）。
+   * listVersions/rollback/retention 全部基于 revision——
+   * 不再依赖墙钟毫秒（同毫秒保存两个版本时"谁新谁旧"由 revision 表达）。
+   * 历史版本无此字段时按 timestamp 兼容排序。
+   */
+  revision: number;
   source: VersionSource;
   /** 相对上一版本的字段变更 */
   fieldChanges: FieldChange[];

@@ -120,6 +120,84 @@ const DANGEROUS_PATTERNS: RegExp[] = [
 ];
 
 // ============================================================
+// 第九轮复审：结构化危险执行策略（ExecutionPolicy V2）
+// 危险命令不依赖路径拼写——executable basename 归一后判定：
+//   /sbin/shutdown、/usr/bin/dd、C:\Windows\System32ormat.com
+//   与裸命令等价。regex 仅保留 fork bomb 等 defense-in-depth。
+// ============================================================
+
+/** 系统关机/重启类（任意路径前缀均拒绝） */
+const SHUTDOWN_COMMANDS = new Set(['shutdown', 'reboot', 'halt', 'poweroff']);
+
+/** mkfs 系列（格式化文件系统）：mkfs / mkfs.ext4 / mkfs.xfs ... */
+const MKFS_PATTERN = /^mkfs(\.|$)/;
+
+/** shell 解释器（高风险类别：-c 可执行任意命令） */
+const SHELL_INTERPRETERS = new Set(['bash', 'sh', 'zsh', 'cmd', 'powershell', 'pwsh']);
+
+/**
+ * 结构化危险策略：基于 normalized executable（basename）判定命令语义。
+ * @param executableName 归一化可执行名（小写、已 strip .exe/.cmd/.bat）
+ * @param firstToken 原始首 token（Windows format.com 等扩展名保留判定用）
+ * @param args 结构化参数（dd 的 of=/dev/* 检查）
+ * @returns 危险原因；undefined = 通过结构化策略
+ */
+function checkDangerousPolicy(
+  executableName: string,
+  firstToken: string,
+  args: readonly string[],
+): string | undefined {
+  const base = executableName.toLowerCase();
+  const rawBase = firstToken.toLowerCase();
+
+  // 系统关机/重启类：basename 命中即拒绝（路径拼写无关）
+  if (SHUTDOWN_COMMANDS.has(base)) {
+    return '系统关机/重启命令（shutdown/reboot/halt/poweroff）';
+  }
+
+  // mkfs 系列：basename 命中 mkfs/mkfs.* 即拒绝
+  if (MKFS_PATTERN.test(base)) {
+    return '文件系统格式化命令（mkfs 系列）';
+  }
+
+  // dd 裸设备写入：executable == dd 且参数含 of=/dev/*
+  if (base === 'dd') {
+    const hasDeviceWrite = args.some((a) => /^of=\/dev\//.test(a));
+    if (hasDeviceWrite) {
+      return 'dd 写入裸设备（of=/dev/*）';
+    }
+  }
+
+  // Windows format：format / format.com（任意路径前缀）
+  if (base === 'format' || rawBase === 'format.com' || base === 'format.com') {
+    // 目标盘符（format C:）或裸调用均拒绝
+    const hasDriveTarget = args.some((a) => /^[a-z]:/i.test(a));
+    if (hasDriveTarget || args.length === 0) {
+      return 'Windows format 磁盘格式化';
+    }
+  }
+
+  // Windows del /f /s /q（强制递归静默删除）
+  if (base === 'del') {
+    const flags = args.join(' ').toLowerCase();
+    if (flags.includes('/f') && flags.includes('/s') && flags.includes('/q')) {
+      return 'Windows del /f /s /q 强制递归删除';
+    }
+  }
+
+  // shell 解释器 -c 执行任意命令（显式高风险类别）
+  if (SHELL_INTERPRETERS.has(base)) {
+    const hasEvalFlag = args.some((a) => a === '-c' || a === '/c' || a === '-command' || a === '-Command');
+    if (hasEvalFlag) {
+      return 'shell 解释器 -c 执行任意命令（bash/sh/cmd/powershell）';
+    }
+  }
+
+  return undefined;
+}
+
+
+// ============================================================
 // CommandSandbox 主类
 // ============================================================
 
@@ -410,7 +488,7 @@ export class CommandSandbox {
     // 去掉 Windows 可执行文件扩展名（.exe / .cmd / .bat）
     const stripExt = (s: string) => s.replace(/\.(exe|cmd|bat)$/i, '');
 
-    // 2) 危险模式检测（对完整命令行匹配）
+    // 2) 危险模式检测（对完整命令行匹配；fork bomb 等 regex 保留为 defense-in-depth）
     for (const pattern of DANGEROUS_PATTERNS) {
       if (pattern.test(command)) {
         return {
@@ -418,6 +496,17 @@ export class CommandSandbox {
           reason: `命中危险命令模式: ${pattern.source}`,
         };
       }
+    }
+    // 第九轮复审：结构化危险策略（basename 归一——/sbin/shutdown 与 shutdown 等价；
+    // 字符串接口从 command 剩余部分解析参数供 dd of=/dev/*、bash -c 等语义检查）
+    const restArgs = command.slice(firstToken.length).trim();
+    const structuredReason = checkDangerousPolicy(
+      cmdNameFromFirst,
+      firstToken,
+      restArgs.length > 0 ? restArgs.split(/\s+/) : [],
+    );
+    if (structuredReason) {
+      return { allowed: false, reason: structuredReason };
     }
 
     // 3) 白名单检查（只认 executable identity——首 token）
@@ -506,6 +595,12 @@ export class CommandSandbox {
           reason: `命中危险命令模式: ${pattern.source}`,
         };
       }
+    }
+    // 第九轮复审：结构化危险策略（basename 归一 + 参数语义：
+    // dd of=/dev/*、format C:、del /f/s/q、shell -c）
+    const structuredReason = checkDangerousPolicy(cmdName, firstToken, args);
+    if (structuredReason) {
+      return { allowed: false, reason: structuredReason };
     }
 
     // 白名单（只认 executable）

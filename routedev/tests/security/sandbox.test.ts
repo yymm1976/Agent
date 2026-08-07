@@ -390,4 +390,50 @@ describe('CommandSandbox', () => {
       expect(CommandSandbox.validateCommand('/usr/bin/node', opts).allowed).toBe(true);
     });
   });
+
+  describe('第九轮 ExecutionPolicy V2：path-qualified 危险命令', () => {
+    it('/sbin/shutdown -h now 与 shutdown -h now 等价拒绝', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] }; // 白名单空 = 全部允许，危险策略独立拦截
+      expect(CommandSandbox.validateCommand('/sbin/shutdown -h now', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('shutdown -h now', opts).allowed).toBe(false);
+    });
+
+    it('/usr/bin/dd of=/dev/sda 与 dd 裸设备写入等价拒绝', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      expect(CommandSandbox.validateCommand('/usr/bin/dd if=/dev/zero of=/dev/sda', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('dd if=/dev/zero of=/dev/sda', opts).allowed).toBe(false);
+    });
+
+    it('/sbin/mkfs.ext4 与 mkfs 等价拒绝', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      expect(CommandSandbox.validateCommand('/sbin/mkfs.ext4 /dev/sda1', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('mkfs.xfs /dev/sda1', opts).allowed).toBe(false);
+    });
+
+    it('Windows C:\\Windows\\System32\\format.com C: 与 format 等价拒绝', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      const validation = CommandSandbox.validateExecution(
+        'C:\\Windows\\System32\\format.com',
+        ['C:'],
+        opts,
+      );
+      expect(validation.allowed).toBe(false);
+      expect(validation.reason).toContain('format');
+    });
+
+    it('shell 解释器 -c 执行任意命令为显式高风险类别（bash -c / powershell -Command）', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      expect(CommandSandbox.validateCommand('bash -c "rm -rf /"', opts).allowed).toBe(false);
+      const ps = CommandSandbox.validateExecution('powershell', ['-Command', 'Get-Process'], opts);
+      expect(ps.allowed).toBe(false);
+      expect(ps.reason).toContain('shell');
+      // 裸解释器执行脚本（无 -c）不拦截（脚本内容风险由其他策略覆盖）
+      expect(CommandSandbox.validateCommand('bash /opt/script.sh', opts).allowed).toBe(true);
+    });
+
+    it('fork bomb 仍由 regex defense-in-depth 拦截', () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      expect(CommandSandbox.validateCommand(':(){:|:&};:', opts).allowed).toBe(false);
+    });
+  });
 });

@@ -231,6 +231,8 @@ describe('AuditLogger 哈希链接入', () => {
     const crypto = require('node:crypto');
     const r1: HashChainRecord = {
       timestamp: new Date().toISOString(),
+      eventId: `ev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      sequence: 1,
       sessionId: 'verifier-session',
       action: 'file_write',
       agentId: 'main',
@@ -240,11 +242,26 @@ describe('AuditLogger 哈希链接入', () => {
       previousHash: genesisPrev,
       hash: '',
     };
-    const data1 = `${r1.timestamp}${r1.agentId}${r1.action}${r1.target}${genesisPrev}${JSON.stringify(r1.details)}`;
+    const data1 = JSON.stringify({
+      timestamp: r1.timestamp,
+      eventId: r1.eventId,
+      sequence: r1.sequence,
+      sessionId: r1.sessionId,
+      agentId: r1.agentId,
+      action: r1.action,
+      target: r1.target,
+      result: r1.result,
+      confirmation: r1.confirmation,
+      qualityMetadata: (r1 as Record<string, unknown>).qualityMetadata,
+      details: r1.details,
+      previousHash: genesisPrev,
+    });
     r1.hash = crypto.createHash('sha256').update(data1).digest('hex');
 
     const r2: HashChainRecord = {
       timestamp: new Date().toISOString(),
+      eventId: `ev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      sequence: 1,
       sessionId: 'verifier-session',
       action: 'shell_exec',
       agentId: 'main',
@@ -254,7 +271,20 @@ describe('AuditLogger 哈希链接入', () => {
       previousHash: r1.hash,
       hash: '',
     };
-    const data2 = `${r2.timestamp}${r2.agentId}${r2.action}${r2.target}${r1.hash}${JSON.stringify(r2.details)}`;
+    const data2 = JSON.stringify({
+      timestamp: r2.timestamp,
+      eventId: r2.eventId,
+      sequence: r2.sequence,
+      sessionId: r2.sessionId,
+      agentId: r2.agentId,
+      action: r2.action,
+      target: r2.target,
+      result: r2.result,
+      confirmation: r2.confirmation,
+      qualityMetadata: (r2 as Record<string, unknown>).qualityMetadata,
+      details: r2.details,
+      previousHash: r1.hash,
+    });
     r2.hash = crypto.createHash('sha256').update(data2).digest('hex');
 
     // 完整链应通过验证
@@ -268,6 +298,8 @@ describe('AuditLogger 哈希链接入', () => {
 
     const r1: HashChainRecord = {
       timestamp: new Date().toISOString(),
+      eventId: `ev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      sequence: 1,
       sessionId: 'verifier-session',
       action: 'file_write',
       agentId: 'main',
@@ -277,7 +309,20 @@ describe('AuditLogger 哈希链接入', () => {
       previousHash: genesisPrev,
       hash: '',
     };
-    const data1 = `${r1.timestamp}${r1.agentId}${r1.action}${r1.target}${genesisPrev}${JSON.stringify(r1.details)}`;
+    const data1 = JSON.stringify({
+      timestamp: r1.timestamp,
+      eventId: r1.eventId,
+      sequence: r1.sequence,
+      sessionId: r1.sessionId,
+      agentId: r1.agentId,
+      action: r1.action,
+      target: r1.target,
+      result: r1.result,
+      confirmation: r1.confirmation,
+      qualityMetadata: (r1 as Record<string, unknown>).qualityMetadata,
+      details: r1.details,
+      previousHash: genesisPrev,
+    });
     r1.hash = crypto.createHash('sha256').update(data1).digest('hex');
 
     // 篡改：target 与 hash 不一致

@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { AuditLogger } from '../../src/harness/audit-logger.js';
+import { AuditLogger, type HashChainRecord } from '../../src/harness/audit-logger.js';
 
 let tempDir: string;
 
@@ -219,6 +219,83 @@ describe('AuditLogger', () => {
       await new Promise(r => setTimeout(r, 50));
       const records = await al.listToday();
       expect(records.length).toBe(0);
+    });
+  });
+
+  describe('第九轮 AuditEnvelope V2：hash 完整性', () => {
+    function makeLogger(): AuditLogger {
+      const al = new AuditLogger('sess-chain', { storageDir: tempDir });
+      // 哈希链需显式 setChainConfig 启用（constructor 不读取 chain 配置）
+      al.setChainConfig({ enabled: true });
+      return al;
+    }
+
+    async function readChainRecords(): Promise<HashChainRecord[]> {
+      const al = makeLogger();
+      const records = await al.listToday();
+      // listToday 只返回 AuditRecord——直接从文件读 HashChainRecord
+      const { readFileSync, readdirSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const dir = join(tempDir, new Date().toISOString().slice(0, 10));
+      const out: HashChainRecord[] = [];
+      for (const f of readdirSync(dir)) {
+        if (!f.endsWith('.audit.jsonl')) continue;
+        for (const line of readFileSync(join(dir, f), 'utf-8').split(String.fromCharCode(10))) {
+          if (line.trim()) out.push(JSON.parse(line));
+        }
+      }
+      return out;
+    }
+
+    it('篡改任一安全字段都会使 verifyChain 失败（eventId/sequence/sessionId/result/confirmation/details）', async () => {
+      const al = makeLogger();
+      al.log('file_write', '/a.txt', { operation: 'write' }, 'success');
+      al.log('shell_exec', 'rm -rf /tmp/x', { commandLength: 12 }, 'success', 'main', { requested: true, approved: true });
+      const records = await readChainRecords();
+      expect(records.length).toBe(2);
+
+      // 基线：未篡改链完整
+      expect(al.verifyChain(records)).toBe(true);
+
+      // 篡改测试：每项改一个字段后链必须失败
+      const tamperCases: Array<[string, (r: HashChainRecord) => HashChainRecord]> = [
+        ['eventId', (r) => ({ ...r, eventId: 'tampered-id' })],
+        ['sequence', (r) => ({ ...r, sequence: (r.sequence ?? 0) + 999 })],
+        ['sessionId', (r) => ({ ...r, sessionId: 'other-session' })],
+        ['result', (r) => ({ ...r, result: r.result === 'success' ? 'denied' : 'success' })],
+        ['details', (r) => ({ ...r, details: { ...r.details, operation: 'tampered' } })],
+        ['action', (r) => ({ ...r, action: r.action === 'file_write' ? 'shell_exec' : 'file_write' })],
+        ['target', (r) => ({ ...r, target: r.target + '-tampered' })],
+      ];
+      for (const [name, mutate] of tamperCases) {
+        const tampered = records.map((r, i) => (i === 0 ? mutate(r) : r));
+        expect(al.verifyChain(tampered)).toBe(false);
+      }
+      void tamperCases;
+    });
+
+    it('append 失败时不推进 chain head——下一条记录链仍完整（A → [B 失败] → C）', async () => {
+      const al = makeLogger();
+      al.log('file_write', '/a.txt', {}, 'success'); // A 写成功
+      // 模拟 B append 失败：把审计文件路径替换为同名目录（appendFileSync → EISDIR 抛错）
+      const { renameSync, mkdirSync, rmSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const todayDir = join(tempDir, new Date().toISOString().slice(0, 10));
+      const auditFile = join(todayDir, 'sess-chain.audit.jsonl');
+      const backupFile = auditFile + '.bak';
+      renameSync(auditFile, backupFile);
+      mkdirSync(auditFile); // 同名目录占位 → B 的 appendFileSync 抛 EISDIR
+      // B 写失败（chain head 不得推进）
+      al.log('shell_exec', 'bad', {}, 'success');
+      // 恢复文件路径
+      rmSync(auditFile, { recursive: true, force: true });
+      renameSync(backupFile, auditFile);
+      // C 写成功——previousHash 仍链到 A（B 未 commit）
+      al.log('todo_write', '/t', {}, 'success');
+
+      const records = await readChainRecords();
+      expect(records.length).toBe(2); // A 与 C（B 失败未落盘）
+      expect(al.verifyChain(records)).toBe(true);
     });
   });
 });

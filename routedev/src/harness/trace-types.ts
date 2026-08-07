@@ -145,9 +145,14 @@ export type AuditAction =
 export interface AuditRecord {
   timestamp: string;
   /**
-   * P0 复审：单调递增序号（同进程内分配）——同毫秒 timestamp 的审计记录
+   * 第九轮复审：确定性顺序原语——可排序 eventId（OrderedRevision.id）。
+   * 进入 hash 安全域（canonical serialization 覆盖）。
+   */
+  eventId?: string;
+  /**
+   * 单调递增序号（同进程内分配）——同毫秒 timestamp 的审计记录
    * 排序确定（timestamp DESC, sequence DESC, 文件行序兜底），
-   * 消除 listToday 对同毫秒唯一性的依赖
+   * 消除 listToday 对同毫秒唯一性的依赖；进入 hash 安全域
    */
   sequence?: number;
   sessionId: string;

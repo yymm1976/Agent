@@ -58,6 +58,28 @@ export class VersionManager {
     }
   }
 
+  /**
+   * 第九轮复审：分配单调 revision（同 profile 内递增，唯一排序键）。
+   * 读取现有版本的最大 revision +1——持久化单调，跨进程/重启不重置。
+   */
+  private nextRevision(profileId: string): number {
+    const dir = this.versionsDir(profileId);
+    if (!existsSync(dir)) return 1;
+    let max = 0;
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith('.json')) continue;
+      try {
+        const raw = readFileSync(join(dir, file), 'utf-8');
+        const record = JSON.parse(raw) as PersistedVersion;
+        const rev = record?.meta?.revision;
+        if (typeof rev === 'number' && rev > max) max = rev;
+      } catch {
+        // 损坏文件跳过
+      }
+    }
+    return max + 1;
+  }
+
   private generateVersionId(): string {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const rand = randomBytes(4).toString('hex');
@@ -110,6 +132,7 @@ export class VersionManager {
     this.ensureDir(profile.id);
     const versionId = this.generateVersionId();
     const timestamp = Date.now();
+    const revision = this.nextRevision(profile.id);
     const fieldChanges = this.computeFieldChanges(previousSnapshot, profile);
     const changeSummary = this.buildChangeSummary(fieldChanges);
 
@@ -117,6 +140,7 @@ export class VersionManager {
       versionId,
       profileId: profile.id,
       timestamp,
+      revision,
       source,
       fieldChanges,
       changeSummary,
@@ -159,7 +183,8 @@ export class VersionManager {
       }
     }
 
-    return metas.sort((a, b) => b.timestamp - a.timestamp);
+    // 第九轮复审：revision 是唯一排序键（同毫秒保存的版本顺序确定）
+    return metas.sort((a, b) => (b.revision ?? b.timestamp) - (a.revision ?? a.timestamp));
   }
 
   /**
@@ -268,7 +293,7 @@ export class VersionManager {
         // skip
       }
     }
-    metas.sort((a, b) => b.timestamp - a.timestamp);
+    metas.sort((a, b) => (b.revision ?? b.timestamp) - (a.revision ?? a.timestamp));
 
     if (metas.length <= MAX_VERSIONS_PER_PROFILE) return;
 

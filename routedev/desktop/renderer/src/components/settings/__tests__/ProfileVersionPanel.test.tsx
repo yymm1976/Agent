@@ -16,6 +16,7 @@ const VERSION_A: VersionMeta = {
   versionId: 'ver-a',
   profileId: 'profile-1',
   timestamp: new Date('2026-03-20T10:00:00').getTime(),
+  revision: 1,
   source: 'user_edit',
   fieldChanges: [
     { field: 'modelId', before: 'gpt-4o-mini', after: 'gpt-4o' },
@@ -29,6 +30,7 @@ const VERSION_B: VersionMeta = {
   versionId: 'ver-b',
   profileId: 'profile-1',
   timestamp: new Date('2026-03-21T12:30:00').getTime(),
+  revision: 2,
   source: 'programmatic_write',
   fieldChanges: [{ field: 'temperature', before: 0.2, after: 0.7 }],
   changeSummary: '程序写入 temperature',
