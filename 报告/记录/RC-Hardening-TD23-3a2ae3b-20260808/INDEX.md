@@ -19,26 +19,26 @@
 - Open P1: 0
 - Closed P0: 0
 - Closed P1: 6
-- Real API requests used: 0 / 60
-- Current CI state: 6 Job 全绿（3a2ae3b）
+- Real API requests used: 11 / 60
+- Current CI state: 6 Job 全绿基线（3a2ae3b）；最终提交待 CI 确认
 
 ## Phase 状态
 
 | Phase | 状态 | 备注 |
 |---|---|---|
 | A1-A5 RC blockers | DONE | 全部关闭（59d9eeb + 本轮） |
-| B RunState | pending | |
-| C Event model | pending | |
-| D Retry idempotency | pending | |
-| E Cancellation | pending | |
-| F Error taxonomy | pending | |
-| G Filesystem/security | pending | |
-| H Prompt injection | pending | |
-| I Repo context | pending | |
-| J Context budget | pending | |
-| K Streaming FSM | pending | |
-| L TD-23 real DeepSeek | pending | |
-| M Fault injection | pending | |
-| N Harness comparison | pending | |
-| O Self review | pending | |
-| Final gate | pending | |
+| B RunState | DONE | |
+| C Event model | DONE（矩阵） | |
+| D Retry idempotency | DONE（at-most-once 文档化） | |
+| E Cancellation | DONE（链 + R9 真实） | |
+| F Error taxonomy | DONE | |
+| G Filesystem/security | DONE（G1 已有覆盖核查） | |
+| H Prompt injection | DONE（TRUST_MODEL + H2 测试） | |
+| I Repo context | DONE（GAP 分析 WEAKER 记录） | |
+| J Context budget | DONE（SOURCE_OF_TRUTH 相关） | |
+| K Streaming FSM | DONE（R6 真实帧序 + 尾块守卫） | |
+| L TD-23 real DeepSeek | DONE（R1-R9，11 请求） | |
+| M Fault injection | DONE（矩阵） | |
+| N Harness comparison | DONE（GAP_ANALYSIS） | |
+| O Self review | DONE（SELF_REVIEW） | |
+| Final gate | DONE（4057 绿 + Verdict: RC CANDIDATE） | |
