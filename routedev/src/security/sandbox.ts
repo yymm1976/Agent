@@ -123,6 +123,32 @@ const DANGEROUS_PATTERNS: RegExp[] = [
 // CommandSandbox 主类
 // ============================================================
 
+/** P0 复审：可执行名跨平台规范化（win32/posix basename 取短者） */
+function extractExecutableName(s: string): string {
+  const win = path.win32.basename(s);
+  const posix = path.posix.basename(s);
+  const candidate = win.length <= posix.length ? win : posix;
+  return candidate.toLowerCase();
+}
+
+/**
+ * P0 复审：提取 executable identity token——
+ * - 带引号路径：parseCommand 正确处理（"C:\Program Files
+ode.exe"）
+ * - 无引号 Windows 盘符路径（结构化入口 command 即完整 executable）：
+ *   整段视为 executable（spawn 语义），不按空格 tokenize
+ * - 普通命令：parseCommand 首 token
+ */
+function executableToken(command: string): string {
+  const raw = command.trim();
+  const quoted = (raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"));
+  // 盘符路径（C:\ 或 C:/）：未加引号时整段视为 executable（含空格不切分）
+  if (!quoted && /^[A-Za-z]:[\\/]/.test(raw)) {
+    return raw;
+  }
+  return parseCommand(command).command || raw;
+}
+
 export class CommandSandbox {
   private readonly options: Required<
     Pick<SandboxOptions, 'timeout' | 'maxOutputBytes'>
@@ -159,9 +185,10 @@ export class CommandSandbox {
   async execute(command: string, args: string[] = []): Promise<SandboxResult> {
     const startTime = Date.now();
 
-    // 1) 静态校验（拼接完整命令行，便于危险模式检测）
-    const fullCommand = args.length > 0 ? `${command} ${args.join(' ')}` : command;
-    const validation = CommandSandbox.validateCommand(fullCommand, this.options);
+    // 1) 静态校验（结构化：executable identity 只看 command，危险模式查 command+args）
+    // P0 修复（复审）：不得把 args 压扁回 command 再走 validateCommand——
+    // 参数路径 basename 会冒充 executable（/tmp/evil /tmp/node 的 whole-basename 是 node）。
+    const validation = CommandSandbox.validateExecution(command, args, this.options);
     if (!validation.allowed) {
       const reason = validation.reason ?? '命令被沙箱拒绝';
       logger.warn(`[sandbox] command rejected: ${command} — ${reason}`);
@@ -375,22 +402,11 @@ export class CommandSandbox {
       return { allowed: false, reason: '命令为空' };
     }
 
-    // F-040：使用 parseCommand 正确解析带引号命令的首 token
-    // 原 command.split(/\s+/)[0] 会被引号内的空格截断（如 "C:\Program Files\node.exe"）
-    const firstToken = parseCommand(command).command || '';
-    // basename（去路径前缀，便于白名单匹配）—— 同时考虑 firstToken 和整体 command
-    // 之所以同时考虑整体 command：处理路径含空格的情况（如 'C:\Program Files\nodejs\node.exe'）
-    // P0 修复（复审）：跨平台规范化——Linux 上 path.basename 不识别 Windows 反斜杠
-    // 分隔符，'C:\Program Files\nodejs\node.exe' 会整体返回导致白名单不匹配。
-    // 同时按 win32/posix 取 basename，取更短（更像真实文件名）的候选。
-    const extractExecutableName = (s: string): string => {
-      const win = path.win32.basename(s);
-      const posix = path.posix.basename(s);
-      const candidate = win.length <= posix.length ? win : posix;
-      return candidate.toLowerCase();
-    };
+    // P0 修复（复审）：executable identity 只来自首 token——**移除整条命令的
+    // basename 匹配**（cmdNameFromWhole）：`allowed:['node']` 时 `/tmp/evil /tmp/node`
+    // 的 whole-basename 是 'node' → 放行，参数路径可冒充 executable（P0 安全绕过）。
+    const firstToken = executableToken(command);
     const cmdNameFromFirst = extractExecutableName(firstToken);
-    const cmdNameFromWhole = extractExecutableName(command);
     // 去掉 Windows 可执行文件扩展名（.exe / .cmd / .bat）
     const stripExt = (s: string) => s.replace(/\.(exe|cmd|bat)$/i, '');
 
@@ -404,7 +420,7 @@ export class CommandSandbox {
       }
     }
 
-    // 3) 白名单检查
+    // 3) 白名单检查（只认 executable identity——首 token）
     const allowed = options.allowedCommands;
     if (allowed && allowed.length > 0) {
       const allowedLower = allowed.map((c) => c.toLowerCase());
@@ -412,10 +428,7 @@ export class CommandSandbox {
         (c) =>
           c === cmdNameFromFirst ||
           c === stripExt(cmdNameFromFirst) ||
-          c === cmdNameFromWhole ||
-          c === stripExt(cmdNameFromWhole) ||
-          c === firstToken.toLowerCase() ||
-          c === command.toLowerCase(),
+          c === firstToken.toLowerCase(),
       );
       if (!matched) {
         return {
@@ -425,7 +438,7 @@ export class CommandSandbox {
       }
     }
 
-    // 4) 黑名单检查
+    // 4) 黑名单检查（只认 executable identity——首 token）
     const blocked = options.blockedCommands;
     if (blocked && blocked.length > 0) {
       const blockedLower = blocked.map((c) => c.toLowerCase());
@@ -433,10 +446,7 @@ export class CommandSandbox {
         (c) =>
           c === cmdNameFromFirst ||
           c === stripExt(cmdNameFromFirst) ||
-          c === cmdNameFromWhole ||
-          c === stripExt(cmdNameFromWhole) ||
-          c === firstToken.toLowerCase() ||
-          c === command.toLowerCase(),
+          c === firstToken.toLowerCase(),
       );
       if (matched) {
         return {
@@ -456,6 +466,86 @@ export class CommandSandbox {
         if (resolvedCwd === resolvedDir) return true;
         const rel = path.relative(resolvedDir, resolvedCwd);
         return !rel.startsWith('..') && !path.isAbsolute(rel);
+      });
+      if (!ok) {
+        return {
+          allowed: false,
+          reason: `工作目录 "${cwd}" 不在允许列表中`,
+        };
+      }
+    }
+
+    return { allowed: true };
+  }
+
+  /**
+   * P0 修复（复审）：结构化执行校验——executable identity 与 command semantics 分离。
+   * - executable 白/黑名单：只看 command（spawn 的真实可执行文件），args 永不参与
+   * - 危险模式：检查 command + args 拼接（args 中的 rm -rf 等仍需拦截）
+   * - 工作目录限制：与 validateCommand 一致
+   */
+  static validateExecution(
+    command: string,
+    args: readonly string[],
+    options: SandboxOptions,
+  ): CommandValidationResult {
+    if (!command || typeof command !== 'string' || command.trim() === '') {
+      return { allowed: false, reason: '命令为空' };
+    }
+    // executable identity：只看 command（spawn 的真实可执行文件）
+    const firstToken = executableToken(command);
+    const cmdName = extractExecutableName(firstToken);
+    const stripExt = (s: string) => s.replace(/\.(exe|cmd|bat)$/i, '');
+
+    // 危险模式：对完整语义（command + args）匹配
+    const full = args.length > 0 ? `${command} ${args.join(' ')}` : command;
+    for (const pattern of DANGEROUS_PATTERNS) {
+      if (pattern.test(full)) {
+        return {
+          allowed: false,
+          reason: `命中危险命令模式: ${pattern.source}`,
+        };
+      }
+    }
+
+    // 白名单（只认 executable）
+    const allowed = options.allowedCommands;
+    if (allowed && allowed.length > 0) {
+      const allowedLower = allowed.map((c) => c.toLowerCase());
+      const matched = allowedLower.some(
+        (c) => c === cmdName || c === stripExt(cmdName) || c === firstToken.toLowerCase(),
+      );
+      if (!matched) {
+        return {
+          allowed: false,
+          reason: `命令 "${firstToken}" 不在白名单中`,
+        };
+      }
+    }
+
+    // 黑名单（只认 executable）
+    const blocked = options.blockedCommands;
+    if (blocked && blocked.length > 0) {
+      const blockedLower = blocked.map((c) => c.toLowerCase());
+      const matched = blockedLower.some(
+        (c) => c === cmdName || c === stripExt(cmdName) || c === firstToken.toLowerCase(),
+      );
+      if (matched) {
+        return {
+          allowed: false,
+          reason: `命令 "${firstToken}" 在黑名单中`,
+        };
+      }
+    }
+
+    // 工作目录限制
+    const restrictions = options.workingDirectoryRestriction;
+    if (restrictions && restrictions.length > 0) {
+      const cwd = options.cwd ?? process.cwd();
+      const resolvedCwd = path.resolve(cwd);
+      const ok = restrictions.some((r) => {
+        const resolved = path.resolve(r);
+        return resolvedCwd === resolved || resolvedCwd.startsWith(resolved + path.sep);
       });
       if (!ok) {
         return {

@@ -83,6 +83,8 @@ export class AuditLogger {
   /** 上一条记录的 hash（链式） */
   private previousHash: string = GENESIS_HASH;
   private sessionId: string;
+  /** P0 复审：同进程内单调序号（同毫秒审计记录排序 tie-breaker） */
+  private seq = 0;
 
   constructor(sessionId: string, config?: Partial<AuditLoggerConfig>) {
     this.sessionId = sessionId;
@@ -156,6 +158,8 @@ export class AuditLogger {
 
     const record: AuditRecord = {
       timestamp: new Date().toISOString(),
+      // P0 复审：单调序号——同毫秒连续记录排序确定
+      sequence: ++this.seq,
       sessionId: this.sessionId,
       action,
       agentId,
@@ -327,15 +331,18 @@ export class AuditLogger {
 
     try {
       const files = await fs.readdir(dayDir);
-      const records: AuditRecord[] = [];
+      // 解析时记录文件内行序（跨进程/重启时 sequence 会重置，行序兜底）
+      const records: Array<AuditRecord & { _ordinal: number }> = [];
 
       for (const file of files) {
         if (!file.endsWith('.audit.jsonl')) continue;
         const content = await fs.readFile(path.join(dayDir, file), 'utf-8');
+        let ordinal = 0;
         for (const line of content.split('\n')) {
           if (!line.trim()) continue;
+          ordinal += 1;
           try {
-            records.push(JSON.parse(line));
+            records.push({ ...JSON.parse(line), _ordinal: ordinal });
           } catch (e) {
             // 损坏行（JSON 解析失败），跳过继续解析下一行
             logger.warn('[audit-logger] listToday: 跳过损坏的审计行', {
@@ -346,8 +353,13 @@ export class AuditLogger {
         }
       }
 
+      // P0 复审：排序确定——timestamp DESC，同毫秒用 sequence DESC（进程内单调），
+      // 跨进程/重启同毫秒用文件行序（追加顺序）兜底
       return records
-        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+        .sort((a, b) =>
+          b.timestamp.localeCompare(a.timestamp)
+          || (b.sequence ?? 0) - (a.sequence ?? 0)
+          || b._ordinal - a._ordinal)
         .slice(0, limit);
     } catch (e) {
       // 读取今日审计目录失败（ENOENT 是正常情况），返回空数组

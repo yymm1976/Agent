@@ -345,4 +345,49 @@ describe('CommandSandbox', () => {
       expect(events[0]!.reason).toContain('超时');
     });
   });
+
+  describe('P0 复审：参数伪装绕过（executable identity 与 semantics 分离）', () => {
+    it('args 中的路径 basename 不得冒充 executable（/tmp/evil /tmp/node → REJECT）', async () => {
+      const opts: SandboxOptions = { allowedCommands: ['node'] };
+      const sandbox = new CommandSandbox(opts);
+      const result = await sandbox.execute('/tmp/evil', ['/tmp/node']);
+      expect(result.exitCode).toBeNull();
+      expect(result.stderr).toContain('不在白名单中');
+    });
+
+    it('合法 Windows 路径 executable 仍被接受（C:\\Program Files\\nodejs\\node.exe → ACCEPT）', async () => {
+      const opts: SandboxOptions = { allowedCommands: ['node'] };
+      // 结构化入口：command 即完整 executable（路径含空格不需要 tokenize）
+      const validation = CommandSandbox.validateExecution(
+        'C:\\Program Files\\nodejs\\node.exe',
+        [],
+        opts,
+      );
+      expect(validation.allowed).toBe(true);
+    });
+
+    it('npm 白名单下 /tmp/not-npm + args 含 /usr/bin/npm → REJECT', async () => {
+      const opts: SandboxOptions = { allowedCommands: ['npm'] };
+      const sandbox = new CommandSandbox(opts);
+      const result = await sandbox.execute('/tmp/not-npm', ['/usr/bin/npm']);
+      expect(result.exitCode).toBeNull();
+      expect(result.stderr).toContain('不在白名单中');
+    });
+
+    it('args 中多个伪造名（node/node.exe/C:\node.exe）全部 REJECT', async () => {
+      const opts: SandboxOptions = { allowedCommands: ['node'] };
+      const sandbox = new CommandSandbox(opts);
+      for (const fake of ['node', 'node.exe', 'C:\\node.exe']) {
+        const result = await sandbox.execute('/usr/bin/evil', [fake]);
+        expect(result.exitCode).toBeNull();
+        expect(result.stderr).toContain('不在白名单中');
+      }
+    });
+
+    it('validateCommand 字符串接口同样拒绝 whole-basename 冒充', () => {
+      const opts: SandboxOptions = { allowedCommands: ['node'] };
+      expect(CommandSandbox.validateCommand('/tmp/evil /tmp/node', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('/usr/bin/node', opts).allowed).toBe(true);
+    });
+  });
 });

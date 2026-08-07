@@ -144,6 +144,12 @@ export type AuditAction =
 /** 审计记录 */
 export interface AuditRecord {
   timestamp: string;
+  /**
+   * P0 复审：单调递增序号（同进程内分配）——同毫秒 timestamp 的审计记录
+   * 排序确定（timestamp DESC, sequence DESC, 文件行序兜底），
+   * 消除 listToday 对同毫秒唯一性的依赖
+   */
+  sequence?: number;
   sessionId: string;
   action: AuditAction;
   agentId: string;

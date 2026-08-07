@@ -982,9 +982,15 @@ describe('ChatBridge 集成测试 (Phase 79 Task 1)', () => {
       // （不得包装成"已验证只是有警告"；错误信息仍保留在 progress 事件中）
       expect(verifySpy).toHaveBeenCalledTimes(1);
       expect(extractDoneStatus(onStream)).toBe('completed_unverified');
-      // 验证错误确实被记录（progress 事件携带失败信息）
-      const progressEvents = onStream.filter((p) => p.type === 'progress');
-      expect(progressEvents.some((p) => String(p.progress.label).includes('验证'))).toBe(true);
+      // 验证错误确实被记录（onStream 是 vi.fn()——检查 mock calls 而非数组 filter）
+      expect(onStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'progress',
+          progress: expect.objectContaining({
+            label: expect.stringContaining('验证'),
+          }),
+        }),
+      );
     });
 
     it('边界：工具调用 isError=true 不计入 modifiedFiles，不触发验证', async () => {
