@@ -1,0 +1,22 @@
+# TD-23 Real DeepSeek V4 Flash — REAL_EVAL_SUMMARY
+
+- gitSHA: working-tree
+- date: 2026-08-07T18:13:02.163Z
+- provider: DeepSeek Official
+- baseURL: https://api.deepseek.com/v1
+- model: deepseek-v4-flash
+- requestCount: 11
+- retryCount: 0
+- rateLimitCount: 0
+- serverErrorCount: 0
+- R1: PASS
+- R2: PASS
+- R3: PASS
+- R4: PASS
+- R5: SKIP(模型未选择多工具调用——有限次数内不强制)
+- R6: PASS
+- R7: PASS(hit=512/514)
+- R8: PASS
+- R9: PASS
+- R10: SKIP(压缩路径由 R4/R8 长上下文覆盖，预算优先)
+- allSecretsRedacted: true

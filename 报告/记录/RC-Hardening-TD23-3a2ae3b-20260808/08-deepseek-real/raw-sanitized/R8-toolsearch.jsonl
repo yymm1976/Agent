@@ -1,0 +1,9 @@
+{"type":"loop_event","hasReasoning":true,"toolCallIds":["start:tool_search"],"ts":1786126380776}
+{"type":"loop_event","hasReasoning":true,"toolCallIds":["result:tool_search"],"ts":1786126380776}
+{"type":"loop_event","hasReasoning":true,"toolCallIds":["start:web_search"],"ts":1786126380776}
+{"type":"loop_event","hasReasoning":true,"toolCallIds":["result:web_search"],"ts":1786126380776}
+{"type":"loop_event","hasReasoning":true,"toolCallIds":["start:web_search"],"ts":1786126380776}
+{"type":"loop_event","hasReasoning":true,"toolCallIds":["result:web_search"],"ts":1786126380776}
+{"type":"loop_event","hasReasoning":true,"toolCallIds":["start:web_search"],"ts":1786126380776}
+{"type":"loop_event","hasReasoning":true,"toolCallIds":["result:web_search"],"ts":1786126380776}
+{"type":"loop_event","hasReasoning":true,"toolCallIds":["done"],"ts":1786126380776}
