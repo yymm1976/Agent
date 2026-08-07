@@ -408,3 +408,111 @@ describe('AgentProfileManager 版本管理集成', () => {
     expect(currentFields).toContain('maxSteps');
   });
 });
+
+describe('A3 legacy revision migration', () => {
+  let tempDir: string;
+  let vm: VersionManager;
+
+  beforeEach(async () => {
+    tempDir = await makeTempDir();
+    vm = new VersionManager(tempDir);
+  });
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  /** 手工写一个无 revision 的 legacy 版本文件 */
+  function writeLegacyVersion(profileId: string, versionId: string, timestamp: number): void {
+    const dir = path.join(tempDir, '.routedev', 'skills', 'agents', profileId, 'versions');
+    fsSync.mkdirSync(dir, { recursive: true });
+    const record = {
+      meta: {
+        versionId,
+        profileId,
+        timestamp,
+        source: 'user_edit' as const,
+        fieldChanges: [],
+        changeSummary: 'legacy',
+      },
+      snapshot: makeValidProfile({ id: profileId, name: versionId }),
+    };
+    fsSync.writeFileSync(path.join(dir, `${versionId}.json`), JSON.stringify(record, null, 2), 'utf-8');
+  }
+
+  function readMeta(profileId: string, versionId: string): { revision?: number; timestamp: number } {
+    const raw = fsSync.readFileSync(
+      path.join(tempDir, '.routedev', 'skills', 'agents', profileId, 'versions', `${versionId}.json`),
+      'utf-8',
+    );
+    return JSON.parse(raw).meta;
+  }
+
+  it('legacy 2 versions → migrate（timestamp ASC 赋号 1,2）', async () => {
+    writeLegacyVersion('p1', 'v-older', 1000);
+    writeLegacyVersion('p1', 'v-newer', 2000);
+    const max = vm.ensureRevisions('p1');
+    expect(max).toBe(2);
+    expect(readMeta('p1', 'v-older').revision).toBe(1);
+    expect(readMeta('p1', 'v-newer').revision).toBe(2);
+  });
+
+  it('legacy same timestamp → versionId ASC 确定性', async () => {
+    writeLegacyVersion('p1', 'b-ver', 1000);
+    writeLegacyVersion('p1', 'a-ver', 1000);
+    vm.ensureRevisions('p1');
+    expect(readMeta('p1', 'a-ver').revision).toBe(1);
+    expect(readMeta('p1', 'b-ver').revision).toBe(2);
+  });
+
+  it('migration 幂等（重复调用不重复编号）', async () => {
+    writeLegacyVersion('p1', 'v1', 1000);
+    writeLegacyVersion('p1', 'v2', 2000);
+    vm.ensureRevisions('p1');
+    vm.ensureRevisions('p1');
+    expect(readMeta('p1', 'v1').revision).toBe(1);
+    expect(readMeta('p1', 'v2').revision).toBe(2);
+  });
+
+  it('migrate → save new（新版本从 N+1 起）', async () => {
+    writeLegacyVersion('p1', 'v1', 1000);
+    vm.ensureRevisions('p1');
+    const newId = await vm.saveVersion(makeValidProfile({ id: 'p1' }), 'user_edit');
+    const newMeta = readMeta('p1', newId);
+    expect(newMeta.revision).toBe(2);
+  });
+
+  it('20 legacy + new → retention 必须保留 new（不因 legacy timestamp 巨大误删）', async () => {
+    for (let i = 0; i < 20; i += 1) {
+      writeLegacyVersion('p1', `legacy-${i}`, 1000 + i);
+    }
+    vm.ensureRevisions('p1');
+    const newId = await vm.saveVersion(makeValidProfile({ id: 'p1', name: 'newest' }), 'user_edit');
+    const versions = await vm.listVersions('p1');
+    // 最新在前：第一个必须是 new（revision 21）
+    expect(versions[0]!.versionId).toBe(newId);
+    expect(versions[0]!.revision).toBe(21);
+  });
+
+  it('migration 中存在 corrupt JSON：跳过不阻塞', async () => {
+    writeLegacyVersion('p1', 'v-good', 1000);
+    const dir = path.join(tempDir, '.routedev', 'skills', 'agents', 'p1', 'versions');
+    fsSync.writeFileSync(path.join(dir, 'corrupt.json'), '{ not json', 'utf-8');
+    const max = vm.ensureRevisions('p1');
+    expect(max).toBe(1);
+    expect(readMeta('p1', 'v-good').revision).toBe(1);
+  });
+
+  it('migrate → restart（新 manager 实例）→ 仍正确', async () => {
+    writeLegacyVersion('p1', 'v1', 1000);
+    writeLegacyVersion('p1', 'v2', 2000);
+    vm.ensureRevisions('p1');
+    // 模拟重启：新实例
+    const vm2 = new VersionManager(tempDir);
+    const max2 = vm2.ensureRevisions('p1');
+    expect(max2).toBe(2);
+    expect(readMeta('p1', 'v1').revision).toBe(1);
+    const newId = await vm2.saveVersion(makeValidProfile({ id: 'p1' }), 'programmatic_write');
+    expect(readMeta('p1', newId).revision).toBe(3);
+  });
+});

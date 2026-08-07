@@ -6,7 +6,7 @@
  *   ${rootDir}/.routedev/skills/agents/<profileId>/versions/<versionId>.json
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync, rmSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { AgentProfile } from './types.js';
@@ -59,24 +59,66 @@ export class VersionManager {
   }
 
   /**
-   * 第九轮复审：分配单调 revision（同 profile 内递增，唯一排序键）。
-   * 读取现有版本的最大 revision +1——持久化单调，跨进程/重启不重置。
+   * A3（RC Hardening）：legacy 版本 revision 正式迁移——
+   * 无 revision 的历史版本按 (timestamp ASC, versionId ASC) 确定性赋号
+   * （从 maxExisting+1 起），已迁移的保留原号。
+   * - deterministic：timestamp → versionId 双键升序
+   * - idempotent：重复调用不重复编号
+   * - crash-safe：每个文件 tmp+rename 原子写回
+   * - restart-safe：编号基于持久化内容
+   * 迁移后 list/rollback/retention 只用 revision（不再依赖 `revision ?? timestamp`
+   * 跨数值域比较——legacy timestamp 1.7e12 与 new revision 1 混比会错乱）。
+   * @returns 迁移后的最大 revision（供 nextRevision 使用）
    */
-  private nextRevision(profileId: string): number {
+  ensureRevisions(profileId: string): number {
     const dir = this.versionsDir(profileId);
-    if (!existsSync(dir)) return 1;
-    let max = 0;
-    for (const file of readdirSync(dir)) {
-      if (!file.endsWith('.json')) continue;
+    if (!existsSync(dir)) return 0;
+    const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
+    const entries: Array<{ file: string; meta: VersionMeta | null }> = [];
+    for (const file of files) {
       try {
         const raw = readFileSync(join(dir, file), 'utf-8');
         const record = JSON.parse(raw) as PersistedVersion;
-        const rev = record?.meta?.revision;
-        if (typeof rev === 'number' && rev > max) max = rev;
+        entries.push({ file, meta: record?.meta ?? null });
       } catch {
-        // 损坏文件跳过
+        entries.push({ file, meta: null }); // corrupt JSON：跳过（不迁移不阻塞）
       }
     }
+
+    // 已有 revision 的最大值（新分配从其后开始）
+    let maxExisting = 0;
+    for (const e of entries) {
+      const rev = e.meta?.revision;
+      if (typeof rev === 'number' && rev > maxExisting) maxExisting = rev;
+    }
+
+    // 无 revision 的 legacy 条目：timestamp ASC → versionId ASC 确定性排序
+    const legacy = entries
+      .filter((e) => e.meta !== null && typeof e.meta!.revision !== 'number')
+      .sort((a, b) => {
+        const ta = a.meta!.timestamp;
+        const tb = b.meta!.timestamp;
+        if (ta !== tb) return ta - tb;
+        return a.meta!.versionId < b.meta!.versionId ? -1 : a.meta!.versionId > b.meta!.versionId ? 1 : 0;
+      });
+
+    let next = maxExisting + 1;
+    for (const e of legacy) {
+      // crash-safe：tmp + rename 原子写回
+      const meta = { ...e.meta!, revision: next };
+      const record: PersistedVersion = { meta, snapshot: JSON.parse(readFileSync(join(dir, e.file), 'utf-8')).snapshot };
+      const filePath = join(dir, e.file);
+      const tmpPath = `${filePath}.tmp`;
+      writeFileSync(tmpPath, JSON.stringify(record, null, 2), 'utf-8');
+      renameSync(tmpPath, filePath);
+      next += 1;
+    }
+    return next - 1;
+  }
+
+  /** 分配单调 revision（先迁移 legacy，再取 max+1） */
+  private nextRevision(profileId: string): number {
+    const max = this.ensureRevisions(profileId);
     return max + 1;
   }
 

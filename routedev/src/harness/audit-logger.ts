@@ -97,9 +97,10 @@ export class AuditLogger {
    */
   setChainConfig(chainConfig: AuditChainConfig): void {
     this.chainConfig = chainConfig;
-    // 启用时重置 previousHash 为创世哈希（新链开始）
+    // A5：per-day 链语义——启用时先尝试恢复当日文件尾部 hash 作为 chain head；
+    // 当日无文件（或首条）用创世哈希。进程重启/logger 重建后同一天追加仍链连续。
     if (chainConfig.enabled) {
-      this.previousHash = GENESIS_HASH;
+      this.previousHash = this.restoreChainHead() ?? GENESIS_HASH;
     }
   }
 
@@ -395,6 +396,37 @@ export class AuditLogger {
   async listByAction(action: AuditAction, limit = 50): Promise<AuditRecord[]> {
     const all = await this.listToday(200);
     return all.filter(r => r.action === action).slice(0, limit);
+  }
+
+  /**
+   * A5：从当日文件尾部恢复 chain head（per-day 链：文件即链边界）。
+   * 返回 null = 当日无记录（新链从 genesis 开始）。
+   * 文件尾部损坏/截断：返回 null 并告警——新链从 genesis 开始（旧记录
+   * verifyChain 会失败，属 tamper-evident 语义而非静默修复）。
+   */
+  private restoreChainHead(): string | null {
+    if (!this.chainConfig.enabled) return null;
+    const dir = this.getStorageDir();
+    const today = new Date().toISOString().slice(0, 10);
+    const filePath = path.join(dir, today, `${this.sessionId}.audit.jsonl`);
+    if (!fsSync.existsSync(filePath)) return null;
+    try {
+      const content = fsSync.readFileSync(filePath, 'utf-8');
+      const lines = content.split(String.fromCharCode(10)).filter((l) => l.trim());
+      if (lines.length === 0) return null;
+      const last = JSON.parse(lines[lines.length - 1]) as HashChainRecord;
+      if (typeof last.hash === 'string' && last.hash.length === 64) return last.hash;
+      logger.warn('[audit-logger] chain head restore: 尾记录无有效 hash（截断？），从 genesis 开始新链', {
+        file: filePath,
+      });
+      return null;
+    } catch (e) {
+      logger.warn('[audit-logger] chain head restore failed, starting from genesis', {
+        file: filePath,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      return null;
+    }
   }
 
   private writeRecord(record: AuditRecord): void {
