@@ -503,4 +503,31 @@ describe('P0 复审：accumulateUsage 统一聚合', () => {
     expect(deepseek.cacheMissTokens).toBe(60);
     expect(deepseek.cacheReadInputTokens).toBeUndefined(); // 不得生成 0
   });
+
+  it('B1: Run A 传 reasoningEffort=max 后，Run B 不传不得残留（跨 Run 参数隔离）', async () => {
+    const { ReActAgentLoop } = await import('../../src/agent/loop.js');
+    const loop = new ReActAgentLoop({
+      getToolDefinitions: () => [],
+      executeTool: async () => 'x',
+      hasTool: () => false,
+      executeToolStructured: async () => ({ output: 'x', isError: false }),
+    } as never, { toolsEnabled: false });
+    const client = createMockTextClient('hello');
+    const decision = makeRouteDecision();
+    const runParams = (effort?: 'high' | 'max') => ({
+      userMessage: 'hi',
+      llmClient: client,
+      routeDecision: decision,
+      conversationHistory: [],
+      ...(effort ? { reasoningEffort: effort } : {}),
+    });
+    // Run A：传 max
+    for await (const _e of loop.run(runParams('max') as never)) { /* 消费 */ }
+    // Run B：不传
+    for await (const _e of loop.run(runParams() as never)) { /* 消费 */ }
+    // finally 必须已清理（Run B 内部 currentReasoningEffort 为 undefined）
+    const state = loop as unknown as { currentReasoningEffort: unknown; currentAutonomyMode: unknown };
+    expect(state.currentReasoningEffort).toBeUndefined();
+    expect(state.currentAutonomyMode).toBe('manual');
+  });
 });

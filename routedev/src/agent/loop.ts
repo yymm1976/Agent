@@ -1180,6 +1180,10 @@ export class ReActAgentLoop {
       this.currentCapability = null;
       this.currentToolSurface = undefined;
       this.engineTurnRequestId = null;
+      // B1（PHASE B）：清理 run 级参数残留——Run A 传 effort=max 后，
+      // Run B 不传时不得沿用 max（currentAutonomyMode 同理）
+      this.currentReasoningEffort = undefined;
+      this.currentAutonomyMode = 'manual';
       // P1 修复（复审）：finally 清理 boost——Run A 提升但未调用的工具不得
       // 残留在 boost 池，否则 Run B 的 ChatBridge 在进入 loop 前读取旧 boost
       // 渲染 Prompt 摘要（与 loop 开始后 resetBoost 的真实 schema 不一致）
