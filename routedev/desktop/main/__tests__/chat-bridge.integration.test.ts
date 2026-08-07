@@ -966,7 +966,7 @@ describe('ChatBridge 集成测试 (Phase 79 Task 1)', () => {
       expect(extractDoneStatus(onStream)).toBe('verification_failed');
     });
 
-    it('边界：gate.verify 抛异常 → completed_with_warnings', async () => {
+    it('边界：gate.verify 抛异常 → completed_unverified（基础设施异常不得宣称已验证）', async () => {
       const verifySpy = vi.fn().mockRejectedValue(new Error('spawn ENOENT'));
       const { bridge, ctx, onStream } = setupBridge({
         agentLoopRun: async function* () {
@@ -978,9 +978,13 @@ describe('ChatBridge 集成测试 (Phase 79 Task 1)', () => {
       await bridge.sendChat('请帮我验证');
 
       // chat-bridge.ts catch 后用 { passed: true, checks: [], warnings: [err] } 兜底
-      // toCompletionStatus: warnings 非空 → completed_with_warnings
+      // P1 语义（复审）：checks 为空 = 验证未执行 → completed_unverified
+      // （不得包装成"已验证只是有警告"；错误信息仍保留在 progress 事件中）
       expect(verifySpy).toHaveBeenCalledTimes(1);
-      expect(extractDoneStatus(onStream)).toBe('completed_with_warnings');
+      expect(extractDoneStatus(onStream)).toBe('completed_unverified');
+      // 验证错误确实被记录（progress 事件携带失败信息）
+      const progressEvents = onStream.filter((p) => p.type === 'progress');
+      expect(progressEvents.some((p) => String(p.progress.label).includes('验证'))).toBe(true);
     });
 
     it('边界：工具调用 isError=true 不计入 modifiedFiles，不触发验证', async () => {

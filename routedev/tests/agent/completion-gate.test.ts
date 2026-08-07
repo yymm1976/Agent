@@ -354,6 +354,14 @@ describe('Phase 92：项目脚本适配', () => {
 });
 
 describe('B-04 按变更类型自动验证', () => {
+  let gateTempDir: string;
+  beforeEach(() => {
+    gateTempDir = mkdtempSync(join(tmpdir(), 'rd-gate-b04-'));
+  });
+  afterEach(() => {
+    rmSync(gateTempDir, { recursive: true, force: true });
+  });
+
   it('isDocOnlyChange：全部为纯文档时返回 true', async () => {
     const { isDocOnlyChange } = await import('../../src/agent/completion-gate.js');
     expect(isDocOnlyChange(['README.md', 'notes/design.txt', 'assets/logo.svg'])).toBe(true);
@@ -387,29 +395,55 @@ describe('B-04 按变更类型自动验证', () => {
   });
 
   it('includeTests=false 时 tests 检查标记 skipped（不运行全量测试）', async () => {
+    // 复审修复：使用 fixture 项目（stub scripts 即时返回）——此前 projectPath 指向
+    // 真实仓库，CI 慢环境下会执行真实 typecheck/lint 命令导致超时
+    writeFileSync(join(gateTempDir, 'tsconfig.json'), '{}');
+    writeFileSync(join(gateTempDir, 'vitest.config.ts'), '');
+    writeFileSync(join(gateTempDir, 'package.json'), JSON.stringify({
+      name: 'fixture',
+      scripts: {
+        typecheck: 'node -e "process.exit(0)"',
+        test: 'node -e "process.exit(0)"',
+      },
+    }));
     const { createCompletionGate } = await import('../../src/agent/completion-gate.js');
     const gate = createCompletionGate();
     const result = await gate.verify({
       modifiedFiles: ['src/index.ts'],
-      projectPath: process.cwd(), // 本仓库有 vitest.config.ts → hasTestConfig true
+      projectPath: gateTempDir,
       includeTests: false,
     });
     const testsCheck = result.checks.find((c) => c.name === 'tests');
     expect(testsCheck).toBeDefined();
     expect(testsCheck!.skipped).toBe(true);
     expect(testsCheck!.output).toContain('未运行');
-    // 注意：typecheck 是否通过取决于运行环境，此处只断言 tests 检查的 skipped 语义
+    // typecheck 检查走 stub script，快速返回且不依赖仓库环境
+    const typecheckCheck = result.checks.find((c) => c.name === 'typecheck');
+    expect(typecheckCheck).toBeDefined();
   });
 
   it('includeTests 缺省时仍运行 tests（兼容旧调用方）', async () => {
+    // 复审修复：fixture 项目 stub scripts——绝不触发本仓库真实 pnpm test
+    // （此前 Vitest 嵌套执行仓库 pnpm test 造成递归）
+    writeFileSync(join(gateTempDir, 'tsconfig.json'), '{}');
+    writeFileSync(join(gateTempDir, 'vitest.config.ts'), '');
+    writeFileSync(join(gateTempDir, 'package.json'), JSON.stringify({
+      name: 'fixture',
+      scripts: {
+        typecheck: 'node -e "process.exit(0)"',
+        test: 'node -e "process.exit(0)"',
+      },
+    }));
     const { createCompletionGate } = await import('../../src/agent/completion-gate.js');
     const gate = createCompletionGate();
     const result = await gate.verify({
       modifiedFiles: ['src/index.ts'],
-      projectPath: process.cwd(),
+      projectPath: gateTempDir,
     });
     const testsCheck = result.checks.find((c) => c.name === 'tests');
     expect(testsCheck).toBeDefined();
     expect(testsCheck!.skipped).not.toBe(true);
+    // 断言测试命令确实被提交（stub 执行成功）
+    expect(testsCheck!.ok).toBe(true);
   });
 });

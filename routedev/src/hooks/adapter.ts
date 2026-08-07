@@ -112,23 +112,64 @@ export function executeShellCommand(
     // 命令注入风险由 replaceVariables() 中的 shellEscape 消除：所有
     // {{filePath}}/{{toolName}}/{{stepId}} 替换值在插入命令前已转义。
     // 命令模板本身来自可信开发者配置（HookConfigRegistry），非用户输入。
-    const child = spawn(command, { shell: true, timeout, cwd, windowsHide: true });
+    //
+    // P0 修复（复审）：进程树终止——Node 的 timeout 选项只杀 shell 本身，
+    // POSIX 下 shell 启动的孙进程（sleep 等）仍存活并持有 stdout FD，
+    // close 事件要等 FD 关闭 → 父进程可能无限挂起。
+    // 方案：POSIX detached 进程组 + kill(-pid)；Windows taskkill /T。
+    const child = spawn(command, {
+      shell: true,
+      // detached 在 POSIX 上创建独立进程组（Windows 上忽略该语义，用 taskkill）
+      detached: process.platform !== 'win32',
+      cwd,
+      windowsHide: true,
+    });
     let stdout = '';
+    let settled = false;
+    const finish = (result: HookResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    // 超时：终止整个进程树后返回超时结果（不等待孙进程退出）
+    const timer = setTimeout(() => {
+      if (process.platform === 'win32' && child.pid) {
+        // Windows：taskkill /T 递归终止进程树
+        spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
+      } else if (child.pid) {
+        try {
+          process.kill(-child.pid, 'SIGTERM');
+        } catch {
+          /* 进程组已退出 */
+        }
+        // 宽限期后 SIGKILL 兜底（unref 不阻塞进程退出）
+        setTimeout(() => {
+          try {
+            process.kill(-child.pid!, 'SIGKILL');
+          } catch {
+            /* 已退出 */
+          }
+        }, 1000).unref();
+      }
+      finish({ action: 'continue', message: `Hook 超时（${timeout}ms），已终止进程树` });
+    }, timeout);
+    timer.unref?.();
     child.stdout.on('data', (d) => {
       stdout += d;
     });
     child.on('close', (code) => {
       if (code === 0) {
-        resolve({ action: 'continue', modifiedToolResult: stdout });
+        finish({ action: 'continue', modifiedToolResult: stdout });
       } else {
-        resolve({
+        finish({
           action: 'skip',
           message: `Hook 退出码 ${code}`,
         });
       }
     });
     child.on('error', (err) => {
-      resolve({ action: 'continue', message: `Hook 执行失败: ${err.message}` });
+      finish({ action: 'continue', message: `Hook 执行失败: ${err.message}` });
     });
   });
 }

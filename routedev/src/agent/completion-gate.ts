@@ -15,8 +15,13 @@ function runCommandAsync(
   options: { timeout: number; cwd: string; shell?: boolean },
 ): Promise<{ status: number | null; signal: string | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
+    // P0 修复（复审）：Windows 上直接 spawn .cmd/.bat 会 EINVAL——
+    // 必须经 shell 执行（args 由 detectRunTarget 生成：['run', scriptName]，
+    // 无用户输入注入面；原有"附加 .cmd 后缀避免 shell:true 注入"注释仅适用
+    // fallback 的 npx 直调路径，那里已用 npx.cmd + 无 shell）
+    const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
     // windowsHide:true 防止 GUI 应用 spawn 子进程时弹出 cmd/console 窗口
-    const child = spawn(cmd, args, { ...options, windowsHide: true });
+    const child = spawn(cmd, args, { ...options, windowsHide: true, shell: needsShell });
     let stdout = '';
     let stderr = '';
     child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf-8'); });

@@ -1,17 +1,41 @@
 // tests/agent/composer-reference.test.ts
 // Phase 97 Part G：ComposerReference 统一解析器——/ @ & ~ 前缀 + accessScope 校验
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { parseComposerReferences } from '../../src/agent/context/composer-reference.js';
 import path from 'node:path';
+import { join } from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 
-const cwd = path.resolve('C:/fake-project');
+// P0 修复（复审）：使用当前平台真实 absolute path——'C:/fake-project' 在 Linux
+// CI 上被 path.resolve 解析成 cwd 下的普通路径，破坏 workspace 边界语义
+let tmpBase: string;
+let workspace: string;
+let sharedLib: string;
+let cwd: string;
+
+beforeAll(() => {
+  tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'composer-ref-'));
+  workspace = path.join(tmpBase, 'workspace');
+  sharedLib = path.join(tmpBase, 'shared-lib');
+  fs.mkdirSync(workspace, { recursive: true });
+  fs.mkdirSync(sharedLib, { recursive: true });
+  // @src/index.ts 引用解析需要文件真实存在（mention-parser 校验存在性）
+  fs.mkdirSync(join(workspace, 'src'), { recursive: true });
+  fs.writeFileSync(join(workspace, 'src', 'index.ts'), 'export const x = 1;' + String.fromCharCode(10));
+  cwd = workspace;
+});
+
+afterAll(() => {
+  fs.rmSync(tmpBase, { recursive: true, force: true });
+});
 
 describe('parseComposerReferences（统一引用解析）', () => {
   it('解析 @ 文件引用（复用 mention-parser）', () => {
     const refs = parseComposerReferences('请修改 @src/index.ts', {
       cwd,
-      workspaceRoot: 'C:/fake-project',
+      workspaceRoot: workspace,
     });
     expect(refs.length).toBe(1);
     expect(refs[0]!.type).toBe('file');
@@ -60,10 +84,10 @@ describe('parseComposerReferences（统一引用解析）', () => {
   });
 
   it('accessScope：附加目录内为 attached，外部为 system', () => {
-    const refs = parseComposerReferences('看 @C:/shared-lib/api.ts', {
+    const refs = parseComposerReferences(`看 @${sharedLib}/api.ts`, {
       cwd,
-      workspaceRoot: 'C:/fake-project',
-      attachedRoots: ['C:/shared-lib'],
+      workspaceRoot: workspace,
+      attachedRoots: [sharedLib],
     });
     const file = refs.find((r) => r.type === 'file' && r.id.includes('shared-lib'));
     expect(file).toBeDefined();
@@ -71,7 +95,7 @@ describe('parseComposerReferences（统一引用解析）', () => {
   });
 
   it('去重：同一引用多次出现只解析一次', () => {
-    const refs = parseComposerReferences('修改 @src/a.ts 和 @src/a.ts', { cwd, workspaceRoot: 'C:/fake-project' });
+    const refs = parseComposerReferences('修改 @src/a.ts 和 @src/a.ts', { cwd, workspaceRoot: workspace });
     const files = refs.filter((r) => r.type === 'file');
     expect(files.length).toBe(1);
   });

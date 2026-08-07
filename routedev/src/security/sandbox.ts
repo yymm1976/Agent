@@ -380,8 +380,17 @@ export class CommandSandbox {
     const firstToken = parseCommand(command).command || '';
     // basename（去路径前缀，便于白名单匹配）—— 同时考虑 firstToken 和整体 command
     // 之所以同时考虑整体 command：处理路径含空格的情况（如 'C:\Program Files\nodejs\node.exe'）
-    const cmdNameFromFirst = path.basename(firstToken).toLowerCase();
-    const cmdNameFromWhole = path.basename(command).toLowerCase();
+    // P0 修复（复审）：跨平台规范化——Linux 上 path.basename 不识别 Windows 反斜杠
+    // 分隔符，'C:\Program Files\nodejs\node.exe' 会整体返回导致白名单不匹配。
+    // 同时按 win32/posix 取 basename，取更短（更像真实文件名）的候选。
+    const extractExecutableName = (s: string): string => {
+      const win = path.win32.basename(s);
+      const posix = path.posix.basename(s);
+      const candidate = win.length <= posix.length ? win : posix;
+      return candidate.toLowerCase();
+    };
+    const cmdNameFromFirst = extractExecutableName(firstToken);
+    const cmdNameFromWhole = extractExecutableName(command);
     // 去掉 Windows 可执行文件扩展名（.exe / .cmd / .bat）
     const stripExt = (s: string) => s.replace(/\.(exe|cmd|bat)$/i, '');
 
