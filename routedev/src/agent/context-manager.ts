@@ -47,6 +47,15 @@ export interface LLMStreamResult {
   /** F-012：true = 完整终态（stop/tool_use/length）；false = 协议不完整 */
   complete: boolean;
   /**
+   * K2（GA Hardening）：usage-only 尾块丢失标志。
+   * complete=true 时区分两类情形：
+   * - usageIncomplete=false —— usage 事件完整到达，token 记账可信
+   * - usageIncomplete=true —— finish 已到（语义完成）但 usage 尾块丢失
+   *   （流在 finish chunk 之后、usage-only 尾块之前中断）。
+   *   本轮仍为**成功 turn**，绝不重执行；仅 token 记账会低估。
+   */
+  usageIncomplete: boolean;
+  /**
    * Phase 96+：本轮 LLM 的推理内容（DeepSeek R1 类模型的 reasoning_content）
    * 工具调用修复 pipeline 的 scavenge 工序会从中捞回被吃掉的 tool-call JSON
    * 无推理能力的模型为空字符串
@@ -428,6 +437,8 @@ export class LoopContextManager {
     const toolCallBuffers = new Map<string, { id: string; name: string; arguments: Record<string, unknown>; __argsBuffer?: string }>();
     // 用于按顺序追踪当前的工具调用
     const toolCallOrder: string[] = [];
+    // K2：usage 事件是否到达——流结束时仍为 false = usage-only 尾块丢失
+    let usageSeen = false;
 
     for await (const event of stream) {
       // 检查取消
@@ -491,6 +502,7 @@ export class LoopContextManager {
 
         case 'usage':
           usage = event.usage;
+          usageSeen = true;
           break;
 
         case 'done':
@@ -516,6 +528,9 @@ export class LoopContextManager {
 
     // 返回（AsyncGenerator return value）
     const complete = finishReason !== undefined && finishReason !== 'error';
+    // K2：finish 已到（语义完成）但 usage 尾块从未到达 → usageIncomplete=true。
+    // 本轮仍为成功 turn（complete=true），调用方不得重执行——仅 token 记账低估。
+    const usageIncomplete = complete && !usageSeen;
     return {
       content: fullContent,
       toolCalls,
@@ -523,6 +538,7 @@ export class LoopContextManager {
       reasoning: fullReasoning,
       finishReason,
       complete,
+      usageIncomplete,
     };
   }
 

@@ -3,6 +3,8 @@
 // 包含：LLM 消息格式、工具调用、Token 使用、分类结果、路由结果、LLM 客户端抽象、LLM 错误
 
 import type { ScenarioTier, Protocol, BudgetMode, ModelConfig } from '../config/schema.js';
+import { AgentError } from '../errors/agent-errors.js';
+import type { AgentErrorKind } from '../errors/agent-errors.js';
 
 // 重新导出 config/schema 中的类型
 export type { ScenarioTier, Protocol, BudgetMode, ModelConfig };
@@ -236,6 +238,11 @@ export interface LLMRequestOptions {
    * Gemini 客户端在 SSE 读取循环中检查 signal.aborted 并 break
    */
   signal?: AbortSignal;
+  /**
+   * TD-21 Phase 1：per-request provider retry 观察者——
+   * 每次实际重试前触发（provider retry 可观测性，接入 RunEventLog）
+   */
+  onRetry?: (info: { error: unknown; attempt: number }) => void;
   /** P2-11：结构化输出格式（OpenAI 使用 response_format json_schema） */
   responseFormat?: {
     type: 'json_schema';
@@ -374,12 +381,14 @@ export type LLMErrorType =
 /**
  * LLM 错误类
  * 统一 OpenAI 和 Anthropic 的错误格式
+ *
+ * GA Hardening 第4项：继承 AgentError——重试判定用类型（kind/retryable）驱动，
+ * 不再依赖消息字符串正则；401/403（auth）retryable=false 停止 provider 重试
  */
-export class LLMError extends Error {
+export class LLMError extends AgentError {
   readonly type: LLMErrorType;
   readonly statusCode?: number;
   readonly model?: string;
-  readonly cause?: Error;
 
   constructor(
     message: string,
@@ -387,18 +396,23 @@ export class LLMError extends Error {
     model: string | undefined,
     cause?: Error,
   ) {
-    super(message);
+    const type = LLMError.inferType(statusCode, message);
+    super(
+      LLMError.typeToKind(type),
+      LLMError.typeRetryable(type),
+      message,
+      cause,
+    );
     this.name = 'LLMError';
     this.statusCode = statusCode;
     this.model = model;
-    this.cause = cause;
-    this.type = LLMError.inferType(statusCode, message);
+    this.type = type;
   }
 
   /** 根据状态码和消息推断错误类型 */
   private static inferType(statusCode: number | undefined, message: string): LLMErrorType {
     if (statusCode === 401 || statusCode === 403) return 'auth_error';
-    if (statusCode === 429) return 'rate_limit';
+    if (statusCode === 429 || statusCode === 529) return 'rate_limit';
     if (statusCode === 408) return 'timeout';
     if (statusCode === 404) return 'model_not_found';
     if (statusCode === 400 && message.includes('content')) return 'content_filter';
@@ -406,6 +420,37 @@ export class LLMError extends Error {
     if (message.includes('timeout') || message.includes('ETIMEDOUT')) return 'timeout';
     if (message.includes('ECONNREFUSED') || message.includes('ENOTFOUND')) return 'network_error';
     return 'unknown';
+  }
+
+  /** 类型 → AgentErrorKind（分类，供 instanceof 体系判定） */
+  private static typeToKind(type: LLMErrorType): AgentErrorKind {
+    switch (type) {
+      case 'auth_error': return 'auth';
+      case 'rate_limit': return 'rate_limit';
+      case 'timeout': return 'timeout';
+      case 'network_error': return 'provider_unavailable';
+      case 'invalid_request':
+      case 'model_not_found':
+      case 'content_filter': return 'protocol';
+      case 'unknown': return 'provider_unavailable';
+    }
+  }
+
+  /**
+   * 类型 → retryable（类型化重试语义，核心控制流）
+   * unknown 保守为 false——不重试不认识的错误，与旧消息正则行为一致
+   */
+  private static typeRetryable(type: LLMErrorType): boolean {
+    switch (type) {
+      case 'rate_limit':
+      case 'timeout':
+      case 'network_error': return true;
+      case 'auth_error':
+      case 'invalid_request':
+      case 'model_not_found':
+      case 'content_filter':
+      case 'unknown': return false;
+    }
   }
 
   /** 是否为速率限制错误 */

@@ -6,12 +6,28 @@
 //   - FOREGROUND_RETRY_SOURCES 白名单：用户阻塞型任务全力重试
 //   - 后台任务（summary/title/suggestion/classifier）529 时直接 bail
 //   - 避免后台任务重试引发级联风暴（一个慢后台任务拖垮前台体验）
+//
+// GA Hardening 第4项：重试判定类型化——AgentError 用 retryable 字段，
+// 不再用消息字符串正则驱动核心控制流（外部 SDK 错误仍保留消息兜底）；
+// 401/403（AuthError）任何场景都不得重试。
+
+import { AgentError, isRetryableError, isAuthError } from '../errors/agent-errors.js';
 
 interface RetryPolicyOptions {
   maxRetries?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
   retryable?: (error: unknown) => boolean;
+}
+
+/** TD-21 Phase 1：重试观察者——每次实际重试前触发（provider retry 可观测性） */
+export interface RetryObserver {
+  (info: { error: unknown; attempt: number; querySource?: string }): void;
+}
+
+/** 单次 execute 的重试观察选项（per-request，不污染策略实例） */
+export interface RetryExecuteOptions {
+  onRetry?: RetryObserver;
 }
 
 export class RetryPolicy {
@@ -26,16 +42,15 @@ export class RetryPolicy {
     this.maxDelayMs = options.maxDelayMs ?? 8000;
     this.retryable =
       options.retryable ??
+      // GA Hardening 第4项：类型化优先（AgentError.retryable），
+      // 认证错误（401/403）绝不在任何匹配路径上被重试
       ((error) => {
-        if (error instanceof Error) {
-          const msg = error.message.toLowerCase();
-          return msg.includes('timeout') || msg.includes('econnreset') || msg.includes('rate limit');
-        }
-        return false;
+        if (isAuthError(error)) return false;
+        return isRetryableError(error);
       });
   }
 
-  async execute<T>(fn: () => Promise<T>): Promise<T> {
+  async execute<T>(fn: () => Promise<T>, options?: RetryExecuteOptions): Promise<T> {
     let lastError: unknown;
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
@@ -45,6 +60,8 @@ export class RetryPolicy {
         if (attempt === this.maxRetries || !this.retryable(error)) {
           throw error;
         }
+        // TD-21 Phase 1：重试前通知观察者（attempt+1 = 即将进行的第几次请求）
+        options?.onRetry?.({ error, attempt: attempt + 1 });
         const delay = Math.min(
           this.baseDelayMs * 2 ** attempt,
           this.maxDelayMs,
@@ -97,8 +114,10 @@ export function isForegroundQuerySource(source: QuerySource): boolean {
   return FOREGROUND_RETRY_SOURCES.has(source);
 }
 
-/** P0-10：HTTP 529（服务过载）检测 */
+/** P0-10：HTTP 529（服务过载）检测——GA Hardening 第4项：类型化优先，外部错误消息兜底 */
 function is529Error(error: unknown): boolean {
+  // RateLimitError（含 LLMError type=rate_limit，覆盖 429/529 状态码）类型化判定
+  if (error instanceof AgentError && error.kind === 'rate_limit') return true;
   if (error instanceof Error) {
     const msg = error.message.toLowerCase();
     // 覆盖常见 529 表现形式
@@ -162,15 +181,14 @@ export class QuerySourceAwareRetryPolicy {
         baseDelayMs: this.baseDelayMs,
         maxDelayMs: this.backgroundMaxDelayMs,
         retryable: (error) => {
-          // 529 错误：后台任务直接 bail，不重试
+          // GA Hardening 第4项：认证错误（401/403）任何场景不得重试
+          if (isAuthError(error)) return false;
+          // 529/429 错误：后台任务直接 bail，不重试
           if (is529Error(error)) return false;
           // 其他错误：使用调用方提供的 retryable 或默认逻辑
           if (options.retryable) return options.retryable(error);
-          if (error instanceof Error) {
-            const msg = error.message.toLowerCase();
-            return msg.includes('timeout') || msg.includes('econnreset');
-          }
-          return false;
+          // 类型化判定优先（AgentError.retryable），外部 SDK 错误消息兜底
+          return isRetryableError(error);
         },
       });
     }
@@ -186,8 +204,8 @@ export class QuerySourceAwareRetryPolicy {
     return this.isForeground;
   }
 
-  async execute<T>(fn: () => Promise<T>): Promise<T> {
-    return this.inner.execute(fn);
+  async execute<T>(fn: () => Promise<T>, options?: RetryExecuteOptions): Promise<T> {
+    return this.inner.execute(fn, options);
   }
 }
 

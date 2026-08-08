@@ -14,7 +14,7 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { VersionManager } from '../../src/agents/profiles/version-manager.js';
+import { VersionManager, MigrationPlanCorruptError } from '../../src/agents/profiles/version-manager.js';
 import { type AgentProfile } from '../../src/agents/profiles/types.js';
 import { AgentProfileManager } from '../../src/agents/profiles/manager.js';
 import { RESEARCHER_PROFILE } from '../../src/agents/profiles/builtin-templates.js';
@@ -615,5 +615,98 @@ describe('A3 legacy revision migration', () => {
       await fs.rm(base, { recursive: true, force: true });
     }
     await fs.rm(cleanBase, { recursive: true, force: true });
+  });
+
+  describe('GA Hardening 第5项：corrupt-plan fail-closed', () => {
+    let versionsDir: string;
+
+    beforeEach(() => {
+      // 3 个 legacy + 半迁移态（legacy-a 已写 revision=1，模拟崩溃后恢复现场）
+      writeLegacyVersion('p1', 'legacy-a', 1000);
+      writeLegacyVersion('p1', 'legacy-b', 2000);
+      writeLegacyVersion('p1', 'legacy-c', 3000);
+      versionsDir = path.join(tempDir, '.routedev', 'skills', 'agents', 'p1', 'versions');
+      // 半迁移：legacy-a 已被旧 plan 写过 revision=1
+      const fa = path.join(versionsDir, 'legacy-a.json');
+      const ra = JSON.parse(fsSync.readFileSync(fa, 'utf-8'));
+      ra.meta.revision = 1;
+      fsSync.writeFileSync(fa, JSON.stringify(ra, null, 2), 'utf-8');
+    });
+
+    function snapshotRevisions(): Record<string, number | undefined> {
+      const out: Record<string, number | undefined> = {};
+      for (const f of fsSync.readdirSync(versionsDir)) {
+        if (!f.endsWith('.json')) continue;
+        if (f.startsWith('.revision-schema-v2')) continue; // plan/marker 非版本文件
+        const r = JSON.parse(fsSync.readFileSync(path.join(versionsDir, f), 'utf-8'));
+        out[f] = r.meta.revision;
+      }
+      return out;
+    }
+
+    it('plan JSON 损坏 → 抛 MigrationPlanCorruptError，不重扫/不覆盖/不写 marker', () => {
+      fsSync.writeFileSync(path.join(versionsDir, '.revision-schema-v2.plan.json'), '{ broken json', 'utf-8');
+      const before = snapshotRevisions();
+      expect(() => vm.ensureRevisions('p1')).toThrow(MigrationPlanCorruptError);
+      // 任何文件都未被改写（半迁移态保持原样）
+      expect(snapshotRevisions()).toEqual(before);
+      // marker 未写（迁移未完成）
+      expect(fsSync.existsSync(path.join(versionsDir, '.revision-schema-v2'))).toBe(false);
+    });
+
+    it('plan schema 不符（未来版本）→ fail-closed 抛错', () => {
+      fsSync.writeFileSync(
+        path.join(versionsDir, '.revision-schema-v2.plan.json'),
+        JSON.stringify({ schema: 3, entries: [] }),
+        'utf-8',
+      );
+      const before = snapshotRevisions();
+      expect(() => vm.ensureRevisions('p1')).toThrow(MigrationPlanCorruptError);
+      expect(snapshotRevisions()).toEqual(before);
+    });
+
+    it('plan 结构非法（entries 缺失/重复 targetRevision）→ fail-closed 抛错', () => {
+      const planPath = path.join(versionsDir, '.revision-schema-v2.plan.json');
+      // entries 缺失
+      fsSync.writeFileSync(planPath, JSON.stringify({ schema: 2 }), 'utf-8');
+      expect(() => vm.ensureRevisions('p1')).toThrow(MigrationPlanCorruptError);
+      // targetRevision 重复（内部不一致）
+      fsSync.writeFileSync(planPath, JSON.stringify({
+        schema: 2,
+        entries: [
+          { file: 'legacy-a.json', targetRevision: 1 },
+          { file: 'legacy-b.json', targetRevision: 1 },
+        ],
+      }), 'utf-8');
+      expect(() => vm.ensureRevisions('p1')).toThrow(MigrationPlanCorruptError);
+      expect(fsSync.existsSync(path.join(versionsDir, '.revision-schema-v2'))).toBe(false);
+    });
+
+    it('错误消息含恢复指引（MIGRATION_PLAN_CORRUPT code）', () => {
+      fsSync.writeFileSync(path.join(versionsDir, '.revision-schema-v2.plan.json'), 'not json at all', 'utf-8');
+      try {
+        vm.ensureRevisions('p1');
+        expect.unreachable();
+      } catch (err) {
+        expect(err).toBeInstanceOf(MigrationPlanCorruptError);
+        const e = err as MigrationPlanCorruptError;
+        expect(e.code).toBe('MIGRATION_PLAN_CORRUPT');
+        expect(e.message).toContain('fail-closed');
+        expect(e.message).toContain('.revision-schema-v2.plan.json'); // 恢复指引提及 plan 文件
+      }
+    });
+
+    it('恢复路径：删除损坏 plan 后重试 → 全新扫描正常迁移', () => {
+      fsSync.writeFileSync(path.join(versionsDir, '.revision-schema-v2.plan.json'), 'garbage', 'utf-8');
+      expect(() => vm.ensureRevisions('p1')).toThrow(MigrationPlanCorruptError);
+      // 操作者恢复：删除 plan 文件
+      fsSync.unlinkSync(path.join(versionsDir, '.revision-schema-v2.plan.json'));
+      const max = vm.ensureRevisions('p1');
+      expect(max).toBe(3);
+      // 统一 revision 空间无 collision
+      const revs = Object.values(snapshotRevisions()).filter((r) => typeof r === 'number');
+      expect(new Set(revs).size).toBe(revs.length);
+      expect(fsSync.existsSync(path.join(versionsDir, '.revision-schema-v2'))).toBe(true);
+    });
   });
 });

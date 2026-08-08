@@ -86,8 +86,10 @@ export class OpenAIResponsesClient extends BaseLLMClient {
       const params = this.buildRequestParams(options, false);
       const requestOptions = this.buildRequestOptions(options);
       // P0-10：用 withRetry 包装实际 API 调用
-      const response = await this.withRetry(() =>
-        this.client!.responses.create(params, requestOptions) as Promise<Response>,
+      // TD-21 Phase 1：透传 options.onRetry（provider retry 可观测性）
+      const response = await this.withRetry(
+        () => this.client!.responses.create(params, requestOptions) as Promise<Response>,
+        options.onRetry,
       );
 
       const { content, toolCalls } = this.extractOutput(response.output);

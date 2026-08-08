@@ -48,6 +48,8 @@ import { MemoryIntegration } from './memory-integration.js';
 import type { DualLoopOrchestrator } from './dual-loop-orchestrator.js';
 // VFS（运行时 import：构造函数中需默认实例化）
 import { VirtualFS, createVFS } from './context/virtual-fs.js';
+// GA Hardening 第4项：类型化错误体系（协议错误等核心控制流异常）
+import { AgentError, ProtocolError } from '../errors/agent-errors.js';
 // PlanState（type-only import）
 import type { PlanState } from './context/plan-state.js';
 // token 估算（用于 ReAct 循环内压缩阈值判断）
@@ -230,6 +232,14 @@ export class ReActAgentLoop {
   private currentMessageId: string | null = null;
   /** Phase 97 Part A：agent 结束原因（finally 发射 agent_end 用） */
   private engineEndReason: 'completed' | 'error' | 'cancelled' | 'max_iterations' = 'completed';
+  /** TD-21 Phase 1：RunEventLog（权威 append-only 事件日志，可选注入） */
+  private runEventLog: import('../harness/run-event-log.js').RunEventLog | null = null;
+  /** TD-21 Phase 1：当前 run 的 LLM 请求计数（attempt 语义） */
+  private runLlmAttempt = 0;
+  /** TD-21 Phase 1：当前 run 的 provider retry 计数（onRetry 累计） */
+  private runRetryCount = 0;
+  /** TD-21 Phase 1：当前 run 的已执行工具调用数 */
+  private runToolCalls = 0;
   /** B-14：当前 run 的模型能力决策（run 开始时解析一次，run 期间生效） */
   private currentCapability: import('../router/capability-resolver.js').CapabilityDecision | null = null;
   /** B-16（审查 I2 修复）：当前 run 的隔离工作区（worktree 实验时切换工具的 workingDirectory 与边界） */
@@ -284,6 +294,11 @@ export class ReActAgentLoop {
   /** Phase 34：注入 TraceCollector */
   setTraceCollector(trace: import('../harness/trace-collector.js').TraceCollector | null): void {
     this.ctxMgr.setTraceCollector(trace);
+  }
+
+  /** TD-21 Phase 1：注入 RunEventLog（权威 append-only 事件日志） */
+  setRunEventLog(log: import('../harness/run-event-log.js').RunEventLog | null): void {
+    this.runEventLog = log;
   }
 
   /** C5 修复：注入 Steering Queue 消费者 */
@@ -500,6 +515,12 @@ export class ReActAgentLoop {
       this.engineEndReason = 'completed';
       this.emitEngineEvent({ type: 'agent_start', payload: { kernel: 'routedev-native', model: routeDecision.model.id } });
 
+      // TD-21 Phase 1：run 开始记录权威事件（user request 受理）
+      this.runLlmAttempt = 0;
+      this.runRetryCount = 0;
+      this.runToolCalls = 0;
+      this.runEventLog?.record('run_started', { input: userMessage, model: routeDecision.model.id });
+
       // Phase 38 Task 1：onSystemPrompt 中间件（systemBlocks 模式下跳过）
       if (!systemBlocks) {
         systemPrompt = await this.mwRunner.runOnSystemPrompt(systemPrompt);
@@ -566,6 +587,8 @@ export class ReActAgentLoop {
           yield overflowEscalation; trace?.recordEvent(overflowEscalation);
           const overflowDone: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
           yield overflowDone; trace?.recordEvent(overflowDone);
+          // TD-21 Phase 1：FollowUp 溢出 = 运行中断
+          this.runEventLog?.record('run_interrupted', { reason: `FollowUp 循环达到最大迭代次数 (${MAX_FOLLOWUP_ITERATIONS})` });
           this.engineEndReason = 'max_iterations';
           this.finishEngineTurn();
           break followUpLoop;
@@ -577,6 +600,8 @@ export class ReActAgentLoop {
             yield cancelError; trace?.recordEvent(cancelError);
             const doneEvent: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
             yield doneEvent; trace?.recordEvent(doneEvent);
+            // TD-21 Phase 1：取消 = 运行中断
+            this.runEventLog?.record('run_interrupted', { reason: '用户取消了执行' });
             this.engineEndReason = 'cancelled';
             this.finishEngineTurn();
             return;
@@ -682,6 +707,9 @@ export class ReActAgentLoop {
 
           try {
             // ===== LLM 流式调用 =====
+            // TD-21 Phase 1：LLM 请求发起事件（attempt 单调递增）
+            this.runLlmAttempt += 1;
+            this.runEventLog?.record('llm_requested', { model: routeDecision.model.id, attempt: this.runLlmAttempt });
             let result: LLMStreamResult;
             try {
               result = yield* this.callLLMStream(
@@ -690,17 +718,48 @@ export class ReActAgentLoop {
                 signal, routeDecision.enableCache,
               );
             } catch (error) {
+              // TD-21 Phase 1：LLM 请求失败（含类型化 kind）
+              this.runEventLog?.record('llm_failed', {
+                model: routeDecision.model.id,
+                attempt: this.runLlmAttempt,
+                errorKind: error instanceof AgentError ? error.kind : 'unknown',
+                error: error instanceof Error ? error.message : String(error),
+              });
               onModelFailure?.(routeDecision.model.id, error);
               throw error;
             }
             // F-012：协议不完整（done(error)/流中断）——不得视为成功模型返回
             if (!result.complete) {
-              const protocolError = new Error(
+              // GA Hardening 第4项：类型化 ProtocolError——重试/取消判定用类型而非消息字符串
+              const protocolError = new ProtocolError(
                 `LLM stream 协议不完整（finishReason=${result.finishReason ?? 'undefined'}），工具调用已丢弃`);
+              // TD-21 Phase 1：协议不完整也记 llm_failed（类型化 kind=protocol）
+              this.runEventLog?.record('llm_failed', {
+                model: routeDecision.model.id,
+                attempt: this.runLlmAttempt,
+                errorKind: 'protocol',
+                error: protocolError.message,
+              });
               onModelFailure?.(routeDecision.model.id, protocolError);
               throw protocolError;
             }
+            // TD-21 Phase 1：LLM 请求成功（finishReason/usage 进事件流）
+            this.runEventLog?.record('llm_succeeded', {
+              model: routeDecision.model.id,
+              attempt: this.runLlmAttempt,
+              finishReason: result.finishReason,
+              usage: result.usage,
+            });
             onModelSuccess?.(routeDecision.model.id);
+
+            // K2：finish 已到但 usage-only 尾块丢失——本轮为成功 turn，绝不重执行、
+            // 不触发 onModelFailure；仅 token 记账会低估，记日志以便观测
+            if (result.usageIncomplete) {
+              logger.warn('K2: usage-only tail lost after finish——本轮语义完成，usage 记账不完整', {
+                modelId: routeDecision.model.id,
+                finishReason: result.finishReason,
+              });
+            }
 
             // C7 修复：流返回后立即检查取消信号
             if (signal?.aborted) {
@@ -860,6 +919,9 @@ export class ReActAgentLoop {
                   }
 
                   approvedCalls.push(toolCall);
+                  // TD-21 Phase 1：工具调用发起事件
+                  this.runToolCalls += 1;
+                  this.runEventLog?.record('tool_requested', { toolName: toolCall.name, toolCallId: toolCall.id });
                   // Phase 94：收集 explorationSuggestion（覆盖式，保留最后一个）
                   if (actingResult.explorationSuggestion) {
                     lastExplorationSuggestion = actingResult.explorationSuggestion;
@@ -906,6 +968,9 @@ export class ReActAgentLoop {
 
                     // I16 修复：并行模式下触发 post-tool-call 钩子
                     await this.mwRunner.fireHookSafe('post-tool-call', { stepId: tc.id, toolName: tc.name, toolArgs: tc.arguments, toolResult, toolDuration });
+
+                    // TD-21 Phase 1：工具调用完成事件（并行）
+                    this.runEventLog?.record('tool_completed', { toolName: tc.name, toolCallId: tc.id, isError, outputPreview: execResult.output.slice(0, 200) });
 
                     yield { type: 'tool_call_result', toolName: tc.name, toolCallId: tc.id, result: toolResult, isError };
                     messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: tc.id, content: toolResult, isError }] });
@@ -1010,6 +1075,9 @@ export class ReActAgentLoop {
                   let toolResult: string;
                   let isError: boolean;
                   const toolStartTime = Date.now();
+                  // TD-21 Phase 1：工具调用发起事件（串行）
+                  this.runToolCalls += 1;
+                  this.runEventLog?.record('tool_requested', { toolName: toolCall.name, toolCallId: toolCall.id });
                   if (useStructured) {
                     const stream = this.createToolStream<{ output: string; isError: boolean; images?: Array<{ mediaType: string; data: string }> }>(toolCall.name, toolCall.id);
                     const toolPromise = this.toolExecutor.executeToolStructured!(
@@ -1051,6 +1119,9 @@ export class ReActAgentLoop {
 
                   // post-tool-call 钩子
                   await this.mwRunner.fireHookSafe('post-tool-call', { stepId: toolCall.id, toolName: toolCall.name, toolArgs: toolCall.arguments, toolResult, toolDuration });
+
+                  // TD-21 Phase 1：工具调用完成事件（串行）
+                  this.runEventLog?.record('tool_completed', { toolName: toolCall.name, toolCallId: toolCall.id, isError, outputPreview: toolResult.slice(0, 200) });
 
                   yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError };
                   messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError }] });
@@ -1111,6 +1182,12 @@ export class ReActAgentLoop {
 
             const finalDone: ReActEvent = { type: 'done', content: result.content, usage: totalUsage };
             yield finalDone; trace?.recordEvent(finalDone);
+            // TD-21 Phase 1：运行正常完成（投影一致性基准）
+            this.runEventLog?.record('run_completed', {
+              outputLength: result.content.length,
+              toolCallCount: this.runToolCalls,
+              retryCount: this.runRetryCount,
+            });
             this.finishEngineTurn();
             return;
 
@@ -1129,6 +1206,8 @@ export class ReActAgentLoop {
               yield errorEvent; trace?.recordEvent(errorEvent);
               const doneEvent: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
               yield doneEvent; trace?.recordEvent(doneEvent);
+              // TD-21 Phase 1：连续错误终止 = 运行中断
+              this.runEventLog?.record('run_interrupted', { reason: `连续 ${consecutiveErrors} 次错误，终止执行` });
               this.engineEndReason = 'error';
               this.finishEngineTurn();
               return;
@@ -1161,6 +1240,8 @@ export class ReActAgentLoop {
         yield escalationEvent; trace?.recordEvent(escalationEvent);
         const doneEvent: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
         yield doneEvent; trace?.recordEvent(doneEvent);
+        // TD-21 Phase 1：达到最大迭代次数 = 运行中断
+        this.runEventLog?.record('run_interrupted', { reason: `达到最大迭代次数 (${this.config.maxIterations})` });
         this.engineEndReason = 'max_iterations';
         this.finishEngineTurn();
         // maxIterations 退出不处理 follow-up（避免无限循环）
@@ -1269,6 +1350,16 @@ export class ReActAgentLoop {
       enableCache,
       // V2-021 修复：透传 AbortSignal 到 LLM 客户端，支持流式取消
       signal,
+      // TD-21 Phase 1：provider retry 可观测性——重试策略每次实际重试前触发
+      onRetry: (info) => {
+        this.runRetryCount += 1;
+        this.runEventLog?.record('llm_retry', {
+          model: modelId,
+          attempt: info.attempt,
+          errorKind: info.error instanceof AgentError ? info.error.kind : 'unknown',
+          error: info.error instanceof Error ? info.error.message : String(info.error),
+        });
+      },
     };
 
     // Phase 38 Task 1：onModelCall 中间件——LLM API 调用前（fail-open）

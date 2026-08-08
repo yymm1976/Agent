@@ -28,6 +28,17 @@ describe('CompletionGate (Phase 31 Task 6.4)', { timeout: 30000 }, () => {
   });
 
   afterEach(() => {
+    // EBUSY 重试：取消测试杀掉的进程树可能短暂占用临时目录，稍后清理
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        rmSync(tempDir, { recursive: true, force: true });
+        return;
+      } catch {
+        // 目录仍被占用的可能性低，短暂等待后重试
+        const until = Date.now() + 100;
+        while (Date.now() < until) { /* busy-wait 100ms */ }
+      }
+    }
     rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -204,6 +215,21 @@ describe('CompletionGate (Phase 31 Task 6.4)', { timeout: 30000 }, () => {
     ] as const)('映射 GateResult %#', (result, succeeded, expected) => {
       expect(toCompletionStatus(result, succeeded)).toBe(expected);
     });
+
+    // GA Hardening 第3项：用户取消必须是 'cancelled'，即使 checks 显示失败/未通过
+    it('GateResult.cancelled → cancelled（不误报 verification_failed）', () => {
+      const cancelled: GateResult = {
+        passed: false,
+        cancelled: true,
+        checks: [{ name: 'tests', ok: false, skipped: true, cancelled: true, output: '已取消（用户中断）', duration: 100 }],
+      };
+      expect(toCompletionStatus(cancelled, true)).toBe('cancelled');
+    });
+
+    it('GateResult.cancelled + 执行失败 → execution_failed 优先（计划自身失败优先于取消）', () => {
+      const cancelled: GateResult = { passed: false, cancelled: true, checks: [] };
+      expect(toCompletionStatus(cancelled, false)).toBe('execution_failed');
+    });
   });
 
   describe('工厂函数', () => {
@@ -234,6 +260,77 @@ describe('CompletionGate (Phase 31 Task 6.4)', { timeout: 30000 }, () => {
       expect(check).toHaveProperty('ok');
       expect(check).toHaveProperty('output');
       expect(check).toHaveProperty('duration');
+    });
+  });
+
+  describe('GA Hardening 第3项：AbortSignal 全链路', () => {
+    it('预取消信号：不 spawn 任何命令，返回 cancelled=true + cancelled 检查', async () => {
+      writeFileSync(join(tempDir, 'tsconfig.json'), '{}');
+      writeFileSync(join(tempDir, 'package.json'), JSON.stringify({ name: 'test' }));
+
+      const controller = new AbortController();
+      controller.abort(); // 预取消
+      const gate = createCompletionGate();
+      const result = await gate.verify({
+        modifiedFiles: [],
+        projectPath: tempDir,
+        signal: controller.signal,
+      });
+
+      expect(result.cancelled).toBe(true);
+      expect(result.checks.length).toBeGreaterThan(0);
+      for (const check of result.checks) {
+        expect(check.cancelled).toBe(true);
+      }
+    });
+
+    it('运行中取消：杀进程树，typecheck 返回 cancelled 而非超时跳过/失败', async () => {
+      // 脚本故意长时间运行（60s），验证取消能立即杀进程树而不是等超时
+      writeFileSync(join(tempDir, 'tsconfig.json'), '{}');
+      writeFileSync(join(tempDir, 'package.json'), JSON.stringify({
+        name: 'test',
+        scripts: { typecheck: 'node -e "setTimeout(() => {}, 60000)"' },
+      }));
+
+      const controller = new AbortController();
+      const gate = createCompletionGate();
+      const start = Date.now();
+      // 发起验证，200ms 后取消
+      const verifyPromise = gate.verify({
+        modifiedFiles: ['src/a.ts'],
+        projectPath: tempDir,
+        signal: controller.signal,
+      });
+      setTimeout(() => controller.abort(), 200);
+      const result = await verifyPromise;
+
+      const elapsed = Date.now() - start;
+      expect(result.cancelled).toBe(true);
+      // 取消后不再启动后续检查（lint/tests 无配置时本来就没有；typecheck 必须已取消）
+      const tc = result.checks.find(c => c.name === 'typecheck');
+      expect(tc).toBeDefined();
+      expect(tc!.cancelled).toBe(true);
+      expect(tc!.skipped).toBe(true);
+      // 快速返回（远小于 60s 超时）
+      expect(elapsed).toBeLessThan(10000);
+    });
+
+    it('正常完成且无信号：不设置 cancelled（无回归）', async () => {
+      writeFileSync(join(tempDir, 'tsconfig.json'), '{}');
+      writeFileSync(join(tempDir, 'package.json'), JSON.stringify({
+        name: 'test',
+        scripts: { typecheck: 'node -e "console.log(\'ok\')"' },
+      }));
+
+      const gate = createCompletionGate();
+      const result = await gate.verify({
+        modifiedFiles: ['src/a.ts'],
+        projectPath: tempDir,
+      });
+
+      expect(result.cancelled).toBeUndefined();
+      const tc = result.checks.find(c => c.name === 'typecheck');
+      expect(tc!.ok).toBe(true);
     });
   });
 });

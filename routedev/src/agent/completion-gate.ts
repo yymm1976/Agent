@@ -9,11 +9,13 @@ import { join } from 'node:path';
 import { logger } from '../utils/logger.js';
 
 // F-034：spawnSync 阻塞事件循环，改用 spawn + Promise 包装异步执行
+// GA Hardening 第3项：支持 AbortSignal——取消时杀整个进程树
+// （POSIX 用 detached 进程组 kill(-pid)，Windows 用 taskkill /T /F 递归终止）
 function runCommandAsync(
   cmd: string,
   args: string[],
-  options: { timeout: number; cwd: string; shell?: boolean },
-): Promise<{ status: number | null; signal: string | null; stdout: string; stderr: string }> {
+  options: { timeout: number; cwd: string; shell?: boolean; signal?: AbortSignal },
+): Promise<{ status: number | null; signal: string | null; stdout: string; stderr: string; cancelled: boolean }> {
   return new Promise((resolve) => {
     // P0 修复（复审）：Windows 上直接 spawn .cmd/.bat 会 EINVAL——
     // 必须经 shell 执行（args 由 detectRunTarget 生成：['run', scriptName]，
@@ -21,13 +23,47 @@ function runCommandAsync(
     // fallback 的 npx 直调路径，那里已用 npx.cmd + 无 shell）
     const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
     // windowsHide:true 防止 GUI 应用 spawn 子进程时弹出 cmd/console 窗口
-    const child = spawn(cmd, args, { ...options, windowsHide: true, shell: needsShell });
+    // POSIX：signal 存在时 detached 创建独立进程组，便于 kill(-pid) 杀整棵进程树
+    const treeKillable = options.signal !== undefined && process.platform !== 'win32';
+    const child = spawn(cmd, args, {
+      cwd: options.cwd,
+      timeout: options.timeout,
+      shell: needsShell,
+      windowsHide: true,
+      ...(treeKillable ? { detached: true } : {}),
+    });
     let stdout = '';
     let stderr = '';
+    let settled = false;
+    const finish = (result: { status: number | null; signal: string | null; stdout: string; stderr: string; cancelled: boolean }) => {
+      if (!settled) { settled = true; resolve(result); }
+    };
     child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf-8'); });
     child.stderr?.on('data', (d: Buffer) => { stderr += d.toString('utf-8'); });
-    child.on('close', (code, signal) => resolve({ status: code, signal, stdout, stderr }));
-    child.on('error', () => resolve({ status: -1, signal: null, stdout, stderr }));
+    child.on('close', (code, signal) => finish({ status: code, signal, stdout, stderr, cancelled: false }));
+    child.on('error', () => finish({ status: -1, signal: null, stdout, stderr, cancelled: false }));
+      if (options.signal) {
+        // 取消：杀整个进程树（pnpm/npm 脚本链会派生孙进程，只杀直接子进程会残留孤儿）
+        const onAbort = () => {
+          if (child.pid === undefined) return;
+          try {
+            if (process.platform === 'win32') {
+              // Windows 无进程组概念：taskkill /T /F 递归终止
+              spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
+            } else {
+              process.kill(-child.pid, 'SIGTERM'); // detached 进程组整体终止
+            }
+          } catch { /* 进程可能已退出 */ }
+          finish({ status: null, signal: 'SIGABRT', stdout, stderr, cancelled: true });
+        };
+        if (options.signal.aborted) {
+          onAbort();
+        } else {
+          options.signal.addEventListener('abort', onAbort, { once: true });
+          // 进程先于 abort 结束时清理监听器（防泄漏）
+          child.on('close', () => options.signal?.removeEventListener('abort', onAbort));
+        }
+      }
   });
 }
 
@@ -86,6 +122,11 @@ export interface GateCheck {
   ok: boolean;
   /** 是否因超时被跳过（不阻断任务完成） */
   skipped?: boolean;
+  /**
+   * GA Hardening 第3项：是否因用户取消（AbortSignal）中断。
+   * cancelled 的检查不算失败也不算普通跳过——结果无效。
+   */
+  cancelled?: boolean;
   /** 输出内容（失败时截取前 500 字符） */
   output: string;
   /** 耗时（毫秒） */
@@ -98,10 +139,16 @@ export interface GateCheck {
  * 验证门总结果
  */
 export interface GateResult {
-  /** 是否全部通过（skipped 不算失败） */
+  /** 是否全部通过（skipped 不算失败；cancelled 另由 cancelled 字段表达） */
   passed: boolean;
   /** 各项检查结果 */
   checks: GateCheck[];
+  /**
+   * GA Hardening 第3项：验证期间被用户取消（AbortSignal.aborted）。
+   * 为 true 时 passed 无意义——调用方应映射为 CompletionStatus 'cancelled'，
+   * 不得把取消误报为 verification_failed / completed_unverified。
+   */
+  cancelled?: boolean;
   /** Phase 52 Task 7：饱和监测告警（saturationMonitor 注入且非 healthy 时填充） */
   warnings?: string[];
 }
@@ -119,6 +166,9 @@ export type CompletionStatus =
 export function toCompletionStatus(gateResult?: GateResult, executionSucceeded = true): CompletionStatus {
   if (!executionSucceeded) return 'execution_failed';
   if (!gateResult) return 'completed_unverified';
+  // GA Hardening 第3项：用户取消优先于一切通过/失败判定——
+  // 取消状态必须是 'cancelled'，不得误报为 verification_failed
+  if (gateResult.cancelled) return 'cancelled';
   if (!gateResult.passed) return 'verification_failed';
   // P1 语义修正：任何检查因超时被跳过 = 验证未完整执行。
   // 不得宣称"已验证通过"（completed_verified/with_warnings），
@@ -156,6 +206,20 @@ const TEST_TIMEOUT = 120000; // 2 分钟
 
 // 输出截取长度
 const OUTPUT_MAX_CHARS = 500;
+
+// GA Hardening 第3项：构造用户取消的检查结果——
+// cancelled=true 且 skipped=true（不参与 passed 判定），结果无效由 GateResult.cancelled 表达
+function cancelledCheck(name: string, duration: number): GateCheck {
+  return {
+    name,
+    ok: false,
+    skipped: true,
+    cancelled: true,
+    output: '已取消（用户中断）',
+    duration,
+    warnings: ['验证已取消，结果无效'],
+  };
+}
 
 /**
  * B-04：文档/配置类变更扩展名（仅这类变更时跳过代码验证并说明）
@@ -207,9 +271,12 @@ export class CompletionGate {
     projectPath: string;
     planDescription?: string;
     includeTests?: boolean;
+    /** GA Hardening 第3项：取消信号——中止时杀进程树并标记 cancelled（用户中断） */
+    signal?: AbortSignal;
   }): Promise<GateResult> {
     const { modifiedFiles, projectPath } = params;
     const includeTests = params.includeTests ?? true;
+    const signal = params.signal;
     const checks: GateCheck[] = [];
 
     logger.info('CompletionGate: starting verification', {
@@ -234,8 +301,11 @@ export class CompletionGate {
 
     // 1. TypeScript 编译检查（如果有 tsconfig.json）
     if (existsSync(join(projectPath, 'tsconfig.json'))) {
-      checks.push(await this.runTypecheck(projectPath, modifiedFiles));
+      checks.push(await this.runTypecheck(projectPath, modifiedFiles, signal));
     }
+
+    // GA Hardening 第3项：取消后不再启动剩余检查（跳过 lint/tests 的启动开销）
+    if (signal?.aborted) return { passed: false, checks, cancelled: true };
 
     // 2. Lint 检查（如果有 eslint 配置）
     if (
@@ -246,12 +316,14 @@ export class CompletionGate {
       existsSync(join(projectPath, 'eslint.config.mjs')) ||
       existsSync(join(projectPath, 'eslint.config.ts'))
     ) {
-      checks.push(await this.runLint(projectPath, modifiedFiles));
+      checks.push(await this.runLint(projectPath, modifiedFiles, signal));
     }
+
+    if (signal?.aborted) return { passed: false, checks, cancelled: true };
 
     // 3. 测试运行（B-04：includeTests=false 时只做小而相关的 typecheck/lint）
     if (includeTests && (await this.hasTestConfig(projectPath))) {
-      checks.push(await this.runTests(projectPath, modifiedFiles));
+      checks.push(await this.runTests(projectPath, modifiedFiles, signal));
     } else if (!includeTests && (await this.hasTestConfig(projectPath))) {
       checks.push({
         name: 'tests',
@@ -263,9 +335,10 @@ export class CompletionGate {
     }
 
     const passed = checks.every((c) => c.ok || c.skipped);
-    logger.info('CompletionGate: verification done', { passed, checkCount: checks.length });
+    const cancelled = signal?.aborted ?? false;
+    logger.info('CompletionGate: verification done', { passed, checkCount: checks.length, cancelled });
 
-    const result: GateResult = { passed, checks };
+    const result: GateResult = { passed, checks, ...(cancelled ? { cancelled: true } : {}) };
 
     return result;
   }
@@ -273,8 +346,9 @@ export class CompletionGate {
   /**
    * TypeScript 编译检查
    */
-  private async runTypecheck(projectPath: string, _files: string[]): Promise<GateCheck> {
+  private async runTypecheck(projectPath: string, _files: string[], signal?: AbortSignal): Promise<GateCheck> {
     const start = Date.now();
+    if (signal?.aborted) return cancelledCheck('typecheck', 0);
     try {
       // Phase 92：优先用 package.json scripts.typecheck，fallback 到 npx tsc
       const target = detectRunTarget(projectPath, 'typecheck') ?? {
@@ -284,9 +358,12 @@ export class CompletionGate {
       const result = await runCommandAsync(target.cmd, target.args, {
         cwd: projectPath,
         timeout: TYPECHECK_TIMEOUT,
+        signal,
       });
 
       const duration = Date.now() - start;
+      // GA Hardening 第3项：用户取消 → cancelled 检查（结果无效，非失败非跳过）
+      if (result.cancelled) return cancelledCheck('typecheck', duration);
       // I2 修复：超时检测——与 runTests 一致，超时视为 skipped 而非 failed
       if (result.status === null && result.signal === 'SIGTERM') {
         return {
@@ -318,8 +395,9 @@ export class CompletionGate {
   /**
    * Lint 检查
    */
-  private async runLint(projectPath: string, _files: string[]): Promise<GateCheck> {
+  private async runLint(projectPath: string, _files: string[], signal?: AbortSignal): Promise<GateCheck> {
     const start = Date.now();
+    if (signal?.aborted) return cancelledCheck('lint', 0);
     try {
       // Phase 92：优先用 package.json scripts.lint，fallback 到 npx eslint
       const target = detectRunTarget(projectPath, 'lint') ?? {
@@ -329,9 +407,11 @@ export class CompletionGate {
       const result = await runCommandAsync(target.cmd, target.args, {
         cwd: projectPath,
         timeout: LINT_TIMEOUT,
+        signal,
       });
 
       const duration = Date.now() - start;
+      if (result.cancelled) return cancelledCheck('lint', duration);
       // I2 修复：超时检测——与 runTests 一致，超时视为 skipped 而非 failed
       if (result.status === null && result.signal === 'SIGTERM') {
         return {
@@ -363,8 +443,9 @@ export class CompletionGate {
   /**
    * 测试运行——只运行与修改文件相关的测试
    */
-  private async runTests(projectPath: string, files: string[]): Promise<GateCheck> {
+  private async runTests(projectPath: string, files: string[], signal?: AbortSignal): Promise<GateCheck> {
     const start = Date.now();
+    if (signal?.aborted) return cancelledCheck('tests', 0);
     try {
       // Phase 92：优先用 package.json scripts.test（避免 vitest --related 在某些项目下缺失相关测试）
       // fallback 到 npx vitest run [--related files]
@@ -385,6 +466,7 @@ export class CompletionGate {
       const result = await runCommandAsync(cmd, args, {
         cwd: projectPath,
         timeout: TEST_TIMEOUT,
+        signal,
       });
 
       const duration = Date.now() - start;
@@ -392,6 +474,9 @@ export class CompletionGate {
       const output = ok
         ? (result.stdout || '').substring(0, OUTPUT_MAX_CHARS)
         : (result.stdout || result.stderr || '').substring(0, OUTPUT_MAX_CHARS);
+
+      // GA Hardening 第3项：用户取消 → cancelled 检查（结果无效，非失败非跳过）
+      if (result.cancelled) return cancelledCheck('tests', duration);
 
       // 超时检测：spawn 超时后 status 为 null
       if (result.status === null && result.signal === 'SIGTERM') {

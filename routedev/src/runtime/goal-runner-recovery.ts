@@ -179,8 +179,9 @@ export function createRecoveryFunctions(ctx: GoalRunnerCtx) {
   /**
    * 运行独立代码验证门（typecheck/lint/tests）
    * 提取为独立函数，供迭代闭环复用
+   * GA Hardening 第3项：signal 由调用方（scheduler）注入验证门阶段专用 AbortController
    */
-  async function runCompletionGate(plan: GoalPlan): Promise<import('../agent/completion-gate.js').GateResult | undefined> {
+  async function runCompletionGate(plan: GoalPlan, signal?: AbortSignal): Promise<import('../agent/completion-gate.js').GateResult | undefined> {
     // Phase 32 Task 1.4：CompletionGate 独立代码验证门
     // 在 GoalVerifier（LLM 验证）之后运行，通过实际执行 typecheck/lint/tests 验证代码状态
     // 不信任 LLM 的"已完成"判断——只有代码编译通过、测试通过才算真正完成
@@ -196,7 +197,15 @@ export function createRecoveryFunctions(ctx: GoalRunnerCtx) {
           modifiedFiles,
           projectPath: process.cwd(),
           planDescription: plan.description,
+          signal,
         });
+
+        // GA Hardening 第3项：用户取消验证 → 不得把取消误报为验证失败，
+        // 不得把 plan 置为 failed；由调用方（scheduler）抛 PlanAbortError 中止
+        if (gateResult.cancelled) {
+          addSystemMessage('⏸ 代码验证已取消（用户中断），结果无效');
+          return gateResult;
+        }
 
         // Phase 54 Task 4：缓存 typecheck/lint/tests 结果，供 verifyPlan 中 GoalAuditor.audit 使用
         // 按 name 字段模糊匹配（兼容不同 CompletionGate 实现的命名）
@@ -419,7 +428,12 @@ export function createRecoveryFunctions(ctx: GoalRunnerCtx) {
 
         // 重新验证
         await verifyPlan(plan);
-        await runCompletionGate(plan);
+        // GA Hardening 第3项：gate 阶段接当前步骤 AbortSignal（用户取消时杀进程树并返回 cancelled）
+        const gateRes = await runCompletionGate(plan, abortControllerRef.current?.signal);
+        if (gateRes?.cancelled || abortControllerRef.current?.signal.aborted) {
+          addSystemMessage('⏸ 迭代闭环被中断');
+          break;
+        }
 
         // 重新读取 plan.status（verifyPlan 和 runCompletionGate 可能已将其改为 completed 或 failed）
         // 使用局部变量断言避免 TypeScript 的类型窄化（它不知道函数调用会修改 plan.status）

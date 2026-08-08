@@ -64,10 +64,13 @@ export abstract class BaseLLMClient implements ILLMClient {
    * 子类在 complete() 中调用 this.withRetry(() => apiCall()) 即可获得差异化重试
    * - foreground 任务（主对话/子Agent）：全力重试（默认 5 次，最大 16s 延迟）
    * - background 任务（摘要/压缩）：保守重试（默认 0 次），529 直接 bail
+   *
+   * TD-21 Phase 1：retryObserver（来自 LLMRequestOptions.onRetry）透传到重试策略，
+   * 每次实际重试前触发——provider retry 可观测性
    */
-  protected async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  protected async withRetry<T>(fn: () => Promise<T>, retryObserver?: (info: { error: unknown; attempt: number }) => void): Promise<T> {
     if (this.retryPolicy) {
-      return this.retryPolicy.execute(fn);
+      return this.retryPolicy.execute(fn, { onRetry: retryObserver });
     }
     return fn();
   }

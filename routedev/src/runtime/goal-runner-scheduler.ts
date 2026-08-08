@@ -25,6 +25,8 @@ import { PathRouter } from '../agent/path-router.js';
 import { StateMigration } from '../agent/state-migration.js';
 import { attestPlan, verifyPlanAttestation } from '../agent/plan-attestation.js';
 import { logger } from '../utils/logger.js';
+// GA Hardening 第4项：类型化取消语义（PlanAbortError 继承 CancellationError）
+import { CancellationError } from '../errors/agent-errors.js';
 import { estimateTokens } from '../utils/token-estimate.js';
 import { renderGoalProgressText, renderGoalCompletionSummary, formatDuration } from './components/goal-progress.js';
 import { notifyRoutingFallback } from './notification.js';
@@ -50,8 +52,9 @@ const COMPOSE_STEP_ID_OFFSET = 10000;
 /**
  * Phase 55：计划中止错误（预算耗尽/用户中断时抛出）
  * executeSingleStep 抛出后，调用方据此中止整个 plan（区别于普通步骤失败）
+ * GA Hardening 第4项：继承 CancellationError——类型化取消语义（retryable=false）
  */
-class PlanAbortError extends Error {
+class PlanAbortError extends CancellationError {
   constructor(reason: string) {
     super(reason);
     this.name = 'PlanAbortError';
@@ -246,16 +249,32 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
     } else if (auditMode === 'none') {
       plan.status = 'completed';
       addSystemMessage('⏭ 已跳过目标验证（auditMode=none）');
-    } else if (auditMode === 'completion_gate_first') {
-      gateResult = await ctx.runCompletionGate(plan);
-      await ctx.verifyPlan(plan);
-    } else if (auditMode === 'reviewer_first') {
-      await ctx.verifyPlan(plan);
-      gateResult = await ctx.runCompletionGate(plan);
     } else {
-      // 'full' 或默认值：两者都执行，先 LLM 验证后代码验证门
-      await ctx.verifyPlan(plan);
-      gateResult = await ctx.runCompletionGate(plan);
+      // GA Hardening 第3项：验证门阶段安装独立 AbortController——步骤结束后
+      // abortControllerRef.current 已被清空，stopGeneration 必须仍能取消验证门
+      // （spawn 的 typecheck/lint/tests 进程树）。完成后恢复原 ref。
+      const prevAbortController = abortControllerRef.current;
+      const gateAbort = new AbortController();
+      abortControllerRef.current = gateAbort;
+      try {
+        if (auditMode === 'completion_gate_first') {
+          gateResult = await ctx.runCompletionGate(plan, gateAbort.signal);
+          await ctx.verifyPlan(plan);
+        } else if (auditMode === 'reviewer_first') {
+          await ctx.verifyPlan(plan);
+          gateResult = await ctx.runCompletionGate(plan, gateAbort.signal);
+        } else {
+          // 'full' 或默认值：两者都执行，先 LLM 验证后代码验证门
+          await ctx.verifyPlan(plan);
+          gateResult = await ctx.runCompletionGate(plan, gateAbort.signal);
+        }
+      } finally {
+        abortControllerRef.current = prevAbortController;
+      }
+      // 用户中断验证门：与步骤中断一致的 PlanAbortError 语义（调用方据此中止整个 plan）
+      if (gateAbort.signal.aborted) {
+        throw new PlanAbortError('用户中断（验证门阶段）');
+      }
     }
 
     // Phase 55 Task 9：用 DualLoop + BoundedRecovery 替代迭代闭环

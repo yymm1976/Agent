@@ -222,6 +222,69 @@ describe('AuditLogger', () => {
     });
   });
 
+  describe('GA Hardening 第6项：hash envelope 版本化', () => {
+    function makeLogger(): AuditLogger {
+      const al = new AuditLogger('sess-ver', { storageDir: tempDir });
+      al.setChainConfig({ enabled: true });
+      return al;
+    }
+
+    async function readChainRecords(): Promise<HashChainRecord[]> {
+      const { readFileSync, readdirSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const dir = join(tempDir, new Date().toISOString().slice(0, 10));
+      const out: HashChainRecord[] = [];
+      for (const f of readdirSync(dir)) {
+        if (!f.endsWith('.audit.jsonl')) continue;
+        for (const line of readFileSync(join(dir, f), 'utf-8').split(String.fromCharCode(10))) {
+          if (line.trim()) out.push(JSON.parse(line));
+        }
+      }
+      return out;
+    }
+
+    it('新记录写入 auditSchemaVersion=2 + hashVersion=1，链验证通过', async () => {
+      const al = makeLogger();
+      al.log('file_write', '/a.txt', {}, 'success');
+      const records = await readChainRecords();
+      expect(records.length).toBe(1);
+      expect(records[0]!.auditSchemaVersion).toBe(2);
+      expect(records[0]!.hashVersion).toBe(1);
+      expect(al.verifyChain(records)).toBe(true);
+    });
+
+    it('旧记录兼容：无版本字段（hashVersion 缺省）→ 按 v1 算法验证通过', async () => {
+      const al = makeLogger();
+      al.log('file_write', '/a.txt', {}, 'success');
+      const records = await readChainRecords();
+      // 剥掉版本字段 = 模拟版本化之前的旧记录
+      const legacy = records.map((r) => {
+        const { auditSchemaVersion: _a, hashVersion: _h, ...rest } = r;
+        return rest as unknown as HashChainRecord;
+      });
+      expect(legacy[0]!.hashVersion).toBeUndefined();
+      // 缺省 → v1 算法 → 与写入时的 hash 一致 → 验证通过
+      expect(al.verifyChain(legacy)).toBe(true);
+    });
+
+    it('未知 hashVersion（未来算法）→ fail-closed 验证失败（不误报通过）', async () => {
+      const al = makeLogger();
+      al.log('file_write', '/a.txt', {}, 'success');
+      al.log('shell_exec', 'ls', {}, 'success');
+      const records = await readChainRecords();
+      const future = records.map((r, i) => (i === 1 ? { ...r, hashVersion: 99 } : r));
+      expect(al.verifyChain(future)).toBe(false);
+    });
+
+    it('篡改 hashVersion 字段本身 → fail-closed（算法不匹配视为不可验证）', async () => {
+      const al = makeLogger();
+      al.log('file_write', '/a.txt', {}, 'success');
+      const records = await readChainRecords();
+      const tampered = records.map((r) => ({ ...r, hashVersion: (r.hashVersion ?? 1) + 1 }));
+      expect(al.verifyChain(tampered)).toBe(false);
+    });
+  });
+
   describe('第九轮 AuditEnvelope V2：hash 完整性', () => {
     function makeLogger(): AuditLogger {
       const al = new AuditLogger('sess-chain', { storageDir: tempDir });

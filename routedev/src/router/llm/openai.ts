@@ -105,8 +105,10 @@ export class OpenAIClient extends BaseLLMClient {
             }
           : undefined;
       // P0-10：用 withRetry 包装实际 API 调用，启用 querySource-aware 差异化重试
-      const response = await this.withRetry(() =>
-        this.client!.chat.completions.create(params, requestOptions) as Promise<ChatCompletion>,
+      // TD-21 Phase 1：透传 options.onRetry（provider retry 可观测性）
+      const response = await this.withRetry(
+        () => this.client!.chat.completions.create(params, requestOptions) as Promise<ChatCompletion>,
+        options.onRetry,
       );
 
       const usage = this.extractUsage(response);
@@ -259,8 +261,9 @@ export class OpenAIClient extends BaseLLMClient {
       );
       // P1-3 修复（复审）：从未收到 finish_reason 就 EOF = 协议不完整——
       // 不得伪装成正常 stop（Case A：必须失败/incomplete）。
-      // Case B（finish 已收到、usage tail 丢失）在此层视为 completed——
-      // usage 缺失由消费方决定（K2 契约，GA 前记录）。
+      // Case B（finish 已收到、usage-only 尾块丢失）在此层视为 completed——
+      // 消费方（processLLMStream）通过 usageSeen 判定 usageIncomplete=true
+      // （K2 契约：语义完成 ≠ 重执行，仅 token 记账低估）。
       if (!pendingFinishReason) {
         logger.warn('B-06 stream: EOF before finish_reason（协议不完整）', {
           model: options.model,

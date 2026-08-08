@@ -34,8 +34,16 @@ export interface QualityAuditRecord extends AuditRecord {
  * Phase 53 Task 4：哈希链审计记录
  * 每条记录包含 previousHash，形成防篡改链
  * hash = SHA-256(timestamp + agentId + action + target + previousHash + details)
+ *
+ * GA Hardening 第6项：版本化 envelope——auditSchemaVersion（记录字段集版本）+
+ * hashVersion（哈希算法版本）。verifier 按 hashVersion 选择算法，
+ * 未来算法变更不影响旧记录验证（旧记录用旧算法验证）。
  */
 export interface HashChainRecord extends AuditRecord {
+  /** GA Hardening 第6项：审计记录 schema 版本（2 = AuditEnvelope V2 规范字段集） */
+  auditSchemaVersion: number;
+  /** GA Hardening 第6项：哈希算法版本（1 = AuditEnvelope V2 canonical SHA-256） */
+  hashVersion: number;
   /** 上一条记录的 hash（创世记录为 64 个 '0'） */
   previousHash: string;
   /** 当前记录的 hash */
@@ -74,6 +82,12 @@ const DEFAULT_CONFIG: AuditLoggerConfig = {
 /** Phase 53 Task 4：创世哈希（64 个 '0'） */
 const GENESIS_HASH = '0'.repeat(64);
 
+// GA Hardening 第6项：审计链版本化常量
+/** 审计记录 schema 版本（2 = AuditEnvelope V2 规范字段集） */
+const AUDIT_SCHEMA_VERSION = 2;
+/** 哈希算法版本（1 = AuditEnvelope V2 canonical SHA-256） */
+const HASH_VERSION_V1 = 1;
+
 export class AuditLogger {
   private config: AuditLoggerConfig;
   /**
@@ -109,12 +123,20 @@ export class AuditLogger {
 
   /**
    * Phase 53 Task 4：计算记录的 SHA-256 哈希
-   * 第九轮复审（AuditEnvelope V2）：canonical serialization——覆盖全部
-   * 安全相关字段（eventId/sequence/sessionId/result/confirmation/
-   * qualityMetadata 此前缺失：攻击者改 result 或 sequence 后链仍验证通过）。
+   * GA Hardening 第6项：按 hashVersion 分派算法——未知版本抛错（verifier fail-closed）
+   */
+  private computeHash(record: AuditRecord, previousHash: string, hashVersion: number = HASH_VERSION_V1): string {
+    if (hashVersion === HASH_VERSION_V1) return this.computeHashV1(record, previousHash);
+    throw new Error(`Unsupported audit hashVersion: ${hashVersion}`);
+  }
+
+  /**
+   * AuditEnvelope V2 canonical serialization——覆盖全部安全相关字段
+   * （eventId/sequence/sessionId/result/confirmation/qualityMetadata 此前缺失：
+   * 攻击者改 result 或 sequence 后链仍验证通过）。
    * JSON.stringify 的对象键序 = 字面量声明序（确定性），无需额外排序。
    */
-  private computeHash(record: AuditRecord, previousHash: string): string {
+  private computeHashV1(record: AuditRecord, previousHash: string): string {
     const data = JSON.stringify({
       timestamp: record.timestamp,
       eventId: record.eventId,
@@ -146,7 +168,19 @@ export class AuditLogger {
         return false; // 链断裂
       }
       // 2. 验证当前记录的 hash 未被篡改
-      const computed = this.computeHash(record, record.previousHash);
+      // GA Hardening 第6项：按 hashVersion 选择算法；旧记录无字段 → 默认 v1
+      // （旧算法验证旧记录）；未知版本 fail-closed（无法验证 = 视为篡改/不兼容）
+      const hashVersion = record.hashVersion ?? HASH_VERSION_V1;
+      let computed: string;
+      try {
+        computed = this.computeHash(record, record.previousHash, hashVersion);
+      } catch (e) {
+        logger.warn('[audit-logger] 哈希链验证：不支持的 hashVersion', {
+          hashVersion,
+          error: e instanceof Error ? e.message : String(e),
+        });
+        return false;
+      }
       try {
         // timingSafeEqual 要求两个 Buffer 长度相等
         const computedBuf = Buffer.from(computed, 'hex');
@@ -455,9 +489,13 @@ export class AuditLogger {
     // 此前先推进 previousHash 再 append——append 失败时内存链指向不存在的 B，
     // 下一条 C 写 previousHash=B 但磁盘无 B，链永久断裂（A → [B missing] → C）。
     if (this.chainConfig.enabled) {
-      const hash = this.computeHash(record, this.previousHash);
+      const hash = this.computeHash(record, this.previousHash, HASH_VERSION_V1);
+      // GA Hardening 第6项：版本化 envelope——写入 auditSchemaVersion + hashVersion，
+      // 未来算法变更时 verifier 按版本选择算法验证旧记录
       const chainRecord: HashChainRecord = {
         ...record,
+        auditSchemaVersion: AUDIT_SCHEMA_VERSION,
+        hashVersion: HASH_VERSION_V1,
         previousHash: this.previousHash,
         hash,
       };

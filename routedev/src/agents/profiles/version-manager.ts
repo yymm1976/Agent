@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { AgentProfile } from './types.js';
 import type { VersionMeta, VersionRecord, VersionSource, FieldChange, FieldDiff } from './version-types.js';
+import { RouteDevError } from '../../utils/errors.js';
 
 /** 每个 Profile 最多保留版本数 */
 const MAX_VERSIONS_PER_PROFILE = 20;
@@ -28,6 +29,47 @@ const MIGRATION_PLAN_SCHEMA = 2;
 interface RevisionMigrationPlanV2 {
   schema: typeof MIGRATION_PLAN_SCHEMA;
   entries: Array<{ file: string; targetRevision: number }>;
+}
+
+/**
+ * GA Hardening 第5项：迁移 plan 损坏错误（fail-closed）
+ * plan 损坏（JSON 解析失败/schema 不符/结构非法）时抛出——
+ * 绝不重扫当前状态重新生成（半迁移态重扫 = 混合态分类，revision collision 风险），
+ * 绝不覆盖/修改任何版本文件。恢复路径：删除 plan 文件后重试（全新扫描），
+ * 或从备份恢复版本目录。
+ */
+export class MigrationPlanCorruptError extends RouteDevError {
+  readonly planPath: string;
+
+  constructor(planPath: string, reason: string) {
+    super(
+      `迁移 plan 损坏（fail-closed），迁移未执行：${reason}。` +
+      `请手动恢复：删除 ${REVISION_SCHEMA_PLAN} 后重试（将全新扫描生成新 plan），或从备份恢复版本目录。`,
+      'MIGRATION_PLAN_CORRUPT',
+      { details: `plan 路径: ${planPath}` },
+    );
+    this.planPath = planPath;
+  }
+}
+
+/** GA Hardening 第5项：校验 plan 结构——非法即 fail-closed（返回失败原因，null = 合法） */
+function validateMigrationPlan(plan: unknown, planPath: string): string | null {
+  if (typeof plan !== 'object' || plan === null) return 'plan 不是对象';
+  const p = plan as { schema?: unknown; entries?: unknown };
+  if (p.schema !== MIGRATION_PLAN_SCHEMA) return `schema=${String(p.schema)}（期望 ${MIGRATION_PLAN_SCHEMA}）`;
+  if (!Array.isArray(p.entries)) return 'entries 不是数组';
+  const seenTargets = new Set<number>();
+  for (const entry of p.entries) {
+    if (typeof entry !== 'object' || entry === null) return 'entries 含非对象项';
+    const e = entry as { file?: unknown; targetRevision?: unknown };
+    if (typeof e.file !== 'string' || e.file.length === 0) return 'entry.file 非法';
+    if (typeof e.targetRevision !== 'number' || !Number.isInteger(e.targetRevision) || e.targetRevision <= 0) {
+      return `entry(${e.file}).targetRevision 非法`;
+    }
+    if (seenTargets.has(e.targetRevision)) return `targetRevision 重复: ${e.targetRevision}`;
+    seenTargets.add(e.targetRevision);
+  }
+  return null;
 }
 
 /** 参与 diff / fieldChanges 的字段 */
@@ -101,17 +143,26 @@ export class VersionManager {
     }
 
     // 崩溃恢复：plan 已存在 → 按 plan 重放（幂等）
+    // GA Hardening 第5项：plan 损坏（解析失败/schema 不符/结构非法）→ fail-closed——
+    // 不重扫当前状态重新生成（半迁移态重扫 = 混合态分类，revision collision 风险）、
+    // 不覆盖任何文件、不写 marker，抛出明确 recovery error 由操作者决定恢复路径
     let plan: RevisionMigrationPlanV2 | null = null;
     if (existsSync(planPath)) {
+      let parsed: unknown = null;
       try {
-        plan = JSON.parse(readFileSync(planPath, 'utf-8')) as RevisionMigrationPlanV2;
-        if (plan.schema !== MIGRATION_PLAN_SCHEMA) plan = null; // 版本不符：重新生成
+        parsed = JSON.parse(readFileSync(planPath, 'utf-8'));
       } catch {
-        plan = null; // 损坏 plan：重新生成（从当前状态扫描——但当前状态可能已是半迁移……
+        throw new MigrationPlanCorruptError(planPath, 'JSON 解析失败');
       }
+      const invalidReason = validateMigrationPlan(parsed, planPath);
+      if (invalidReason !== null) {
+        throw new MigrationPlanCorruptError(planPath, invalidReason);
+      }
+      plan = parsed as RevisionMigrationPlanV2;
     }
     if (!plan) {
-      // 生成不可变 plan（分类信息只在此处确定）
+      // 生成不可变 plan（分类信息只在此处确定；此处仅在"无 plan 文件"时可达——
+      // plan 损坏已由第5项 fail-closed 拦截，不存在半迁移态重扫）
       const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
       const entries: Array<{ file: string; meta: VersionMeta | null }> = [];
       for (const file of files) {
@@ -123,10 +174,9 @@ export class VersionManager {
           entries.push({ file, meta: null }); // corrupt JSON：跳过
         }
       }
-      // 分类：此扫描可能发生在半迁移状态（plan 损坏场景）——但 plan 生成后
-      // 重新扫描语义一致：无 revision 的（含已迁移但 plan 丢失的）按 legacy 处理，
-      // 有 revision 的按 post-schema——目标是一致的最终 revision 空间（1..N 重编号），
-      // 不依赖具体分类，只依赖全序（timestamp→versionId 对无 revision；revision 对有 revision）。
+      // 分类：无 revision 的按 legacy（timestamp ASC→versionId ASC），
+      // 有 revision 的按 post-schema（revision ASC）——统一重编号 1..N。
+      // 不依赖具体分类，只依赖全序，最终空间一致。
       const legacy = entries
         .filter((e) => e.meta !== null && typeof e.meta!.revision !== 'number')
         .sort((a, b) => {

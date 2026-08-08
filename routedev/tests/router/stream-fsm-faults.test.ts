@@ -105,6 +105,19 @@ describe('K1 stream FSM fault cases', () => {
     expect(usage?.usage?.totalTokens).toBe(6);
   });
 
+  it('K2：finish 已到但 usage-only 尾块丢失（流中断）→ done(finishReason)，非 error——语义完成', async () => {
+    mockCreate.mockResolvedValue((async function* () {
+      yield { choices: [{ delta: { content: 'answer' }, finish_reason: null }] };
+      yield { choices: [{ delta: {}, finish_reason: 'stop' }] };
+      // 流在 usage-only 尾块前中断——K2 Case B：本轮语义完成，不得伪装成协议失败
+    })());
+    const events = await collect(makeClient().stream({ ...OPTIONS }));
+    const done = events.find((e) => e.type === 'done');
+    expect(done).toBeDefined();
+    expect(done!.finishReason).toBe('stop'); // 非 error——调用方不得重执行
+    expect(events.find((e) => e.type === 'usage')).toBeUndefined();
+  });
+
   it('空 choices + 无 usage 的未知帧：忽略不崩溃', async () => {
     mockCreate.mockResolvedValue((async function* () {
       yield { choices: [] };

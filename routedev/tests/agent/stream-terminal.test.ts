@@ -54,6 +54,110 @@ describe('F-012 stream terminal state', () => {
     expect(ret!.value.toolCalls[0]!.name).toBe('file_read');
   });
 
+  it('K2：done(stop) + 无 usage 事件 → complete=true 且 usageIncomplete=true（语义完成，非失败）', async () => {
+    const ctxMgr = new LoopContextManager({} as never);
+    async function* stream(): AsyncGenerator<LLMStreamEvent> {
+      yield { type: 'text_delta', text: 'answer' };
+      yield { type: 'done', finishReason: 'stop' };
+      // usage-only 尾块丢失——流在 finish 后中断
+    }
+    const gen = ctxMgr.processLLMStream(stream(), undefined);
+    let ret: Awaited<ReturnType<typeof gen.next>> | undefined;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const r = await gen.next();
+      if (r.done) { ret = r; break; }
+    }
+    expect(ret!.value.complete).toBe(true); // 本轮成功——绝不重执行
+    expect(ret!.value.usageIncomplete).toBe(true);
+    expect(ret!.value.usage.totalTokens).toBe(0); // 记账低估，但语义完成
+  });
+
+  it('K2：usage 事件完整到达 → usageIncomplete=false（无回归）', async () => {
+    const ctxMgr = new LoopContextManager({} as never);
+    async function* stream(): AsyncGenerator<LLMStreamEvent> {
+      yield { type: 'text_delta', text: 'answer' };
+      yield { type: 'done', finishReason: 'stop' };
+      yield { type: 'usage', usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 } };
+    }
+    const gen = ctxMgr.processLLMStream(stream(), undefined);
+    let ret: Awaited<ReturnType<typeof gen.next>> | undefined;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const r = await gen.next();
+      if (r.done) { ret = r; break; }
+    }
+    expect(ret!.value.complete).toBe(true);
+    expect(ret!.value.usageIncomplete).toBe(false);
+    expect(ret!.value.usage.totalTokens).toBe(7);
+  });
+
+  it('K2：done(error) → complete=false，usageIncomplete=false（协议失败路径不受影响）', async () => {
+    const ctxMgr = new LoopContextManager({} as never);
+    async function* stream(): AsyncGenerator<LLMStreamEvent> {
+      yield { type: 'done', finishReason: 'error' };
+    }
+    const gen = ctxMgr.processLLMStream(stream(), undefined);
+    let ret: Awaited<ReturnType<typeof gen.next>> | undefined;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const r = await gen.next();
+      if (r.done) { ret = r; break; }
+    }
+    expect(ret!.value.complete).toBe(false);
+    expect(ret!.value.usageIncomplete).toBe(false);
+  });
+
+  it('Full ReAct Loop：usageIncomplete（finish 后 usage 尾块丢失）→ 不重执行、不 onModelFailure、正常 done', async () => {
+    let executeCalls = 0;
+    let modelSuccess = 0;
+    let modelFailure = 0;
+    const executor = {
+      getToolDefinitions: () => [],
+      executeTool: async () => { executeCalls += 1; return 'x'; },
+      hasTool: () => false,
+      executeToolStructured: async () => { executeCalls += 1; return { output: 'x', isError: false }; },
+    } as never;
+    const client = {
+      protocol: 'openai' as const,
+      providerId: 'deepseek',
+      isReady: () => true,
+      complete: async () => ({ content: '', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, finishReason: 'stop', model: 'm' }),
+      stream: async function* (): AsyncGenerator<LLMStreamEvent> {
+        yield { type: 'text_delta', text: 'final answer' };
+        yield { type: 'done', finishReason: 'stop' }; // finish 已到、usage 尾块丢失（K2）
+      },
+    };
+    const loop = new ReActAgentLoop(executor, { toolsEnabled: true });
+    const events: string[] = [];
+    let loopError: unknown = null;
+    try {
+      for await (const ev of loop.run({
+        userMessage: 'hello',
+        llmClient: client as never,
+        routeDecision: {
+          model: { id: 'm', name: 'm', provider: 'p', tier: 'simple', contextWindow: 1000, capabilities: ['tool_use'], latencyMs: 0, available: true },
+          providerId: 'p', fallbackUsed: false, originalTier: 'simple', degraded: false,
+        },
+        conversationHistory: [],
+        onConfirmTool: async () => true,
+        onModelSuccess: () => { modelSuccess += 1; },
+        onModelFailure: () => { modelFailure += 1; },
+      })) {
+        events.push(ev.type);
+      }
+    } catch (err) {
+      loopError = err;
+    }
+    // K2 验收：usage 尾块丢失绝不导致已成功 turn 重执行/失败
+    expect(loopError).toBeNull();
+    expect(executeCalls).toBe(0);
+    expect(modelFailure).toBe(0);
+    expect(modelSuccess).toBe(1);
+    expect(events).toContain('done');
+    expect(events).not.toContain('error');
+  });
+
   it('Full ReAct Loop：provider 残缺工具调用 + done(error) → executeTool=0、onModelFailure=1、run 含 error', async () => {
     let executeCalls = 0;
     let modelSuccess = 0;
