@@ -131,42 +131,50 @@ export class RunEventLog {
   }
 
   /**
-   * 追加事件（内存 + 磁盘 JSONL append-only）
-   * Closure 6（durability contract）：append 失败 = 日志失效（fail-closed）——
-   * record 抛 RunEventLogDurabilityError，调用方必须停用该日志；
-   * 绝不出现"内存有 event N、磁盘没有 event N"的静默分歧（replay 对不完整日志返回 null）。
+   * 追加事件（authoritative commit：disk 先行，成功后提交 memory sequence）。
+   * Closure-2：构造候选事件 → appendFileSync（authoritative commit point）→
+   * 成功后才推进 sequence 并 push memory——绝不出现"内存有 event N、磁盘没有
+   * event N"；append 失败 = 日志失效（fail-closed），抛 RunEventLogDurabilityError，
+   * 调用方必须让当前 Run 停止（不得产生新的 LLM/tool 副作用）。
    */
   record<E extends RunEvent>(type: E['type'], payload: E['payload']): void {
     if (this.failed) throw new RunEventLogDurabilityError(this.runId, '日志已因先前的 append 失败而失效');
-    // Closure 6：redaction——run_started 原文输入截断
-    const safePayload = this.redactPayload(type, payload);
-    this.sequence += 1;
+    // Closure-2：候选事件（sequence 尚未提交）
+    const nextSequence = this.sequence + 1;
     const event = {
-      id: `${this.runId}-${this.sequence}-${randomBytes(3).toString('hex')}`,
+      id: `${this.runId}-${nextSequence}-${randomBytes(3).toString('hex')}`,
       runId: this.runId,
-      sequence: this.sequence,
+      sequence: nextSequence,
       timestamp: Date.now(),
       type,
-      payload: safePayload,
+      // Closure 6：redaction——run_started 原文输入截断
+      payload: this.redactPayload(type, payload),
     } as E;
-    this.events.push(event);
     try {
       const dir = this.eventsDir();
       mkdirSync(dir, { recursive: true });
       appendFileSync(join(dir, `${this.runId}.events.jsonl`), JSON.stringify(event) + '\n', 'utf-8');
     } catch (err) {
-      // fail-closed：日志立即失效——后续 record 抛错，调用方停用日志并显式记录错误
+      // fail-closed：磁盘未提交 → memory 也不推进；日志立即失效，Run 必须停止
       this.failed = true;
       throw new RunEventLogDurabilityError(
         this.runId,
         err instanceof Error ? err.message : String(err),
       );
     }
+    // authoritative commit point 之后：提交 memory 状态
+    this.sequence = nextSequence;
+    this.events.push(event);
   }
 
   /** 日志是否已失效（append 失败后为 true） */
   isFailed(): boolean {
     return this.failed;
+  }
+
+  /** 当前 runId（Closure-2：每 Run 唯一，测试/审计用） */
+  getRunId(): string {
+    return this.runId;
   }
 
   /** Closure 6：redaction——输入/输出按契约截断，不落盘完整原文 */
@@ -194,7 +202,13 @@ export class RunEventLog {
     const filePath = join(dir, `${runId}.events.jsonl`);
     if (!existsSync(filePath)) return { projection: null, events: [] };
     const events: RunEvent[] = [];
-    for (const line of readFileSync(filePath, 'utf-8').split('\n')) {
+    let raw: string;
+    try {
+      raw = readFileSync(filePath, 'utf-8');
+    } catch {
+      return { projection: null, events }; // 读取失败（目录占位/权限）= 日志不完整，fail-closed
+    }
+    for (const line of raw.split('\n')) {
       if (!line.trim()) continue;
       try {
         events.push(JSON.parse(line) as RunEvent);

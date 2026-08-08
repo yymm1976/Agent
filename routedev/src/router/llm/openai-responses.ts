@@ -26,6 +26,8 @@ import type {
 } from '../types.js';
 import { LLMError } from '../types.js';
 import { logger } from '../../utils/logger.js';
+// Closure-2：K2 post-finish 只吞 transport termination
+import { isTransportTermination } from './k2-transport.js';
 
 /**
  * OpenAI Responses API 协议客户端
@@ -142,7 +144,7 @@ export class OpenAIResponsesClient extends BaseLLMClient {
       // 跟踪已结束的 call_id，用于在 completed 事件中补发未触发的 tool_call_end
       const endedCallIds = new Set<string>();
       let hasToolCalls = false;
-      let doneEmitted = false;
+      // Closure-2：内层 doneEmitted shadow 已删——只有 try 外声明（catch 读取外层）
 
       for await (const event of stream) {
         switch (event.type) {
@@ -280,8 +282,9 @@ export class OpenAIResponsesClient extends BaseLLMClient {
     } catch (err) {
       // K2 Transport Terminal（Closure 1）：done 已发出 → 语义完成，
       // 后续 transport exception 不得把已成功 turn 变成失败（usage 缺失由消费方标记）。
+      // Closure-2：仅吞 transport termination——内部程序异常不得伪装成功。
       // 用户取消不在此列。
-      if (doneEmitted && !options.signal?.aborted) {
+      if (doneEmitted && !options.signal?.aborted && isTransportTermination(err)) {
         logger.warn('K2: openai-responses stream transport error after done emitted——语义完成', {
           model: options.model,
           error: err instanceof Error ? err.message : String(err),

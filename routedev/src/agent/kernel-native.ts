@@ -19,6 +19,8 @@ import type { ReActAgentLoop, ReActRunParams } from './loop.js';
 import type { ReActEvent } from './loop-config.js';
 // Closure 6（TD-21 Production Closure）：每个生产 Run 创建权威 RunEventLog
 import { RunEventLog } from '../harness/run-event-log.js';
+// Closure-2：每 Run 唯一 runId（requestId ?? randomUUID）
+import { randomUUID } from 'node:crypto';
 
 /** ReActRunParams 工厂：把统一执行上下文翻译为 loop 所需参数（signal 由内核管理） */
 export type KernelRunParamsFactory = (
@@ -105,16 +107,9 @@ export class NativeAgentKernel implements AgentKernel {
       try { this.trace?.recordEngineEvent(event); } catch { /* observability must not break execution */ }
     };
     this.loop.setEngineEventSink(sink);
-    // Closure 6（TD-21 Production Phase-1 Closure）：真实生产 Run 入口创建并注入
-    // RunEventLog——每个 run 一个权威事件日志（runId = requestId），run 结束清理。
-    // 存储目录沿用 trace 的 storageDir（未注入时用默认 appdata 路径）。
-    const runLog = new RunEventLog(
-      params.requestId ?? ctx.sessionId,
-      this.trace?.getStorageDirPath(),
-    );
-    // 能力守卫：mock/轻量 loop 可能未实现 setRunEventLog（测试环境）
-    const canLog = typeof (this.loop as { setRunEventLog?: unknown }).setRunEventLog === 'function';
-    if (canLog) this.loop.setRunEventLog(runLog);
+    // Closure-2：每 Run 唯一 runId 的 RunEventLog（requestId ?? randomUUID），
+    // run 结束清理；存储目录沿用 trace 的 storageDir
+    const runLog = this.attachRunLog(params.requestId);
     try {
       params.context = ctx;
       params.signal = controller.signal;
@@ -123,7 +118,7 @@ export class NativeAgentKernel implements AgentKernel {
       state.error = error instanceof Error ? error.message : String(error);
       throw error;
     } finally {
-      if (canLog) this.loop.setRunEventLog(null);
+      this.detachRunLog(runLog);
       this.loop.setEngineEventSink(null);
       upstreamSignal?.removeEventListener('abort', abortFromUpstream);
       state.running = false;
@@ -137,6 +132,26 @@ export class NativeAgentKernel implements AgentKernel {
   /** 会话最近使用的内核绑定记录（供切换内核 / 会话元数据持久化） */
   getBinding(sessionId: string): KernelBinding | undefined {
     return this.bindings.get(sessionId);
+  }
+
+  /**
+   * Closure-2：每 Run 唯一 runId 的 RunEventLog 装配（runReAct()/run() 共用）。
+   * runId = requestId ?? randomUUID()——sessionId 只作 metadata，禁止作为 run
+   * identity fallback（同 session 连续 run 会 append 到同一文件导致 sequence 断裂，
+   * replay 必失败）。mock/轻量 loop 未实现 setRunEventLog 时返回 null（能力守卫）。
+   */
+  private attachRunLog(requestId: string | undefined): import('../harness/run-event-log.js').RunEventLog | null {
+    const loop = this.loop as { setRunEventLog?: (log: import('../harness/run-event-log.js').RunEventLog | null) => void };
+    if (typeof loop.setRunEventLog !== 'function') return null;
+    const runId = requestId ?? randomUUID();
+    const log = new RunEventLog(runId, this.trace?.getStorageDirPath());
+    loop.setRunEventLog(log);
+    return log;
+  }
+
+  private detachRunLog(log: import('../harness/run-event-log.js').RunEventLog | null): void {
+    if (!log) return;
+    (this.loop as { setRunEventLog?: (log: import('../harness/run-event-log.js').RunEventLog | null) => void }).setRunEventLog?.(null);
   }
 
   /** 已登记过的会话 id 列表（供状态聚合查询遍历） */
@@ -205,12 +220,18 @@ export class NativeAgentKernel implements AgentKernel {
     const runPromise = (async (): Promise<void> => {
       try {
         const params = await factory(ctx, input, controller.signal);
-        // 透传统一执行上下文与取消信号，保证 loop 内部状态与上层一致
-        params.context = ctx;
-        params.signal = controller.signal;
-        // 消费 ReActEvent 流以驱动执行；EngineEventV1 经 sink 实时进入队列
-        for await (const _event of this.loop.run(params)) {
-          // 事件已通过 sink 进入队列
+        // Closure-2：run() 生产路径同样装配每 Run 唯一 runId 的 RunEventLog
+        const runLog = this.attachRunLog(params.requestId);
+        try {
+          // 透传统一执行上下文与取消信号，保证 loop 内部状态与上层一致
+          params.context = ctx;
+          params.signal = controller.signal;
+          // 消费 ReActEvent 流以驱动执行；EngineEventV1 经 sink 实时进入队列
+          for await (const _event of this.loop.run(params)) {
+            // 事件已通过 sink 进入队列
+          }
+        } finally {
+          this.detachRunLog(runLog);
         }
       } catch (err) {
         loopError = err;

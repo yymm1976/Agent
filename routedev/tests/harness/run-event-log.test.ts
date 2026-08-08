@@ -9,7 +9,7 @@
 // 5. Provider retry 可观测性：RetryPolicy onRetry → llm_retry 事件
 
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { RunEventLog, RunEventLogDurabilityError } from '../../src/harness/run-event-log.js';
@@ -463,5 +463,188 @@ describe('Closure 6：durability / redaction / 集成矩阵', () => {
     expect(projection!.interruptedReason).toBe('用户取消了执行');
     expect(replayed.some((e) => e.type === 'run_interrupted')).toBe(true);
     expect(log.getEvents().map((e) => e.sequence)).toEqual(replayed.map((e) => e.sequence));
+  });
+});
+
+describe('Closure-2：authoritative commit / fault injection / run identity', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'rd-cl2-'));
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  /** 故障注入：第 failAt 次 record 前把日志文件替换为目录 → append 必然失败（已 durable 内容先备份） */
+  function sabotageAt(log: RunEventLog, failAt: number): { log: RunEventLog; restore: () => void } {
+    const origRecord = log.record.bind(log);
+    let count = 0;
+    let backupPath: string | null = null;
+    const file = () => join(tempDir, 'runs', `${log.getRunId()}.events.jsonl`);
+    (log as { record: unknown }).record = ((type: never, payload: never) => {
+      count += 1;
+      if (count === failAt) {
+        mkdirSync(join(tempDir, 'runs'), { recursive: true });
+        if (existsSync(file())) {
+          backupPath = file() + '.partial';
+          rmSync(backupPath, { force: true });
+          renameSync(file(), backupPath); // 保留已 durable 的内容
+        }
+        mkdirSync(file(), { recursive: true }); // 同名目录 → appendFileSync EISDIR
+      }
+      return origRecord(type, payload);
+    }) as never;
+    return {
+      log,
+      restore: () => {
+        // 恢复磁盘视图：目录占位移除，partial 内容还原为日志文件
+        rmSync(file(), { recursive: true, force: true });
+        if (backupPath && existsSync(backupPath)) renameSync(backupPath, file());
+      },
+    };
+  }
+
+  function makeToolClient(): {
+    protocol: string; providerId: string; isReady: () => boolean; complete: () => Promise<unknown>;
+    streamCalls: number; stream: () => AsyncGenerator<LLMStreamEvent>;
+  } {
+    const state = { streamCalls: 0 };
+    return {
+      protocol: 'openai', providerId: 'deepseek', isReady: () => true,
+      complete: async () => ({ content: '', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, finishReason: 'stop', model: 'm' }),
+      get streamCalls() { return state.streamCalls; },
+      stream: async function* (): AsyncGenerator<LLMStreamEvent> {
+        state.streamCalls += 1;
+        if (state.streamCalls === 1) {
+          yield { type: 'tool_call_start', toolCall: { id: 'c1', name: 'file_write' } };
+          yield { type: 'tool_call_delta', toolCallId: 'c1', argumentsDelta: '{"path":"a.txt"}' };
+          yield { type: 'tool_call_end', toolCallId: 'c1' };
+          yield { type: 'done', finishReason: 'tool_use' };
+          return;
+        }
+        yield { type: 'text_delta', text: 'done' };
+        yield { type: 'done', finishReason: 'stop' };
+      },
+    };
+  }
+
+  function makeExecutor(executeCalls: { count: number }): never {
+    return {
+      getToolDefinitions: () => [],
+      executeTool: async () => { executeCalls.count += 1; return 'written'; },
+      hasTool: () => false,
+      executeToolStructured: async () => { executeCalls.count += 1; return { output: 'written', isError: false }; },
+    } as never;
+  }
+
+  async function runLoopWith(log: RunEventLog): Promise<{ loopError: unknown; client: ReturnType<typeof makeToolClient>; executed: { count: number } }> {
+    const executed = { count: 0 };
+    const client = makeToolClient();
+    const loop = new ReActAgentLoop(makeExecutor(executed), { toolsEnabled: true });
+    loop.setRunEventLog(log);
+    let loopError: unknown = null;
+    try {
+      for await (const _ev of loop.run({
+        userMessage: '写文件',
+        llmClient: client as never,
+        routeDecision: {
+          model: { id: 'm', name: 'm', provider: 'p', tier: 'simple', contextWindow: 1000, capabilities: ['tool_use'], latencyMs: 0, available: true },
+          providerId: 'p', fallbackUsed: false, originalTier: 'simple', degraded: false,
+        },
+        conversationHistory: [],
+        onConfirmTool: async () => true,
+      })) { /* drain */ }
+    } catch (err) {
+      loopError = err;
+    }
+    return { loopError, client, executed };
+  }
+
+  it('disk==memory ALWAYS：每个 record 后磁盘与内存事件完全一致', () => {
+    const log = new RunEventLog('run-dm', tempDir);
+    log.record('run_started', { input: 'hi', model: 'm' });
+    log.record('llm_requested', { model: 'm', attempt: 1 });
+    const { events } = RunEventLog.replay(tempDir, 'run-dm');
+    expect(events).toEqual(log.getEvents());
+    log.record('run_completed', { outputLength: 1, toolCallCount: 0, retryCount: 0 });
+    const { events: events2 } = RunEventLog.replay(tempDir, 'run-dm');
+    expect(events2).toEqual(log.getEvents());
+  });
+
+  it('fail run_started append → Run 立即停止，零 LLM/零工具副作用', async () => {
+    const { log } = sabotageAt(new RunEventLog('run-f1', tempDir), 1);
+    const { loopError, client, executed } = await runLoopWith(log);
+    expect(loopError).toBeInstanceOf(RunEventLogDurabilityError);
+    expect(client.streamCalls).toBe(0); // 未发起任何 LLM
+    expect(executed.count).toBe(0); // 未执行任何工具
+  });
+
+  it('fail llm_requested append → Run 停止，LLM 未发起', async () => {
+    const { log } = sabotageAt(new RunEventLog('run-f2', tempDir), 2);
+    const { loopError, client, executed } = await runLoopWith(log);
+    expect(loopError).toBeInstanceOf(RunEventLogDurabilityError);
+    expect(client.streamCalls).toBe(0);
+    expect(executed.count).toBe(0);
+  });
+
+  it('fail tool_requested append → Run 停止，工具未执行（record 先于 executeTool）', async () => {
+    const { log } = sabotageAt(new RunEventLog('run-f3', tempDir), 4); // run_started/llm_requested/llm_succeeded/tool_requested
+    const { loopError, executed } = await runLoopWith(log);
+    expect(loopError).toBeInstanceOf(RunEventLogDurabilityError);
+    expect(executed.count).toBe(0);
+  });
+
+  it('fail tool_completed append → Run 停止；replay 显示 tool outcome uncertain（tool_requested 无 tool_completed）', async () => {
+    const { log, restore } = sabotageAt(new RunEventLog('run-f4', tempDir), 5);
+    const { loopError, executed } = await runLoopWith(log);
+    expect(loopError).toBeInstanceOf(RunEventLogDurabilityError);
+    expect(executed.count).toBe(1); // 工具已实际执行（副作用发生）
+    // 恢复磁盘视图（目录占位移除，partial 内容还原）后 replay：
+    // tool_requested 已 durable，tool_completed 缺失 → outcome uncertain
+    restore();
+    const { events } = RunEventLog.replay(tempDir, 'run-f4');
+    const toolRequested = events.filter((e) => e.type === 'tool_requested');
+    const toolCompleted = events.filter((e) => e.type === 'tool_completed');
+    expect(toolRequested.length).toBe(1);
+    expect(toolCompleted.length).toBe(0); // uncertain——不允许自动重放副作用
+    // 内存与磁盘一致（失败事件未提交到任何一侧）
+    expect(log.getEvents().some((e) => e.type === 'tool_completed')).toBe(false);
+  });
+
+  it('same-session 连续两次 run（无 requestId）→ 两个独立 runId，均可独立 replay', async () => {
+    // kernel 级验证：runReAct 每次生成唯一 runId（requestId ?? randomUUID）
+    const { NativeAgentKernel } = await import('../../src/agent/kernel-native.js');
+    const { TraceCollector } = await import('../../src/harness/trace-collector.js');
+    const attached: Array<RunEventLog | null> = [];
+    const mockLoop = {
+      setEngineEventSink: () => { /* noop */ },
+      setRunEventLog: (log: RunEventLog | null) => { attached.push(log); },
+      run: async function* (): AsyncGenerator<never> {
+        yield { type: 'done', content: 'ok', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } } as never;
+      },
+    };
+    // 注入带 storageDir 的 trace——kernel 用 trace.getStorageDirPath() 作为日志目录
+    const kernel = new NativeAgentKernel(mockLoop as never, { trace: new TraceCollector({ storageDir: tempDir }) });
+    const ctx = { sessionId: 'same-session' } as never;
+    const params = { routeDecision: { model: { id: 'm' } }, conversationHistory: [] } as never;
+    for await (const _e of kernel.runReAct(ctx, params)) { /* drain */ }
+    for await (const _e of kernel.runReAct(ctx, params)) { /* drain */ }
+    // attach 各推一次 log、detach 各推一次 null——取非 null 的两次装配
+    const attachedLogs = attached.filter((l): l is RunEventLog => l !== null);
+    expect(attachedLogs.length).toBe(2);
+    const log1 = attachedLogs[0]!;
+    const log2 = attachedLogs[1]!;
+    expect(log1.getRunId()).not.toBe(log2.getRunId()); // 每 Run 唯一
+    // 各自独立可 replay（不同文件）
+    log1.record('run_started', { input: 'run-1', model: 'm' });
+    log2.record('run_started', { input: 'run-2', model: 'm' });
+    const p1 = RunEventLog.replay(tempDir, log1.getRunId());
+    const p2 = RunEventLog.replay(tempDir, log2.getRunId());
+    expect(p1.projection).not.toBeNull();
+    expect(p2.projection).not.toBeNull();
+    expect(p1.projection!.input).toBe('run-1');
+    expect(p2.projection!.input).toBe('run-2');
   });
 });

@@ -13,6 +13,8 @@ import type {
 import type { ReActEvent } from './loop-config.js';
 import { DEFAULT_REACT_CONFIG } from './loop-config.js';
 import { logger } from '../utils/logger.js';
+// Closure-2：K2 post-finish 只吞 transport termination
+import { isTransportTermination } from '../router/llm/k2-transport.js';
 import type { TokenProfiler, TokenProfileSnapshot } from './token-profiler.js';
 import type { TraceCollector } from '../harness/trace-collector.js';
 import type { ToolResultSanitizer } from '../tools/result-sanitizer.js';
@@ -525,8 +527,9 @@ export class LoopContextManager {
       // K2 Transport Terminal（Closure 1）：done(non-error) 已收到后 transport exception →
       // 语义完成——计费尾块传输失败绝不能把已成功 turn 变成失败（否则重执行）。
       // 已 flush 的完整工具调用保留（tool 只执行一次）；usage 缺失 → usageIncomplete=true。
+      // Closure-2：仅吞 transport termination——内部程序异常（TypeError 等）不得伪装成功。
       // 用户取消不在此列（signal.aborted → 重抛，取消语义优先）。
-      if (finishReason !== undefined && finishReason !== 'error' && !signal?.aborted) {
+      if (finishReason !== undefined && finishReason !== 'error' && !signal?.aborted && isTransportTermination(error)) {
         logger.warn('K2: stream transport error after done received——语义完成，usage 可能不完整', {
           finishReason,
           error: error instanceof Error ? error.message : String(error),

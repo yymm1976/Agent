@@ -23,6 +23,8 @@ import type {
 } from '../types.js';
 import { LLMError } from '../types.js';
 import { logger } from '../../utils/logger.js';
+// Closure-2：K2 post-finish 只吞 transport termination
+import { isTransportTermination } from './k2-transport.js';
 
 /**
  * OpenAI 协议客户端
@@ -295,9 +297,10 @@ export class OpenAIClient extends BaseLLMClient {
       // K2 Transport Terminal（Closure 1）：finish_reason 已观察到 → 语义完成——
       // 等待 usage-only 尾块期间的 transport exception（ECONNRESET/socket reset/
       // SDK iterator throw）绝不能把已成功的 turn 变成失败（否则重执行）。
+      // Closure-2：仅吞 transport termination——内部程序异常（TypeError 等）不得伪装成功。
       // 消费方因 usage 事件缺失自动标记 usageIncomplete=true。
       // 用户主动取消不在此列（取消由 signal 路径处理，不得伪装成成功）。
-      if (pendingFinishReason && !options.signal?.aborted) {
+      if (pendingFinishReason && !options.signal?.aborted && isTransportTermination(err)) {
         logger.warn('K2: stream transport error after finish observed——语义完成，usage 可能不完整', {
           model: options.model,
           finishReason: pendingFinishReason,

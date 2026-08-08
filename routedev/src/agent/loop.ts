@@ -304,26 +304,15 @@ export class ReActAgentLoop {
   }
 
   /**
-   * Closure 6（durability contract）：记录 Run 事件。
-   * append 失败（RunEventLogDurabilityError）→ 日志立即失效（fail-closed）——
-   * 停用该日志并显式记录错误，绝不出现"内存有 event N、磁盘没有 event N"的
-   * 静默分歧（replay 对不完整日志返回 null）；run 主流程不被观测失败阻断。
+   * Closure-2（authoritative contract）：记录 Run 事件。
+   * append 失败（RunEventLogDurabilityError）→ **不吞**——向上传播让当前 Run
+   * 立即停止：不得再产生新的 LLM/tool 副作用（replay 尾部自然表达 uncertain/
+   * incomplete lifecycle，tool outcome uncertain 不允许自动重放副作用）。
    */
   private recordRunEvent(type: import('../harness/run-event-log.js').RunEventType, payload: import('../harness/run-event-log.js').RunEvent['payload']): void {
     const log = this.runEventLog;
     if (!log) return;
-    try {
-      log.record(type, payload);
-    } catch (err) {
-      if (err instanceof RunEventLogDurabilityError) {
-        logger.error('RunEventLog 失效（append 失败）——该 run 的 replay 不可用（fail-closed）', {
-          error: err.message,
-        });
-        this.runEventLog = null;
-      } else {
-        throw err;
-      }
-    }
+    log.record(type, payload); // durability 失败直接抛 RunEventLogDurabilityError（不吞）
   }
 
   /** C5 修复：注入 Steering Queue 消费者 */
@@ -1229,6 +1218,14 @@ export class ReActAgentLoop {
             return;
 
           } catch (error) {
+            // Closure-2：durability 失败不是可重试的迭代错误——Run 必须立即停止
+            // （日志 append 失败后不得再产生新的 LLM/tool 副作用）
+            if (error instanceof RunEventLogDurabilityError) {
+              logger.error('RunEventLog durability 失败——Run 停止（authoritative contract）', {
+                error: error.message,
+              });
+              throw error;
+            }
             consecutiveErrors++;
             const errorMessage = error instanceof Error ? error.message : String(error);
 

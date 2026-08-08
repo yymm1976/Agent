@@ -15,6 +15,8 @@ import type {
 } from '../types.js';
 import { LLMError } from '../types.js';
 import { logger } from '../../utils/logger.js';
+// Closure-2：K2 post-finish 只吞 transport termination
+import { isTransportTermination } from './k2-transport.js';
 
 /** Gemini API 默认 base URL */
 const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
@@ -149,9 +151,10 @@ export class GeminiClient extends BaseLLMClient {
     const startTime = Date.now();
     this.logRequest(options.model, true, options.messages.length);
 
-    // K2 Transport Terminal（Closure 1）：finishReason 已观察到 = 语义完成——
+    // Closure-2：observedFinishReason 用 undefined sentinel——"还没看到 finish"
+    // 与 "stop" 严格区分（旧实现默认 'stop' 让 finish 前中断也伪装成 done(stop)）。
     // 声明在 try 外：catch 需要读取（finish 已观察判定）
-    let lastFinishReason: 'stop' | 'tool_use' | 'length' | 'error' = 'stop';
+    let observedFinishReason: 'stop' | 'tool_use' | 'length' | 'error' | undefined;
 
     try {
       const url = `${this.baseUrl}/models/${encodeURIComponent(options.model)}:streamGenerateContent?alt=sse`;
@@ -233,7 +236,7 @@ export class GeminiClient extends BaseLLMClient {
             // finishReason
             const fr = chunk.candidates?.[0]?.finishReason;
             if (fr) {
-              lastFinishReason = this.mapFinishReason(fr);
+              observedFinishReason = this.mapFinishReason(fr);
             }
           } catch (e) {
             logger.warn('跳过无法解析的 chunk', { error: e instanceof Error ? e.message : String(e) });
@@ -265,9 +268,9 @@ export class GeminiClient extends BaseLLMClient {
         }
       }
 
-      // 有工具调用时 finishReason 强制为 tool_use
-      if (hasToolCalls) {
-        lastFinishReason = 'tool_use';
+      // 有工具调用时 finishReason 强制为 tool_use（仅当确实观察到 finish 之后）
+      if (hasToolCalls && observedFinishReason !== undefined) {
+        observedFinishReason = 'tool_use';
       }
 
       const usage: TokenUsageInfo = {
@@ -279,18 +282,19 @@ export class GeminiClient extends BaseLLMClient {
 
       this.logResponse(options.model, usage, Date.now() - startTime);
 
-      yield { type: 'done', finishReason: lastFinishReason };
+      // Closure-2：clean EOF 前未观察到 finish = 协议不完整（不得伪装 stop）
+      yield { type: 'done', finishReason: observedFinishReason ?? 'error' };
     } catch (err) {
-      // K2 Transport Terminal（Closure 1）：finishReason 已观察到 → 语义完成。
-      // 流中断（fetch/SSE 异常）不得把已成功 turn 变成失败；usage 缺失由消费方
-      // 标记 usageIncomplete=true。用户取消不在此列。
-      if (lastFinishReason && !options.signal?.aborted) {
+      // Closure-2：仅当（1）finish 确实被观察到，且（2）异常是 transport termination
+      // 时，才降级为语义完成 + usageIncomplete；内部程序异常（TypeError 等）不得
+      // 伪装成功。用户取消由 signal 检查单独处理（不在此列）。
+      if (observedFinishReason !== undefined && !options.signal?.aborted && isTransportTermination(err)) {
         logger.warn('K2: gemini stream transport error after finish observed——语义完成，usage 可能不完整', {
           model: options.model,
-          finishReason: lastFinishReason,
+          finishReason: observedFinishReason,
           error: err instanceof Error ? err.message : String(err),
         });
-        yield { type: 'done', finishReason: lastFinishReason };
+        yield { type: 'done', finishReason: observedFinishReason };
         return;
       }
       throw this.normalizeError(err, options.model);

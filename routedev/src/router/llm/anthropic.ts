@@ -27,6 +27,8 @@ import type {
 } from '../types.js';
 import { LLMError, THINKING_BUDGET_TOKENS } from '../types.js';
 import { logger } from '../../utils/logger.js';
+// Closure-2：K2 post-finish 只吞 transport termination
+import { isTransportTermination } from './k2-transport.js';
 
 /**
  * Anthropic 协议客户端
@@ -246,8 +248,9 @@ export class AnthropicClient extends BaseLLMClient {
     } catch (err) {
       // K2 Transport Terminal（Closure 1）：done（stop_reason）已发出 → 语义完成。
       // 等待 message_stop/usage 期间的 transport exception 不得把已成功 turn 变成失败；
+      // Closure-2：仅吞 transport termination——内部程序异常不得伪装成功。
       // 消费方因 usage 事件缺失自动标记 usageIncomplete=true。用户取消不在此列。
-      if (doneEmitted && !options.signal?.aborted) {
+      if (doneEmitted && !options.signal?.aborted && isTransportTermination(err)) {
         logger.warn('K2: anthropic stream transport error after done emitted——语义完成，usage 可能不完整', {
           model: options.model,
           error: err instanceof Error ? err.message : String(err),
