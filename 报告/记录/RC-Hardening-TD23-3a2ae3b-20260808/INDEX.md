@@ -12,15 +12,19 @@
 | F-004 | P1 | FIXED | profile-version | legacy timestamp vs new revision 跨数值域比较 | tests/agents/profiles-version.test.ts A3 |
 | F-005 | P1 | FIXED | audit-chain | 链 head 内存态，logger 重建断链 | tests/harness/audit-logger.test.ts A5 |
 | F-006 | P1 | FIXED | runstate | effort/autonomy 跨 Run 残留 | tests/agent/loop.test.ts B1 |
+| F-007 | P1 | FIXED | profile-migration | 混合态 migration 排错版本 | profiles-version P1-1 |
+| F-008 | P1 | FIXED | audit-chain | 跨午夜未重置链 | audit-logger P1-2 |
+| F-009 | P1 | FIXED | streaming | EOF 无 finish 伪装 stop | stream-fsm P1-3 |
+| F-010 | P1 | FIXED | shell-policy | eval flag 大小写/家族绕过 | sandbox P1-4 |
 
 ## 当前状态
 
 - Open P0: 0
 - Open P1: 0
 - Closed P0: 0
-- Closed P1: 6
+- Closed P1: 10
 - Real API requests used: 11 / 60
-- Current CI state: 6 Job 全绿（e8995c3 完整确认：Core/Desktop×3/Android/Security 全 success）
+- Current CI state: 6 Job 全绿（a0d794d 完整确认：Run 31234844780 全 success——含复审 4 P1 修复）
 
 ## Phase 状态
 
