@@ -108,16 +108,35 @@ describe('LLMError 集成（继承 AgentError）', () => {
     expect(err2.retryable).toBe(true);
   });
 
-  it('unknown 错误保守不重试（与旧消息正则行为一致）', () => {
-    const err = new LLMError('weird provider error', 500, 'm');
-    expect(err.type).toBe('unknown');
-    expect(err.retryable).toBe(false);
+  it('Closure 3：500/502/503/504 → provider_unavailable，retryable=true（有限退避重试）', () => {
+    for (const status of [500, 502, 503, 504]) {
+      const err = new LLMError('Internal Server Error', status, 'm');
+      expect(err.type).toBe('network_error');
+      expect(err.kind).toBe('provider_unavailable');
+      expect(err.retryable).toBe(true);
+    }
   });
 
-  it('network_error → provider_unavailable，retryable=true', () => {
-    const err = new LLMError('ECONNREFUSED connect', undefined, 'm');
-    expect(err.kind).toBe('provider_unavailable');
-    expect(err.retryable).toBe(true);
+  it('Closure 3：ECONNRESET/EPIPE → provider_unavailable，retryable=true（normalizeError 包装后不丢失）', () => {
+    for (const msg of ['ECONNRESET socket hang up', 'write EPIPE', 'ECONNREFUSED connect', 'ENOTFOUND host']) {
+      const err = new LLMError(msg, undefined, 'm');
+      expect(err.kind).toBe('provider_unavailable');
+      expect(err.retryable).toBe(true);
+    }
+  });
+
+  it('Closure 3：用户 Abort 绝不误分类为 transient（unknown → retryable=false）', () => {
+    const err = new LLMError('LLM request aborted by user', undefined, 'm');
+    expect(err.type).toBe('unknown');
+    expect(err.retryable).toBe(false);
+    expect(isRetryableError(err)).toBe(false);
+  });
+
+  it('Closure 3：401/403/Protocol/Cancellation 绝不重试（终态语义）', () => {
+    expect(isRetryableError(new AuthError('401'))).toBe(false);
+    expect(isRetryableError(new ProtocolError('stream broken'))).toBe(false);
+    expect(isRetryableError(new CancellationError('user cancel'))).toBe(false);
+    expect(isRetryableError(new LLMError('Unauthorized', 401, 'm'))).toBe(false);
   });
 
   it('既有 API 兼容：type/isRateLimited/isAuthError/isTimeout/cause 保留', () => {
@@ -182,6 +201,40 @@ describe('RetryPolicy 类型化重试行为', () => {
       throw new LLMError('rate limited', 429, 'm');
     })).rejects.toBeInstanceOf(LLMError);
     expect(rateAttempts).toBe(3);
+  });
+
+  it('Closure 3：LLMError(500) 有限退避重试（不把第一次 500 当 terminal）', async () => {
+    let attempts = 0;
+    const retry = new RetryPolicy({ maxRetries: 2, baseDelayMs: 1 });
+    const result = await retry.execute(async () => {
+      attempts++;
+      if (attempts < 2) throw new LLMError('Internal Server Error', 500, 'm');
+      return 'ok';
+    });
+    expect(result).toBe('ok');
+    expect(attempts).toBe(2);
+  });
+
+  it('Closure 3：LLMError(ECONNRESET) 重试（normalizeError 包装后不丢可重试性）', async () => {
+    let attempts = 0;
+    const retry = new RetryPolicy({ maxRetries: 2, baseDelayMs: 1 });
+    const result = await retry.execute(async () => {
+      attempts++;
+      if (attempts < 2) throw new LLMError('ECONNRESET socket hang up', undefined, 'm');
+      return 'ok';
+    });
+    expect(result).toBe('ok');
+    expect(attempts).toBe(2);
+  });
+
+  it('Closure 3：用户 Abort 的 LLMError 不重试（即使消息含其他关键词）', async () => {
+    let attempts = 0;
+    const retry = new RetryPolicy({ maxRetries: 3, baseDelayMs: 1 });
+    await expect(retry.execute(async () => {
+      attempts++;
+      throw new LLMError('LLM request aborted by user', undefined, 'm');
+    })).rejects.toBeInstanceOf(LLMError);
+    expect(attempts).toBe(1);
   });
 });
 

@@ -229,6 +229,8 @@ describe('AuditLogger 哈希链接入', () => {
     // 创世记录
     const genesisPrev = '0'.repeat(64);
     const crypto = require('node:crypto');
+    // Closure 5：手工构造的记录用 V1 canonical 算法（preimage 不含版本字段），
+    // 标注 hashVersion=1 让 verifier 按 V1 算法验证（无标注 = legacy 算法 0）
     const r1: HashChainRecord = {
       timestamp: new Date().toISOString(),
       eventId: `ev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
@@ -239,6 +241,8 @@ describe('AuditLogger 哈希链接入', () => {
       target: '/test/x.txt',
       details: { op: 'write' },
       result: 'success',
+      auditSchemaVersion: 2,
+      hashVersion: 1,
       previousHash: genesisPrev,
       hash: '',
     };
@@ -268,6 +272,8 @@ describe('AuditLogger 哈希链接入', () => {
       target: 'ls',
       details: { cmd: 'ls' },
       result: 'success',
+      auditSchemaVersion: 2,
+      hashVersion: 1,
       previousHash: r1.hash,
       hash: '',
     };

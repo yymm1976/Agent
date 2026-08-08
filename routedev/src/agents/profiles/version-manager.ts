@@ -35,16 +35,24 @@ interface RevisionMigrationPlanV2 {
  * GA Hardening 第5项：迁移 plan 损坏错误（fail-closed）
  * plan 损坏（JSON 解析失败/schema 不符/结构非法）时抛出——
  * 绝不重扫当前状态重新生成（半迁移态重扫 = 混合态分类，revision collision 风险），
- * 绝不覆盖/修改任何版本文件。恢复路径：删除 plan 文件后重试（全新扫描），
- * 或从备份恢复版本目录。
+ * 绝不覆盖/修改任何版本文件。
+ * Closure 4（Recovery Contract）：恢复指引禁止"删除 plan 重扫"——
+ * 半迁移状态下删除 plan 会重新打开 F-011 原始缺陷。只允许：
+ *   1. 从备份恢复 plan 文件（迁移未开始/完整时安全）
+ *   2. 从备份恢复整个版本目录（权威恢复路径）
+ *   3. 显式 recovery tooling（由维护者确认迁移状态后处理）
  */
 export class MigrationPlanCorruptError extends RouteDevError {
   readonly planPath: string;
 
   constructor(planPath: string, reason: string) {
     super(
-      `迁移 plan 损坏（fail-closed），迁移未执行：${reason}。` +
-      `请手动恢复：删除 ${REVISION_SCHEMA_PLAN} 后重试（将全新扫描生成新 plan），或从备份恢复版本目录。`,
+      `迁移 plan 损坏（fail-closed），迁移未执行、未修改任何版本文件：${reason}。` +
+      `恢复指引（按顺序尝试）：` +
+      `(1) 从备份恢复 ${REVISION_SCHEMA_PLAN} 文件——仅在迁移确认未开始时安全；` +
+      `(2) 从备份恢复整个版本目录；` +
+      `(3) 使用显式 recovery tooling（人工确认迁移状态）。` +
+      `警告：半迁移状态下删除 plan 文件并重扫会重新打开 revision 冲突缺陷（F-011），禁止作为默认恢复手段。`,
       'MIGRATION_PLAN_CORRUPT',
       { details: `plan 路径: ${planPath}` },
     );
@@ -59,15 +67,28 @@ function validateMigrationPlan(plan: unknown, planPath: string): string | null {
   if (p.schema !== MIGRATION_PLAN_SCHEMA) return `schema=${String(p.schema)}（期望 ${MIGRATION_PLAN_SCHEMA}）`;
   if (!Array.isArray(p.entries)) return 'entries 不是数组';
   const seenTargets = new Set<number>();
+  const seenFiles = new Set<string>();
   for (const entry of p.entries) {
     if (typeof entry !== 'object' || entry === null) return 'entries 含非对象项';
     const e = entry as { file?: unknown; targetRevision?: unknown };
     if (typeof e.file !== 'string' || e.file.length === 0) return 'entry.file 非法';
+    // Closure 4：file 必须是合法 basename——禁止路径分隔符与 '..'，
+    // 防止损坏 plan 把迁移边界打穿（写入目录外文件）
+    if (e.file.includes('/') || e.file.includes('\\') || e.file === '..' || e.file.startsWith('..')) {
+      return `entry.file 不是合法 basename: ${e.file}`;
+    }
+    if (seenFiles.has(e.file)) return `file 重复: ${e.file}`;
+    seenFiles.add(e.file);
     if (typeof e.targetRevision !== 'number' || !Number.isInteger(e.targetRevision) || e.targetRevision <= 0) {
       return `entry(${e.file}).targetRevision 非法`;
     }
     if (seenTargets.has(e.targetRevision)) return `targetRevision 重复: ${e.targetRevision}`;
     seenTargets.add(e.targetRevision);
+  }
+  // Closure 4：target revisions 必须连续（恰好 1..N）——损坏 plan 不得把迁移边界打穿
+  const maxTarget = Math.max(...seenTargets);
+  if (seenTargets.size !== maxTarget) {
+    return `targetRevision 不连续（期望 1..${seenTargets.size}）`;
   }
   return null;
 }

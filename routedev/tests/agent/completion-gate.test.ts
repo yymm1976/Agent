@@ -3,7 +3,7 @@
 // 注意：部分测试实际运行 typecheck/lint/tests 命令，需要较长超时（并行运行时尤其如此）
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -331,6 +331,41 @@ describe('CompletionGate (Phase 31 Task 6.4)', { timeout: 30000 }, () => {
       expect(result.cancelled).toBeUndefined();
       const tc = result.checks.find(c => c.name === 'typecheck');
       expect(tc!.ok).toBe(true);
+    });
+
+    it('Closure 2：取消后进程树确实死亡——孙进程 sentinel 证明（非仅 Promise 快速返回）', async () => {
+      // 进程树：npm run typecheck → node spawner → node grandchild（5s 后写 sentinel）
+      // 取消必须杀整棵树；若只杀直接子进程，孙进程会在 5s 时写出 sentinel → 测试失败
+      const sentinel = join(tempDir, 'grandchild-touched.txt');
+      const spawnerCode = [
+        "const { spawn } = require('node:child_process');",
+        'const sentinel = process.argv[2];',
+        "const code = 'setTimeout(() => require(\"node:fs\").writeFileSync(process.argv[1], \"touched\"), 5000)';",
+        "spawn(process.execPath, ['-e', code, sentinel], { stdio: 'ignore' });",
+        'setInterval(() => {}, 1000); // 保持进程树存活',
+      ].join('\n');
+      writeFileSync(join(tempDir, 'grandchild-spawner.js'), spawnerCode, 'utf-8');
+      writeFileSync(join(tempDir, 'tsconfig.json'), '{}');
+      writeFileSync(join(tempDir, 'package.json'), JSON.stringify({
+        name: 'test',
+        scripts: { typecheck: `node grandchild-spawner.js ${JSON.stringify(sentinel)}` },
+      }));
+
+      const controller = new AbortController();
+      const gate = createCompletionGate();
+      const verifyPromise = gate.verify({
+        modifiedFiles: ['src/a.ts'],
+        projectPath: tempDir,
+        signal: controller.signal,
+      });
+      setTimeout(() => controller.abort(), 300);
+      const result = await verifyPromise;
+      expect(result.cancelled).toBe(true);
+
+      // 等待超过孙进程的写入时间——sentinel 必须从未出现（整棵树已死亡）
+      const until = Date.now() + 5500;
+      while (Date.now() < until) { /* 等待 */ }
+      expect(existsSync(sentinel)).toBe(false);
     });
   });
 });

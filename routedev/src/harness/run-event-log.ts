@@ -12,8 +12,27 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { getAppDataDir } from '../utils/paths.js';
+import { RouteDevError } from '../utils/errors.js';
 
-/** Run 事件类型——覆盖 TD-21 关键路径 + provider retry 可观测性 */
+/**
+ * Closure 6（durability contract）：append 失败——日志已失效。
+ * 调用方（loop）捕获后必须停用该日志（不再产生静默分歧）；
+ * 该 run 的 replay 因磁盘不完整返回 null（fail-closed）。
+ */
+export class RunEventLogDurabilityError extends RouteDevError {
+  readonly runId: string;
+
+  constructor(runId: string, reason: string) {
+    super(
+      `RunEventLog append 失败，日志已失效（该 run 的 replay 将不可用）：${reason}`,
+      'RUN_EVENT_LOG_DURABILITY',
+      { details: `runId: ${runId}` },
+    );
+    this.runId = runId;
+  }
+}
+
+/** Run 事件类型——覆盖 TD-21 关键路径 + provider retry 可观测性 + denial lifecycle */
 export type RunEventType =
   | 'run_started'     // 运行开始（user request 受理）
   | 'llm_requested'   // LLM 请求发起（attempt=1..N；attempt>1 即前次失败后的重试）
@@ -22,6 +41,7 @@ export type RunEventType =
   | 'llm_failed'      // LLM 请求失败（含类型化 errorKind）
   | 'tool_requested'  // 工具调用发起
   | 'tool_completed'  // 工具调用完成（isError 区分成功/失败）
+  | 'tool_rejected'   // Closure 6：工具被拒（权限 deny / 用户拒绝 / pre-tool deny）——denial lifecycle
   | 'run_completed'   // 运行正常完成
   | 'run_interrupted'; // 运行中断（取消/连续错误/溢出）
 
@@ -48,6 +68,7 @@ export interface LlmSucceededEvent extends RunEventBase {
 export interface LlmFailedEvent extends RunEventBase { type: 'llm_failed'; payload: { model: string; attempt: number; errorKind: string; error: string } }
 export interface ToolRequestedEvent extends RunEventBase { type: 'tool_requested'; payload: { toolName: string; toolCallId: string } }
 export interface ToolCompletedEvent extends RunEventBase { type: 'tool_completed'; payload: { toolName: string; toolCallId: string; isError: boolean; outputPreview: string } }
+export interface ToolRejectedEvent extends RunEventBase { type: 'tool_rejected'; payload: { toolName: string; toolCallId: string; reason: string } }
 export interface RunCompletedEvent extends RunEventBase { type: 'run_completed'; payload: { outputLength: number; toolCallCount: number; retryCount: number } }
 export interface RunInterruptedEvent extends RunEventBase { type: 'run_interrupted'; payload: { reason: string } }
 
@@ -60,6 +81,7 @@ export type RunEvent =
   | LlmFailedEvent
   | ToolRequestedEvent
   | ToolCompletedEvent
+  | ToolRejectedEvent
   | RunCompletedEvent
   | RunInterruptedEvent;
 
@@ -90,16 +112,34 @@ export interface RunProjection {
  * - 供 ReActAgentLoop 在关键路径（LLM/tool/完成）记录
  */
 export class RunEventLog {
+  private sequence = 0;
+  private readonly events: RunEvent[] = []; // 内存态（replay consistency 比对基准）
+  /** Closure 6：日志是否已失效（append 失败后 fail-closed——不再静默写内存/磁盘不一致） */
+  private failed = false;
+  private readonly inputTruncateChars: number;
+  private readonly outputPreviewChars: number;
+
   constructor(
     private readonly runId: string,
     private readonly storageDir?: string,
-  ) {}
+    options: { inputTruncateChars?: number; outputPreviewChars?: number } = {},
+  ) {
+    // Closure 6（redaction policy）：默认不持久化完整原文——input/outputPreview 截断，
+    // 防止用户输入与工具输出原文无限落盘（隐私/retention 契约）
+    this.inputTruncateChars = options.inputTruncateChars ?? 200;
+    this.outputPreviewChars = options.outputPreviewChars ?? 200;
+  }
 
-  private sequence = 0;
-  private readonly events: RunEvent[] = []; // 内存态（replay consistency 比对基准）
-
-  /** 追加事件（内存 + 磁盘 JSONL append-only） */
+  /**
+   * 追加事件（内存 + 磁盘 JSONL append-only）
+   * Closure 6（durability contract）：append 失败 = 日志失效（fail-closed）——
+   * record 抛 RunEventLogDurabilityError，调用方必须停用该日志；
+   * 绝不出现"内存有 event N、磁盘没有 event N"的静默分歧（replay 对不完整日志返回 null）。
+   */
   record<E extends RunEvent>(type: E['type'], payload: E['payload']): void {
+    if (this.failed) throw new RunEventLogDurabilityError(this.runId, '日志已因先前的 append 失败而失效');
+    // Closure 6：redaction——run_started 原文输入截断
+    const safePayload = this.redactPayload(type, payload);
     this.sequence += 1;
     const event = {
       id: `${this.runId}-${this.sequence}-${randomBytes(3).toString('hex')}`,
@@ -107,7 +147,7 @@ export class RunEventLog {
       sequence: this.sequence,
       timestamp: Date.now(),
       type,
-      payload,
+      payload: safePayload,
     } as E;
     this.events.push(event);
     try {
@@ -115,10 +155,29 @@ export class RunEventLog {
       mkdirSync(dir, { recursive: true });
       appendFileSync(join(dir, `${this.runId}.events.jsonl`), JSON.stringify(event) + '\n', 'utf-8');
     } catch (err) {
-      // 事件日志写入失败 fail-open（不阻断 run 主流程）
-      // eslint-disable-next-line no-console
-      console.warn('[run-event-log] append failed (non-blocking)', err instanceof Error ? err.message : String(err));
+      // fail-closed：日志立即失效——后续 record 抛错，调用方停用日志并显式记录错误
+      this.failed = true;
+      throw new RunEventLogDurabilityError(
+        this.runId,
+        err instanceof Error ? err.message : String(err),
+      );
     }
+  }
+
+  /** 日志是否已失效（append 失败后为 true） */
+  isFailed(): boolean {
+    return this.failed;
+  }
+
+  /** Closure 6：redaction——输入/输出按契约截断，不落盘完整原文 */
+  private redactPayload(type: RunEventType, payload: Record<string, unknown>): Record<string, unknown> {
+    if (type === 'run_started' && typeof payload.input === 'string' && payload.input.length > this.inputTruncateChars) {
+      return { ...payload, input: payload.input.slice(0, this.inputTruncateChars) + '…' };
+    }
+    if (type === 'tool_completed' && typeof payload.outputPreview === 'string' && payload.outputPreview.length > this.outputPreviewChars) {
+      return { ...payload, outputPreview: payload.outputPreview.slice(0, this.outputPreviewChars) + '…' };
+    }
+    return payload;
   }
 
   /** 内存事件流（测试/比对用） */

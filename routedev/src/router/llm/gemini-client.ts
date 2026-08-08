@@ -149,6 +149,10 @@ export class GeminiClient extends BaseLLMClient {
     const startTime = Date.now();
     this.logRequest(options.model, true, options.messages.length);
 
+    // K2 Transport Terminal（Closure 1）：finishReason 已观察到 = 语义完成——
+    // 声明在 try 外：catch 需要读取（finish 已观察判定）
+    let lastFinishReason: 'stop' | 'tool_use' | 'length' | 'error' = 'stop';
+
     try {
       const url = `${this.baseUrl}/models/${encodeURIComponent(options.model)}:streamGenerateContent?alt=sse`;
       const body = this.buildRequestBody(options);
@@ -182,7 +186,6 @@ export class GeminiClient extends BaseLLMClient {
 
       let inputTokens = 0;
       let outputTokens = 0;
-      let lastFinishReason: 'stop' | 'tool_use' | 'length' | 'error' = 'stop';
       let hasToolCalls = false;
 
       // 解析 SSE 流
@@ -278,6 +281,18 @@ export class GeminiClient extends BaseLLMClient {
 
       yield { type: 'done', finishReason: lastFinishReason };
     } catch (err) {
+      // K2 Transport Terminal（Closure 1）：finishReason 已观察到 → 语义完成。
+      // 流中断（fetch/SSE 异常）不得把已成功 turn 变成失败；usage 缺失由消费方
+      // 标记 usageIncomplete=true。用户取消不在此列。
+      if (lastFinishReason && !options.signal?.aborted) {
+        logger.warn('K2: gemini stream transport error after finish observed——语义完成，usage 可能不完整', {
+          model: options.model,
+          finishReason: lastFinishReason,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        yield { type: 'done', finishReason: lastFinishReason };
+        return;
+      }
       throw this.normalizeError(err, options.model);
     }
   }

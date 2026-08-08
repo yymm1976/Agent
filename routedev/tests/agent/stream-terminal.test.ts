@@ -158,6 +158,112 @@ describe('F-012 stream terminal state', () => {
     expect(events).not.toContain('error');
   });
 
+  it('K2 Transport Terminal（Full Loop）：tool_use 完整 + usage-tail 前 reset → 工具只执行一次（不重执行）', async () => {
+    let executeCalls = 0;
+    let modelFailure = 0;
+    const executor = {
+      getToolDefinitions: () => [],
+      executeTool: async () => { executeCalls += 1; return 'done'; },
+      hasTool: () => false,
+      executeToolStructured: async () => { executeCalls += 1; return { output: 'done', isError: false }; },
+    } as never;
+    const client = {
+      protocol: 'openai' as const,
+      providerId: 'deepseek',
+      isReady: () => true,
+      complete: async () => ({ content: '', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, finishReason: 'stop', model: 'm' }),
+      // 有状态：首轮完整工具调用 + usage-tail 前 reset；后续轮次正常文本收尾
+      streamCalls: 0,
+      stream: async function* (): AsyncGenerator<LLMStreamEvent> {
+        const calls = ++this.streamCalls;
+        if (calls === 1) {
+          // 完整工具调用 + finish_reason=tool_use
+          yield { type: 'tool_call_start', toolCall: { id: 'c1', name: 'file_write' } };
+          yield { type: 'tool_call_delta', toolCallId: 'c1', argumentsDelta: '{"path":"a.txt","content":"x"}' };
+          yield { type: 'tool_call_end', toolCallId: 'c1' };
+          yield { type: 'done', finishReason: 'tool_use' };
+          // 等待 usage-only 尾块期间 socket reset
+          throw new Error('ECONNRESET socket hang up');
+        }
+        yield { type: 'text_delta', text: 'file written' };
+        yield { type: 'done', finishReason: 'stop' };
+      },
+    };
+    const loop = new ReActAgentLoop(executor, { toolsEnabled: true, maxIterations: 2 });
+    const events: string[] = [];
+    let loopError: unknown = null;
+    try {
+      for await (const ev of loop.run({
+        userMessage: 'write file',
+        llmClient: client as never,
+        routeDecision: {
+          model: { id: 'm', name: 'm', provider: 'p', tier: 'simple', contextWindow: 1000, capabilities: ['tool_use'], latencyMs: 0, available: true },
+          providerId: 'p', fallbackUsed: false, originalTier: 'simple', degraded: false,
+        },
+        conversationHistory: [],
+        onConfirmTool: async () => true,
+        onModelFailure: () => { modelFailure += 1; },
+      })) {
+        events.push(ev.type);
+      }
+    } catch (err) {
+      loopError = err;
+    }
+    // K2 验收：transport reset 不导致整个 turn 重执行——工具恰好执行一次
+    expect(loopError).toBeNull();
+    expect(executeCalls).toBe(1);
+    expect(modelFailure).toBe(0);
+    expect(events).toContain('done');
+    expect(events).not.toContain('error');
+  });
+
+  it('K2 Transport Terminal（Full Loop）：partial tool + finish 前 reset → execute=0（残缺不执行）', async () => {
+    let executeCalls = 0;
+    let modelFailure = 0;
+    const executor = {
+      getToolDefinitions: () => [],
+      executeTool: async () => { executeCalls += 1; return 'x'; },
+      hasTool: () => false,
+      executeToolStructured: async () => { executeCalls += 1; return { output: 'x', isError: false }; },
+    } as never;
+    const client = {
+      protocol: 'openai' as const,
+      providerId: 'deepseek',
+      isReady: () => true,
+      complete: async () => ({ content: '', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, finishReason: 'stop', model: 'm' }),
+      stream: async function* (): AsyncGenerator<LLMStreamEvent> {
+        // 残缺工具参数 + finish 前 reset——协议失败
+        yield { type: 'tool_call_start', toolCall: { id: 'c1', name: 'file_write' } };
+        yield { type: 'tool_call_delta', toolCallId: 'c1', argumentsDelta: '{"path":' };
+        throw new Error('ECONNRESET socket hang up');
+      },
+    };
+    const loop = new ReActAgentLoop(executor, { toolsEnabled: true, maxIterations: 1 });
+    const events: string[] = [];
+    let loopError: unknown = null;
+    try {
+      for await (const ev of loop.run({
+        userMessage: 'write file',
+        llmClient: client as never,
+        routeDecision: {
+          model: { id: 'm', name: 'm', provider: 'p', tier: 'simple', contextWindow: 1000, capabilities: ['tool_use'], latencyMs: 0, available: true },
+          providerId: 'p', fallbackUsed: false, originalTier: 'simple', degraded: false,
+        },
+        conversationHistory: [],
+        onConfirmTool: async () => true,
+        onModelFailure: () => { modelFailure += 1; },
+      })) {
+        events.push(ev.type);
+      }
+    } catch (err) {
+      loopError = err;
+    }
+    // 未观察到 finish → 协议失败：残缺工具绝不执行
+    expect(executeCalls).toBe(0);
+    expect(modelFailure).toBeGreaterThanOrEqual(1);
+    expect(events).toContain('error');
+  });
+
   it('Full ReAct Loop：provider 残缺工具调用 + done(error) → executeTool=0、onModelFailure=1、run 含 error', async () => {
     let executeCalls = 0;
     let modelSuccess = 0;

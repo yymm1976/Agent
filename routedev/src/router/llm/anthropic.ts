@@ -128,6 +128,11 @@ export class AnthropicClient extends BaseLLMClient {
     const startTime = Date.now();
     this.logRequest(options.model, true, options.messages.length);
 
+    // K2 Transport Terminal（Closure 1）：done（stop_reason）已发出 = 语义完成——
+    // 此后 message_stop 前的 transport exception 不得再把 turn 变成失败。
+    // 声明在 try 外：catch 需要读取（done 已发出判定）
+    let doneEmitted = false;
+
     try {
       const params = await this.buildRequestParams(options, true);
       // V2-021 修复：透传 options.signal / timeoutMs 到 SDK stream() 的 RequestOptions，支持流式取消
@@ -212,6 +217,7 @@ export class AnthropicClient extends BaseLLMClient {
             // 消息增量（output tokens + stop reason）
             outputTokens = event.usage.output_tokens;
             if (event.delta.stop_reason) {
+              doneEmitted = true;
               yield {
                 type: 'done',
                 finishReason: this.mapStopReason(event.delta.stop_reason),
@@ -238,6 +244,16 @@ export class AnthropicClient extends BaseLLMClient {
         }
       }
     } catch (err) {
+      // K2 Transport Terminal（Closure 1）：done（stop_reason）已发出 → 语义完成。
+      // 等待 message_stop/usage 期间的 transport exception 不得把已成功 turn 变成失败；
+      // 消费方因 usage 事件缺失自动标记 usageIncomplete=true。用户取消不在此列。
+      if (doneEmitted && !options.signal?.aborted) {
+        logger.warn('K2: anthropic stream transport error after done emitted——语义完成，usage 可能不完整', {
+          model: options.model,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
       throw this.normalizeError(err, options.model);
     }
   }

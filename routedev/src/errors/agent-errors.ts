@@ -116,11 +116,16 @@ export class InternalInvariantError extends AgentError {
 /**
  * 类型化重试判定：
  * 1. AgentError → 直接用 retryable（核心控制流，不碰消息字符串）
- * 2. 外部 SDK 错误（非 AgentError）→ 消息正则兜底（无法类型化的外部错误）
+ * 2. 外部 SDK 错误（非 AgentError）→ 先结构化 status 判定（5xx 瞬时故障，
+ *    Closure 6：stream 请求阶段重试依赖此判定——SDK 原始错误尚未 normalize），
+ *    再消息正则兜底（无法类型化的外部错误）
  */
 export function isRetryableError(error: unknown): boolean {
   if (error instanceof AgentError) return error.retryable;
   if (error instanceof Error) {
+    // 外部 SDK APIError 携带结构化 status：5xx = 瞬时故障，有限退避重试
+    const status = (error as { status?: unknown }).status;
+    if (typeof status === 'number' && status >= 500 && status < 600) return true;
     const msg = error.message.toLowerCase();
     return msg.includes('timeout')
       || msg.includes('econnreset')

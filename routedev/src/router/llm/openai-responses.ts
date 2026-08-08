@@ -121,12 +121,18 @@ export class OpenAIResponsesClient extends BaseLLMClient {
     const startTime = Date.now();
     this.logRequest(options.model, true, options.messages.length);
 
+    // K2 Transport Terminal（Closure 1）：done 已发出 = 语义完成——
+    // 声明在 try 外：catch 需要读取（done 已发出判定）
+    let doneEmitted = false;
+
     try {
       const params = this.buildRequestParams(options, true);
       const requestOptions = this.buildRequestOptions(options);
-      const stream = await this.client.responses.create(
-        params,
-        requestOptions,
+      // Closure 6（TD-21）：流式 create 也接入 withRetry（请求阶段 5xx 重试安全；
+      // 流开始后的异常由 K2 Transport Terminal 处理）
+      const stream = await this.withRetry(
+        () => this.client!.responses.create(params, requestOptions) as Promise<unknown>,
+        options.onRetry,
       ) as unknown as AsyncIterable<ResponseStreamEvent>;
 
       // 跟踪 item_id → call_id 映射
@@ -136,6 +142,7 @@ export class OpenAIResponsesClient extends BaseLLMClient {
       // 跟踪已结束的 call_id，用于在 completed 事件中补发未触发的 tool_call_end
       const endedCallIds = new Set<string>();
       let hasToolCalls = false;
+      let doneEmitted = false;
 
       for await (const event of stream) {
         switch (event.type) {
@@ -219,6 +226,7 @@ export class OpenAIResponsesClient extends BaseLLMClient {
             const usage = this.extractUsage(event.response.usage);
             // 与 OpenAIClient 流式一致：在 done 前 yield usage 事件
             yield { type: 'usage', usage };
+            doneEmitted = true;
             yield {
               type: 'done',
               finishReason: this.mapFinishReason(event.response.status, hasToolCalls),
@@ -229,6 +237,7 @@ export class OpenAIResponsesClient extends BaseLLMClient {
 
           // ---- 失败 ----
           case 'response.failed': {
+            doneEmitted = true;
             yield { type: 'done', finishReason: 'error' };
             this.logResponse(
               options.model,
@@ -242,6 +251,7 @@ export class OpenAIResponsesClient extends BaseLLMClient {
           case 'response.incomplete': {
             const usage = this.extractUsage(event.response.usage);
             yield { type: 'usage', usage };
+            doneEmitted = true;
             yield { type: 'done', finishReason: 'length' };
             this.logResponse(options.model, usage, Date.now() - startTime);
             return;
@@ -249,6 +259,7 @@ export class OpenAIResponsesClient extends BaseLLMClient {
 
           // ---- SDK 级 error 事件 ----
           case 'error': {
+            doneEmitted = true;
             yield { type: 'done', finishReason: 'error' };
             this.logResponse(
               options.model,
@@ -267,6 +278,16 @@ export class OpenAIResponsesClient extends BaseLLMClient {
       // 流自然结束但未收到 completed/failed/incomplete 事件：保守补发 done
       yield { type: 'done', finishReason: 'error' };
     } catch (err) {
+      // K2 Transport Terminal（Closure 1）：done 已发出 → 语义完成，
+      // 后续 transport exception 不得把已成功 turn 变成失败（usage 缺失由消费方标记）。
+      // 用户取消不在此列。
+      if (doneEmitted && !options.signal?.aborted) {
+        logger.warn('K2: openai-responses stream transport error after done emitted——语义完成', {
+          model: options.model,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
       throw this.normalizeError(err, options.model);
     }
   }

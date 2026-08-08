@@ -867,6 +867,11 @@ export class TraceCollector {
       ?? path.join(getAppDataDir(), 'traces');
   }
 
+  /** Closure 6（TD-21）：暴露存储目录供 RunEventLog 复用（同目录归档 run 事件） */
+  getStorageDirPath(): string {
+    return this.getStorageDir();
+  }
+
   /**
    * Phase 77：定位指定会话的某个产物文件（trace.jsonl / session.json / spans.json）
    * 优先查 sessionPathCache；未命中时扫描所有日期目录查找 `${sessionId}.trace.jsonl` 作为锚点并缓存。

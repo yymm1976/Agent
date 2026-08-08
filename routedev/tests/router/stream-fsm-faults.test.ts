@@ -6,6 +6,7 @@
 // 断言 parser 不崩溃、状态确定、事件序合法。
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { LLMError } from '../../src/router/types.js';
 
 const { createMock, mockCreate } = vi.hoisted(() => {
   const mockCreate = vi.fn();
@@ -116,6 +117,71 @@ describe('K1 stream FSM fault cases', () => {
     expect(done).toBeDefined();
     expect(done!.finishReason).toBe('stop'); // 非 error——调用方不得重执行
     expect(events.find((e) => e.type === 'usage')).toBeUndefined();
+  });
+
+  it('K2 Transport Terminal：finish 已观察到 + iterator throw（ECONNRESET）→ done(stop)，非 error', async () => {
+    mockCreate.mockResolvedValue((async function* () {
+      yield { choices: [{ delta: { content: 'answer' }, finish_reason: null }] };
+      yield { choices: [{ delta: {}, finish_reason: 'stop' }] };
+      // 等待 usage-only 尾块期间 socket reset——transport exception
+      throw new Error('ECONNRESET socket hang up');
+    })());
+    const events = await collect(makeClient().stream({ ...OPTIONS }));
+    const done = events.find((e) => e.type === 'done');
+    // 语义完成：finish 已观察到，计费尾块传输失败绝不能导致 turn 重执行
+    expect(done).toBeDefined();
+    expect(done!.finishReason).toBe('stop');
+    expect(events.find((e) => e.type === 'usage')).toBeUndefined(); // usage 缺失 → 消费方 usageIncomplete
+  });
+
+  it('K2 Transport Terminal：finish 未观察到 + throw → 抛错（协议失败，非语义完成）', async () => {
+    mockCreate.mockResolvedValue((async function* () {
+      yield { choices: [{ delta: { content: 'partial' }, finish_reason: null }] };
+      throw new Error('ECONNRESET socket hang up'); // finish 前 reset
+    })());
+    await expect(collect(makeClient().stream({ ...OPTIONS }))).rejects.toThrow();
+  });
+
+  it('K2 Transport Terminal：finish 已观察到 + throw，但用户已取消 → 抛错（取消不伪装成功）', async () => {
+    mockCreate.mockResolvedValue((async function* () {
+      yield { choices: [{ delta: { content: 'answer' }, finish_reason: null }] };
+      yield { choices: [{ delta: {}, finish_reason: 'stop' }] };
+      throw new Error('aborted');
+    })());
+    const controller = new AbortController();
+    controller.abort();
+    await expect(collect(makeClient().stream({ ...OPTIONS, signal: controller.signal }))).rejects.toThrow();
+  });
+
+  it('Closure 6：stream 请求阶段 500 → withRetry 重试成功，onRetry 观察者触发（TD-21 llm_retry 链路）', async () => {
+    const sdk500 = new Error('Internal Server Error') as Error & { status: number };
+    sdk500.status = 500; // SDK APIError 结构化 status
+    mockCreate
+      .mockRejectedValueOnce(sdk500) // 第一次 500（请求阶段，流未开始）
+      .mockResolvedValueOnce((async function* () {
+        yield { choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] };
+        yield { choices: [], usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 } };
+      })());
+    const client = makeClient();
+    // 注入前台重试策略（1ms 退避加速测试）
+    const { QuerySourceAwareRetryPolicy } = await import('../../src/utils/retry.js');
+    client.setRetryPolicy(new QuerySourceAwareRetryPolicy({ querySource: 'repl_main_thread', maxRetries: 2, baseDelayMs: 1 }));
+    const retries: Array<{ attempt: number; status?: unknown }> = [];
+    const events = await collect(client.stream({
+      ...OPTIONS,
+      onRetry: (info) => retries.push({
+        attempt: info.attempt,
+        status: (info.error as { status?: unknown }).status,
+      }),
+    }));
+    // 重试发生且观察者收到（TD-21 llm_retry 事件的数据源）
+    expect(retries).toHaveLength(1);
+    expect(retries[0]!.attempt).toBe(1);
+    expect(retries[0]!.status).toBe(500);
+    // 重试后成功拿到完整流
+    const done = events.find((e) => e.type === 'done');
+    expect(done!.finishReason).toBe('stop');
+    expect(events.find((e) => e.type === 'usage')).toBeDefined();
   });
 
   it('空 choices + 无 usage 的未知帧：忽略不崩溃', async () => {

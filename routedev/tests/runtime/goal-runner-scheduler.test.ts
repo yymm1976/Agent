@@ -102,6 +102,74 @@ function createTestPlan(opts: { steps?: PlanStep[]; status?: GoalPlan['status'] 
 }
 
 describe('goal-runner-scheduler 模块', () => {
+  describe('Closure 2：cancellation settlement（gate 取消后不再启动 verifyPlan）', () => {
+    it('completion_gate_first：gate 期间取消 → verifyPlan 不启动（classifier 零调用）', async () => {
+      const addSystemMessage = vi.fn();
+      // 与 runner 共享同一 ref：mock verify 在 gate 阶段 abort 调度器安装的 controller
+      const abortControllerRef = { current: null as AbortController | null };
+      const classifySpy = vi.fn(async () => ({ tier: 'simple', confidence: 0.9 }));
+      const deps = createMockDeps({
+        addSystemMessage,
+        abortControllerRef,
+        classifier: { classify: classifySpy } as any,
+        completionGate: {
+          verify: vi.fn(async (params: { signal?: AbortSignal }) => {
+            // 模拟用户在 typecheck/tests 期间点击取消
+            abortControllerRef.current?.abort();
+            return { passed: false, checks: [], cancelled: true };
+          }),
+        } as any,
+      });
+      const runner = createGoalRunner(deps);
+
+      const plan = createTestPlan({
+        steps: [
+          { id: 1, description: '步骤1', status: 'pending', dependencies: [], domain: 'general' },
+        ],
+      });
+      await expect(runner.executeGoalPlan(plan)).rejects.toThrow('用户中断');
+      // cancellation invariant：取消一旦被确认，不得再启动新的 verification 工作
+      // （verifyPlan 会用 plan.description 作为 verifierQuery——绝不出现）
+      const verifyQueries = classifySpy.mock.calls.filter(
+        ([args]) => (args as { query?: string }).query === '测试目标',
+      );
+      expect(verifyQueries).toHaveLength(0);
+    });
+
+    it('reviewer_first：reviewer 期间取消 → runCompletionGate 不启动（verify 零调用）', async () => {
+      const addSystemMessage = vi.fn();
+      const abortControllerRef = { current: null as AbortController | null };
+      const classifySpy = vi.fn(async () => ({ tier: 'simple', confidence: 0.9 }));
+      const verifySpy = vi.fn();
+      const deps = createMockDeps({
+        addSystemMessage,
+        abortControllerRef,
+        classifier: { classify: classifySpy } as any,
+        completionGate: { verify: verifySpy } as any,
+        config: {
+          checkpoint: { enabled: false },
+          router: { budget: { mode: 'track_only' as const, dailyLimit: 500000 } },
+          goal: { auditMode: 'reviewer_first' as const },
+        } as any,
+      });
+      const runner = createGoalRunner(deps);
+
+      const plan = createTestPlan({
+        steps: [
+          { id: 1, description: '步骤1', status: 'pending', dependencies: [], domain: 'general' },
+        ],
+      });
+      // 仅当 reviewer（verifyPlan 用 plan.description 作 verifierQuery）发起分类时模拟用户取消
+      classifySpy.mockImplementation(async (args: { query: string }) => {
+        if (args.query === '测试目标') abortControllerRef.current?.abort();
+        return { tier: 'simple', confidence: 0.9 };
+      });
+      await expect(runner.executeGoalPlan(plan)).rejects.toThrow('用户中断');
+      // reviewer 取消 → 不得再启动 CompletionGate（取消确认后的不变量）
+      expect(verifySpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('executeGoalPlan attestation 校验', () => {
     it('无 attestation 时自动补签（execution_auto_repair）', async () => {
       const addSystemMessage = vi.fn();

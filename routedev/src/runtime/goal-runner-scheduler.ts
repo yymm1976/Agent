@@ -54,10 +54,21 @@ const COMPOSE_STEP_ID_OFFSET = 10000;
  * executeSingleStep 抛出后，调用方据此中止整个 plan（区别于普通步骤失败）
  * GA Hardening 第4项：继承 CancellationError——类型化取消语义（retryable=false）
  */
-class PlanAbortError extends CancellationError {
+export class PlanAbortError extends CancellationError {
   constructor(reason: string) {
     super(reason);
     this.name = 'PlanAbortError';
+  }
+}
+
+/**
+ * Closure 2（Cancellation Settlement）：取消一旦被确认，立即中止——
+ * 每个 runCompletionGate/verifyPlan await 之后必须检查，不得再启动新的
+ * LLM/tool/verification 工作（cancellation invariant）。
+ */
+function throwIfGateAborted(gateAbort: AbortController, phase: string): void {
+  if (gateAbort.signal.aborted) {
+    throw new PlanAbortError(`用户中断（${phase}阶段）`);
   }
 }
 
@@ -257,23 +268,27 @@ export function createSchedulerFunctions(ctx: GoalRunnerCtx) {
       const gateAbort = new AbortController();
       abortControllerRef.current = gateAbort;
       try {
+        // Closure 2：每个 await 后立即检查取消——一旦取消被确认，
+        // 不得再产生新的 LLM/tool/verification 工作（cancellation invariant）
         if (auditMode === 'completion_gate_first') {
           gateResult = await ctx.runCompletionGate(plan, gateAbort.signal);
-          await ctx.verifyPlan(plan);
+          throwIfGateAborted(gateAbort, 'completion-gate');
+          await ctx.verifyPlan(plan, gateAbort.signal);
+          throwIfGateAborted(gateAbort, 'reviewer');
         } else if (auditMode === 'reviewer_first') {
-          await ctx.verifyPlan(plan);
+          await ctx.verifyPlan(plan, gateAbort.signal);
+          throwIfGateAborted(gateAbort, 'reviewer');
           gateResult = await ctx.runCompletionGate(plan, gateAbort.signal);
+          throwIfGateAborted(gateAbort, 'completion-gate');
         } else {
           // 'full' 或默认值：两者都执行，先 LLM 验证后代码验证门
-          await ctx.verifyPlan(plan);
+          await ctx.verifyPlan(plan, gateAbort.signal);
+          throwIfGateAborted(gateAbort, 'reviewer');
           gateResult = await ctx.runCompletionGate(plan, gateAbort.signal);
+          throwIfGateAborted(gateAbort, 'completion-gate');
         }
       } finally {
         abortControllerRef.current = prevAbortController;
-      }
-      // 用户中断验证门：与步骤中断一致的 PlanAbortError 语义（调用方据此中止整个 plan）
-      if (gateAbort.signal.aborted) {
-        throw new PlanAbortError('用户中断（验证门阶段）');
       }
     }
 

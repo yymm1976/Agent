@@ -417,7 +417,14 @@ export class LLMError extends AgentError {
     if (statusCode === 404) return 'model_not_found';
     if (statusCode === 400 && message.includes('content')) return 'content_filter';
     if (statusCode === 400) return 'invalid_request';
+    // Closure 3（Provider Error Taxonomy V2）：5xx 是瞬时故障——有限退避重试，
+    // 不得把第一次 500 当 terminal（此前落入 unknown → retryable=false）
+    if (statusCode !== undefined && statusCode >= 500 && statusCode < 600) return 'network_error';
     if (message.includes('timeout') || message.includes('ETIMEDOUT')) return 'timeout';
+    // Closure 3：ECONNRESET/EPIPE（连接被重置/管道断裂）是瞬时网络故障——
+    // 此前只识别 ECONNREFUSED/ENOTFOUND，normalizeError 包装后 ECONNRESET 落入
+    // unknown → retryable=false，把真实可恢复故障变成 terminal
+    if (message.includes('ECONNRESET') || message.includes('EPIPE')) return 'network_error';
     if (message.includes('ECONNREFUSED') || message.includes('ENOTFOUND')) return 'network_error';
     return 'unknown';
   }

@@ -336,10 +336,10 @@ describe('goal-runner-recovery 模块', () => {
       expect(gateMsg).toBeUndefined();
     });
 
-    it('completionGate 注入但 plan.status 非 completed 时不执行验证门', async () => {
-      // 实际行为：默认 auditMode='completion_gate_first' 下，runCompletionGate 先于 verifyPlan 执行
-      // 此时 plan.status 仍为 'executing'（非 'completed'），runCompletionGate 提前返回 undefined
-      // 验证门仅在 plan.status === 'completed' 时才执行（见 goal-runner-recovery.ts:188）
+    it('Closure 2：completion_gate_first 下 gate 先于 verifyPlan 执行（status 为 executing 也执行）', async () => {
+      // Closure 2 修复：旧前置条件 plan.status === 'completed' 让默认 auditMode
+      // （completion_gate_first）的验证门永不执行（gate 先于 verifyPlan 时 status 仍是
+      // 'executing'）。新契约：status !== 'failed' 即执行验证门。
       const addSystemMessage = vi.fn();
       const mockCompletionGate = {
         verify: vi.fn(async () => ({
@@ -357,8 +357,8 @@ describe('goal-runner-recovery 模块', () => {
       const runner = createGoalRunner(deps);
 
       const plan: GoalPlan = {
-        id: 'plan-gate-skip',
-        description: '测试验证门跳过',
+        id: 'plan-gate-run',
+        description: '测试验证门执行',
         steps: [
           { id: 1, description: '步骤1', status: 'pending', dependencies: [], domain: 'general' },
         ],
@@ -368,13 +368,48 @@ describe('goal-runner-recovery 模块', () => {
       attestPlan(plan, 'test');
       await runner.executeGoalPlan(plan);
 
-      // plan.status 非 completed 时 completionGate.verify 不被调用
-      expect(mockCompletionGate.verify).not.toHaveBeenCalled();
-      // 不应有"代码验证通过"消息
+      // 默认 auditMode=completion_gate_first：gate 在 verifyPlan 之前运行并实际执行
+      expect(mockCompletionGate.verify).toHaveBeenCalled();
+      // 应有"代码验证通过"消息
       const gatePassMsg = addSystemMessage.mock.calls.find(
         ([content]) => typeof content === 'string' && content.includes('代码验证通过'),
       );
-      expect(gatePassMsg).toBeUndefined();
+      expect(gatePassMsg).toBeDefined();
+    });
+
+    it('plan.status=failed 时不执行验证门（guard 保留）', async () => {
+      const addSystemMessage = vi.fn();
+      const mockCompletionGate = {
+        verify: vi.fn(async () => ({
+          passed: true,
+          checks: [],
+          warnings: [],
+        })),
+      };
+      const deps = createMockDeps({
+        addSystemMessage,
+        completionGate: mockCompletionGate as any,
+        agentLoop: {
+          run: async function* () { throw new Error('步骤执行失败'); },
+          updateToolExecutor: vi.fn(),
+        } as any,
+      });
+      const runner = createGoalRunner(deps);
+
+      const plan: GoalPlan = {
+        id: 'plan-gate-failed',
+        description: '测试验证门失败跳过',
+        steps: [
+          { id: 1, description: '会失败的步骤', status: 'pending', dependencies: [], domain: 'general' },
+        ],
+        status: 'pending',
+        createdAt: Date.now(),
+      };
+      attestPlan(plan, 'test');
+      await runner.executeGoalPlan(plan);
+
+      // 步骤失败 → plan.status=failed → 跳过验证门（guard 保留）
+      expect(mockCompletionGate.verify).not.toHaveBeenCalled();
     });
   });
 });

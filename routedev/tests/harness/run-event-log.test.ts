@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { RunEventLog } from '../../src/harness/run-event-log.js';
+import { RunEventLog, RunEventLogDurabilityError } from '../../src/harness/run-event-log.js';
 import { RetryPolicy, QuerySourceAwareRetryPolicy } from '../../src/utils/retry.js';
 import { RateLimitError, AuthError } from '../../src/errors/agent-errors.js';
 import { ReActAgentLoop } from '../../src/agent/loop.js';
@@ -226,5 +226,242 @@ describe('RunEventLog（TD-21 Phase 1）', () => {
     });
     expect(result).toBe('ok');
     expect(retries).toEqual([1]); // 第一次失败后重试（attempt=1 是下一次请求）
+  });
+});
+
+describe('Closure 6：durability / redaction / 集成矩阵', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'rd-runlog6-'));
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('durability：append 失败 → record 抛 RunEventLogDurabilityError，日志失效（fail-closed）', () => {
+    // storageDir 指向一个已存在的文件 → mkdirSync 抛错 → append 失败
+    const blocker = join(tempDir, 'blocker.txt');
+    writeFileSync(blocker, 'i am a file, not a dir', 'utf-8');
+    const log = new RunEventLog('run-dur', blocker);
+    expect(() => log.record('run_started', { input: 'x', model: 'm' })).toThrow(RunEventLogDurabilityError);
+    expect(log.isFailed()).toBe(true);
+    // 失效后任何 record 都抛错（不静默写内存/磁盘不一致）
+    expect(() => log.record('llm_requested', { model: 'm', attempt: 1 })).toThrow(RunEventLogDurabilityError);
+    // 磁盘无该 run 的日志 → replay 返回 null（不产生权威投影）
+    const { projection } = RunEventLog.replay(tempDir, 'run-dur');
+    expect(projection).toBeNull();
+  });
+
+  it('redaction：run_started 原文输入截断（默认 200；可配置）', () => {
+    const log = new RunEventLog('run-redact', tempDir, { inputTruncateChars: 10 });
+    log.record('run_started', { input: '这是一个非常长的用户输入，超过十个字符的原文不应该完整落盘', model: 'm' });
+    const { projection, events } = RunEventLog.replay(tempDir, 'run-redact');
+    expect(projection).not.toBeNull();
+    const started = events.find((e) => e.type === 'run_started') as { payload: { input: string } };
+    expect(started.payload.input.length).toBeLessThanOrEqual(11); // 10 + 省略号
+    expect(started.payload.input.endsWith('…')).toBe(true);
+    expect(projection!.input).toBe(started.payload.input); // 投影一致（截断后）
+  });
+
+  it('集成矩阵：工具成功 —— live 状态与 replay 投影一致（tool_requested/tool_completed）', async () => {
+    const executor = {
+      getToolDefinitions: () => [],
+      executeTool: async () => { return 'written'; },
+      hasTool: () => false,
+      executeToolStructured: async () => { return { output: 'written', isError: false }; },
+    } as never;
+    const client = {
+      protocol: 'openai' as const,
+      providerId: 'deepseek',
+      isReady: () => true,
+      complete: async () => ({ content: '', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, finishReason: 'stop', model: 'm' }),
+      streamCalls: 0,
+      stream: async function* (): AsyncGenerator<LLMStreamEvent> {
+        const calls = ++this.streamCalls;
+        if (calls === 1) {
+          yield { type: 'tool_call_start', toolCall: { id: 'c1', name: 'file_write' } };
+          yield { type: 'tool_call_delta', toolCallId: 'c1', argumentsDelta: '{"path":"a.txt"}' };
+          yield { type: 'tool_call_end', toolCallId: 'c1' };
+          yield { type: 'done', finishReason: 'tool_use' };
+          return;
+        }
+        yield { type: 'text_delta', text: 'done' };
+        yield { type: 'done', finishReason: 'stop' };
+      },
+    };
+    const log = new RunEventLog('run-tool-ok', tempDir);
+    const loop = new ReActAgentLoop(executor, { toolsEnabled: true });
+    loop.setRunEventLog(log);
+    const events: string[] = [];
+    for await (const ev of loop.run({
+      userMessage: '写文件',
+      llmClient: client as never,
+      routeDecision: {
+        model: { id: 'm', name: 'm', provider: 'p', tier: 'simple', contextWindow: 1000, capabilities: ['tool_use'], latencyMs: 0, available: true },
+        providerId: 'p', fallbackUsed: false, originalTier: 'simple', degraded: false,
+      },
+      conversationHistory: [],
+      onConfirmTool: async () => true,
+    })) {
+      events.push(ev.type);
+    }
+    expect(events).toContain('done');
+    const { projection, events: replayed } = RunEventLog.replay(tempDir, 'run-tool-ok');
+    expect(projection!.completed).toBe(true);
+    expect(projection!.toolCalls).toEqual([{ toolName: 'file_write', toolCallId: 'c1', isError: false }]);
+    const types = replayed.map((e) => e.type);
+    expect(types).toContain('tool_requested');
+    expect(types).toContain('tool_completed');
+    expect(types).not.toContain('tool_rejected');
+    expect(log.getEvents().map((e) => e.sequence)).toEqual(replayed.map((e) => e.sequence)); // live == disk
+  });
+
+  it('集成矩阵：用户拒绝工具 —— tool_rejected 事件、executeTool=0、投影一致', async () => {
+    let executeCalls = 0;
+    const executor = {
+      getToolDefinitions: () => [],
+      executeTool: async () => { executeCalls += 1; return 'x'; },
+      hasTool: () => false,
+      executeToolStructured: async () => { executeCalls += 1; return { output: 'x', isError: false }; },
+    } as never;
+    const client = {
+      protocol: 'openai' as const,
+      providerId: 'deepseek',
+      isReady: () => true,
+      complete: async () => ({ content: '', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, finishReason: 'stop', model: 'm' }),
+      streamCalls: 0,
+      stream: async function* (): AsyncGenerator<LLMStreamEvent> {
+        const calls = ++this.streamCalls;
+        if (calls === 1) {
+          yield { type: 'tool_call_start', toolCall: { id: 'c1', name: 'file_write' } };
+          yield { type: 'tool_call_delta', toolCallId: 'c1', argumentsDelta: '{"path":"a.txt"}' };
+          yield { type: 'tool_call_end', toolCallId: 'c1' };
+          yield { type: 'done', finishReason: 'tool_use' };
+          return;
+        }
+        yield { type: 'text_delta', text: 'ok' };
+        yield { type: 'done', finishReason: 'stop' };
+      },
+    };
+    const log = new RunEventLog('run-tool-reject', tempDir);
+    const loop = new ReActAgentLoop(executor, { toolsEnabled: true });
+    loop.setRunEventLog(log);
+    for await (const _ev of loop.run({
+      userMessage: '写文件',
+      llmClient: client as never,
+      routeDecision: {
+        model: { id: 'm', name: 'm', provider: 'p', tier: 'simple', contextWindow: 1000, capabilities: ['tool_use'], latencyMs: 0, available: true },
+        providerId: 'p', fallbackUsed: false, originalTier: 'simple', degraded: false,
+      },
+      conversationHistory: [],
+      onConfirmTool: async () => false, // 用户拒绝
+    })) { /* drain */ }
+    expect(executeCalls).toBe(0);
+    const { events: replayed } = RunEventLog.replay(tempDir, 'run-tool-reject');
+    const rejected = replayed.filter((e) => e.type === 'tool_rejected');
+    expect(rejected.length).toBe(1);
+    expect((rejected[0] as { payload: { toolName: string } }).payload.toolName).toBe('file_write');
+    // 拒绝 ≠ 执行：无 tool_requested/tool_completed
+    expect(replayed.some((e) => e.type === 'tool_requested')).toBe(false);
+  });
+
+  it('集成矩阵：transient provider retry —— llm_retry 事件、投影 retryCount 一致', async () => {
+    const executor = {
+      getToolDefinitions: () => [],
+      executeTool: async () => 'x',
+      hasTool: () => false,
+      executeToolStructured: async () => ({ output: 'x', isError: false }),
+    } as never;
+    let streamCalls = 0;
+    // 模拟真实链路：client.stream 内部用 RetryPolicy 包装请求阶段（同 openai.ts 接线）
+    const policy = new QuerySourceAwareRetryPolicy({ querySource: 'repl_main_thread', maxRetries: 2, baseDelayMs: 1 });
+    const client = {
+      protocol: 'openai' as const,
+      providerId: 'deepseek',
+      isReady: () => true,
+      complete: async () => ({ content: '', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, finishReason: 'stop', model: 'm' }),
+      stream: async function* (options: { onRetry?: (info: { error: unknown; attempt: number }) => void }): AsyncGenerator<LLMStreamEvent> {
+        await policy.execute(async () => {
+          streamCalls += 1;
+          if (streamCalls === 1) throw new RateLimitError('429 too many');
+          return null;
+        }, { onRetry: options.onRetry });
+        yield { type: 'text_delta', text: 'ok' };
+        yield { type: 'done', finishReason: 'stop' };
+      },
+    };
+    const log = new RunEventLog('run-retry-matrix', tempDir);
+    const loop = new ReActAgentLoop(executor, { toolsEnabled: true });
+    loop.setRunEventLog(log);
+    for await (const _ev of loop.run({
+      userMessage: 'hi',
+      llmClient: client as never,
+      routeDecision: {
+        model: { id: 'm', name: 'm', provider: 'p', tier: 'simple', contextWindow: 1000, capabilities: ['tool_use'], latencyMs: 0, available: true },
+        providerId: 'p', fallbackUsed: false, originalTier: 'simple', degraded: false,
+      },
+      conversationHistory: [],
+      onConfirmTool: async () => true,
+    })) { /* drain */ }
+    expect(streamCalls).toBe(2); // 真实重试发生
+    const { projection, events: replayed } = RunEventLog.replay(tempDir, 'run-retry-matrix');
+    expect(projection!.completed).toBe(true);
+    expect(projection!.retryCount).toBe(1);
+    expect(replayed.some((e) => e.type === 'llm_retry')).toBe(true);
+    // llm_retry 事件携带类型化 errorKind
+    const retryEv = replayed.find((e) => e.type === 'llm_retry') as { payload: { errorKind: string } };
+    expect(retryEv.payload.errorKind).toBe('rate_limit');
+  });
+
+  it('集成矩阵：取消 —— run_interrupted 事件、投影 completed=false、live==disk', async () => {
+    const executor = {
+      getToolDefinitions: () => [],
+      executeTool: async () => 'x',
+      hasTool: () => false,
+      executeToolStructured: async () => ({ output: 'x', isError: false }),
+    } as never;
+    const client = {
+      protocol: 'openai' as const,
+      providerId: 'deepseek',
+      isReady: () => true,
+      complete: async () => ({ content: '', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, finishReason: 'stop', model: 'm' }),
+      stream: async function* (options: { signal?: AbortSignal }): AsyncGenerator<LLMStreamEvent> {
+        yield { type: 'text_delta', text: 'partial' };
+        // 模拟真实 client：挂起直到取消信号（abort 后抛错退出流）
+        await new Promise((_resolve, reject) => {
+          if (options.signal?.aborted) reject(new Error('aborted'));
+          else options.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        });
+      },
+    };
+    const log = new RunEventLog('run-cancel-matrix', tempDir);
+    const loop = new ReActAgentLoop(executor, { toolsEnabled: true });
+    loop.setRunEventLog(log);
+    const controller = new AbortController();
+    const runPromise = (async () => {
+      for await (const _ev of loop.run({
+        userMessage: 'hi',
+        llmClient: client as never,
+        routeDecision: {
+          model: { id: 'm', name: 'm', provider: 'p', tier: 'simple', contextWindow: 1000, capabilities: ['tool_use'], latencyMs: 0, available: true },
+          providerId: 'p', fallbackUsed: false, originalTier: 'simple', degraded: false,
+        },
+        conversationHistory: [],
+        signal: controller.signal,
+        onConfirmTool: async () => true,
+      })) { /* drain */ }
+    })();
+    // 等待流开始后取消
+    await new Promise((r) => setTimeout(r, 100));
+    controller.abort();
+    await runPromise;
+
+    const { projection, events: replayed } = RunEventLog.replay(tempDir, 'run-cancel-matrix');
+    expect(projection!.completed).toBe(false);
+    expect(projection!.interruptedReason).toBe('用户取消了执行');
+    expect(replayed.some((e) => e.type === 'run_interrupted')).toBe(true);
+    expect(log.getEvents().map((e) => e.sequence)).toEqual(replayed.map((e) => e.sequence));
   });
 });

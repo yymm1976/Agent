@@ -11,6 +11,52 @@ import { logger } from '../utils/logger.js';
 // F-034：spawnSync 阻塞事件循环，改用 spawn + Promise 包装异步执行
 // GA Hardening 第3项：支持 AbortSignal——取消时杀整个进程树
 // （POSIX 用 detached 进程组 kill(-pid)，Windows 用 taskkill /T /F 递归终止）
+// Closure 2（Cancellation Settlement）：杀进程树后等待"确实死亡"——
+//   POSIX：SIGTERM → grace → SIGKILL（进程组）
+//   Windows：等待 taskkill /T /F 完成再 resolve cancelled
+const KILL_GRACE_MS = 2000; // SIGTERM 后宽限期，随后 SIGKILL 兜底
+
+/** 等待进程组被 SIGTERM 终止；grace 后仍未死则 SIGKILL（POSIX） */
+function killTreeSettled(childPid: number): Promise<void> {
+  return new Promise((resolve) => {
+    let killed = false;
+    try {
+      process.kill(-childPid, 'SIGTERM');
+      killed = true;
+    } catch { /* 进程组可能已退出 */ }
+    if (!killed) { resolve(); return; }
+    const timer = setTimeout(() => {
+      try { process.kill(-childPid, 'SIGKILL'); } catch { /* 已退出 */ }
+      resolve();
+    }, KILL_GRACE_MS);
+    // 轮询确认进程组已死（提前 resolve，不干等 grace）
+    const probe = setInterval(() => {
+      try {
+        process.kill(-childPid, 0); // 仍存活
+      } catch {
+        clearInterval(probe);
+        clearTimeout(timer);
+        resolve();
+      }
+    }, 50);
+  });
+}
+
+/** 等待 taskkill /T /F 完成（Windows）——确保进程树确实被终止 */
+function taskkillSettled(childPid: number): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; resolve(); } };
+    try {
+      const killer = spawn('taskkill', ['/pid', String(childPid), '/T', '/F'], { windowsHide: true });
+      killer.on('close', done);
+      killer.on('error', done);
+    } catch {
+      done();
+    }
+  });
+}
+
 function runCommandAsync(
   cmd: string,
   args: string[],
@@ -35,35 +81,41 @@ function runCommandAsync(
     let stdout = '';
     let stderr = '';
     let settled = false;
+    let abortInProgress = false;
     const finish = (result: { status: number | null; signal: string | null; stdout: string; stderr: string; cancelled: boolean }) => {
       if (!settled) { settled = true; resolve(result); }
     };
     child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf-8'); });
     child.stderr?.on('data', (d: Buffer) => { stderr += d.toString('utf-8'); });
-    child.on('close', (code, signal) => finish({ status: code, signal, stdout, stderr, cancelled: false }));
+    child.on('close', (code, signal) => {
+      // Closure 2：取消进行中时 close 不接管结算——由 settle 路径负责
+      // （taskkill 完成后才 resolve，确保整棵进程树确实死亡；否则 taskkill 杀死
+      // 直接子进程的 close 会以 cancelled:false 抢先 resolve，settle 被 settled 闸门丢弃）
+      if (abortInProgress) return;
+      finish({ status: code, signal, stdout, stderr, cancelled: false });
+    });
     child.on('error', () => finish({ status: -1, signal: null, stdout, stderr, cancelled: false }));
-      if (options.signal) {
-        // 取消：杀整个进程树（pnpm/npm 脚本链会派生孙进程，只杀直接子进程会残留孤儿）
-        const onAbort = () => {
-          if (child.pid === undefined) return;
-          try {
-            if (process.platform === 'win32') {
-              // Windows 无进程组概念：taskkill /T /F 递归终止
-              spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
-            } else {
-              process.kill(-child.pid, 'SIGTERM'); // detached 进程组整体终止
-            }
-          } catch { /* 进程可能已退出 */ }
+    if (options.signal) {
+      // 取消：杀整个进程树并等待 settlement（pnpm/npm 脚本链会派生孙进程，
+      // 只杀直接子进程会残留孤儿；不等待就 resolve 会让调用方误以为已清理）
+      const onAbort = () => {
+        if (child.pid === undefined) return;
+        abortInProgress = true;
+        const settle = process.platform === 'win32'
+          ? taskkillSettled(child.pid)
+          : killTreeSettled(child.pid);
+        settle.then(() => {
           finish({ status: null, signal: 'SIGABRT', stdout, stderr, cancelled: true });
-        };
-        if (options.signal.aborted) {
-          onAbort();
-        } else {
-          options.signal.addEventListener('abort', onAbort, { once: true });
-          // 进程先于 abort 结束时清理监听器（防泄漏）
-          child.on('close', () => options.signal?.removeEventListener('abort', onAbort));
-        }
+        });
+      };
+      if (options.signal.aborted) {
+        onAbort();
+      } else {
+        options.signal.addEventListener('abort', onAbort, { once: true });
+        // 进程先于 abort 结束时清理监听器（防泄漏）
+        child.on('close', () => options.signal?.removeEventListener('abort', onAbort));
       }
+    }
   });
 }
 

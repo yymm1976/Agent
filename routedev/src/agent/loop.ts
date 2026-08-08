@@ -50,6 +50,8 @@ import type { DualLoopOrchestrator } from './dual-loop-orchestrator.js';
 import { VirtualFS, createVFS } from './context/virtual-fs.js';
 // GA Hardening 第4项：类型化错误体系（协议错误等核心控制流异常）
 import { AgentError, ProtocolError } from '../errors/agent-errors.js';
+// Closure 6：RunEventLog durability 失败处理（fail-closed 停用日志）
+import { RunEventLogDurabilityError } from '../harness/run-event-log.js';
 // PlanState（type-only import）
 import type { PlanState } from './context/plan-state.js';
 // token 估算（用于 ReAct 循环内压缩阈值判断）
@@ -301,6 +303,29 @@ export class ReActAgentLoop {
     this.runEventLog = log;
   }
 
+  /**
+   * Closure 6（durability contract）：记录 Run 事件。
+   * append 失败（RunEventLogDurabilityError）→ 日志立即失效（fail-closed）——
+   * 停用该日志并显式记录错误，绝不出现"内存有 event N、磁盘没有 event N"的
+   * 静默分歧（replay 对不完整日志返回 null）；run 主流程不被观测失败阻断。
+   */
+  private recordRunEvent(type: import('../harness/run-event-log.js').RunEventType, payload: import('../harness/run-event-log.js').RunEvent['payload']): void {
+    const log = this.runEventLog;
+    if (!log) return;
+    try {
+      log.record(type, payload);
+    } catch (err) {
+      if (err instanceof RunEventLogDurabilityError) {
+        logger.error('RunEventLog 失效（append 失败）——该 run 的 replay 不可用（fail-closed）', {
+          error: err.message,
+        });
+        this.runEventLog = null;
+      } else {
+        throw err;
+      }
+    }
+  }
+
   /** C5 修复：注入 Steering Queue 消费者 */
   setSteeringConsumer(consumer: (() => { content: string; mode: string }[] | null) | null): void {
     this.ctxMgr.setSteeringConsumer(consumer);
@@ -519,7 +544,7 @@ export class ReActAgentLoop {
       this.runLlmAttempt = 0;
       this.runRetryCount = 0;
       this.runToolCalls = 0;
-      this.runEventLog?.record('run_started', { input: userMessage, model: routeDecision.model.id });
+      this.recordRunEvent('run_started', { input: userMessage, model: routeDecision.model.id });
 
       // Phase 38 Task 1：onSystemPrompt 中间件（systemBlocks 模式下跳过）
       if (!systemBlocks) {
@@ -588,7 +613,7 @@ export class ReActAgentLoop {
           const overflowDone: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
           yield overflowDone; trace?.recordEvent(overflowDone);
           // TD-21 Phase 1：FollowUp 溢出 = 运行中断
-          this.runEventLog?.record('run_interrupted', { reason: `FollowUp 循环达到最大迭代次数 (${MAX_FOLLOWUP_ITERATIONS})` });
+          this.recordRunEvent('run_interrupted', { reason: `FollowUp 循环达到最大迭代次数 (${MAX_FOLLOWUP_ITERATIONS})` });
           this.engineEndReason = 'max_iterations';
           this.finishEngineTurn();
           break followUpLoop;
@@ -601,7 +626,7 @@ export class ReActAgentLoop {
             const doneEvent: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
             yield doneEvent; trace?.recordEvent(doneEvent);
             // TD-21 Phase 1：取消 = 运行中断
-            this.runEventLog?.record('run_interrupted', { reason: '用户取消了执行' });
+            this.recordRunEvent('run_interrupted', { reason: '用户取消了执行' });
             this.engineEndReason = 'cancelled';
             this.finishEngineTurn();
             return;
@@ -709,7 +734,7 @@ export class ReActAgentLoop {
             // ===== LLM 流式调用 =====
             // TD-21 Phase 1：LLM 请求发起事件（attempt 单调递增）
             this.runLlmAttempt += 1;
-            this.runEventLog?.record('llm_requested', { model: routeDecision.model.id, attempt: this.runLlmAttempt });
+            this.recordRunEvent('llm_requested', { model: routeDecision.model.id, attempt: this.runLlmAttempt });
             let result: LLMStreamResult;
             try {
               result = yield* this.callLLMStream(
@@ -719,7 +744,7 @@ export class ReActAgentLoop {
               );
             } catch (error) {
               // TD-21 Phase 1：LLM 请求失败（含类型化 kind）
-              this.runEventLog?.record('llm_failed', {
+              this.recordRunEvent('llm_failed', {
                 model: routeDecision.model.id,
                 attempt: this.runLlmAttempt,
                 errorKind: error instanceof AgentError ? error.kind : 'unknown',
@@ -734,7 +759,7 @@ export class ReActAgentLoop {
               const protocolError = new ProtocolError(
                 `LLM stream 协议不完整（finishReason=${result.finishReason ?? 'undefined'}），工具调用已丢弃`);
               // TD-21 Phase 1：协议不完整也记 llm_failed（类型化 kind=protocol）
-              this.runEventLog?.record('llm_failed', {
+              this.recordRunEvent('llm_failed', {
                 model: routeDecision.model.id,
                 attempt: this.runLlmAttempt,
                 errorKind: 'protocol',
@@ -744,7 +769,7 @@ export class ReActAgentLoop {
               throw protocolError;
             }
             // TD-21 Phase 1：LLM 请求成功（finishReason/usage 进事件流）
-            this.runEventLog?.record('llm_succeeded', {
+            this.recordRunEvent('llm_succeeded', {
               model: routeDecision.model.id,
               attempt: this.runLlmAttempt,
               finishReason: result.finishReason,
@@ -860,6 +885,8 @@ export class ReActAgentLoop {
                   // Phase 79 Task 3：onActing 中间件 + 策略引擎前置（fail-closed）
                   const actingResult = await this.mwRunner.runOnActing(toolCall.name, toolCall.arguments, this.currentAutonomyMode);
                   if (actingResult.denied) {
+                    // Closure 6：denial lifecycle——权限 deny 记 tool_rejected（不记 tool_requested）
+                    this.recordRunEvent('tool_rejected', { toolName: toolCall.name, toolCallId: toolCall.id, reason: actingResult.reason ?? '权限拦截' });
                     const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[被拦截] ${actingResult.reason ?? '未知原因'}`);
                     yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
                     messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError: true }] });
@@ -901,6 +928,8 @@ export class ReActAgentLoop {
                   }
 
                   if (!approved) {
+                    // Closure 6：denial lifecycle——用户拒绝记 tool_rejected
+                    this.recordRunEvent('tool_rejected', { toolName: toolCall.name, toolCallId: toolCall.id, reason: '用户拒绝' });
                     const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[用户拒绝了此工具调用] ${toolCall.name}`);
                     yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
                     messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError: true }] });
@@ -910,6 +939,8 @@ export class ReActAgentLoop {
                   // pre-tool-call 钩子
                   const preToolHookResult = await this.mwRunner.fireHookSafe('pre-tool-call', { stepId: toolCall.id, toolName: toolCall.name, toolArgs: toolCall.arguments });
                   if (preToolHookResult.action === 'deny') {
+                    // Closure 6：denial lifecycle——pre-tool 钩子 deny 记 tool_rejected
+                    this.recordRunEvent('tool_rejected', { toolName: toolCall.name, toolCallId: toolCall.id, reason: preToolHookResult.reason ?? 'pre-tool 钩子拒绝' });
                     const denyReason = preToolHookResult.reason ?? '工具调用被钩子拒绝';
                     logger.info('Pre-tool-call hook denied tool execution (parallel)', { toolName: toolCall.name, stepId: toolCall.id, reason: denyReason });
                     const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[工具被拒绝] ${denyReason}`);
@@ -921,7 +952,7 @@ export class ReActAgentLoop {
                   approvedCalls.push(toolCall);
                   // TD-21 Phase 1：工具调用发起事件
                   this.runToolCalls += 1;
-                  this.runEventLog?.record('tool_requested', { toolName: toolCall.name, toolCallId: toolCall.id });
+                  this.recordRunEvent('tool_requested', { toolName: toolCall.name, toolCallId: toolCall.id });
                   // Phase 94：收集 explorationSuggestion（覆盖式，保留最后一个）
                   if (actingResult.explorationSuggestion) {
                     lastExplorationSuggestion = actingResult.explorationSuggestion;
@@ -970,7 +1001,7 @@ export class ReActAgentLoop {
                     await this.mwRunner.fireHookSafe('post-tool-call', { stepId: tc.id, toolName: tc.name, toolArgs: tc.arguments, toolResult, toolDuration });
 
                     // TD-21 Phase 1：工具调用完成事件（并行）
-                    this.runEventLog?.record('tool_completed', { toolName: tc.name, toolCallId: tc.id, isError, outputPreview: execResult.output.slice(0, 200) });
+                    this.recordRunEvent('tool_completed', { toolName: tc.name, toolCallId: tc.id, isError, outputPreview: execResult.output.slice(0, 200) });
 
                     yield { type: 'tool_call_result', toolName: tc.name, toolCallId: tc.id, result: toolResult, isError };
                     messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: tc.id, content: toolResult, isError }] });
@@ -994,6 +1025,8 @@ export class ReActAgentLoop {
                   // PermissionEngine.check() 在此被调用，deny 拦截、confirm 驱动用户确认、auto 放行
                   const actingResult = await this.mwRunner.runOnActing(toolCall.name, toolCall.arguments, this.currentAutonomyMode);
                   if (actingResult.denied) {
+                    // Closure 6：denial lifecycle——权限 deny 记 tool_rejected（不记 tool_requested）
+                    this.recordRunEvent('tool_rejected', { toolName: toolCall.name, toolCallId: toolCall.id, reason: actingResult.reason ?? '权限拦截' });
                     const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[被拦截] ${actingResult.reason ?? '未知原因'}`);
                     yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
                     messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError: true }] });
@@ -1045,6 +1078,8 @@ export class ReActAgentLoop {
                   }
 
                   if (!approved) {
+                    // Closure 6：denial lifecycle——用户拒绝记 tool_rejected
+                    this.recordRunEvent('tool_rejected', { toolName: toolCall.name, toolCallId: toolCall.id, reason: '用户拒绝' });
                     const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[用户拒绝了此工具调用] ${toolCall.name}`);
                     yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
                     messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError: true }] });
@@ -1061,6 +1096,8 @@ export class ReActAgentLoop {
                   // pre-tool-call 钩子
                   const preToolHookResult = await this.mwRunner.fireHookSafe('pre-tool-call', { stepId: toolCall.id, toolName: toolCall.name, toolArgs: toolCall.arguments });
                   if (preToolHookResult.action === 'deny') {
+                    // Closure 6：denial lifecycle——pre-tool 钩子 deny 记 tool_rejected
+                    this.recordRunEvent('tool_rejected', { toolName: toolCall.name, toolCallId: toolCall.id, reason: preToolHookResult.reason ?? 'pre-tool 钩子拒绝' });
                     const denyReason = preToolHookResult.reason ?? '工具调用被钩子拒绝';
                     logger.info('Pre-tool-call hook denied tool execution', { toolName: toolCall.name, stepId: toolCall.id, reason: denyReason });
                     const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[工具被拒绝] ${denyReason}`);
@@ -1077,7 +1114,7 @@ export class ReActAgentLoop {
                   const toolStartTime = Date.now();
                   // TD-21 Phase 1：工具调用发起事件（串行）
                   this.runToolCalls += 1;
-                  this.runEventLog?.record('tool_requested', { toolName: toolCall.name, toolCallId: toolCall.id });
+                  this.recordRunEvent('tool_requested', { toolName: toolCall.name, toolCallId: toolCall.id });
                   if (useStructured) {
                     const stream = this.createToolStream<{ output: string; isError: boolean; images?: Array<{ mediaType: string; data: string }> }>(toolCall.name, toolCall.id);
                     const toolPromise = this.toolExecutor.executeToolStructured!(
@@ -1121,7 +1158,7 @@ export class ReActAgentLoop {
                   await this.mwRunner.fireHookSafe('post-tool-call', { stepId: toolCall.id, toolName: toolCall.name, toolArgs: toolCall.arguments, toolResult, toolDuration });
 
                   // TD-21 Phase 1：工具调用完成事件（串行）
-                  this.runEventLog?.record('tool_completed', { toolName: toolCall.name, toolCallId: toolCall.id, isError, outputPreview: toolResult.slice(0, 200) });
+                  this.recordRunEvent('tool_completed', { toolName: toolCall.name, toolCallId: toolCall.id, isError, outputPreview: toolResult.slice(0, 200) });
 
                   yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError };
                   messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError }] });
@@ -1183,7 +1220,7 @@ export class ReActAgentLoop {
             const finalDone: ReActEvent = { type: 'done', content: result.content, usage: totalUsage };
             yield finalDone; trace?.recordEvent(finalDone);
             // TD-21 Phase 1：运行正常完成（投影一致性基准）
-            this.runEventLog?.record('run_completed', {
+            this.recordRunEvent('run_completed', {
               outputLength: result.content.length,
               toolCallCount: this.runToolCalls,
               retryCount: this.runRetryCount,
@@ -1207,7 +1244,7 @@ export class ReActAgentLoop {
               const doneEvent: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
               yield doneEvent; trace?.recordEvent(doneEvent);
               // TD-21 Phase 1：连续错误终止 = 运行中断
-              this.runEventLog?.record('run_interrupted', { reason: `连续 ${consecutiveErrors} 次错误，终止执行` });
+              this.recordRunEvent('run_interrupted', { reason: `连续 ${consecutiveErrors} 次错误，终止执行` });
               this.engineEndReason = 'error';
               this.finishEngineTurn();
               return;
@@ -1241,7 +1278,7 @@ export class ReActAgentLoop {
         const doneEvent: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
         yield doneEvent; trace?.recordEvent(doneEvent);
         // TD-21 Phase 1：达到最大迭代次数 = 运行中断
-        this.runEventLog?.record('run_interrupted', { reason: `达到最大迭代次数 (${this.config.maxIterations})` });
+        this.recordRunEvent('run_interrupted', { reason: `达到最大迭代次数 (${this.config.maxIterations})` });
         this.engineEndReason = 'max_iterations';
         this.finishEngineTurn();
         // maxIterations 退出不处理 follow-up（避免无限循环）
@@ -1353,7 +1390,7 @@ export class ReActAgentLoop {
       // TD-21 Phase 1：provider retry 可观测性——重试策略每次实际重试前触发
       onRetry: (info) => {
         this.runRetryCount += 1;
-        this.runEventLog?.record('llm_retry', {
+        this.recordRunEvent('llm_retry', {
           model: modelId,
           attempt: info.attempt,
           errorKind: info.error instanceof AgentError ? info.error.kind : 'unknown',

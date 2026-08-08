@@ -27,6 +27,8 @@ import { attestPlan } from '../agent/plan-attestation.js';
 import { notifyRoutingFallback } from './notification.js';
 import { logger } from '../utils/logger.js';
 import { MAX_CONTEXT_ITEMS } from './goal-runner-types.js';
+// Closure 2：verifyPlan 接 AbortSignal 后抛类型化取消错误（scheduler 导出）
+import { PlanAbortError } from './goal-runner-scheduler.js';
 
 /**
  * 创建恢复模块函数
@@ -59,7 +61,12 @@ export function createRecoveryFunctions(ctx: GoalRunnerCtx) {
    * 提取为独立函数，供迭代闭环复用
    * @returns 验证是否通过（验证异常时返回 true 以保持向后兼容）
    */
-  async function verifyPlan(plan: GoalPlan): Promise<boolean> {
+  async function verifyPlan(plan: GoalPlan, signal?: AbortSignal): Promise<boolean> {
+    // Closure 2：取消一旦被确认，不得再启动新的 verification 工作
+    if (signal?.aborted) {
+      addSystemMessage('⏸ 目标验证已取消（用户中断），未启动验证');
+      throw new PlanAbortError('用户中断（reviewer 阶段）');
+    }
     plan.status = 'verifying';
     addSystemMessage('🔍 正在验证目标完成度...');
 
@@ -186,7 +193,10 @@ export function createRecoveryFunctions(ctx: GoalRunnerCtx) {
     // 在 GoalVerifier（LLM 验证）之后运行，通过实际执行 typecheck/lint/tests 验证代码状态
     // 不信任 LLM 的"已完成"判断——只有代码编译通过、测试通过才算真正完成
     // 配置开关：optimization.safety.completionGate（默认 true）
-    if (completionGate && config.optimization?.safety?.completionGate !== false && plan.status === 'completed') {
+    // Closure 2 修复：前置条件从 plan.status === 'completed' 放宽为 !== 'failed'——
+    // completion_gate_first 模式下 gate 在 verifyPlan 之前运行，此时 plan.status 仍是
+    // 'executing'（'completed' 由 verifyPlan 事后设置），旧条件让默认路径的 gate 永不执行
+    if (completionGate && config.optimization?.safety?.completionGate !== false && plan.status !== 'failed') {
       try {
         addSystemMessage('🔬 正在运行独立代码验证（typecheck/lint/tests）...');
         // 收集所有步骤修改的文件列表

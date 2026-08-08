@@ -63,8 +63,8 @@ export interface GoalRunnerCtx {
   handleGoalCommand: (text: string) => Promise<void>;
   /** 执行目标计划：逐步骤运行 Agent Loop，支持中断 + 检查点 + 压缩（scheduler 模块） */
   executeGoalPlan: (plan: GoalPlan) => Promise<void>;
-  /** 验证目标完成度（LLM 验证）（recovery 模块） */
-  verifyPlan: (plan: GoalPlan) => Promise<boolean>;
+  /** 验证目标完成度（LLM 验证）（recovery 模块）；signal 可选（Closure 2：取消时不启动验证） */
+  verifyPlan: (plan: GoalPlan, signal?: AbortSignal) => Promise<boolean>;
   /** 运行独立代码验证门（typecheck/lint/tests）（recovery 模块）；signal 可选（GA Hardening 第3项：取消时杀进程树） */
   runCompletionGate: (plan: GoalPlan, signal?: AbortSignal) => Promise<GateResult | undefined>;
   /** 旧迭代闭环 fallback（DualLoop 未启用或异常时使用）（recovery 模块） */

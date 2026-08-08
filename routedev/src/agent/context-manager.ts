@@ -440,15 +440,16 @@ export class LoopContextManager {
     // K2：usage 事件是否到达——流结束时仍为 false = usage-only 尾块丢失
     let usageSeen = false;
 
-    for await (const event of stream) {
-      // 检查取消
-      if (signal?.aborted) break;
+    try {
+      for await (const event of stream) {
+        // 检查取消
+        if (signal?.aborted) break;
 
-      switch (event.type) {
-        case 'text_delta':
-          fullContent += event.text;
-          yield { type: 'text_delta', text: event.text };
-          break;
+        switch (event.type) {
+          case 'text_delta':
+            fullContent += event.text;
+            yield { type: 'text_delta', text: event.text };
+            break;
 
         case 'reasoning_delta':
           fullReasoning += event.text;
@@ -518,6 +519,20 @@ export class LoopContextManager {
             toolCallBuffers.clear();
           }
           break;
+      }
+      }
+    } catch (error) {
+      // K2 Transport Terminal（Closure 1）：done(non-error) 已收到后 transport exception →
+      // 语义完成——计费尾块传输失败绝不能把已成功 turn 变成失败（否则重执行）。
+      // 已 flush 的完整工具调用保留（tool 只执行一次）；usage 缺失 → usageIncomplete=true。
+      // 用户取消不在此列（signal.aborted → 重抛，取消语义优先）。
+      if (finishReason !== undefined && finishReason !== 'error' && !signal?.aborted) {
+        logger.warn('K2: stream transport error after done received——语义完成，usage 可能不完整', {
+          finishReason,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } else {
+        throw error;
       }
     }
 

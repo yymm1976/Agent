@@ -140,6 +140,13 @@ export class OpenAIClient extends BaseLLMClient {
     const startTime = Date.now();
     this.logRequest(options.model, true, options.messages.length);
 
+    // P0 修复（复审）：DeepSeek include_usage 模式下，完整 usage 可能位于
+    // finish_reason 之后的独立尾块（choices:[] + usage），[DONE] 前到达。
+    // 收到 finish_reason 只记录状态并发射 tool_call_end（一次），不 return——
+    // 继续读取 usage-only 尾块，流结束才发 done。
+    // 声明在 try 外：K2 Transport Terminal 的 catch 需要读取（finish 已观察判定）
+    let pendingFinishReason: 'stop' | 'tool_use' | 'length' | 'error' | null = null;
+
     try {
       const params = this.buildRequestParams(options, true);
       // Phase 55 修复：透传 options.timeoutMs 到 SDK RequestOptions（与 complete 一致）
@@ -151,18 +158,23 @@ export class OpenAIClient extends BaseLLMClient {
               ...(options.signal ? { signal: options.signal } : {}),
             }
           : undefined;
-      const stream = await this.client.chat.completions.create(params, requestOptions) as AsyncIterable<ChatCompletionChunk>;
+      // Closure 6（TD-21）：主 ReAct 路径是 stream-only——此前只有 complete() 接入了
+      // withRetry，流式请求的 provider retry 从未发生，llm_retry 事件不可能产生。
+      // SDK 的 create(stream:true) 在请求阶段（5xx/连接失败）同步抛错——此时流尚未
+      // 开始消费，重试安全；流开始后的 transport exception 由 K2 Transport Terminal
+      // 处理（语义完成），不在重试范围。
+      const stream = await this.withRetry(
+        () => this.client!.chat.completions.create(params, requestOptions) as Promise<AsyncIterable<ChatCompletionChunk>>,
+        options.onRetry,
+      );
 
       // B-06：并行工具调用按 tool_call index 分别累积（OpenAI 流式规范：
       // 增量分片与首片共享同一 index）。旧实现用单一 currentToolId 状态机，
       // 并行工具的分片交错到达时会把后一工具的参数追加到前一工具，且 finish 只 end 最后一个。
       const toolAccum = new Map<number, { id: string; name: string; args: string }>();
 
-      // P0 修复（复审）：DeepSeek include_usage 模式下，完整 usage 可能位于
-      // finish_reason 之后的独立尾块（choices:[] + usage），[DONE] 前到达。
       // 收到 finish_reason 只记录状态并发射 tool_call_end（一次），不 return——
-      // 继续读取 usage-only 尾块，流结束才发 done。
-      let pendingFinishReason: 'stop' | 'tool_use' | 'length' | 'error' | null = null;
+      // 继续读取 usage-only 尾块，流结束才发 done（声明已移至 try 外，注释见上）。
       let toolEndsEmitted = false;
       // 最后一个 chunk 的 usage（优先于全零兜底传给 logResponse）
       let lastUsage: { inputTokens: number; outputTokens: number; totalTokens: number } | null = null;
@@ -280,6 +292,23 @@ export class OpenAIClient extends BaseLLMClient {
         finishReason: pendingFinishReason,
       };
     } catch (err) {
+      // K2 Transport Terminal（Closure 1）：finish_reason 已观察到 → 语义完成——
+      // 等待 usage-only 尾块期间的 transport exception（ECONNRESET/socket reset/
+      // SDK iterator throw）绝不能把已成功的 turn 变成失败（否则重执行）。
+      // 消费方因 usage 事件缺失自动标记 usageIncomplete=true。
+      // 用户主动取消不在此列（取消由 signal 路径处理，不得伪装成成功）。
+      if (pendingFinishReason && !options.signal?.aborted) {
+        logger.warn('K2: stream transport error after finish observed——语义完成，usage 可能不完整', {
+          model: options.model,
+          finishReason: pendingFinishReason,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        yield {
+          type: 'done',
+          finishReason: pendingFinishReason,
+        };
+        return;
+      }
       throw this.normalizeError(err, options.model);
     }
   }
