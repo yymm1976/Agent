@@ -1,8 +1,8 @@
 # FINAL_RC_REVIEW — Overnight RC Hardening Mission
 
 - **时间**：2026-08-08
-- **Baseline**：`3a2ae3b` → 最终 HEAD：`6926301`（含全部提交）
-- **Committs**：`59d9eeb`（A1/A2/A4 security）→ `0bfbbe5`（B1/H2 + 文档）→ `6926301`（TD-23 eval + 证据）
+- **Baseline**：`3a2ae3b` → 最终 HEAD：`e243506`（含全部提交）
+- **Commits**：`59d9eeb` → `0bfbbe5` → `6926301` → `31936d3` → `9dbc24f` → `a0d794d` → `e243506`（后续 F-011~F-013 批次见最新提交）
 
 ## P0 findings
 
@@ -97,7 +97,7 @@
 | R9 取消 | PASS | R9-cancel.jsonl |
 | R10 压缩 | SKIP | 预算优先（R4/R8 长上下文覆盖） |
 
-- **Real request count**：11 / 60（预算内）
+- **guardedEvalInvocationCount**：6 / 60（eval wrapper 调用数；实际 provider HTTP 请求数因 R8 内部多轮不可直接等同，R9 重跑 6 次内）
 - **Retry**：0 / **429**：0 / **5xx**：0
 - **Cache observations**：prompt_cache_hit_tokens/miss_tokens 字段存在；第二次相同前缀命中 512/514
 - **Observed reasoning schema**：streaming reasoning_content（thinking 模式默认开启）
@@ -122,7 +122,7 @@ ROUTEDEV_GAP_ANALYSIS.md：12 项对比——ownership（BETTER single-flight）
 
 ## Full CI Run
 
-**已确认**：最终提交 `e8995c3` 的 GitHub Actions 6 Job 全部 success（Core typecheck/tests、Desktop Windows/Ubuntu/macOS typecheck+tests+build、Android test+lint+assembleDebug、Dependency/Security audit）。Run ID 31230858090。
+**已确认**：最终提交 `a0d794d` 的 GitHub Actions 6 Job 全部 success（Run 31234844780：Core、Desktop Windows/Ubuntu/macOS、Android、Dependency/Security）。
 
 ## Remaining RC blockers
 
@@ -152,7 +152,7 @@ ROUTEDEV_GAP_ANALYSIS.md：12 项对比——ownership（BETTER single-flight）
 - TD-23 mandatory 门（R1/R2/R3/R4/R6/R8/R9）真实 API 全部 PASS——V2 判定器加固后
   R6 严格帧序（usage<done）、R8 严格链（tool_search→web_search→done→boostClean）、
   R9 abort 观察证据、R4 reasoning 非空断言
-- Offline Gate：4082 测试通过（仅 doctor 既有 Windows 环境失败）/ 双端 tsc 0 / audit 0
+- Offline Gate：4082+ 测试通过（仅 doctor 既有 Windows 环境失败）/ 双端 tsc 0 / audit 0
 - 系统不变量均有测试或真实证据
 
 **Verdict 修订记录**：复审（2026-08-08）指出 4 个生产 P1 + TD-23 证据门问题

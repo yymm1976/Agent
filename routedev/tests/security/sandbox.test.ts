@@ -558,4 +558,34 @@ describe('CommandSandbox', () => {
       expect(CommandSandbox.validateCommand('cmd.exe /d script.bat', opts).allowed).toBe(true);
     });
   });
+
+  describe('F-013 policy operand identity（配置与 executable 同一 canonicalizer）', () => {
+    it('blocked=[cmd.exe] + 路径限定 cmd.exe → BLOCK（扩展名配置不再被路径绕过）', async () => {
+      const opts: SandboxOptions = { blockedCommands: ['cmd.exe'] };
+      expect(CommandSandbox.validateCommand('cmd.exe /c echo hi', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('C:\\Windows\\System32\\cmd.exe /c echo hi', opts).allowed).toBe(false);
+    });
+
+    it('blocked=[node.exe] + 路径限定 node.exe → BLOCK', async () => {
+      const opts: SandboxOptions = { blockedCommands: ['node.exe'] };
+      expect(CommandSandbox.validateCommand('node.exe --version', opts).allowed).toBe(false);
+      // 结构化入口（含空格路径不需要引号）
+      const validation = CommandSandbox.validateExecution('C:\\Program Files\\nodejs\\node.exe', ['--version'], opts);
+      expect(validation.allowed).toBe(false);
+    });
+
+    it('allowed=[node.exe] + 路径限定 node.exe → ALLOW', async () => {
+      const opts: SandboxOptions = { allowedCommands: ['node.exe'] };
+      const validation = CommandSandbox.validateExecution('C:\\Program Files\\nodejs\\node.exe', ['--version'], opts);
+      expect(validation.allowed).toBe(true);
+    });
+
+    it('allowed=[node] + /tmp/evil + args 含 /usr/bin/node → 仍 BLOCK（参数不参与 identity）', async () => {
+      const opts: SandboxOptions = { allowedCommands: ['node'] };
+      const sandbox = new CommandSandbox(opts);
+      const result = await sandbox.execute('/tmp/evil', ['/usr/bin/node']);
+      expect(result.exitCode).toBeNull();
+      expect(result.stderr).toContain('不在白名单中');
+    });
+  });
 });

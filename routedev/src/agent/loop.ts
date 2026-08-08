@@ -693,6 +693,13 @@ export class ReActAgentLoop {
               onModelFailure?.(routeDecision.model.id, error);
               throw error;
             }
+            // F-012：协议不完整（done(error)/流中断）——不得视为成功模型返回
+            if (!result.complete) {
+              const protocolError = new Error(
+                `LLM stream 协议不完整（finishReason=${result.finishReason ?? 'undefined'}），工具调用已丢弃`);
+              onModelFailure?.(routeDecision.model.id, protocolError);
+              throw protocolError;
+            }
             onModelSuccess?.(routeDecision.model.id);
 
             // C7 修复：流返回后立即检查取消信号

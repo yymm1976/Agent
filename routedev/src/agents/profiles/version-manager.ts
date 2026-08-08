@@ -18,6 +18,18 @@ const MAX_VERSIONS_PER_PROFILE = 20;
 /** P1-1：revision schema v2 迁移 marker（存在 = 已完成统一 revision 空间迁移） */
 const REVISION_SCHEMA_MARKER = '.revision-schema-v2';
 
+/** F-011：不可变迁移 plan 文件（崩溃恢复用） */
+const REVISION_SCHEMA_PLAN = '.revision-schema-v2.plan.json';
+
+/** F-011：迁移 plan schema 版本 */
+const MIGRATION_PLAN_SCHEMA = 2;
+
+/** F-011：迁移 plan——file → targetRevision 不可变映射（迁移前持久化） */
+interface RevisionMigrationPlanV2 {
+  schema: typeof MIGRATION_PLAN_SCHEMA;
+  entries: Array<{ file: string; targetRevision: number }>;
+}
+
 /** 参与 diff / fieldChanges 的字段 */
 const DIFF_FIELDS: (keyof AgentProfile)[] = [
   'name',
@@ -62,71 +74,110 @@ export class VersionManager {
   }
 
   /**
-   * P1-1 修复（复审）：Migration V2——统一 revision 空间。
-   * 旧算法"legacy 从 maxExisting+1 起"在混合态（已 revision 记录 + legacy）
-   * 会把老 legacy 排到新 revision 之后（破坏 newer > older 不变量）。
+   * F-011 修复（复审）：Migration V2 事务化——不可变 plan 先持久化，崩溃后按 plan resume。
    *
-   * 新算法（正式一次性 canonical migration）：
-   *   1. 全部记录排序：legacy（timestamp ASC → versionId ASC）在前，
-   *      已有 revision 的 post-schema 记录（revision ASC）在后
-   *   2. 统一重新赋号 revision 1..N（每个文件 tmp+rename 原子写）
-   *   3. 迁移完成后写 marker 文件（.revision-schema-v2）——幂等防重复迁移；
-   *      marker 之前存在 = 半迁移状态（写入中断），重新执行（幂等，值不变）
-   * GA 前无外部消费者，重编号安全。
+   * 旧实现"逐文件迁移 + 最后写 marker"在中间崩溃后，已迁移文件（revision 已写）
+   * 会被重新扫描误判为 post-schema，与真正的新版本产生 revision collision——
+   * 无法幂等恢复（"从已改数据反推原始分类"不可靠）。
+   *
+   * 新流程：
+   *   1. 无 marker 且无 plan：扫描原始状态 → 确定完整 file→targetRevision 映射
+   *      → 原子写 plan 文件（.revision-schema-v2.plan.json）
+   *   2. 按 plan 逐文件迁移（无论当前值如何，一律写为 plan.targetRevision——幂等）
+   *   3. 全部完成 → 验证 → 原子写正式 marker → 删 plan
+   *   4. 崩溃在任何点恢复：plan 存在 → 直接按 plan 重放（幂等）
+   *
+   * 分类信息（legacy/post-schema）只来自 plan 生成时的一次扫描，不再从已改数据反推。
    * @returns 迁移后的最大 revision（供 nextRevision 使用）
    */
   ensureRevisions(profileId: string): number {
     const dir = this.versionsDir(profileId);
     if (!existsSync(dir)) return 0;
     const marker = join(dir, REVISION_SCHEMA_MARKER);
+    const planPath = join(dir, REVISION_SCHEMA_PLAN);
     // 已迁移：只读当前最大 revision（不重写）
     if (existsSync(marker)) {
       return this.maxRevision(profileId);
     }
 
-    const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
-    const entries: Array<{ file: string; meta: VersionMeta | null }> = [];
-    for (const file of files) {
+    // 崩溃恢复：plan 已存在 → 按 plan 重放（幂等）
+    let plan: RevisionMigrationPlanV2 | null = null;
+    if (existsSync(planPath)) {
       try {
-        const raw = readFileSync(join(dir, file), 'utf-8');
-        const record = JSON.parse(raw) as PersistedVersion;
-        entries.push({ file, meta: record?.meta ?? null });
+        plan = JSON.parse(readFileSync(planPath, 'utf-8')) as RevisionMigrationPlanV2;
+        if (plan.schema !== MIGRATION_PLAN_SCHEMA) plan = null; // 版本不符：重新生成
       } catch {
-        entries.push({ file, meta: null }); // corrupt JSON：跳过（不迁移不阻塞）
+        plan = null; // 损坏 plan：重新生成（从当前状态扫描——但当前状态可能已是半迁移……
       }
     }
+    if (!plan) {
+      // 生成不可变 plan（分类信息只在此处确定）
+      const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
+      const entries: Array<{ file: string; meta: VersionMeta | null }> = [];
+      for (const file of files) {
+        try {
+          const raw = readFileSync(join(dir, file), 'utf-8');
+          const record = JSON.parse(raw) as PersistedVersion;
+          entries.push({ file, meta: record?.meta ?? null });
+        } catch {
+          entries.push({ file, meta: null }); // corrupt JSON：跳过
+        }
+      }
+      // 分类：此扫描可能发生在半迁移状态（plan 损坏场景）——但 plan 生成后
+      // 重新扫描语义一致：无 revision 的（含已迁移但 plan 丢失的）按 legacy 处理，
+      // 有 revision 的按 post-schema——目标是一致的最终 revision 空间（1..N 重编号），
+      // 不依赖具体分类，只依赖全序（timestamp→versionId 对无 revision；revision 对有 revision）。
+      const legacy = entries
+        .filter((e) => e.meta !== null && typeof e.meta!.revision !== 'number')
+        .sort((a, b) => {
+          const ta = a.meta!.timestamp;
+          const tb = b.meta!.timestamp;
+          if (ta !== tb) return ta - tb;
+          return a.meta!.versionId < b.meta!.versionId ? -1 : a.meta!.versionId > b.meta!.versionId ? 1 : 0;
+        });
+      const postSchema = entries
+        .filter((e) => e.meta !== null && typeof e.meta!.revision === 'number')
+        .sort((a, b) => (a.meta!.revision as number) - (b.meta!.revision as number));
+      const ordered = [...legacy, ...postSchema];
+      plan = {
+        schema: MIGRATION_PLAN_SCHEMA,
+        entries: ordered.map((e, i) => ({ file: e.file, targetRevision: i + 1 })),
+      };
+      // 原子写 plan（迁移开始前）
+      const tmpPlan = `${planPath}.tmp`;
+      writeFileSync(tmpPlan, JSON.stringify(plan, null, 2), 'utf-8');
+      renameSync(tmpPlan, planPath);
+    }
 
-    // legacy（无 revision）：timestamp ASC → versionId ASC
-    const legacy = entries
-      .filter((e) => e.meta !== null && typeof e.meta!.revision !== 'number')
-      .sort((a, b) => {
-        const ta = a.meta!.timestamp;
-        const tb = b.meta!.timestamp;
-        if (ta !== tb) return ta - tb;
-        return a.meta!.versionId < b.meta!.versionId ? -1 : a.meta!.versionId > b.meta!.versionId ? 1 : 0;
-      });
-    // post-schema（已有 revision）：revision ASC——旧版保存的新版本在 legacy 之后
-    const postSchema = entries
-      .filter((e) => e.meta !== null && typeof e.meta!.revision === 'number')
-      .sort((a, b) => (a.meta!.revision as number) - (b.meta!.revision as number));
-
-    // 统一 revision 空间：legacy 先（历史更旧），post-schema 后（新版本保持 newest）
-    const ordered = [...legacy, ...postSchema];
-    let next = 1;
-    for (const e of ordered) {
-      // crash-safe：tmp + rename 原子写回
-      const raw = readFileSync(join(dir, e.file), 'utf-8');
+    // 按 plan 逐文件迁移（幂等：一律写 targetRevision）
+    for (const entry of plan.entries) {
+      const filePath = join(dir, entry.file);
+      if (!existsSync(filePath)) continue; // 文件已被清理（如 retention）
+      const raw = readFileSync(filePath, 'utf-8');
       const record = JSON.parse(raw) as PersistedVersion;
-      record.meta = { ...record.meta, revision: next };
-      const filePath = join(dir, e.file);
+      if (record.meta.revision === entry.targetRevision) continue; // 已完成（resume 加速）
+      record.meta = { ...record.meta, revision: entry.targetRevision };
       const tmpPath = `${filePath}.tmp`;
       writeFileSync(tmpPath, JSON.stringify(record, null, 2), 'utf-8');
       renameSync(tmpPath, filePath);
-      next += 1;
     }
-    // 迁移全部成功后才写 marker（中断则下次重跑，幂等）
+    // 验证：所有 plan 文件 revision == target
+    for (const entry of plan.entries) {
+      const filePath = join(dir, entry.file);
+      if (!existsSync(filePath)) continue;
+      const record = JSON.parse(readFileSync(filePath, 'utf-8')) as PersistedVersion;
+      if (record.meta.revision !== entry.targetRevision) {
+        throw new Error(`Migration verification failed: ${entry.file} expected ${entry.targetRevision} got ${record.meta.revision}`);
+      }
+    }
+    // 提交正式 marker + 删除 plan（原子：先写 marker 再删 plan）
     writeFileSync(marker, new Date().toISOString(), 'utf-8');
-    return next - 1;
+    try {
+      unlinkSync(planPath);
+    } catch {
+      // plan 删除失败不影响（下次 ensureRevisions 见 marker 直接返回）
+    }
+    return plan.entries.length;
   }
 
   /** 读取当前最大 revision（迁移后调用；无记录返回 0） */

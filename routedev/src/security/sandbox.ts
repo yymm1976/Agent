@@ -505,16 +505,12 @@ export class CommandSandbox {
       return { allowed: false, reason: structuredReason };
     }
 
-    // 3) 白名单检查（只认 executable identity——首 token）
+    // 3) 白名单检查（F-013：policy operand 与 executable 走同一 canonicalizer——
+    // 配置 node.exe / 含路径形式 与 canonical 等价）
     const allowed = options.allowedCommands;
     if (allowed && allowed.length > 0) {
-      const allowedLower = allowed.map((c) => c.toLowerCase());
-      const matched = allowedLower.some(
-        (c) =>
-          c === cmdNameFromFirst ||
-          c === cmdNameFromFirst ||
-          c === firstToken.toLowerCase(),
-      );
+      const allowedCanonical = allowed.map((c) => normalizeExecutableIdentity(c, { wholeAsExecutable: true }).canonicalName);
+      const matched = allowedCanonical.includes(cmdNameFromFirst);
       if (!matched) {
         return {
           allowed: false,
@@ -523,16 +519,11 @@ export class CommandSandbox {
       }
     }
 
-    // 4) 黑名单检查（只认 executable identity——首 token）
+    // 4) 黑名单检查（F-013：同一 canonicalizer）
     const blocked = options.blockedCommands;
     if (blocked && blocked.length > 0) {
-      const blockedLower = blocked.map((c) => c.toLowerCase());
-      const matched = blockedLower.some(
-        (c) =>
-          c === cmdNameFromFirst ||
-          c === cmdNameFromFirst ||
-          c === firstToken.toLowerCase(),
-      );
+      const blockedCanonical = blocked.map((c) => normalizeExecutableIdentity(c, { wholeAsExecutable: true }).canonicalName);
+      const matched = blockedCanonical.includes(cmdNameFromFirst);
       if (matched) {
         return {
           allowed: false,
@@ -600,13 +591,11 @@ export class CommandSandbox {
       return { allowed: false, reason: structuredReason };
     }
 
-    // 白名单（只认 executable）
+    // 白名单（F-013：同一 canonicalizer）
     const allowed = options.allowedCommands;
     if (allowed && allowed.length > 0) {
-      const allowedLower = allowed.map((c) => c.toLowerCase());
-      const matched = allowedLower.some(
-        (c) => c === cmdName || c === cmdName || c === firstToken.toLowerCase(),
-      );
+      const allowedCanonical = allowed.map((c) => normalizeExecutableIdentity(c, { wholeAsExecutable: true }).canonicalName);
+      const matched = allowedCanonical.includes(cmdName);
       if (!matched) {
         return {
           allowed: false,
@@ -615,13 +604,11 @@ export class CommandSandbox {
       }
     }
 
-    // 黑名单（只认 executable）
+    // 黑名单（F-013：同一 canonicalizer）
     const blocked = options.blockedCommands;
     if (blocked && blocked.length > 0) {
-      const blockedLower = blocked.map((c) => c.toLowerCase());
-      const matched = blockedLower.some(
-        (c) => c === cmdName || c === cmdName || c === firstToken.toLowerCase(),
-      );
+      const blockedCanonical = blocked.map((c) => normalizeExecutableIdentity(c, { wholeAsExecutable: true }).canonicalName);
+      const matched = blockedCanonical.includes(cmdName);
       if (matched) {
         return {
           allowed: false,

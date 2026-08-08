@@ -30,7 +30,7 @@ mkdirSync(RAW_DIR, { recursive: true });
 // ===== 预算与断路器 =====
 const HARD_BUDGET = 60;
 const CONCURRENCY = 1;
-let requestCount = 0;
+let guardedEvalInvocationCount = 0; // 注意：非实际 provider HTTP 请求数（R8 内部可多次请求）
 let retryCount = 0;
 let rateLimitCount = 0;
 let serverErrorCount = 0;
@@ -39,7 +39,7 @@ let stopped = false;
 const results = {}; // R1..R10 -> PASS/FAIL/SKIP/INCONCLUSIVE + evidence
 
 function checkBudget() {
-  if (requestCount >= HARD_BUDGET) {
+  if (guardedEvalInvocationCount >= HARD_BUDGET) {
     stopped = true;
     throw new Error(`hard request budget (${HARD_BUDGET}) exceeded`);
   }
@@ -56,13 +56,18 @@ function sanitizeFrame(frame) {
     usageTokens: frame.usageTokens,
     toolCallIds: frame.toolCallIds,
     ts: frame.ts,
+    // P2（证据）：abort 字段必须保留（无 content/Authorization）
+    abortObserved: frame.abortObserved,
+    framesBeforeAbort: frame.framesBeforeAbort,
+    errorClass: frame.errorClass,
+    signalAborted: frame.signalAborted,
   };
 }
 
 /** 带断路器的请求包装：401/403 停止、429 退避、5xx 2 retry */
 async function guardedRequest(fn, label) {
   checkBudget();
-  requestCount += 1;
+  guardedEvalInvocationCount += 1;
   let attempts = 0;
   while (true) {
     attempts += 1;
@@ -308,7 +313,15 @@ async function r9Cancel() {
     // P1-6（V2）：abort 必须真被观察到（AbortError 或 signal.aborted）
     if (/abort|ABORT|AbortError/i.test(err instanceof Error ? err.message : String(err))) abortObserved = true;
   }
-  writeFileSync(join(RAW_DIR, 'R9-cancel.jsonl'), JSON.stringify(sanitizeFrame({ type: 'aborted', frames, abortObserved, error: error ? String(error).slice(0, 60) : null, ts: Date.now() })) + '\n');
+  writeFileSync(join(RAW_DIR, 'R9-cancel.jsonl'), JSON.stringify(sanitizeFrame({
+    type: 'aborted',
+    frames,
+    abortObserved,
+    framesBeforeAbort: frames,
+    errorClass: error ? (error instanceof Error ? error.name : typeof error) : null,
+    signalAborted: ac.signal.aborted,
+    ts: Date.now(),
+  })) + '\n');
   // abort 后下一次请求必须仍工作
   let nextOk = false;
   try {
@@ -417,7 +430,7 @@ await run('R6', r6UsageTail);
 await run('R7', r7Cache);
 await run('R8', r8ToolSearch);
 await run('R9', r9Cancel);
-if (!stopped) results.R10 = 'SKIP(压缩路径由 R4/R8 长上下文覆盖，预算优先)';
+if (!stopped) results.R10 = 'SKIP(not executed in this TD-23 run——未构造触发 compaction 的上下文)';
 
 const summary = {
   gitSHA: process.env.GIT_SHA ?? 'working-tree',
@@ -425,7 +438,7 @@ const summary = {
   provider: 'DeepSeek Official',
   baseURL: 'https://api.deepseek.com/v1',
   model: 'deepseek-v4-flash',
-  requestCount,
+  guardedEvalInvocationCount,
   retryCount,
   rateLimitCount,
   serverErrorCount,

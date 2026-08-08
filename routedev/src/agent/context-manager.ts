@@ -40,6 +40,13 @@ export interface LLMStreamResult {
   toolCalls: ToolCallRequest[];
   usage: TokenUsageInfo;
   /**
+   * F-012：终态传播——provider 的 finishReason 透传到 Agent 层。
+   * complete=false = 协议不完整（done(error) 或流中断）——调用方不得视为成功。
+   */
+  finishReason?: 'stop' | 'tool_use' | 'length' | 'error';
+  /** F-012：true = 完整终态（stop/tool_use/length）；false = 协议不完整 */
+  complete: boolean;
+  /**
    * Phase 96+：本轮 LLM 的推理内容（DeepSeek R1 类模型的 reasoning_content）
    * 工具调用修复 pipeline 的 scavenge 工序会从中捞回被吃掉的 tool-call JSON
    * 无推理能力的模型为空字符串
@@ -414,6 +421,7 @@ export class LoopContextManager {
     let fullReasoning = '';
     const toolCalls: ToolCallRequest[] = [];
     let usage: TokenUsageInfo = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+    let finishReason: 'stop' | 'tool_use' | 'length' | 'error' | undefined;
 
     // 工具调用参数累积缓冲
     // M3：__argsBuffer 为临时字段，用于累积 JSON 片段，end/done 时解析后删除
@@ -486,19 +494,36 @@ export class LoopContextManager {
           break;
 
         case 'done':
-          // flush 所有未收到 tool_call_end 的 buffer，避免静默丢失工具调用
-          this.flushToolCallBuffers(toolCallBuffers, toolCalls);
+          // F-012：终态传播——done(error) = 协议不完整，partial tool buffers
+          // 绝不产生可执行 ToolCallRequest（残缺参数执行 = 危险副作用）
+          finishReason = event.finishReason;
+          if (event.finishReason !== 'error') {
+            this.flushToolCallBuffers(toolCallBuffers, toolCalls);
+          } else {
+            logger.warn('LLM stream done(error): partial tool calls discarded', {
+              pendingBuffers: toolCallBuffers.size,
+            });
+            toolCallBuffers.clear();
+          }
           break;
       }
     }
 
-    // M1 修复：取消信号中断流时，flush 所有未收到 tool_call_end 的 buffer
+    // F-012：取消中断时同样丢弃 partial tool buffers（不执行残缺工具调用）
     if (signal?.aborted) {
-      this.flushToolCallBuffers(toolCallBuffers, toolCalls);
+      toolCallBuffers.clear();
     }
 
     // 返回（AsyncGenerator return value）
-    return { content: fullContent, toolCalls, usage, reasoning: fullReasoning };
+    const complete = finishReason !== undefined && finishReason !== 'error';
+    return {
+      content: fullContent,
+      toolCalls,
+      usage,
+      reasoning: fullReasoning,
+      finishReason,
+      complete,
+    };
   }
 
   /**

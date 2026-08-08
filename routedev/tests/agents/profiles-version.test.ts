@@ -556,4 +556,64 @@ describe('A3 legacy revision migration', () => {
     const again = await vm.listVersions('p1');
     expect(again[0]!.revision).toBe(2);
   });
+
+  it('F-011：迁移在第 N 个文件提交后崩溃（plan 已持久化）→ resume 恢复为与 clean migration 完全相同的映射', async () => {
+    // 初始：3 个 legacy + 1 个已 revision 的新版本（混合态）
+    const setupDir = (profileId: string, base: string) => {
+      const dir = path.join(base, '.routedev', 'skills', 'agents', profileId, 'versions');
+      fsSync.mkdirSync(dir, { recursive: true });
+      const rec = (id: string, ts: number) => ({
+        meta: { versionId: id, profileId, timestamp: ts, source: 'user_edit', fieldChanges: [], changeSummary: 'legacy' },
+        snapshot: makeValidProfile({ id: profileId, name: id }),
+      });
+      const rec2 = (id: string, rev: number) => ({
+        meta: { versionId: id, profileId, timestamp: 9999999999999, revision: rev, source: 'user_edit', fieldChanges: [], changeSummary: 'new' },
+        snapshot: makeValidProfile({ id: profileId, name: id }),
+      });
+      for (const [id, ts] of [['legacy-a', 1000], ['legacy-b', 2000], ['legacy-c', 3000]]) {
+        fsSync.writeFileSync(path.join(dir, `${id}.json`), JSON.stringify(rec(id, ts), null, 2), 'utf-8');
+      }
+      fsSync.writeFileSync(path.join(dir, 'new-v1.json'), JSON.stringify(rec2('new-v1', 1), null, 2), 'utf-8');
+      return dir;
+    };
+
+    // 参考：clean migration 的最终映射（4 个文件：legacy-a:1, legacy-b:2, legacy-c:3, new-v1:4）
+    const cleanBase = tempDir + '-clean';
+    fsSync.mkdirSync(cleanBase, { recursive: true });
+    setupDir('p-clean', cleanBase);
+    const vmClean = new VersionManager(cleanBase);
+    vmClean.ensureRevisions('p-clean');
+    const cleanMapping = (await vmClean.listVersions('p-clean')).map((v) => `${v.versionId}:${v.revision}`).sort().join(',');
+
+    // 每个提交点（N=4 文件，崩溃发生在第 1..3 个之后）注入崩溃
+    const order = ['legacy-a', 'legacy-b', 'legacy-c', 'new-v1']; // plan 中的执行顺序（legacy 先）
+    for (let crashAfter = 1; crashAfter <= 3; crashAfter += 1) {
+      const base = tempDir + `-crash-${crashAfter}`;
+      fsSync.mkdirSync(base, { recursive: true });
+      const versionsDir = setupDir('p1', base);
+      // 手工写不可变 plan（模拟 ensureRevisions 第一步已执行）
+      const plan = { schema: 2, entries: order.map((f, i) => ({ file: `${f}.json`, targetRevision: i + 1 })) };
+      fsSync.writeFileSync(path.join(versionsDir, '.revision-schema-v2.plan.json'), JSON.stringify(plan, null, 2), 'utf-8');
+      // 迁移前 crashAfter 个文件（模拟崩溃在 rename #crashAfter 后）
+      for (let i = 0; i < crashAfter; i += 1) {
+        const f = path.join(versionsDir, `${order[i]}.json`);
+        const r = JSON.parse(fsSync.readFileSync(f, 'utf-8'));
+        r.meta.revision = i + 1;
+        fsSync.writeFileSync(f, JSON.stringify(r, null, 2), 'utf-8');
+      }
+      // marker 不存在（崩溃未提交）
+      // 崩溃恢复：新实例按 plan resume
+      const vmResume = new VersionManager(base);
+      vmResume.ensureRevisions('p1');
+      const resumed = (await vmResume.listVersions('p1')).map((v) => `${v.versionId}:${v.revision}`).sort().join(',');
+      // 与 clean migration 完全相同的逐文件映射
+      expect(resumed).toBe(cleanMapping);
+      const revs = (await vmResume.listVersions('p1')).map((v) => v.revision);
+      expect(new Set(revs).size).toBe(revs.length); // 无 collision
+      // marker 已提交（迁移完成）
+      expect(fsSync.existsSync(path.join(versionsDir, '.revision-schema-v2'))).toBe(true);
+      await fs.rm(base, { recursive: true, force: true });
+    }
+    await fs.rm(cleanBase, { recursive: true, force: true });
+  });
 });
