@@ -518,4 +518,44 @@ describe('CommandSandbox', () => {
       expect(CommandSandbox.validateCommand('/sbin/shutdown -h now', opts).allowed).toBe(false);
     });
   });
+
+  describe('P1-4 shell eval flag 规范化', () => {
+    it('cmd /c 与 /C 大小写不敏感均拒绝（含路径限定）', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      expect(CommandSandbox.validateCommand('cmd.exe /C echo hi', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('cmd /c echo hi', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('C:\\Windows\\System32\\cmd.exe /C echo hi', opts).allowed).toBe(false);
+    });
+
+    it('cmd /k 与 /K（保留窗口）同样拒绝', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      expect(CommandSandbox.validateCommand('cmd /k echo hi', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('cmd.exe /K echo hi', opts).allowed).toBe(false);
+    });
+
+    it('powershell mixed-case -CoMmAnD 拒绝（含前缀缩写）', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      expect(CommandSandbox.validateCommand('powershell.exe -CoMmAnD Get-Process', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('powershell -COMMAND Get-Process', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('powershell.exe -comm Get-Process', opts).allowed).toBe(false);
+    });
+
+    it('powershell -EncodedCommand 家族（-e/-en/-enc/合并参数）拒绝', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      expect(CommandSandbox.validateCommand('powershell.exe -EncodedCommand AAAA', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('pwsh.exe -enc AAAA', opts).allowed).toBe(false);
+      expect(CommandSandbox.validateCommand('powershell.exe -en:AAAA', opts).allowed).toBe(false);
+    });
+
+    it('路径限定 powershell 全路径同样拒绝', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      expect(CommandSandbox.validateCommand('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -COMMAND x', opts).allowed).toBe(false);
+    });
+
+    it('裸解释器执行脚本（无 eval flag）不拦截', async () => {
+      const opts: SandboxOptions = { allowedCommands: [] };
+      expect(CommandSandbox.validateCommand('powershell.exe -File script.ps1', opts).allowed).toBe(true);
+      expect(CommandSandbox.validateCommand('cmd.exe /d script.bat', opts).allowed).toBe(true);
+    });
+  });
 });

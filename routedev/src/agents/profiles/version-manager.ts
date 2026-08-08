@@ -15,6 +15,9 @@ import type { VersionMeta, VersionRecord, VersionSource, FieldChange, FieldDiff 
 /** 每个 Profile 最多保留版本数 */
 const MAX_VERSIONS_PER_PROFILE = 20;
 
+/** P1-1：revision schema v2 迁移 marker（存在 = 已完成统一 revision 空间迁移） */
+const REVISION_SCHEMA_MARKER = '.revision-schema-v2';
+
 /** 参与 diff / fieldChanges 的字段 */
 const DIFF_FIELDS: (keyof AgentProfile)[] = [
   'name',
@@ -59,20 +62,28 @@ export class VersionManager {
   }
 
   /**
-   * A3（RC Hardening）：legacy 版本 revision 正式迁移——
-   * 无 revision 的历史版本按 (timestamp ASC, versionId ASC) 确定性赋号
-   * （从 maxExisting+1 起），已迁移的保留原号。
-   * - deterministic：timestamp → versionId 双键升序
-   * - idempotent：重复调用不重复编号
-   * - crash-safe：每个文件 tmp+rename 原子写回
-   * - restart-safe：编号基于持久化内容
-   * 迁移后 list/rollback/retention 只用 revision（不再依赖 `revision ?? timestamp`
-   * 跨数值域比较——legacy timestamp 1.7e12 与 new revision 1 混比会错乱）。
+   * P1-1 修复（复审）：Migration V2——统一 revision 空间。
+   * 旧算法"legacy 从 maxExisting+1 起"在混合态（已 revision 记录 + legacy）
+   * 会把老 legacy 排到新 revision 之后（破坏 newer > older 不变量）。
+   *
+   * 新算法（正式一次性 canonical migration）：
+   *   1. 全部记录排序：legacy（timestamp ASC → versionId ASC）在前，
+   *      已有 revision 的 post-schema 记录（revision ASC）在后
+   *   2. 统一重新赋号 revision 1..N（每个文件 tmp+rename 原子写）
+   *   3. 迁移完成后写 marker 文件（.revision-schema-v2）——幂等防重复迁移；
+   *      marker 之前存在 = 半迁移状态（写入中断），重新执行（幂等，值不变）
+   * GA 前无外部消费者，重编号安全。
    * @returns 迁移后的最大 revision（供 nextRevision 使用）
    */
   ensureRevisions(profileId: string): number {
     const dir = this.versionsDir(profileId);
     if (!existsSync(dir)) return 0;
+    const marker = join(dir, REVISION_SCHEMA_MARKER);
+    // 已迁移：只读当前最大 revision（不重写）
+    if (existsSync(marker)) {
+      return this.maxRevision(profileId);
+    }
+
     const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
     const entries: Array<{ file: string; meta: VersionMeta | null }> = [];
     for (const file of files) {
@@ -85,14 +96,7 @@ export class VersionManager {
       }
     }
 
-    // 已有 revision 的最大值（新分配从其后开始）
-    let maxExisting = 0;
-    for (const e of entries) {
-      const rev = e.meta?.revision;
-      if (typeof rev === 'number' && rev > maxExisting) maxExisting = rev;
-    }
-
-    // 无 revision 的 legacy 条目：timestamp ASC → versionId ASC 确定性排序
+    // legacy（无 revision）：timestamp ASC → versionId ASC
     const legacy = entries
       .filter((e) => e.meta !== null && typeof e.meta!.revision !== 'number')
       .sort((a, b) => {
@@ -101,22 +105,50 @@ export class VersionManager {
         if (ta !== tb) return ta - tb;
         return a.meta!.versionId < b.meta!.versionId ? -1 : a.meta!.versionId > b.meta!.versionId ? 1 : 0;
       });
+    // post-schema（已有 revision）：revision ASC——旧版保存的新版本在 legacy 之后
+    const postSchema = entries
+      .filter((e) => e.meta !== null && typeof e.meta!.revision === 'number')
+      .sort((a, b) => (a.meta!.revision as number) - (b.meta!.revision as number));
 
-    let next = maxExisting + 1;
-    for (const e of legacy) {
+    // 统一 revision 空间：legacy 先（历史更旧），post-schema 后（新版本保持 newest）
+    const ordered = [...legacy, ...postSchema];
+    let next = 1;
+    for (const e of ordered) {
       // crash-safe：tmp + rename 原子写回
-      const meta = { ...e.meta!, revision: next };
-      const record: PersistedVersion = { meta, snapshot: JSON.parse(readFileSync(join(dir, e.file), 'utf-8')).snapshot };
+      const raw = readFileSync(join(dir, e.file), 'utf-8');
+      const record = JSON.parse(raw) as PersistedVersion;
+      record.meta = { ...record.meta, revision: next };
       const filePath = join(dir, e.file);
       const tmpPath = `${filePath}.tmp`;
       writeFileSync(tmpPath, JSON.stringify(record, null, 2), 'utf-8');
       renameSync(tmpPath, filePath);
       next += 1;
     }
+    // 迁移全部成功后才写 marker（中断则下次重跑，幂等）
+    writeFileSync(marker, new Date().toISOString(), 'utf-8');
     return next - 1;
   }
 
-  /** 分配单调 revision（先迁移 legacy，再取 max+1） */
+  /** 读取当前最大 revision（迁移后调用；无记录返回 0） */
+  private maxRevision(profileId: string): number {
+    const dir = this.versionsDir(profileId);
+    if (!existsSync(dir)) return 0;
+    let max = 0;
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith('.json')) continue;
+      try {
+        const raw = readFileSync(join(dir, file), 'utf-8');
+        const record = JSON.parse(raw) as PersistedVersion;
+        const rev = record?.meta?.revision;
+        if (typeof rev === 'number' && rev > max) max = rev;
+      } catch {
+        // 损坏文件跳过
+      }
+    }
+    return max;
+  }
+
+  /** 分配单调 revision（先正式迁移，再取 max+1） */
   private nextRevision(profileId: string): number {
     const max = this.ensureRevisions(profileId);
     return max + 1;
@@ -207,6 +239,8 @@ export class VersionManager {
    * 列出某 Profile 的所有版本元数据（按时间倒序，最新在前）
    */
   async listVersions(profileId: string): Promise<VersionMeta[]> {
+    // P1-1：先执行统一 revision 迁移——避免混合态 `revision ?? timestamp` 跨数值域比较
+    this.ensureRevisions(profileId);
     const dir = this.versionsDir(profileId);
     if (!existsSync(dir)) return [];
 
@@ -226,7 +260,7 @@ export class VersionManager {
     }
 
     // 第九轮复审：revision 是唯一排序键（同毫秒保存的版本顺序确定）
-    return metas.sort((a, b) => (b.revision ?? b.timestamp) - (a.revision ?? a.timestamp));
+    return metas.sort((a, b) => b.revision - a.revision);
   }
 
   /**
@@ -320,6 +354,8 @@ export class VersionManager {
    * 保留策略：超过 MAX_VERSIONS_PER_PROFILE 时删除最旧的
    */
   enforceRetention(profileId: string): void {
+    // P1-1：先统一 revision（避免混合态排序错乱误删新版本）
+    this.ensureRevisions(profileId);
     const dir = this.versionsDir(profileId);
     if (!existsSync(dir)) return;
 
@@ -335,7 +371,7 @@ export class VersionManager {
         // skip
       }
     }
-    metas.sort((a, b) => (b.revision ?? b.timestamp) - (a.revision ?? a.timestamp));
+    metas.sort((a, b) => b.revision - a.revision);
 
     if (metas.length <= MAX_VERSIONS_PER_PROFILE) return;
 

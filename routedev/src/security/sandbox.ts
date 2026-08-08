@@ -191,11 +191,27 @@ function checkDangerousPolicy(
     }
   }
 
-  // shell 解释器 -c 执行任意命令（显式高风险类别）
+  // shell 解释器进入任意命令执行模式（显式高风险类别）
+  // P1-4 修复（复审）：interpreter-specific flag 规范化——
+  // - cmd：/c /C /k /K（大小写不敏感）
+  // - powershell/pwsh：-c、-Command 及前缀缩写（-comm/-co...）、
+  //   -EncodedCommand 家族（-e/-en/-enc...，参数可合并如 -enc:xxx）
+  // - bash/sh/zsh：-c
   if (SHELL_INTERPRETERS.has(base)) {
-    const hasEvalFlag = args.some((a) => a === '-c' || a === '/c' || a === '-command' || a === '-Command');
+    const loweredArgs = args.map((a) => a.toLowerCase());
+    const isPowerShell = base === 'powershell' || base === 'pwsh';
+    const hasEvalFlag = loweredArgs.some((a) => {
+      // 剥离 `:值` 后缀得到参数名（powershell -enc:xxx / -Command:xxx）
+      const param = a.split(':')[0];
+      if (param === '-c' || param === '/c' || param === '/k') return true; // bash/sh/zsh -c + cmd /c /k
+      // powershell -Command 及前缀缩写（-comm/-co...；-Command:xxx 由 param 处理）
+      if (param.startsWith('-command') || '-command'.startsWith(param)) return true;
+      // -EncodedCommand 家族（-enc.../合并 -enc:xxx；-e 由前缀匹配覆盖）
+      if (isPowerShell && (param.startsWith('-enc') || '-encodedcommand'.startsWith(param))) return true;
+      return false;
+    });
     if (hasEvalFlag) {
-      return 'shell 解释器 -c 执行任意命令（bash/sh/cmd/powershell）';
+      return 'shell 解释器进入任意命令执行模式（-c / /c / -Command / -EncodedCommand）';
     }
   }
 

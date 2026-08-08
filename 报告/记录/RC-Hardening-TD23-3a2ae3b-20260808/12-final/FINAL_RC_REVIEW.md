@@ -18,6 +18,10 @@
 | F-004 | profile-version | legacy timestamp 与 revision 跨数值域比较 | ensureRevisions 正式迁移 |
 | F-005 | audit-chain | 链 head 内存态，logger 重建断链 | restoreChainHead（per-day 语义） |
 | F-006 | runstate | effort/autonomy 跨 Run 残留 | finally 清理 |
+| F-007 | profile-migration | 混合态 migration 老版本排到新版本后 + list/retention 未先迁移 | Migration V2 统一 revision 空间 + marker |
+| F-008 | audit-chain | 同 logger 跨午夜仍连昨天链（per-day contract 破坏） | currentChainDay + injectable clock |
+| F-009 | streaming | EOF 无 finish 伪装成 stop（截断不可区分） | done(error) 协议不完整 |
+| F-010 | shell-policy | cmd /K、powershell -COMMAND/-EncodedCommand/缩写/合并参数可绕过 | interpreter-specific 参数名规范化 |
 
 ## P2 findings（记录，非 RC blocker）
 
@@ -144,9 +148,17 @@ ROUTEDEV_GAP_ANALYSIS.md：12 项对比——ownership（BETTER single-flight）
 ## **RC CANDIDATE**
 
 理由：
-- P0 = 0；P1 runtime/security/data-integrity/protocol 全部关闭（F-001~F-006 有测试证据）
-- TD-23 mandatory 门（R1/R2/R3/R4/R6/R8/R9）真实 API 全部 PASS
-- Offline Gate：4057 测试通过（仅 doctor 既有 Windows 环境失败）/ 双端 tsc 0 / audit 0
+- P0 = 0；P1 runtime/security/data-integrity/protocol 全部关闭（F-001~F-010 有测试证据）
+- TD-23 mandatory 门（R1/R2/R3/R4/R6/R8/R9）真实 API 全部 PASS——V2 判定器加固后
+  R6 严格帧序（usage<done）、R8 严格链（tool_search→web_search→done→boostClean）、
+  R9 abort 观察证据、R4 reasoning 非空断言
+- Offline Gate：4082 测试通过（仅 doctor 既有 Windows 环境失败）/ 双端 tsc 0 / audit 0
 - 系统不变量均有测试或真实证据
 
-不授予 RC1：GA blocker 清单（TD-21/TD-22/audit migration/gate signal/K2/401 类型）未完成；RC1 判定需完整 CI 全绿 + GA blocker 收敛。
+**Verdict 修订记录**：复审（2026-08-08）指出 4 个生产 P1 + TD-23 证据门问题
+（F-007~F-010 + eval 判定器）——已全部修复：Migration V2 统一 revision 空间、
+audit 跨午夜 rollover、streaming EOF 协议不完整、shell eval flag 规范化、
+TD-23 V2 严格判定器（真实 API 重跑 6 请求全 PASS）。
+
+不授予 RC1：GA blocker 清单（TD-21/TD-22/audit migration/gate signal/K2/401 类型）
+未完成；RC1 判定需完整 CI 全绿 + GA blocker 收敛。

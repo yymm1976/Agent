@@ -212,4 +212,6 @@ export interface AuditLoggerConfig {
   enabled: boolean;
   retentionDays: number;
   storageDir?: string;
+  /** P1-2：可注入时钟（跨午夜 rollover 测试用；缺省 new Date()） */
+  now?: () => Date;
 }

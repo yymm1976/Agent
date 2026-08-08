@@ -374,5 +374,35 @@ describe('AuditLogger', () => {
       expect(records.length).toBe(2);
       expect(records[1]!.previousHash).toBe('0'.repeat(64));
     });
+
+    it('P1-2：同一 logger 真跨午夜（23:59 → 00:00）→ 新文件第一条从 genesis 开始', async () => {
+      // injectable clock：先固定在 23:59:59.999
+      let current = new Date('2026-08-08T23:59:59.999Z');
+      const al = new AuditLogger('sess-midnight', {
+        storageDir: tempDir,
+        now: () => current,
+      });
+      al.setChainConfig({ enabled: true });
+      al.log('file_write', '/a.txt', {}, 'success'); // A 写入 2026-08-08 文件
+      // 跨午夜
+      current = new Date('2026-08-09T00:00:00.001Z');
+      al.log('shell_exec', 'ls', {}, 'success'); // B 写入 2026-08-09 文件
+      // B 必须从 genesis 开始新链（per-day 边界）
+      const { join: pathJoin } = await import('node:path');
+      const day8 = pathJoin(tempDir, '2026-08-08', 'sess-midnight.audit.jsonl');
+      const day9 = pathJoin(tempDir, '2026-08-09', 'sess-midnight.audit.jsonl');
+      const { readFileSync } = await import('node:fs');
+      const b = JSON.parse(readFileSync(day9, 'utf-8'));
+      expect(b.previousHash).toBe('0'.repeat(64)); // 新文件 genesis
+      const a = JSON.parse(readFileSync(day8, 'utf-8').split(String.fromCharCode(10)).filter(Boolean)[0]);
+      expect(a.previousHash).toBe('0'.repeat(64));
+      // 同日重开恢复（回到 day9）——C 链接 B 而非 genesis
+      const al2 = new AuditLogger('sess-midnight', { storageDir: tempDir, now: () => current });
+      al2.setChainConfig({ enabled: true });
+      al2.log('todo_write', '/t', {}, 'success'); // C
+      const day9Content = readFileSync(day9, 'utf-8').split(String.fromCharCode(10)).filter(Boolean);
+      const c = JSON.parse(day9Content[day9Content.length - 1]);
+      expect(c.previousHash).toBe(b.hash); // 同日恢复 tail
+    });
   });
 });

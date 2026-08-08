@@ -83,6 +83,8 @@ export class AuditLogger {
   private chainConfig: AuditChainConfig = { enabled: false };
   /** 上一条记录的 hash（链式） */
   private previousHash: string = GENESIS_HASH;
+  /** P1-2：当前链所属日期（YYYY-MM-DD）——跨午夜时重置为新文件 genesis */
+  private currentChainDay = '';
   private sessionId: string;
 
   constructor(sessionId: string, config?: Partial<AuditLoggerConfig>) {
@@ -100,7 +102,8 @@ export class AuditLogger {
     // A5：per-day 链语义——启用时先尝试恢复当日文件尾部 hash 作为 chain head；
     // 当日无文件（或首条）用创世哈希。进程重启/logger 重建后同一天追加仍链连续。
     if (chainConfig.enabled) {
-      this.previousHash = this.restoreChainHead() ?? GENESIS_HASH;
+      this.currentChainDay = this.nowDate().toISOString().slice(0, 10);
+      this.previousHash = this.restoreChainHead(this.currentChainDay) ?? GENESIS_HASH;
     }
   }
 
@@ -404,10 +407,14 @@ export class AuditLogger {
    * 文件尾部损坏/截断：返回 null 并告警——新链从 genesis 开始（旧记录
    * verifyChain 会失败，属 tamper-evident 语义而非静默修复）。
    */
-  private restoreChainHead(): string | null {
+  private nowDate(): Date {
+    return this.config.now ? this.config.now() : new Date();
+  }
+
+  private restoreChainHead(day?: string): string | null {
     if (!this.chainConfig.enabled) return null;
     const dir = this.getStorageDir();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = day ?? this.nowDate().toISOString().slice(0, 10);
     const filePath = path.join(dir, today, `${this.sessionId}.audit.jsonl`);
     if (!fsSync.existsSync(filePath)) return null;
     try {
@@ -431,7 +438,14 @@ export class AuditLogger {
 
   private writeRecord(record: AuditRecord): void {
     const dir = this.getStorageDir();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = this.nowDate().toISOString().slice(0, 10);
+    // P1-2：per-day 链边界——跨午夜时 previousHash 重置为新文件尾部（或 genesis）
+    if (today !== this.currentChainDay) {
+      this.previousHash = this.chainConfig.enabled
+        ? (this.restoreChainHead(today) ?? GENESIS_HASH)
+        : GENESIS_HASH;
+      this.currentChainDay = today;
+    }
     const dayDir = path.join(dir, today);
     const filePath = path.join(dayDir, `${this.sessionId}.audit.jsonl`);
     ensureDir(dayDir);

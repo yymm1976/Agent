@@ -515,4 +515,45 @@ describe('A3 legacy revision migration', () => {
     const newId = await vm2.saveVersion(makeValidProfile({ id: 'p1' }), 'programmatic_write');
     expect(readMeta('p1', newId).revision).toBe(3);
   });
+
+  it('P1-1 OLD→FAIL：20 legacy + 1 已 revision 的新版本 → 迁移后新版本仍 newest，retention 保留新版本', async () => {
+    // 混合态：先写 20 个 legacy（无 revision），再模拟"旧版 RouteDev"保存一个 revision=1 的新版本
+    for (let i = 0; i < 20; i += 1) {
+      writeLegacyVersion('p1', `legacy-${i}`, 1000 + i);
+    }
+    const dir = path.join(tempDir, '.routedev', 'skills', 'agents', 'p1', 'versions');
+    const newRecord = {
+      meta: { versionId: 'new-v1', profileId: 'p1', timestamp: 9999999999999, revision: 1, source: 'user_edit', fieldChanges: [], changeSummary: 'new' },
+      snapshot: makeValidProfile({ id: 'p1', name: 'newest' }),
+    };
+    fsSync.writeFileSync(path.join(dir, 'new-v1.json'), JSON.stringify(newRecord, null, 2), 'utf-8');
+
+    vm.ensureRevisions('p1');
+    const versions = await vm.listVersions('p1');
+    // 不变量：newer revision > older revision——new-v1 必须是最新（revision 21）
+    expect(versions[0]!.versionId).toBe('new-v1');
+    expect(versions[0]!.revision).toBe(21);
+    // 20 个 legacy 排在其后（revision 1..20）
+    expect(versions[1]!.revision).toBe(20);
+    expect(versions[versions.length - 1]!.revision).toBe(1);
+    // retention：不超过上限时不删（这里 21 个 > 20 上限——删除最旧，必须保留 new-v1）
+    // 直接验证排序后 retention 的删除目标是最旧的 legacy 而非 new-v1
+    vm.enforceRetention('p1');
+    const after = await vm.listVersions('p1');
+    expect(after.some((v) => v.versionId === 'new-v1')).toBe(true); // new 保留
+    expect(after.every((v) => v.revision <= after[0]!.revision)).toBe(true); // 排序一致
+  });
+
+  it('P1-1：listVersions 在未保存新版本时也先迁移（混合态排序不再跨数值域）', async () => {
+    writeLegacyVersion('p1', 'legacy-a', 1000);
+    writeLegacyVersion('p1', 'legacy-b', 2000);
+    // 不调用 ensureRevisions——listVersions 内部应迁移
+    const versions = await vm.listVersions('p1');
+    expect(versions.length).toBe(2);
+    expect(versions[0]!.versionId).toBe('legacy-b'); // timestamp 大 = 新
+    expect(versions[0]!.revision).toBe(2);
+    // 迁移 marker 已写——重复调用幂等
+    const again = await vm.listVersions('p1');
+    expect(again[0]!.revision).toBe(2);
+  });
 });

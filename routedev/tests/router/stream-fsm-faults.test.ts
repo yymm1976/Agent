@@ -62,15 +62,15 @@ describe('K1 stream FSM fault cases', () => {
     expect(events[events.length - 1].type).toBe('done');
   });
 
-  it('EOF before finish：无 finish_reason 直接结束 → done 默认 stop', async () => {
+  it('P1-3：EOF before finish（无 finish_reason 直接结束）→ done(error)——不伪装成正常 stop', async () => {
     mockCreate.mockResolvedValue((async function* () {
       yield { choices: [{ delta: { content: 'partial' }, finish_reason: null }] };
-      // 流结束（无 finish）
+      // 流结束（无 finish）——协议不完整（Case A）
     })());
     const events = await collect(makeClient().stream({ ...OPTIONS }));
     const done = events.find((e) => e.type === 'done');
     expect(done).toBeDefined();
-    expect(done!.finishReason).toBe('stop');
+    expect(done!.finishReason).toBe('error');
   });
 
   it('split UTF-8：多字节字符分片 → 文本增量拼接不抛错', async () => {

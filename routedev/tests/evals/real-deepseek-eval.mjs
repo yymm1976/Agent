@@ -198,6 +198,10 @@ async function r4ToolReplay() {
     results.R4 = 'INCONCLUSIVE(模型未调用工具)';
     return;
   }
+  if (round1Reasoning.length === 0) {
+    results.R4 = 'FAIL(第一轮无 reasoning_content——thinking 模式未生效)';
+    return;
+  }
   // 第二轮：replay reasoning_content + tool result
   let finalText = '';
   await guardedRequest(async () => {
@@ -247,7 +251,10 @@ async function r6UsageTail() {
     return true;
   }, 'R6');
   writeFileSync(join(RAW_DIR, 'R6-usage-tail.jsonl'), frames.map((f) => JSON.stringify(f)).join('\n') + '\n');
-  results.R6 = finishSeen && tailUsage ? 'PASS' : `FAIL(finish=${finishSeen} usage=${!!tailUsage})`;
+  const doneIdx = frames.findIndex((f) => f.type === 'done');
+  const usageIdx = frames.findIndex((f) => f.type === 'usage');
+  const ordered = finishSeen && tailUsage && usageIdx >= 0 && doneIdx > usageIdx;
+  results.R6 = ordered ? 'PASS(usage<done 帧序确认)' : `FAIL(finish=${finishSeen} usage=${!!tailUsage} order=${usageIdx}<${doneIdx})`;
 }
 
 // ===== R7 缓存（长前缀 + 短后缀，2 次请求） =====
@@ -280,6 +287,7 @@ async function r9Cancel() {
   const client = makeClient();
   const ac = new AbortController();
   let frames = 0;
+  let abortObserved = false;
   let error = null;
   setTimeout(() => ac.abort(), 300); // stream 开始后短暂取消
   try {
@@ -291,13 +299,16 @@ async function r9Cancel() {
         signal: ac.signal,
       })) {
         frames += 1;
+        if (ac.signal.aborted) abortObserved = true;
       }
       return true;
     }, 'R9');
   } catch (err) {
     error = err;
+    // P1-6（V2）：abort 必须真被观察到（AbortError 或 signal.aborted）
+    if (/abort|ABORT|AbortError/i.test(err instanceof Error ? err.message : String(err))) abortObserved = true;
   }
-  writeFileSync(join(RAW_DIR, 'R9-cancel.jsonl'), JSON.stringify(sanitizeFrame({ type: 'aborted', frames, error: error ? String(error).slice(0, 60) : null, ts: Date.now() })) + '\n');
+  writeFileSync(join(RAW_DIR, 'R9-cancel.jsonl'), JSON.stringify(sanitizeFrame({ type: 'aborted', frames, abortObserved, error: error ? String(error).slice(0, 60) : null, ts: Date.now() })) + '\n');
   // abort 后下一次请求必须仍工作
   let nextOk = false;
   try {
@@ -309,7 +320,9 @@ async function r9Cancel() {
   } catch {
     nextOk = false;
   }
-  results.R9 = nextOk ? 'PASS' : `FAIL(取消后下次请求失败: ${error ? String(error).slice(0, 60) : 'unknown'})`;
+  results.R9 = (nextOk && abortObserved)
+    ? 'PASS(abort 观察到 + 取消后下次请求正常)'
+    : `FAIL(abortObserved=${abortObserved} nextOk=${nextOk} err=${error ? String(error).slice(0, 60) : 'none'})`;
 }
 
 // ===== R8 真实 tool_search 全 loop（Agent harness） =====
@@ -356,8 +369,12 @@ async function r8ToolSearch() {
     return true;
   }, 'R8');
   writeFileSync(join(RAW_DIR, 'R8-toolsearch.jsonl'), trace.map((t) => JSON.stringify(sanitizeFrame({ type: 'loop_event', ts: Date.now(), hasReasoning: true, toolCallIds: [t] }))).join('\n') + '\n');
-  const usedSearch = trace.includes('result:web_search') || trace.some((t) => t.includes('web_search'));
-  results.R8 = usedSearch && boostedAfter ? 'PASS' : `INCONCLUSIVE(trace=${trace.join('|').slice(0, 80)} boostClean=${boostedAfter})`;
+  const searchOk = trace.includes('result:tool_search');
+  const webOk = trace.includes('result:web_search');
+  const doneOk = trace.includes('done');
+  results.R8 = (searchOk && webOk && doneOk && boostedAfter)
+    ? 'PASS(tool_search→web_search→done→boostClean)'
+    : `FAIL(search=${searchOk} web=${webOk} done=${doneOk} boostClean=${boostedAfter} trace=${trace.join('|').slice(0, 80)})`;
 }
 
 // ===== R5 多工具（可跳过）/ R10 压缩（预算允许时） =====

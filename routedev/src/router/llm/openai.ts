@@ -257,9 +257,24 @@ export class OpenAIClient extends BaseLLMClient {
         lastUsage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         Date.now() - startTime,
       );
+      // P1-3 修复（复审）：从未收到 finish_reason 就 EOF = 协议不完整——
+      // 不得伪装成正常 stop（Case A：必须失败/incomplete）。
+      // Case B（finish 已收到、usage tail 丢失）在此层视为 completed——
+      // usage 缺失由消费方决定（K2 契约，GA 前记录）。
+      if (!pendingFinishReason) {
+        logger.warn('B-06 stream: EOF before finish_reason（协议不完整）', {
+          model: options.model,
+          toolCalls: toolAccum.size,
+        });
+        yield {
+          type: 'done',
+          finishReason: 'error',
+        };
+        return;
+      }
       yield {
         type: 'done',
-        finishReason: pendingFinishReason ?? 'stop',
+        finishReason: pendingFinishReason,
       };
     } catch (err) {
       throw this.normalizeError(err, options.model);
