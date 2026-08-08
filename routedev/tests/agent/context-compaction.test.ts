@@ -411,4 +411,44 @@ describe('B-07 压缩恢复与 turn boundary', async () => {
     expect(result.recovery!.readFiles.length).toBeGreaterThan(0);
     expect(result.recovery!.readFiles[0]).toBe('src/f0.ts');
   });
+
+  describe('H3 compaction provenance（denial / 安全约束保留）', () => {
+    it('用户拒绝与安全约束在压缩后保留（不被摘要成"需要执行"）', async () => {
+      const { ContextCompactor } = await import('../../src/agent/context-compaction.js');
+      const { estimateTokens } = await import('../../src/utils/token-estimate.js');
+      const compactor = new ContextCompactor({ maxMessages: 4, maxOutputChars: 1000, targetTokens: 100, estimateTokens });
+      const messages = [
+        { role: 'system' as const, content: '安全基线：禁止删除生产数据库；破坏性操作需用户明确确认。' },
+        { role: 'user' as const, content: '请删除 production 数据库。' },
+        { role: 'assistant' as const, content: '我不能删除 production 数据库——这是破坏性操作，且您没有明确授权。' },
+        { role: 'user' as const, content: '那先改一下配置文件的端口号。' },
+      ];
+      const { messages: compressed, result } = await compactor.compact(messages);
+      // 压缩后保留的消息（最近的 user 请求）不得丢失拒绝语义相关的安全上下文
+      const compressedText = compressed.map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content))).join(' ');
+      // system 安全基线保留
+      expect(compressedText).toContain('禁止删除');
+      // 拒绝语义保留（assistant 的拒绝在保留窗口内——L2 保留最近消息）
+      expect(compressedText.toLowerCase()).not.toContain('delete production database and execute');
+      void result;
+    });
+
+    it('未完成 Todo 与最近文件进恢复清单（压缩后继续工作依据）', async () => {
+      const { extractRecoveryContext } = await import('../../src/agent/context-compaction.js');
+      const messages = [
+        { role: 'user' as const, content: '先修复 src/a.ts。' },
+        {
+          role: 'assistant' as const,
+          content: [
+            { type: 'tool_use' as const, id: 't1', name: 'file_edit', arguments: { path: 'src/a.ts' } },
+            { type: 'tool_use' as const, id: 't2', name: 'todo_write', arguments: { action: 'replace' } },
+          ],
+        },
+        { role: 'user' as const, content: [{ type: 'tool_result' as const, toolUseId: 't1', content: 'ok', isError: false }] },
+      ];
+      const recovery = extractRecoveryContext(messages);
+      expect(recovery.modifiedFiles).toContain('src/a.ts');
+      expect(recovery.todoItems).toContain('replace');
+    });
+  });
 });

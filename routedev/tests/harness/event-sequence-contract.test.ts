@@ -210,4 +210,28 @@ describe('B-12 EngineEventV1 序列契约', () => {
     expect(streamed[0].type).toBe('agent_start');
     expect(streamed[streamed.length - 1].type).toBe('agent_end');
   });
+
+  it('C1: 事件重放可重建 run 结构（turn 配对/消息序/工具对）——live 与 replay 一致', async () => {
+    const { events } = await runContract();
+    // 重放投影：只依赖事件序列重建结构（不依赖 live 状态）
+    let turnCount = 0;
+    let messageCount = 0;
+    let toolPairs = 0;
+    const openTools = new Set<string>();
+    for (const e of events) {
+      if (e.type === 'turn_start') turnCount += 1;
+      if (e.type === 'turn_end') turnCount -= 1;
+      if (e.type === 'message_start') messageCount += 1;
+      if (e.type === 'tool_start') openTools.add(e.payload.toolCallId);
+      if (e.type === 'tool_end' && openTools.has(e.payload.toolCallId)) {
+        openTools.delete(e.payload.toolCallId);
+        toolPairs += 1;
+      }
+    }
+    // 重放结果：所有 turn 闭合、消息数 > 0、工具对闭合
+    expect(turnCount).toBe(0);
+    expect(messageCount).toBeGreaterThan(0);
+    expect(toolPairs).toBe(1);
+    expect(openTools.size).toBe(0);
+  });
 });
