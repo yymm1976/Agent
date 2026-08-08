@@ -20,7 +20,7 @@
 - Closed P0: 0
 - Closed P1: 6
 - Real API requests used: 11 / 60
-- Current CI state: 6 Job 全绿基线（3a2ae3b）；最终提交待 CI 确认
+- Current CI state: 6 Job 全绿（e8995c3 完整确认：Core/Desktop×3/Android/Security 全 success）
 
 ## Phase 状态
 

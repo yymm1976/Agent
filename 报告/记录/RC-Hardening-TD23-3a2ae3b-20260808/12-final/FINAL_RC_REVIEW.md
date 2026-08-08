@@ -118,7 +118,7 @@ ROUTEDEV_GAP_ANALYSIS.md：12 项对比——ownership（BETTER single-flight）
 
 ## Full CI Run
 
-**待推送后确认**——本轮最终提交推送将触发完整 CI。上一轮（0bfbbe5 前）6 Job 全绿基线成立；本轮改动（security/persistence/runstate）有 4000+ 本地测试 + 双端 tsc 覆盖，预期 Core/Desktop 保持绿。
+**已确认**：最终提交 `e8995c3` 的 GitHub Actions 6 Job 全部 success（Core typecheck/tests、Desktop Windows/Ubuntu/macOS typecheck+tests+build、Android test+lint+assembleDebug、Dependency/Security audit）。Run ID 31230858090。
 
 ## Remaining RC blockers
 
