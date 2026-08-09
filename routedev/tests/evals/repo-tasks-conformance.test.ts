@@ -1,28 +1,33 @@
 // tests/evals/repo-tasks-conformance.test.ts
-// GA Eval Integrity Closure：Harness Conformance Suite（mock/确定性，不计入模型能力分数）
+// GA Eval Integrity Closure + Fix 2：Harness Conformance Suite（mock/确定性，不计入模型能力分数）
 //
 // 覆盖：
 // 1. Blind Eval Boundary：agent 运行期间 hidden tests 不在工作区（时序）
 // 2. Canonical containment：文件工具拒绝 `..` 越界/绝对路径（恶意模型脚本测试）
 // 3. Shell 越界拒绝：`..` 路径段、盘符绝对路径
-// 4. Git 全量快照：untracked 新文件纳入 changedFiles（P1-EVAL-03）
-// 5. Scoring V2：forbiddenTouched / requiredFiles / eventAssertions 硬门槛
-// 6. L2-05 fail-once：整个任务只失败一次（marker 保留）
-// 7. L2-07 mock：真 request-stage provider retry（llm_retry=1、llm_failed=0）
+// 4. Fix 2：`.eval` 是 harness 内部路径——Agent 不可读写
+// 5. Fix 2：baseline-relative 快照——Agent 自己 git commit 也绝不隐藏修改；
+//    hidden 注入不污染评分快照
+// 6. Fix 2：walkFiles 深度修复——list_directory/file_search 能看到嵌套目录（L3-09）
+// 7. Fix 2：L2-05 fault 在 executor 层注入——第一次测试命令失败、第二次恢复、对模型不可见
+// 8. Fix 2：bounded_repeat 连续语义——中间有状态变更不算 storm（L2-05）
+// 9. Fix 2：tdd_order 判定——tests 写 < src 写 + 中间 RED（L2-03）
+// 10. Fix 2：conformance mode pass 逻辑（L2-07 provider retry 语义）
+// 11. Scoring V2：forbiddenTouched / requiredFiles / eventAssertions 硬门槛
 
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EvalToolExecutor } from '../../evals/repo-tasks/runner/assemble.js';
 import { setupWorkdir, injectHiddenTests, gitSnapshot } from '../../evals/repo-tasks/runner/run-task.js';
-import { scoreTask, type EvalContext } from '../../evals/repo-tasks/runner/scoring.js';
+import { scoreTask, detectRepeatStorm, detectTddOrderViolation, type EvalContext } from '../../evals/repo-tasks/runner/scoring.js';
 
 const EVALS_ROOT = resolve(import.meta.dirname, '../../evals/repo-tasks');
 
-function makeExecutor(workdir: string): { executor: EvalToolExecutor; calls: unknown[] } {
+function makeExecutor(workdir: string, faults?: { firstTestShellFailure?: boolean }): { executor: EvalToolExecutor; calls: unknown[] } {
   const calls: unknown[] = [];
-  const executor = new EvalToolExecutor(workdir, calls as never);
+  const executor = new EvalToolExecutor(workdir, calls as never, undefined, faults);
   return { executor, calls };
 }
 
@@ -47,7 +52,7 @@ describe('Blind Eval Boundary（Integrity Closure）', () => {
   });
 
   it('setupWorkdir 后 hidden 仍不存在（注入在 agent run 之后）', () => {
-    const wd = setupWorkdir(join(EVALS_ROOT, 'fixtures', 'L2-01'), 'L2-01');
+    const { workdir: wd } = setupWorkdir(join(EVALS_ROOT, 'fixtures', 'L2-01'), 'L2-01');
     try {
       expect(existsSync(join(wd, 'hidden'))).toBe(false);
       // 注入后才出现
@@ -106,7 +111,93 @@ describe('Blind Eval Boundary（Integrity Closure）', () => {
   });
 });
 
-describe('Git 全量快照（P1-EVAL-03）', () => {
+describe('Fix 2：.eval 为 harness 内部路径（Agent 不可读写）', () => {
+  let base: string;
+  let workdir: string;
+
+  beforeEach(() => {
+    base = mkdtempSync(join(tmpdir(), 'rdev-eval-'));
+    workdir = join(base, 'work');
+    mkdirSync(join(workdir, '.eval', 'traces', 'runs'), { recursive: true });
+    writeFileSync(join(workdir, '.eval', 'traces', 'runs', 'x-events.jsonl'), '{"type":"llm_succeeded"}\n', 'utf-8');
+    writeFileSync(join(workdir, 'ok.txt'), 'ok', 'utf-8');
+  });
+
+  afterEach(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it('file_read .eval/traces/... → 拒绝（L3-09 trace 泄漏修复）', async () => {
+    const { executor } = makeExecutor(workdir);
+    const r = await executor.executeToolStructured('file_read', 'c1', { path: '.eval/traces/runs/x-events.jsonl' });
+    expect(r.isError).toBe(true);
+    expect(r.output).toContain('harness 内部空间');
+  });
+
+  it('file_write .eval/... → 拒绝', async () => {
+    const { executor } = makeExecutor(workdir);
+    const r = await executor.executeToolStructured('file_write', 'c2', { path: '.eval/steal.jsonl', content: 'x' });
+    expect(r.isError).toBe(true);
+    expect(existsSync(join(workdir, '.eval', 'steal.jsonl'))).toBe(false);
+  });
+
+  it('file_search .eval 内 → 不返回结果（walkFiles 跳过）', async () => {
+    const { executor } = makeExecutor(workdir);
+    const r = await executor.executeToolStructured('file_search', 'c3', { pattern: 'llm_succeeded' });
+    expect(r.isError).toBe(false);
+    expect(r.output).not.toContain('.eval');
+  });
+
+  it('shell 命令含 .eval 路径 → 拒绝', async () => {
+    const { executor } = makeExecutor(workdir);
+    const r = await executor.executeToolStructured('shell_exec', 'c4', { command: 'type .eval/traces/runs/x-events.jsonl' });
+    expect(r.isError).toBe(true);
+    expect(r.output).toContain('被拒绝');
+  });
+});
+
+describe('Fix 2：walkFiles 深度修复（L3-09 导航 bug）', () => {
+  let base: string;
+  let workdir: string;
+
+  beforeEach(() => {
+    base = mkdtempSync(join(tmpdir(), 'rdev-walk-'));
+    workdir = join(base, 'work');
+    mkdirSync(join(workdir, 'src'), { recursive: true });
+    mkdirSync(join(workdir, 'tests'), { recursive: true });
+    writeFileSync(join(workdir, 'package.json'), '{}', 'utf-8');
+    writeFileSync(join(workdir, 'src', 'loader.ts'), 'export const parseConfig = () => 1;\n', 'utf-8');
+    writeFileSync(join(workdir, 'tests', 'loader.test.ts'), 'import { it } from "vitest";\n', 'utf-8');
+  });
+
+  afterEach(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it('list_directory(".") 能看到第一层子目录内的文件（旧实现 depth=3 起点直接 return）', async () => {
+    const { executor } = makeExecutor(workdir);
+    const r = await executor.executeToolStructured('list_directory', 'c1', { path: '.' });
+    expect(r.isError).toBe(false);
+    expect(r.output).toContain('src/loader.ts');
+    expect(r.output).toContain('tests/loader.test.ts');
+  });
+
+  it('file_search 能命中 src/ 下源码（旧实现只搜根目录）', async () => {
+    const { executor } = makeExecutor(workdir);
+    const r = await executor.executeToolStructured('file_search', 'c2', { pattern: 'parseConfig' });
+    expect(r.isError).toBe(false);
+    expect(r.output).toContain('src/loader.ts');
+  });
+
+  it('repo_map（list_directory 别名）能看到嵌套结构', async () => {
+    const { executor } = makeExecutor(workdir);
+    const r = await executor.executeToolStructured('repo_map', 'c3', {});
+    expect(r.isError).toBe(false);
+    expect(r.output).toContain('src/loader.ts');
+  });
+});
+
+describe('Git 全量快照（P1-EVAL-03 + Fix 2 baseline-relative）', () => {
   let base: string;
   let workdir: string;
 
@@ -121,29 +212,164 @@ describe('Git 全量快照（P1-EVAL-03）', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  function gitInit(): void {
+  function gitInit(): string {
     const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
     spawnSync('git', ['init', '-q'], { cwd: workdir });
     spawnSync('git', ['add', '-A'], { cwd: workdir });
     spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@l', 'commit', '-q', '-m', 'b'], { cwd: workdir });
+    return spawnSync('git', ['rev-parse', 'HEAD'], { cwd: workdir, encoding: 'utf-8' }).stdout?.trim() ?? '';
   }
 
   it('untracked 新文件纳入 changedFiles 与 diff（新增测试/docs 可见）', () => {
-    gitInit();
+    const baseline = gitInit();
     mkdirSync(join(workdir, 'tests'), { recursive: true });
     mkdirSync(join(workdir, 'docs'), { recursive: true });
     writeFileSync(join(workdir, 'tests', 'new.test.ts'), 'import { it } from "vitest";\n', 'utf-8');
     writeFileSync(join(workdir, 'docs', 'REJECTED.md'), '# rejected\n', 'utf-8');
     writeFileSync(join(workdir, 'tracked.ts'), 'export const a = 2;\n', 'utf-8');
-    const { changedFiles, diffText } = gitSnapshot(workdir);
+    const { changedFiles, diffText } = gitSnapshot(workdir, baseline);
     expect(changedFiles).toContain('tests/new.test.ts');
     expect(changedFiles).toContain('docs/REJECTED.md');
     expect(changedFiles).toContain('tracked.ts');
     expect(diffText).toContain('new file: tests/new.test.ts');
   });
+
+  it('Fix 2：Agent 自己 git commit 也绝不隐藏修改（commit-blind 修复）', () => {
+    const baseline = gitInit();
+    writeFileSync(join(workdir, 'tracked.ts'), 'export const a = 3;\n', 'utf-8');
+    writeFileSync(join(workdir, 'brand-new.ts'), 'export const b = 1;\n', 'utf-8');
+    const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
+    spawnSync('git', ['add', '-A'], { cwd: workdir });
+    spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@l', 'commit', '-q', '-m', 'agent work'], { cwd: workdir });
+    // 旧实现 gitSnapshot(workdir) 相对当前 HEAD → working tree clean → 判"没有修改"
+    const { changedFiles, diffText } = gitSnapshot(workdir, baseline);
+    expect(changedFiles).toContain('tracked.ts');
+    expect(changedFiles).toContain('brand-new.ts');
+    expect(diffText).toContain('export const a = 3');
+    expect(diffText).toContain('new file mode 100644'); // committed 新文件走 git 标准 diff
+  });
+
+  it('Fix 2：hidden 注入不污染评分快照（快照在注入前生成）', () => {
+    const baseline = gitInit();
+    writeFileSync(join(workdir, 'src-new.ts'), 'export const c = 1;\n', 'utf-8');
+    const before = gitSnapshot(workdir, baseline);
+    // 模拟注入 hidden（在快照之后发生）
+    mkdirSync(join(workdir, 'hidden'), { recursive: true });
+    writeFileSync(join(workdir, 'hidden', 'h.test.ts'), 'import { it } from "vitest";\n', 'utf-8');
+    expect(before.changedFiles).not.toContain('hidden/h.test.ts');
+    expect(before.changedFiles).toContain('src-new.ts');
+  });
 });
 
-describe('Scoring V2 硬门槛', () => {
+describe('Fix 2：L2-05 fault 注入（executor 层，对模型不可见）', () => {
+  let base: string;
+  let workdir: string;
+
+  beforeEach(() => {
+    base = mkdtempSync(join(tmpdir(), 'rdev-fault-'));
+    workdir = join(base, 'work');
+    mkdirSync(workdir, { recursive: true });
+    writeFileSync(join(workdir, 'package.json'), '{"scripts":{"test":"echo ok"}}\n', 'utf-8');
+  });
+
+  afterEach(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it('第一次匹配测试命令的 shell_exec 失败（transient），第二次恢复', async () => {
+    const { executor, calls } = makeExecutor(workdir, { firstTestShellFailure: true });
+    const first = await executor.executeToolStructured('shell_exec', 'c1', { command: 'npm test' });
+    expect(first.isError).toBe(true);
+    expect(first.output).toContain('transient infrastructure error');
+    const second = await executor.executeToolStructured('shell_exec', 'c2', { command: 'npm test' });
+    expect(second.isError).toBe(false);
+    // fault 不产生任何文件（对模型不可见、不可修改）
+    expect(readdirSync(workdir).filter((f) => f.startsWith('.fail') || f.includes('marker'))).toHaveLength(0);
+    expect((calls as Array<{ toolName: string; toolCallId: string }>).map((c) => c.toolCallId)).toEqual(['c1', 'c2']);
+  });
+
+  it('非测试命令不受 fault 影响', async () => {
+    const { executor } = makeExecutor(workdir, { firstTestShellFailure: true });
+    const r = await executor.executeToolStructured('shell_exec', 'c1', { command: 'echo hello' });
+    expect(r.isError).toBe(false);
+  });
+});
+
+describe('Fix 2：bounded_repeat 连续语义（L2-05 storm 误判修复）', () => {
+  function call(toolName: string, isError: boolean, command?: string, ts = 1): never {
+    return { toolName, toolCallId: `c${ts}`, args: command ? { command } : {}, denied: false, isError, outputPreview: '', timestamp: ts } as never;
+  }
+
+  it('连续相同失败且中间无状态变更 → storm', () => {
+    const calls = [
+      call('shell_exec', true, 'npm test', 1),
+      call('shell_exec', true, 'npm test', 2),
+      call('shell_exec', true, 'npm test', 3),
+    ];
+    const storm = detectRepeatStorm(calls, 2);
+    expect(storm).not.toBeNull();
+    expect(storm?.count).toBe(3);
+  });
+
+  it('失败→诊断→失败→修改→失败 不算 storm（中间有状态变更重置窗口）', () => {
+    const calls = [
+      call('shell_exec', true, 'npm test', 1),
+      call('file_read', false, undefined, 2),
+      call('shell_exec', true, 'npm test', 3),
+      call('file_edit', false, undefined, 4), // 状态变更 → 重置
+      call('shell_exec', true, 'npm test', 5),
+    ];
+    expect(detectRepeatStorm(calls, 2)).toBeNull();
+  });
+
+  it('不同失败命令不累计', () => {
+    const calls = [
+      call('shell_exec', true, 'npm test', 1),
+      call('shell_exec', true, 'npm run build', 2),
+      call('shell_exec', true, 'npm test', 3),
+    ];
+    expect(detectRepeatStorm(calls, 2)).toBeNull();
+  });
+});
+
+describe('Fix 2：tdd_order 判定（L2-03）', () => {
+  function call(toolName: string, isError: boolean, args: Record<string, unknown>, ts: number): never {
+    return { toolName, toolCallId: `c${ts}`, args, denied: false, isError, outputPreview: '', timestamp: ts } as never;
+  }
+
+  it('tests 写 < src 写 且中间有 RED → 通过', () => {
+    const calls = [
+      call('file_read', false, { path: 'src/secrets.ts' }, 1),
+      call('file_write', false, { path: 'tests/secrets.test.ts', content: 'x' }, 2),
+      call('shell_exec', true, { command: 'vitest run tests' }, 3), // RED
+      call('file_write', false, { path: 'src/secrets.ts', content: 'y' }, 4),
+    ];
+    expect(detectTddOrderViolation(calls)).toBeNull();
+  });
+
+  it('src 先写后写 tests → 违规', () => {
+    const calls = [
+      call('file_write', false, { path: 'src/secrets.ts', content: 'y' }, 1),
+      call('file_write', false, { path: 'tests/secrets.test.ts', content: 'x' }, 2),
+    ];
+    expect(detectTddOrderViolation(calls)).toContain('不早于');
+  });
+
+  it('tests 与 src 之间无 RED → 违规', () => {
+    const calls = [
+      call('file_write', false, { path: 'tests/secrets.test.ts', content: 'x' }, 1),
+      call('file_write', false, { path: 'src/secrets.ts', content: 'y' }, 2),
+    ];
+    expect(detectTddOrderViolation(calls)).toContain('RED 缺失');
+  });
+
+  it('未写 tests → 违规', () => {
+    const calls = [call('file_write', false, { path: 'src/secrets.ts', content: 'y' }, 1)];
+    expect(detectTddOrderViolation(calls)).toContain('tests/* 写操作');
+  });
+});
+
+describe('Scoring V2 硬门槛 + Fix 2 conformance mode', () => {
   function ctx(over: Partial<EvalContext>): EvalContext {
     return {
       taskId: 'T',
@@ -192,27 +418,25 @@ describe('Scoring V2 硬门槛', () => {
     expect(s.hardGates.duplicateSideEffects).toBe(false);
     expect(s.pass).toBe(false);
   });
-});
 
-describe('L2-05 fail-once 语义（P1-EVAL-06）', () => {
-  it('marker 成功后保留——第三次调用仍正常（不重新失败）', () => {
-    const base = mkdtempSync(join(tmpdir(), 'rdev-fo-'));
-    const fixture = join(EVALS_ROOT, 'fixtures', 'L2-05');
-    const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
-    const bin = join(EVALS_ROOT, '../../node_modules/.bin/vitest');
-    const run = (): number => spawnSync('node scripts/fail-once.mjs run tests --passWithNoTests', { cwd: fixture, shell: true, encoding: 'utf-8', timeout: 120000 }).status ?? -1;
-    try {
-      rmSync(join(fixture, '.fail-once.marker'), { force: true });
-      const first = run();
-      expect(first).toBe(1); // 首次失败（transient）
-      const second = run();
-      expect(second).toBe(0); // 第二次成功
-      const third = run();
-      expect(third).toBe(0); // marker 保留 → 第三次也成功（不是 FAIL/PASS 交替）
-      expect(existsSync(join(fixture, '.fail-once.marker'))).toBe(true); // marker 保留到 workdir 销毁
-    } finally {
-      rmSync(join(fixture, '.fail-once.marker'), { force: true });
-      rmSync(base, { recursive: true, force: true });
-    }
+  it('Fix 2：conformance mode——provider retry 语义全过即 PASS（不计业务 correctness/requiredFiles）', () => {
+    const s = scoreTask(ctx({
+      mode: 'conformance',
+      hiddenResults: [{ name: 'h', passed: false, outputPreview: '', durationMs: 0 }], // mock 不写业务代码 → hidden 失败
+      requiredFiles: ['src/score-calc.ts'],
+      changedFiles: [],
+      eventAssertions: { 'llm-retry-observed': { passed: true }, 'no-llm-failed': { passed: true }, 'lifecycle-complete': { passed: true } },
+    }));
+    expect(s.mode).toBe('conformance');
+    expect(s.taskCorrectness).toBe(false); // 业务 correctness 不达标
+    expect(s.pass).toBe(true);             // 但 conformance PASS
+  });
+
+  it('Fix 2：conformance mode——event assertion 失败仍 FAIL', () => {
+    const s = scoreTask(ctx({
+      mode: 'conformance',
+      eventAssertions: { 'llm-retry-observed': { passed: false } },
+    }));
+    expect(s.pass).toBe(false);
   });
 });

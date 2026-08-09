@@ -5,13 +5,20 @@ import { maskSecret } from '../src/secrets.js';
 
 describe('maskSecret（hidden）', () => {
   it('长密钥只保留末尾 4 位', () => {
-    expect(maskSecret('sk-abcdef1234567890')).toBe('**************7890');
+    // Eval Fix 2：'sk-abcdef1234567890' 长 19，保留 4 → 15 个 `*`（旧 oracle 少 1 个）
+    expect(maskSecret('sk-abcdef1234567890')).toBe('***************7890');
   });
 
   it('短于 visibleEnd+2 时原样返回', () => {
     expect(maskSecret('abc')).toBe('abc');
     expect(maskSecret('abcd')).toBe('abcd');
-    expect(maskSecret('abcdef')).toBe('abcdef'); // 6 == 4+2 → 原样
+    expect(maskSecret('abcde')).toBe('abcde'); // 5 < 6 → 原样
+  });
+
+  it('等于 visibleEnd+2 时开始打码', () => {
+    // Eval Fix 2：prompt 语义是 shorter than visibleEnd+2 才原样——
+    // 6 == 4+2 → 不短于 → 必须打码（旧 oracle 写"原样"与 prompt 直接矛盾）
+    expect(maskSecret('abcdef')).toBe('**ef');
   });
 
   it('恰好可见位长度时全遮罩后保留可见位', () => {

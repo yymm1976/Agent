@@ -107,6 +107,8 @@ const TOOL_DEFS: LLMToolDefinition[] = [
 ];
 
 function walkFiles(dir: string, depth: number, out: string[]): void {
+  // Eval Fix 2：depth 语义 = 当前深度（根目录 depth 0），递归层数限制从根起算。
+  // 旧实现调用方从 depth=3 起步导致第一层目录直接 return（L3-09 导航 bug）。
   if (depth > 3 || !existsSync(dir)) return;
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules' || entry === '.git' || entry === '.eval') continue;
@@ -121,7 +123,7 @@ function walkFiles(dir: string, depth: number, out: string[]): void {
 function grepFiles(root: string, pattern: string): string[] {
   const hits: string[] = [];
   const files: string[] = [];
-  walkFiles(root, 3, files);
+  walkFiles(root, 0, files);
   for (const f of files) {
     try {
       const content = readFileSync(f, 'utf-8');
@@ -131,9 +133,22 @@ function grepFiles(root: string, pattern: string): string[] {
   return hits;
 }
 
+/** Eval Fix 2：给 shell 子进程注入 PATH（node bin + routedev node_modules/.bin），fixture 无需 npm install */
+function shellEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PATH: [
+      resolve(import.meta.dirname, '../../../node_modules/.bin'),
+      resolve(import.meta.dirname, '../../../node_modules'),
+      dirname(process.execPath),
+      process.env.PATH ?? '',
+    ].join(';'),
+  };
+}
+
 function runShell(command: string, cwd: string, timeoutMs: number): Promise<{ stdout: string; stderr: string; status: number | null }> {
   return new Promise<{ stdout: string; stderr: string; status: number | null }>((resolvePromise) => {
-    const child = spawn(command, { cwd, shell: true, windowsHide: true });
+    const child = spawn(command, { cwd, shell: true, windowsHide: true, env: shellEnv() });
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -151,13 +166,24 @@ function runShell(command: string, cwd: string, timeoutMs: number): Promise<{ st
 }
 
 /** eval 专用工具执行器（harness 工具面，非被测对象）——导出供 conformance 测试 */
+export interface EvalExecutorFaults {
+  /**
+   * Eval Fix 2（L2-05）：第一次匹配测试命令的 shell_exec 注入确定性 transient 失败，
+   * 之后正常放行。fault 在 executor 层执行——对模型不可见、不可修改
+   * （旧实现把 injector 放进被测 repo 让模型能修它）。
+   */
+  firstTestShellFailure?: boolean;
+}
+
 export class EvalToolExecutor implements ToolExecutorAdapter {
   private readonly activeTools: LLMToolDefinition[];
+  private shellFaultConsumed = false;
 
   constructor(
     private readonly workdir: string,
     private readonly calls: EvalToolCall[],
     allowedTools?: string[],
+    private readonly faults?: EvalExecutorFaults,
   ) {
     // Integrity Closure：allowedTools 真正决定 tool surface（manifest 驱动）
     this.activeTools = allowedTools
@@ -186,6 +212,11 @@ export class EvalToolExecutor implements ToolExecutorAdapter {
    */
   private contain(rel: string): { ok: true; path: string } | { ok: false; reason: string } {
     const root = this.workdir;
+    // Eval Fix 2：`.eval` 是 harness 内部路径（trace/EventLog）——Agent 不可读写
+    const normalized = rel.replace(/\\/g, '/');
+    if (normalized === '.eval' || normalized.startsWith('.eval/')) {
+      return { ok: false, reason: `路径为 harness 内部空间（.eval），不可访问: ${rel}` };
+    }
     // 显式拒绝 `..` 段（两种分隔符）——Linux 上反斜杠不是路径分隔符，
     // resolve 不会折叠 `..\x`，单靠 resolve 越界检查会漏（跨平台一致性）
     if (rel.includes('../') || rel.includes('..\\') || rel.startsWith('..')) {
@@ -264,15 +295,21 @@ export class EvalToolExecutor implements ToolExecutorAdapter {
         const p = c.path;
         if (!existsSync(p)) return record(true, `[目录不存在] ${rel}`);
         const files: string[] = [];
-        walkFiles(p, 3, files);
+        walkFiles(p, 0, files);
         return record(false, files.map((f) => relative(root, f).replace(/\\/g, '/')).join('\n'));
       }
       case 'shell_exec': {
         const command = String(args.command ?? '');
         // Integrity Closure：拒绝可越出工作区的命令——`..` 路径段、盘符绝对路径、
         // 指向 workdir 外的路径（防止读 hidden-tests / benchmark source）
-        if (/[a-z]:[\\/]/i.test(command) || command.includes('../') || command.includes('..\\')) {
+        if (/[a-z]:[\\/]/i.test(command) || command.includes('../') || command.includes('..\\') || /\.eval[\\/]/.test(command)) {
           return record(true, '[被拒绝] 命令含越界路径（绝对路径或 ..）');
+        }
+        // Eval Fix 2（L2-05）：第一次测试命令注入确定性 transient 失败（executor 层，
+        // 对模型不可见不可修改；注入失败不算 isError 计数外的特殊路径，重试即恢复）
+        if (this.faults?.firstTestShellFailure && !this.shellFaultConsumed && /(vitest|npm\s+(run\s+)?test|pnpm\s+(run\s+)?test|npm\s+test)/i.test(command)) {
+          this.shellFaultConsumed = true;
+          return record(true, 'transient infrastructure error: test runner unavailable, retry');
         }
         const timeoutMs = typeof args.timeoutMs === 'number' ? args.timeoutMs : 60000;
         const r = await runShell(command, root, timeoutMs);
@@ -307,6 +344,14 @@ export interface AssembleOptions {
   maxIterations?: number;
   /** Integrity Closure：manifest allowedTools 真正决定 tool surface */
   allowedTools?: string[];
+  /**
+   * Eval Fix 2：RunEventLog/trace storage 目录——必须位于 Agent workspace 之外
+   * （旧实现放 workdir/.eval/traces，模型能直接 file_read 自己的 events.jsonl——
+   * L3-09 trajectory 实证 trace 泄漏）。缺省时仍放 workdir/.eval/traces（兼容旧调用）。
+   */
+  traceDir?: string;
+  /** Eval Fix 2（L2-05）：executor 层 fault 注入（对模型不可见不可修改） */
+  faults?: EvalExecutorFaults;
 }
 
 /**
@@ -318,7 +363,7 @@ export function assembleEvalAgent(opts: AssembleOptions): EvalAgentHandle {
   const calls: EvalToolCall[] = [];
 
   // 工具面（allowedTools 驱动 surface；manifest 未实现工具启动即抛 configuration error）
-  const executor = new EvalToolExecutor(workdir, calls, opts.allowedTools);
+  const executor = new EvalToolExecutor(workdir, calls, opts.allowedTools, opts.faults);
 
   // 权限：默认引擎 + 自定义 deny（L2-06 等）
   const engine = createDefaultEngine();
@@ -338,7 +383,7 @@ export function assembleEvalAgent(opts: AssembleOptions): EvalAgentHandle {
   loop.setMiddlewarePipeline(pipeline);
 
   // trace + kernel（RunEventLog 由 kernel.runReAct 生产路径自动装配）
-  const traceDir = join(workdir, '.eval', 'traces');
+  const traceDir = opts.traceDir ?? join(workdir, '.eval', 'traces');
   mkdirSync(traceDir, { recursive: true });
   const trace = new TraceCollector({ storageDir: traceDir });
   const kernel = new NativeAgentKernel(loop, { trace });

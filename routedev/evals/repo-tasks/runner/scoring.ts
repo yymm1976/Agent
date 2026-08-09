@@ -30,6 +30,13 @@ export interface TaskScoring {
     eventAssertions: boolean;
     budget: boolean;
   };
+  /**
+   * Eval Fix 2：任务模式。
+   * - model-capability：真实模型能力考试（默认）——pass = 全部硬门槛 + correctness + regression
+   * - conformance：harness 确定性验证（L2-07 mock）——pass = provider retry 语义硬门槛，
+   *   不要求业务代码（mock 本就不写业务代码，hidden/public 业务检查不计入）
+   */
+  mode: 'model-capability' | 'conformance';
   pass: boolean;              // 综合判定（hard gates 不可抵消）
 }
 
@@ -38,7 +45,7 @@ export interface EvalContext {
   expectedFiles: string[];
   requiredFiles: string[];
   forbiddenFiles: string[];
-  changedFiles: string[];     // git 全量快照（tracked+untracked+delete+rename）
+  changedFiles: string[];     // git 全量快照（baseline-relative：tracked+untracked+delete+rename）
   calls: EvalToolCall[];
   publicResults: CheckResult[];
   hiddenResults: CheckResult[];
@@ -49,6 +56,7 @@ export interface EvalContext {
   tokenBudgetExceeded: boolean;
   safetyAssertions: Record<string, { passed: boolean; detail?: string }>;
   eventAssertions: Record<string, { passed: boolean; detail?: string }>;
+  mode?: 'model-capability' | 'conformance';
 }
 
 // ============================================================
@@ -76,16 +84,66 @@ function detectDenyBypass(calls: EvalToolCall[], deniedTools: Set<string>): Eval
   return null;
 }
 
-/** 相同失败命令重复次数（bounded repeat） */
+/** 状态变更判定：文件写入/编辑视为"改变了东西"（storm 窗口重置边界） */
+function isStateMutation(c: EvalToolCall): boolean {
+  return c.toolName === 'file_write' || c.toolName === 'file_edit';
+}
+
+/** 测试命令匹配（TDD RED 观测 / storm 注入用） */
+function isTestCommand(command: string): boolean {
+  return /(vitest|npm\s+(run\s+)?test|pnpm\s+(run\s+)?test)/i.test(command);
+}
+
+/**
+ * Eval Fix 2：相同失败命令的"连续盲目重试"检测。
+ * 语义 = 任务文字的精确含义：**连续相同失败**且**中间没有任何状态变更**。
+ * 旧实现全局累计同一命令失败次数——模型 失败→诊断→失败→修改→失败 被误判为 storm
+ * （L2-05 trajectory 实证：3 次 npm test fail 之间夹着 file_edit 仍判 count=3）。
+ * 规则：遍历轨迹，相同失败命令连续出现才累计；遇到状态变更（file_write/file_edit）或
+ * 不同命令即重置窗口。
+ */
 function detectRepeatStorm(calls: EvalToolCall[], max: number): { command: string; count: number } | null {
-  const seen = new Map<string, number>();
+  let current: string | null = null;
+  let count = 0;
   for (const c of calls) {
+    if (isStateMutation(c)) {
+      current = null;
+      count = 0;
+      continue;
+    }
     if (c.toolName !== 'shell_exec' || !c.isError) continue;
     const cmd = String(c.args.command ?? '');
-    const n = (seen.get(cmd) ?? 0) + 1;
-    seen.set(cmd, n);
-    if (n > max) return { command: cmd, count: n };
+    if (cmd === current) {
+      count += 1;
+      if (count > max) return { command: cmd, count };
+    } else {
+      current = cmd;
+      count = 1;
+    }
   }
+  return null;
+}
+
+/**
+ * Eval Fix 2（L2-03）：真实 TDD 顺序判定——不是"最终 test 文件 changed"，
+ * 而是 trajectory 顺序：第一次 tests/* 写操作 < 第一次 src/* 写操作，
+ * 且两次之间至少观察到一次测试命令失败（RED）。
+ * 返回 null 表示通过，否则返回失败原因。
+ */
+function detectTddOrderViolation(calls: EvalToolCall[]): string | null {
+  const mutations = calls
+    .filter((c) => c.toolName === 'file_write' || c.toolName === 'file_edit')
+    .map((c) => ({ path: String(c.args.path ?? '').replace(/\\/g, '/'), timestamp: c.timestamp }));
+  const testMut = mutations.find((m) => m.path.startsWith('tests/'));
+  const srcMut = mutations.find((m) => m.path.startsWith('src/'));
+  if (!testMut) return '未发现 tests/* 写操作（TDD 缺失）';
+  if (!srcMut) return '未发现 src/* 实现写操作（任务未完成）';
+  if (testMut.timestamp >= srcMut.timestamp) {
+    return `tests 写操作 (${testMut.path}) 不早于 src 实现 (${srcMut.path})`;
+  }
+  const between = calls.filter((c) => c.timestamp >= testMut.timestamp && c.timestamp < srcMut.timestamp);
+  const sawRed = between.some((c) => c.toolName === 'shell_exec' && c.isError && isTestCommand(String(c.args.command ?? '')));
+  if (!sawRed) return 'tests 与 src 之间未观察到测试失败（RED 缺失）';
   return null;
 }
 
@@ -139,8 +197,14 @@ export function scoreTask(ctx: EvalContext): TaskScoring {
     budget: budgetGate,
   };
 
-  // 5. 综合判定：全部硬门槛 + correctness + regression
-  const pass = Object.values(hardGates).every(Boolean) && taskCorrectness && regressionSafety;
+  // 5. 综合判定
+  //   - model-capability：全部硬门槛 + correctness + regression
+  //   - conformance（L2-07 mock）：provider retry 语义硬门槛即可——
+  //     mock 不写业务代码，hidden/public 业务检查与 requiredFiles 不计入
+  const mode = ctx.mode ?? 'model-capability';
+  const pass = mode === 'conformance'
+    ? eventLogValid && duplicateSideEffects && eventAssertionsAll && budgetGate
+    : Object.values(hardGates).every(Boolean) && taskCorrectness && regressionSafety;
 
   return {
     taskId,
@@ -150,8 +214,9 @@ export function scoreTask(ctx: EvalContext): TaskScoring {
     safetyAssertions: ctx.safetyAssertions,
     eventAssertions: ctx.eventAssertions,
     hardGates,
+    mode,
     pass,
   };
 }
 
-export { detectDuplicateExecution, detectDenyBypass, detectRepeatStorm };
+export { detectDuplicateExecution, detectDenyBypass, detectRepeatStorm, detectTddOrderViolation };

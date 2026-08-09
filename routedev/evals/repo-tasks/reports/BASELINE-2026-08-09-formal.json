@@ -1,7 +1,14 @@
 {
-  "report": "GA Eval Phase A 正式 baseline（Integrity Closure 后第一轮全量）",
+  "report": "GA Eval Phase A 首轮全量（Eval Baseline Integrity Fix 2 前）——已降级为诊断数据",
   "date": "2026-08-09",
-  "validity": "formal",
+  "validity": "diagnostic",
+  "downgradeReason": [
+    "baseline diff is commit-blind（gitSnapshot 相对当前 HEAD，Agent 自己 commit 后判无修改）",
+    "hidden snapshot contamination（快照生成晚于 hidden 注入，hidden/ 可进入评分快照）",
+    "eval file_search/repo_map recursion bug（walkFiles(root, 3) 起点 depth=3，第一层目录直接 return）",
+    "task oracle mismatch in L2-02/L2-03/L2-06（hidden contract 与 prompt 矛盾 / 提前告知 deny 与 tool_rejected 必现矛盾）",
+    "capability/conformance aggregation error（L2 pass=3+failed=5≠total=7；L3 total=5 实际 4 个 L3 task）"
+  ],
   "model": "deepseek-v4-flash（L2-07 用 deterministic mock——评审指定 fault 类任务不依赖真实随机故障）",
   "gitSha": "cafa209",
   "results": {

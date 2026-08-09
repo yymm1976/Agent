@@ -23,7 +23,9 @@ describe('结构化 timeout 契约（hidden）', () => {
   });
 
   it('调用链（bootstrap/server）消费结构化字段', () => {
-    const s = bootstrap({ name: 'svc', timeout: { seconds: 9} });
-    expect(s.timeoutSeconds).toBe(9);
+    // Eval Fix 2：prompt 要求全链迁移（type/loader/bootstrap/server/tests 一致）——
+    // server 边界同样消费 timeout: { seconds }，不再要求旧 scalar timeoutSeconds
+    const s = bootstrap({ name: 'svc', timeout: { seconds: 9 } });
+    expect(s.timeout.seconds).toBe(9);
   });
 });

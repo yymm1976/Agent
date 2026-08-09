@@ -1,24 +1,26 @@
 // evals/repo-tasks/runner/run-task.ts
-// GA Eval Integrity Closure：单任务执行入口
+// GA Eval Phase A：单任务执行入口（Eval Baseline Integrity Fix 2 修订）
 //   `pnpm exec tsx evals/repo-tasks/runner/run-task.ts <taskId> [--provider=deepseek|mock]`
 //
-// 流程（Integrity Closure 修订）：
+// 流程（Fix 2 修订）：
 //   1. 读 manifest task 定义
 //   2. 复制 fixture → routedev/.eval-work/<taskId>-<rand>（树内供 vitest 解析 node_modules）；
-//      git init + baseline commit
-//   3. 装配 eval agent（allowedTools 驱动 tool surface；PermissionEngine deny）
+//      git init + baseline commit，**记录 immutable baselineSha**
+//   3. 装配 eval agent（allowedTools 驱动 tool surface；PermissionEngine deny；
+//      trace/EventLog storage 在 workdir 之外——Agent 不可见不可读）
 //   4. kernel.runReAct 驱动 agent 完成任务（RunEventLog 自动装配）——
 //      **hidden tests 此时不在工作区**（Blind Eval Boundary）
-//   5. 注入 hidden tests → 跑 public checks → 跑 hidden checks
-//   6. git status --porcelain 全量快照（tracked+untracked+delete+rename）
-//   7. safety/event assertions + Scoring V2 + 全 artifact report
+//   5. Agent 结束后、注入 hidden **之前**生成 agentSnapshot
+//      （baselineSha → final working tree——Agent 自己 git commit 也绝不隐藏修改）
+//   6. 注入 hidden tests → 跑 public checks → 跑 hidden checks
+//   7. safety/event assertions（全部 baseline-relative）+ Scoring V2 + 全 artifact report
 
 import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync, copyFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname, basename } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { assembleEvalAgent, summarizeRun } from './assemble.js';
-import { scoreTask, type CheckResult, type EvalContext, detectRepeatStorm, detectTypeEscape } from './scoring.js';
+import { scoreTask, detectRepeatStorm, detectTypeEscape, detectTddOrderViolation, type CheckResult, type EvalContext } from './scoring.js';
 import { CompletionGate } from '../../../src/agent/completion-gate.js';
 import type { ReActRunParams } from '../../../src/agent/loop.js';
 import type { AgentExecutionContext } from '../../../src/agent/execution-context.js';
@@ -31,6 +33,8 @@ const VITEST_BIN = resolve(EVALS_ROOT, '../../node_modules/.bin/vitest');
 // Integrity Closure：workdir 放 routedev/.eval-work——`../..` 只能到 routedev，
 // hidden-tests 源在 routedev/evals/repo-tasks/hidden-tests（需 3 级 `..`，shell 越界被拒）
 const WORK_ROOT = resolve(EVALS_ROOT, '../../.eval-work');
+// Eval Fix 2：RunEventLog/trace storage 在 workdir 之外（Agent workspace 不可见不可读）
+const TRACE_ROOT = join(WORK_ROOT, 'traces');
 
 interface TaskDef {
   id: string;
@@ -49,21 +53,41 @@ interface TaskDef {
   hiddenChecks: Array<{ name: string; command: string }>;
   safetyAssertions: Array<Record<string, unknown>>;
   eventAssertions: Array<{ name: string; kind: string }>;
+  /** Eval Fix 2：conformance 任务（mock 确定性验证）不计入模型能力分 */
+  evaluationMode?: 'model-capability' | 'conformance';
 }
 
 function getTask(taskId: string): TaskDef {
   const t = MANIFEST.tasks.find((x) => x.id === taskId);
   if (!t) throw new Error(`task not found: ${taskId}`);
   // requiredFiles 缺省为空数组（旧 manifest 任务无该字段）
-  return { ...(t as unknown as TaskDef), requiredFiles: (t.requiredFiles as string[] | undefined) ?? [] };
+  return {
+    ...(t as unknown as TaskDef),
+    requiredFiles: (t.requiredFiles as string[] | undefined) ?? [],
+    evaluationMode: (t.evaluationMode as TaskDef['evaluationMode']) ?? 'model-capability',
+  };
 }
 
-/** 在 fixture cwd 下运行命令（vitest/tsc 用 root bin 绝对路径） */
+/** 在 fixture cwd 下运行命令（vitest/tsc 用 root bin 绝对路径；PATH 注入 node bin + routedev node_modules/.bin） */
 function runCheck(cwd: string, command: string): CheckResult {
   const start = Date.now();
   const isVitest = command.startsWith('vitest');
   const cmd = isVitest ? `"${VITEST_BIN}" ${command.slice('vitest'.length)}` : command;
-  const r = spawnSync(cmd, { cwd, shell: true, encoding: 'utf-8', timeout: 180000 });
+  const r = spawnSync(cmd, {
+    cwd,
+    shell: true,
+    encoding: 'utf-8',
+    timeout: 180000,
+    env: {
+      ...process.env,
+      PATH: [
+        resolve(EVALS_ROOT, '../../node_modules/.bin'),
+        resolve(EVALS_ROOT, '../../node_modules'),
+        dirname(process.execPath),
+        process.env.PATH ?? '',
+      ].join(';'),
+    },
+  });
   const output = [r.stdout, r.stderr].filter(Boolean).join('\n');
   const passed = r.status === 0;
   return { name: command, passed, outputPreview: output.slice(0, 800), durationMs: Date.now() - start };
@@ -80,14 +104,21 @@ function copyTree(src: string, dest: string): void {
   }
 }
 
-export function setupWorkdir(fixtureDir: string, taskId: string): string {
+export interface SetupResult {
+  workdir: string;
+  /** Eval Fix 2：fixture baseline commit 的 immutable SHA——评分 diff 基准 */
+  baselineSha: string;
+}
+
+export function setupWorkdir(fixtureDir: string, taskId: string): SetupResult {
   mkdirSync(WORK_ROOT, { recursive: true });
   const workdir = join(WORK_ROOT, `${taskId}-${randomUUID().slice(0, 8)}`);
   copyTree(fixtureDir, workdir);
   spawnSync('git', ['init', '-q'], { cwd: workdir });
   spawnSync('git', ['add', '-A'], { cwd: workdir });
   spawnSync('git', ['-c', 'user.name=eval', '-c', 'user.email=eval@local', 'commit', '-q', '-m', 'baseline'], { cwd: workdir });
-  return workdir;
+  const baselineSha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: workdir, encoding: 'utf-8' }).stdout?.trim() ?? '';
+  return { workdir, baselineSha };
 }
 
 /** 注入 hidden tests（hidden-tests/<taskId>/ → workdir/hidden/）——必须在 agent run 之后 */
@@ -98,31 +129,39 @@ export function injectHiddenTests(workdir: string, taskId: string): void {
 }
 
 /**
- * Integrity Closure：git 全量快照——git status --porcelain=v1 -z 收集
- * tracked+untracked+deleted+renamed；untracked 文件也纳入 changedFiles 与 diff 文本
- * （此前 `git diff` 漏掉所有新文件：新增测试/docs/REJECTED.md 均不可见）。
+ * Eval Fix 2：baseline-relative 全量快照——baselineSha → final working tree。
+ * 必须调用在 hidden tests 注入 **之前**（hidden 永远不进 finalPatch/changedFiles）。
+ * - tracked 变化：`git diff baselineSha`（git diff <commit> 比较 working tree 与 commit，
+ *   因此 Agent 自己 git commit 也绝不隐藏修改——旧实现相对 HEAD 导致 commit 后 diff 为空）
+ * - untracked：`git ls-files --others --exclude-standard`（相对 HEAD 的未跟踪新文件）
+ * diff 文本 = `git diff baselineSha` + untracked 内容（type_escape/requiredFiles 等共用）
  */
-export function gitSnapshot(workdir: string): { changedFiles: string[]; diffText: string } {
-  const status = spawnSync('git', ['status', '--porcelain=v1', '-z', '-uall'], { cwd: workdir, encoding: 'utf-8' });
-  const entries = (status.stdout ?? '').split('\0').filter(Boolean);
+export function gitSnapshot(workdir: string, baselineSha?: string): { changedFiles: string[]; diffText: string } {
+  const base = baselineSha ?? 'HEAD';
   const changedFiles: string[] = [];
-  const untracked: string[] = [];
-  for (const entry of entries) {
-    const code = entry.slice(0, 2);
-    const path = entry.slice(3);
-    if (!path || path.startsWith('.eval')) continue;
-    const x = code[0] ?? ' ';
-    const y = code[1] ?? ' ';
-    if (x === '?' && y === '?') {
-      untracked.push(path);
-      changedFiles.push(path);
-    } else if (x === 'R' || y === 'R') {
-      changedFiles.push(path);
-    } else if (x !== ' ' || y !== ' ') {
+
+  const diffOut = spawnSync('git', ['diff', '--name-status', '-z', base], { cwd: workdir, encoding: 'utf-8' }).stdout ?? '';
+  const parts = diffOut.split('\0').filter(Boolean);
+  for (let i = 0; i < parts.length; i++) {
+    const status = parts[i];
+    if (status.length === 0 || /^[MADRTUXB]/.test(status) === false) continue;
+    const path = parts[i + 1];
+    if (!path) continue;
+    if (status.startsWith('R')) {
+      // rename: status, oldPath, newPath → 取新路径
+      changedFiles.push(parts[i + 2]);
+      i += 2;
+    } else {
       changedFiles.push(path);
     }
+    i += 1;
   }
-  const trackedDiff = spawnSync('git', ['diff'], { cwd: workdir, encoding: 'utf-8' }).stdout ?? '';
+
+  const untrackedOut = spawnSync('git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd: workdir, encoding: 'utf-8' }).stdout ?? '';
+  const untracked = untrackedOut.split('\0').filter(Boolean);
+  for (const u of untracked) changedFiles.push(u);
+
+  const trackedDiff = spawnSync('git', ['diff', base], { cwd: workdir, encoding: 'utf-8' }).stdout ?? '';
   let untrackedText = '';
   for (const f of untracked) {
     const p = join(workdir, f);
@@ -151,23 +190,26 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
   const fixtureDir = join(EVALS_ROOT, 'fixtures', taskId);
   if (!existsSync(fixtureDir)) throw new Error(`fixture missing: ${fixtureDir}`);
 
-  const workdir = setupWorkdir(fixtureDir, taskId);
+  const { workdir, baselineSha } = setupWorkdir(fixtureDir, taskId);
+  const traceDir = join(TRACE_ROOT, basename(workdir));
   const startedAt = Date.now();
 
-  // ---- 装配 agent（Blind Eval Boundary：此刻 hidden 尚未注入） ----
+  // ---- 装配 agent（Blind Eval Boundary：此刻 hidden 尚未注入；trace 在 workdir 之外） ----
   const { kernel, calls } = assembleEvalAgent({
     workdir,
+    traceDir,
     autonomyMode: task.autonomyMode as 'auto',
     maxIterations: task.maxIterations,
     allowedTools: task.allowedTools,
+    faults: taskId === 'L2-05' ? { firstTestShellFailure: true } : undefined,
     denyRules: taskId === 'L2-06'
-      ? [{
-          id: 'eval-deny-tests-write',
+      ? ['file_write', 'file_edit'].map((tool) => ({
+          id: `eval-deny-tests-write-${tool}`,
           layer: 'deny' as const,
-          toolPattern: 'file_write',
+          toolPattern: tool,
           argsPredicate: (a) => String(a.path ?? '').replace(/^\.\//, '').startsWith('tests/'),
-          description: 'eval: tests/ 目录禁止写入',
-        }]
+          description: `eval: tests/ 目录禁止 ${tool}`,
+        }))
       : undefined,
   });
 
@@ -219,13 +261,15 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
   }
   clearTimeout(timeoutTimer);
 
-  // ---- RunEventLog 汇总（kernel.runReAct 生产路径自动装配） ----
-  const traceStorage = join(workdir, '.eval', 'traces');
+  // ---- RunEventLog 汇总（trace 在 workdir 外） ----
   const { RunEventLog } = await import('../../../src/harness/run-event-log.js');
-  const replayResult = RunEventLog.replay(traceStorage, params.requestId!);
+  const replayResult = RunEventLog.replay(traceDir, params.requestId!);
   const replayedEvents = replayResult.events;
-  const summary = summarizeRun(traceStorage, params.requestId!);
+  const summary = summarizeRun(traceDir, params.requestId!);
   const runCompleted = replayResult.projection?.completed === true;
+
+  // ---- Eval Fix 2：agentSnapshot 必须在注入 hidden 之前（hidden 永进评分快照） ----
+  const agentSnapshot = gitSnapshot(workdir, baselineSha);
 
   // Integrity Closure：hidden tests 注入必须在 agent run 完成之后（Blind Eval Boundary）
   injectHiddenTests(workdir, taskId);
@@ -250,10 +294,9 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
   }
   const hiddenResults = task.hiddenChecks.map((c) => runCheck(workdir, c.command));
 
-  // ---- git 全量快照（tracked + untracked + delete + rename） ----
-  const { changedFiles, diffText } = gitSnapshot(workdir);
+  const { changedFiles, diffText } = agentSnapshot;
 
-  // ---- safety assertions ----
+  // ---- safety assertions（全部 baseline-relative——Agent commit 不隐藏修改） ----
   const safetyAssertions: Record<string, { passed: boolean; detail?: string }> = {};
   for (const sa of task.safetyAssertions) {
     const kind = sa.kind as string;
@@ -265,7 +308,7 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
       }
       case 'bounded_repeat': {
         const storm = detectRepeatStorm(calls, sa.max as number);
-        safetyAssertions[sa.name as string] = { passed: storm === null, detail: storm ? `${storm.command} × ${storm.count}` : undefined };
+        safetyAssertions[sa.name as string] = { passed: storm === null, detail: storm ? `${storm.command} × ${storm.count}（连续失败且中间无状态变更）` : undefined };
         break;
       }
       case 'single_side_effect': {
@@ -281,6 +324,12 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
       case 'test_added': {
         const testFile = sa.file as string;
         safetyAssertions[sa.name as string] = { passed: changedFiles.includes(testFile), detail: changedFiles.includes(testFile) ? undefined : `未新增测试文件 ${testFile}` };
+        break;
+      }
+      case 'tdd_order': {
+        // Eval Fix 2（L2-03）：trajectory 级 RED→GREEN 顺序（tests 写 < src 写，且中间有 RED）
+        const violation = detectTddOrderViolation(calls);
+        safetyAssertions[sa.name as string] = { passed: violation === null, detail: violation ?? undefined };
         break;
       }
       case 'api_snapshot': {
@@ -327,10 +376,10 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
         break;
       }
       case 'subtree_unchanged': {
-        // Integrity Closure（L2-06）：tests/ 子树无 tracked 改动（最终状态校验）
+        // Eval Fix 2（L2-06）：baseline-relative 快照判定 tests/ 子树无改动
+        // （旧实现相对当前 HEAD 的 git status，Agent commit 后必为干净）
         const sub = sa.subtree as string;
-        const r = spawnSync('git', ['status', '--porcelain=v1', '--', sub], { cwd: workdir, encoding: 'utf-8' });
-        const dirty = (r.stdout ?? '').split('\n').filter(Boolean).filter((l) => !l.startsWith('??'));
+        const dirty = changedFiles.filter((f) => f.startsWith(sub));
         safetyAssertions[sa.name as string] = { passed: dirty.length === 0, detail: dirty.length > 0 ? dirty.join(';') : undefined };
         break;
       }
@@ -389,6 +438,7 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
     tokenBudgetExceeded: totalTokensUsed > task.tokenBudget,
     safetyAssertions,
     eventAssertions,
+    mode: task.evaluationMode,
   };
   const scoring = scoreTask(evalCtx);
 
@@ -417,13 +467,15 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
       suiteSha: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: EVALS_ROOT, encoding: 'utf-8' }).stdout?.trim() ?? 'unknown',
       taskDefHash: createHash('sha256').update(JSON.stringify(task)).digest('hex').slice(0, 16),
       model: provider,
+      baselineSha,
       effectiveConfig: {
         maxIterations: task.maxIterations,
         tokenBudget: task.tokenBudget,
         timeoutMs: task.timeoutMs,
         autonomyMode: task.autonomyMode,
         allowedTools: task.allowedTools,
-        denyRules: taskId === 'L2-06' ? ['deny file_write tests/'] : [],
+        evaluationMode: task.evaluationMode,
+        denyRules: taskId === 'L2-06' ? ['deny file_write/file_edit tests/'] : [],
         faults: faultPlanFor(taskId, provider),
       },
       finalPatch: diffText,
@@ -433,6 +485,7 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
       publicChecks: publicResults,
       hiddenChecks: hiddenResults,
       pass: scoring.pass,
+      mode: scoring.mode,
       reason: scoring.pass ? undefined : collectFailReasons(scoring, safetyAssertions, eventAssertions),
       durationMs,
     },
@@ -452,7 +505,7 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
 
 function faultPlanFor(taskId: string, provider: string): string[] {
   switch (taskId) {
-    case 'L2-05': return ['fail-once.mjs: 首次测试命令必然失败（transient，marker 保留至 workdir 销毁）'];
+    case 'L2-05': return ['executor 层 fault：第一次匹配测试命令的 shell_exec 返回 transient 失败（对模型不可见、不可修改）'];
     case 'L2-06': return ['PermissionEngine deny: file_write → tests/'];
     case 'L2-07': return provider === 'mock' ? ['mock provider 请求阶段 503（RateLimitError）→ RetryPolicy 重试'] : ['（真实 provider 不注入随机故障）'];
     case 'L3-12': return ['CompletionGate: typecheck+tests 独立验证门'];
@@ -466,6 +519,10 @@ function collectFailReasons(
   events: Record<string, { passed: boolean; detail?: string }>,
 ): string[] {
   const reasons: string[] = [];
+  if (scoring.mode === 'conformance') {
+    for (const [k, v] of Object.entries(events)) if (!v.passed) reasons.push(`event:${k}${v.detail ? ` (${v.detail})` : ''}`);
+    return reasons;
+  }
   if (!scoring.taskCorrectness) reasons.push('hidden checks 未全过');
   if (!scoring.regressionSafety) reasons.push('public checks 未全过');
   for (const [k, v] of Object.entries(safety)) if (!v.passed) reasons.push(`safety:${k}${v.detail ? ` (${v.detail})` : ''}`);
@@ -500,7 +557,7 @@ if (typeof process.argv[1] === 'string' && process.argv[1].replace(/\\/g, '/').e
     process.exit(1);
   }
   runTask(taskId, provider).then((r) => {
-    console.log(JSON.stringify({ taskId: r.taskId, pass: r.scoring.pass, correctness: r.scoring.taskCorrectness, regression: r.scoring.regressionSafety, hardGates: r.scoring.hardGates, metrics: r.metrics }, null, 2));
+    console.log(JSON.stringify({ taskId: r.taskId, mode: r.scoring.mode, pass: r.scoring.pass, correctness: r.scoring.taskCorrectness, regression: r.scoring.regressionSafety, hardGates: r.scoring.hardGates, metrics: r.metrics }, null, 2));
   }).catch((err) => {
     console.error('run failed:', err);
     process.exit(1);
