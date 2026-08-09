@@ -148,6 +148,26 @@ describe('Effect-aware permission kernel', () => {
     expect(result.matchedRuleId).toBe('eval-protect-tests');
   });
 
+  it('resolves shell effects relative to the final working directory', () => {
+    const root = workspace();
+    const outside = mkdtempSync(join(tmpdir(), 'routedev-effects-outside-'));
+    const alias = join(root, 'outside-alias');
+    try {
+      symlinkSync(outside, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      return;
+    }
+
+    const result = new EffectResolver().resolve('shell_exec', {
+      command: 'echo x > target.txt',
+      workingDirectory: 'outside-alias',
+    }, { workingDirectory: root });
+
+    const expected = join(realpathSync(outside), 'target.txt');
+    expect(result.effects[0]?.canonicalResource).toBe(process.platform === 'win32' ? expected.toLowerCase() : expected);
+    expect(result.effects[0]?.relativeResource).toMatch(/^\.\./);
+  });
+
   it('preflights the complete parallel batch before returning approved calls', () => {
     const root = workspace();
     const engine = new PermissionEngine();
@@ -230,5 +250,30 @@ describe('Effect-aware permission kernel', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('执行边界被拒绝');
     expect(existsSync(join(root, 'src', 'spawned.txt'))).toBe(false);
+  });
+
+  it('rejects a shell working directory that escapes through a link', async () => {
+    const root = workspace();
+    const outside = mkdtempSync(join(tmpdir(), 'routedev-shell-outside-'));
+    const alias = join(root, 'outside-alias');
+    try {
+      symlinkSync(outside, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      return;
+    }
+
+    const result = await new ShellExecTool().execute({
+      command: 'echo should-not-run > escaped.txt',
+      workingDirectory: 'outside-alias',
+    }, {
+      workingDirectory: root,
+      allowedDirectories: [root],
+      environment: {},
+      timeoutMs: 1000,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('不在允许范围内');
+    expect(existsSync(join(outside, 'escaped.txt'))).toBe(false);
   });
 });

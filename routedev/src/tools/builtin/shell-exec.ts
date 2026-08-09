@@ -12,6 +12,7 @@ import { logger } from '../../utils/logger.js';
 import type { CommandSandbox } from '../../security/sandbox.js';
 // Phase 96 P1-5：ANSI 去除 + 二进制净化 + 截断元数据
 import { stripAnsi, sanitizeBinaryOutput, computeTruncationMetadata, type TruncationResult } from '../../utils/ansi-stripper.js';
+import { resolveSecurePath } from '../security-enhanced.js';
 
 const MAX_STDOUT = 100 * 1024;
 const MAX_STDERR = 50 * 1024;
@@ -230,20 +231,14 @@ export class ShellExecTool implements ITool {
     const rawTimeout = (args.timeoutMs as number) ?? context.timeoutMs ?? 30000;
     const timeoutMs = Math.min(rawTimeout, MAX_TIMEOUT_MS);
 
-    // C3 修复：校验 cwd 在允许目录内，防止通过绝对路径 workingDirectory 逃逸到任意目录
+    // 校验逻辑路径和真实路径，防止工作区内 symlink/junction 把 cwd 指向外部。
     const allowedDirs = context.allowedDirectories ?? [context.workingDirectory];
-    // F-039：Windows 平台路径大小写不敏感，比较前用 path.resolve + toLowerCase() 归一化
-    const normalizedCwd = path.resolve(cwd).toLowerCase();
-    const isCwdAllowed = allowedDirs.some(dir => {
-      const normalizedDir = path.resolve(dir).toLowerCase();
-      const rel = path.relative(normalizedDir, normalizedCwd);
-      return !rel.startsWith('..') && !path.isAbsolute(rel);
-    });
-    if (!isCwdAllowed) {
+    const secureCwd = resolveSecurePath(cwd, allowedDirs);
+    if (!secureCwd.allowed) {
       return {
         success: false,
         output: '',
-        error: `工作目录 "${args.workingDirectory}" 不在允许范围内`,
+        error: `工作目录 "${args.workingDirectory}" 不在允许范围内: ${secureCwd.reason ?? '真实路径越界'}`,
         durationMs: 0,
       };
     }
@@ -266,7 +261,7 @@ export class ShellExecTool implements ITool {
     // shell 命令默认不重试（maxRetries=0），仅启用熔断器防止连续失败
     try {
       return await resilientExecute(
-        () => this.runCommand(command, cwd, timeoutMs, context),
+        () => this.runCommand(command, secureCwd.realPath, timeoutMs, context),
         this.retry,
         this.circuit,
       );

@@ -30,5 +30,6 @@ export interface EffectResolution {
 
 export interface EffectResolveContext {
   workingDirectory: string;
+  /** Stable workspace identity when a tool executes from a nested working directory. */
+  workspaceRoot?: string;
 }
-

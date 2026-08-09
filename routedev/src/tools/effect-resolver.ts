@@ -31,7 +31,7 @@ function portablePath(value: string): string {
 }
 
 /** Resolve links and, for a new target, resolve its nearest existing parent. */
-export function canonicalizeResource(resource: string, workingDirectory: string): {
+export function canonicalizeResource(resource: string, workingDirectory: string, workspaceRootInput = workingDirectory): {
   canonicalResource: string;
   relativeResource: string;
 } {
@@ -49,16 +49,20 @@ export function canonicalizeResource(resource: string, workingDirectory: string)
 
   let workspaceRoot: string;
   try {
-    workspaceRoot = identity(realpathSync.native(path.resolve(workingDirectory)));
+    workspaceRoot = identity(realpathSync.native(path.resolve(workspaceRootInput)));
   } catch {
-    workspaceRoot = identity(path.resolve(workingDirectory));
+    workspaceRoot = identity(path.resolve(workspaceRootInput));
   }
   const relativeResource = path.relative(workspaceRoot, canonicalResource).replace(/\\/g, '/') || '.';
   return { canonicalResource, relativeResource };
 }
 
 function resourceEffect(kind: EffectKind, resource: string, context: EffectResolveContext): ResourceEffect {
-  return { kind, resource, ...canonicalizeResource(resource, context.workingDirectory) };
+  return {
+    kind,
+    resource,
+    ...canonicalizeResource(resource, context.workingDirectory, context.workspaceRoot ?? context.workingDirectory),
+  };
 }
 
 function resolution(classification: EffectClassification, effects: ResourceEffect[]): EffectResolution {
@@ -243,7 +247,13 @@ export class EffectResolver {
       }
       case 'shell_exec':
         return typeof args.command === 'string'
-          ? analyzeShell(args.command, context)
+          ? analyzeShell(args.command, {
+              ...context,
+              workingDirectory: typeof args.workingDirectory === 'string'
+                ? path.resolve(context.workingDirectory, portablePath(args.workingDirectory))
+                : context.workingDirectory,
+              workspaceRoot: context.workspaceRoot ?? context.workingDirectory,
+            })
           : resolution('OPAQUE_MAY_WRITE', [{ kind: 'opaque_may_write' }]);
       case 'git_op': {
         const operation = String(args.operation ?? '').toLowerCase();
