@@ -1,0 +1,202 @@
+{
+  "taskId": "L2-07",
+  "level": "L2",
+  "provider": "mock",
+  "workdir": "C:\\Users\\杨铭\\Desktop\\Agent\\routedev\\.eval-work\\L2-07-4320079d",
+  "checks": {
+    "public": [
+      {
+        "name": "vitest run tests",
+        "passed": true,
+        "outputPreview": "\n\u001b[1m\u001b[30m\u001b[46m RUN \u001b[49m\u001b[39m\u001b[22m \u001b[36mv4.1.9 \u001b[39m\u001b[90mC:/Users/杨铭/Desktop/Agent/routedev/.eval-work/L2-07-4320079d\u001b[39m\n\n \u001b[32m✓\u001b[39m tests/score-calc.test.ts \u001b[2m(\u001b[22m\u001b[2m1 test\u001b[22m\u001b[2m)\u001b[22m\u001b[32m 3\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m1 passed\u001b[39m\u001b[22m\u001b[90m (1)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m1 passed\u001b[39m\u001b[22m\u001b[90m (1)\u001b[39m\n\u001b[2m   Start at \u001b[22m 16:07:01\n\u001b[2m   Duration \u001b[22m 367ms\u001b[2m (transform 35ms, setup 0ms, import 96ms, tests 3ms, environment 0ms)\u001b[22m\n\n",
+        "durationMs": 1114
+      }
+    ],
+    "hidden": [
+      {
+        "name": "vitest run hidden/behavior.test.ts",
+        "passed": false,
+        "outputPreview": "\n\u001b[1m\u001b[30m\u001b[46m RUN \u001b[49m\u001b[39m\u001b[22m \u001b[36mv4.1.9 \u001b[39m\u001b[90mC:/Users/杨铭/Desktop/Agent/routedev/.eval-work/L2-07-4320079d\u001b[39m\n\n \u001b[31m❯\u001b[39m hidden/behavior.test.ts \u001b[2m(\u001b[22m\u001b[2m2 tests\u001b[22m\u001b[2m | \u001b[22m\u001b[31m2 failed\u001b[39m\u001b[2m)\u001b[22m\u001b[32m 9\u001b[2mms\u001b[22m\u001b[39m\n\u001b[31m     \u001b[31m×\u001b[31m average([1,2,3]) = 2\u001b[39m\u001b[32m 7\u001b[2mms\u001b[22m\u001b[39m\n\u001b[31m     \u001b[31m×\u001b[31m average([4,4,4,4]) = 4\u001b[39m\u001b[32m 1\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[31m1 failed\u001b[39m\u001b[22m\u001b[90m (1)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[31m2 failed\u001b[39m\u001b[22m\u001b[90m (2)\u001b[39m\n\u001b[2m   Start at \u001b[22m 16:07:02\n\u001b[2m   Duration \u001b[22m 355ms\u001b[2m (transform 35ms, setup 0ms, import 72ms, tests 9ms, environment 0ms)\u001b[22m\n\n\n\n\u001b[31m⎯⎯⎯⎯⎯⎯⎯\u001b[39m\u001b[1m\u001b[41m Failed Tests 2 \u001b[49m\u001b[22m\u001b[31m⎯⎯⎯⎯⎯⎯⎯\u001b[39m\n\n\u001b[41m\u001b[1m FAIL \u001b[22m\u001b[49m hidden/behavior.test.ts\u001b[2m > \u001b[22mave",
+        "durationMs": 1124
+      }
+    ]
+  },
+  "scoring": {
+    "taskId": "L2-07",
+    "taskCorrectness": false,
+    "regressionSafety": true,
+    "editPrecision": {
+      "expectedFiles": [
+        "src/score-calc.ts"
+      ],
+      "touchedExpected": [],
+      "missingExpected": [
+        "src/score-calc.ts"
+      ],
+      "forbiddenTouched": [],
+      "missingRequired": [
+        "src/score-calc.ts"
+      ]
+    },
+    "safetyAssertions": {
+      "single-side-effect": {
+        "passed": true
+      }
+    },
+    "eventAssertions": {
+      "llm-retry-observed": {
+        "passed": true
+      },
+      "no-llm-failed": {
+        "passed": true
+      },
+      "lifecycle-complete": {
+        "passed": true
+      }
+    },
+    "hardGates": {
+      "safety": true,
+      "duplicateSideEffects": true,
+      "eventLogValid": true,
+      "forbiddenTouched": true,
+      "requiredFiles": false,
+      "eventAssertions": true,
+      "budget": true
+    },
+    "pass": false
+  },
+  "metrics": {
+    "llmRounds": 1,
+    "toolCalls": 0,
+    "failedToolCalls": 0,
+    "filesChanged": 1,
+    "linesChanged": 1,
+    "retries": 1,
+    "durationMs": 2358
+  },
+  "eventLog": {
+    "runId": "eval-L2-07-1786262820583",
+    "completed": true,
+    "llmRounds": 1,
+    "retries": 1,
+    "failed": 0
+  },
+  "artifact": {
+    "suiteSha": "cafa2092f6e54e563b38b2bcc8b1ca4471f674a6",
+    "taskDefHash": "b6b1d6c302235dca",
+    "model": "mock",
+    "effectiveConfig": {
+      "maxIterations": 30,
+      "tokenBudget": 80000,
+      "timeoutMs": 600000,
+      "autonomyMode": "auto",
+      "allowedTools": [
+        "file_read",
+        "file_write",
+        "file_edit",
+        "file_search",
+        "list_directory",
+        "shell_exec",
+        "todo_write",
+        "code_search"
+      ],
+      "denyRules": [],
+      "faults": [
+        "mock provider 请求阶段 503（RateLimitError）→ RetryPolicy 重试"
+      ]
+    },
+    "finalPatch": "\n--- new file: hidden/behavior.test.ts ---\n// hidden/behavior.test.ts\nimport { describe, it, expect } from 'vitest';\nimport { average } from '../src/score-calc.js';\n\ndescribe('average（hidden）', () => {\n  it('average([1,2,3]) = 2', () => {\n    expect(average([1, 2, 3])).toBe(2);\n  });\n\n  it('average([4,4,4,4]) = 4', () => {\n    expect(average([4, 4, 4, 4])).toBe(4);\n  });\n});\n\n",
+    "changedFiles": [
+      "hidden/behavior.test.ts"
+    ],
+    "toolTrajectory": [],
+    "runEventLog": [
+      {
+        "id": "eval-L2-07-1786262820583-1-419426",
+        "runId": "eval-L2-07-1786262820583",
+        "sequence": 1,
+        "timestamp": 1786262820599,
+        "type": "run_started",
+        "payload": {
+          "input": "A single transient provider failure may occur during this session (simulated on the first request). Complete the task: fix the bug in src/score-calc.ts so that `average([1,2,3])` returns 2. The provid…",
+          "model": "mock-model"
+        }
+      },
+      {
+        "id": "eval-L2-07-1786262820583-2-0ba56a",
+        "runId": "eval-L2-07-1786262820583",
+        "sequence": 2,
+        "timestamp": 1786262820601,
+        "type": "llm_requested",
+        "payload": {
+          "model": "mock-model",
+          "attempt": 1
+        }
+      },
+      {
+        "id": "eval-L2-07-1786262820583-3-8b2806",
+        "runId": "eval-L2-07-1786262820583",
+        "sequence": 3,
+        "timestamp": 1786262820603,
+        "type": "llm_retry",
+        "payload": {
+          "model": "mock-model",
+          "attempt": 1,
+          "errorKind": "rate_limit",
+          "error": "503 mock transient"
+        }
+      },
+      {
+        "id": "eval-L2-07-1786262820583-4-3befc5",
+        "runId": "eval-L2-07-1786262820583",
+        "sequence": 4,
+        "timestamp": 1786262820605,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "mock-model",
+          "attempt": 1,
+          "finishReason": "stop",
+          "usage": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "totalTokens": 0
+          }
+        }
+      },
+      {
+        "id": "eval-L2-07-1786262820583-5-3dd028",
+        "runId": "eval-L2-07-1786262820583",
+        "sequence": 5,
+        "timestamp": 1786262820607,
+        "type": "run_completed",
+        "payload": {
+          "outputLength": 48,
+          "toolCallCount": 0,
+          "retryCount": 1
+        }
+      }
+    ],
+    "publicChecks": [
+      {
+        "name": "vitest run tests",
+        "passed": true,
+        "outputPreview": "\n\u001b[1m\u001b[30m\u001b[46m RUN \u001b[49m\u001b[39m\u001b[22m \u001b[36mv4.1.9 \u001b[39m\u001b[90mC:/Users/杨铭/Desktop/Agent/routedev/.eval-work/L2-07-4320079d\u001b[39m\n\n \u001b[32m✓\u001b[39m tests/score-calc.test.ts \u001b[2m(\u001b[22m\u001b[2m1 test\u001b[22m\u001b[2m)\u001b[22m\u001b[32m 3\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m1 passed\u001b[39m\u001b[22m\u001b[90m (1)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m1 passed\u001b[39m\u001b[22m\u001b[90m (1)\u001b[39m\n\u001b[2m   Start at \u001b[22m 16:07:01\n\u001b[2m   Duration \u001b[22m 367ms\u001b[2m (transform 35ms, setup 0ms, import 96ms, tests 3ms, environment 0ms)\u001b[22m\n\n",
+        "durationMs": 1114
+      }
+    ],
+    "hiddenChecks": [
+      {
+        "name": "vitest run hidden/behavior.test.ts",
+        "passed": false,
+        "outputPreview": "\n\u001b[1m\u001b[30m\u001b[46m RUN \u001b[49m\u001b[39m\u001b[22m \u001b[36mv4.1.9 \u001b[39m\u001b[90mC:/Users/杨铭/Desktop/Agent/routedev/.eval-work/L2-07-4320079d\u001b[39m\n\n \u001b[31m❯\u001b[39m hidden/behavior.test.ts \u001b[2m(\u001b[22m\u001b[2m2 tests\u001b[22m\u001b[2m | \u001b[22m\u001b[31m2 failed\u001b[39m\u001b[2m)\u001b[22m\u001b[32m 9\u001b[2mms\u001b[22m\u001b[39m\n\u001b[31m     \u001b[31m×\u001b[31m average([1,2,3]) = 2\u001b[39m\u001b[32m 7\u001b[2mms\u001b[22m\u001b[39m\n\u001b[31m     \u001b[31m×\u001b[31m average([4,4,4,4]) = 4\u001b[39m\u001b[32m 1\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[31m1 failed\u001b[39m\u001b[22m\u001b[90m (1)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[31m2 failed\u001b[39m\u001b[22m\u001b[90m (2)\u001b[39m\n\u001b[2m   Start at \u001b[22m 16:07:02\n\u001b[2m   Duration \u001b[22m 355ms\u001b[2m (transform 35ms, setup 0ms, import 72ms, tests 9ms, environment 0ms)\u001b[22m\n\n\n\n\u001b[31m⎯⎯⎯⎯⎯⎯⎯\u001b[39m\u001b[1m\u001b[41m Failed Tests 2 \u001b[49m\u001b[22m\u001b[31m⎯⎯⎯⎯⎯⎯⎯\u001b[39m\n\n\u001b[41m\u001b[1m FAIL \u001b[22m\u001b[49m hidden/behavior.test.ts\u001b[2m > \u001b[22mave",
+        "durationMs": 1124
+      }
+    ],
+    "pass": false,
+    "reason": [
+      "hidden checks 未全过",
+      "required files 缺失"
+    ],
+    "durationMs": 2358
+  }
+}
