@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -235,6 +235,66 @@ describe('Effect-aware permission kernel', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('执行边界被拒绝');
     expect(readFileSync(target, 'utf8')).toBe('old\n');
+  });
+
+  it('rejects a directory-link swap at the final file-write boundary', async () => {
+    const root = workspace();
+    const safe = join(root, 'safe');
+    const outside = mkdtempSync(join(tmpdir(), 'routedev-write-swap-'));
+    const alias = join(root, 'write-alias');
+    mkdirSync(safe, { recursive: true });
+    try {
+      symlinkSync(safe, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      return;
+    }
+
+    const result = await new FileWriteTool().execute({ path: 'write-alias/escaped.ts', content: 'x' }, {
+      workingDirectory: root,
+      allowedDirectories: [root],
+      environment: {},
+      timeoutMs: 1000,
+      revalidateEffect: async () => {
+        rmSync(alias, { recursive: true, force: true });
+        symlinkSync(outside, alias, process.platform === 'win32' ? 'junction' : 'dir');
+        return { allowed: true };
+      },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('路径在执行边界被拒绝');
+    expect(existsSync(join(outside, 'escaped.ts'))).toBe(false);
+  });
+
+  it('rejects a directory-link swap at the final file-edit boundary', async () => {
+    const root = workspace();
+    const safe = join(root, 'safe-edit');
+    const outside = mkdtempSync(join(tmpdir(), 'routedev-edit-swap-'));
+    const alias = join(root, 'edit-alias');
+    mkdirSync(safe, { recursive: true });
+    writeFileSync(join(safe, 'a.ts'), 'old\n', 'utf8');
+    writeFileSync(join(outside, 'a.ts'), 'outside\n', 'utf8');
+    try {
+      symlinkSync(safe, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      return;
+    }
+
+    const result = await new FileEditTool().execute({ path: 'edit-alias/a.ts', oldString: 'old', newString: 'new' }, {
+      workingDirectory: root,
+      allowedDirectories: [root],
+      environment: {},
+      timeoutMs: 1000,
+      revalidateEffect: async () => {
+        rmSync(alias, { recursive: true, force: true });
+        symlinkSync(outside, alias, process.platform === 'win32' ? 'junction' : 'dir');
+        return { allowed: true };
+      },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('路径在执行边界被拒绝');
+    expect(readFileSync(join(outside, 'a.ts'), 'utf8')).toBe('outside\n');
   });
 
   it('revalidates shell effects before spawning a process', async () => {

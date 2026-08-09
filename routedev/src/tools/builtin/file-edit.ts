@@ -474,6 +474,10 @@ export class FileEditTool implements ITool {
       if (beforeWrite && !beforeWrite.allowed) {
         return { success: false, output: '', error: `权限在执行边界被拒绝: ${beforeWrite.reason ?? '资源不再获准'}`, durationMs: 0 };
       }
+      const finalSecurePath = resolveSecurePath(filePath, allowedDirs);
+      if (!finalSecurePath.allowed) {
+        return { success: false, output: '', error: `路径在执行边界被拒绝: ${finalSecurePath.reason ?? '真实路径越界'}`, durationMs: 0 };
+      }
 
       // 授权与 stale-check 均通过后再记录历史，拒绝路径不污染 undo 栈。
       editHistory.push(filePath, original);
