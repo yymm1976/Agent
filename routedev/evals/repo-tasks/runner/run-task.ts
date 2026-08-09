@@ -273,6 +273,8 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
     },
     conversationHistory: [],
     autonomyMode: task.autonomyMode as 'auto',
+    // conformance mock 只验证控制流契约，不评估任务完成语义；真实模型与产品路径保持默认强制开启。
+    completionEvidenceEnabled: !(provider === 'mock' && task.evaluationMode === 'conformance'),
     signal: timeoutController.signal,
     onConfirmTool: async () => true,
   };

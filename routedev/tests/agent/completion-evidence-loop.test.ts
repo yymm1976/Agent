@@ -110,6 +110,35 @@ describe('completion evidence production loop wiring', () => {
     expect(interrupted?.type === 'run_interrupted' ? interrupted.payload.reason : '').toBe('completion_evidence_missing');
   });
 
+  it('allows a conformance harness to explicitly disable completion evidence without changing the default', async () => {
+    let rounds = 0;
+    const client: ILLMClient = {
+      protocol: 'openai', providerId: 'mock', isReady: () => true,
+      complete: async () => ({ content: '', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, finishReason: 'stop', model: 'mock' }),
+      stream: async function* (): AsyncGenerator<LLMStreamEvent> {
+        rounds++;
+        yield { type: 'text_delta', text: 'conformance complete' };
+        yield { type: 'done', finishReason: 'stop' };
+      },
+    };
+    const loop = new ReActAgentLoop(executor());
+    const log = new RunEventLog('completion-disabled', mkdtempSync(join(tmpdir(), 'routedev-completion-log-')));
+    loop.setRunEventLog(log);
+    for await (const _event of loop.run({
+      requestId: 'completion-disabled',
+      userMessage: 'Implement src/a.ts and run the tests.',
+      llmClient: client,
+      routeDecision: route(),
+      conversationHistory: [],
+      autonomyMode: 'auto',
+      completionEvidenceEnabled: false,
+    })) { /* consume */ }
+
+    expect(rounds).toBe(1);
+    expect(log.getEvents().filter((event) => event.type === 'run_completed')).toHaveLength(1);
+    expect(log.getEvents().filter((event) => event.type === 'run_interrupted')).toHaveLength(0);
+  });
+
   it('gives cancellation priority while a completion recovery is in flight', async () => {
     const controller = new AbortController();
     let rounds = 0;
