@@ -10,7 +10,7 @@
 // - 轨迹记录：runner 自维护 toolCalls[]（name/args/denied/isError），供评分用
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs';
-import { join, relative, resolve, dirname } from 'node:path';
+import { join, relative, resolve, dirname, sep } from 'node:path';
 import { spawn } from 'node:child_process';
 import { ReActAgentLoop } from '../../../src/agent/loop.js';
 import { NativeAgentKernel } from '../../../src/agent/kernel-native.js';
@@ -25,6 +25,7 @@ import type { ToolExecutorAdapter } from '../../../src/agent/loop-config.js';
 /** eval 轨迹记录（评分输入） */
 export interface EvalToolCall {
   toolName: string;
+  toolCallId: string;
   args: Record<string, unknown>;
   denied: boolean;
   isError: boolean;
@@ -93,6 +94,16 @@ const TOOL_DEFS: LLMToolDefinition[] = [
     description: 'Record a todo item (no-op in eval harness)',
     parameters: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] },
   },
+  {
+    name: 'code_search',
+    description: 'Search files for a string pattern (alias of file_search)',
+    parameters: { type: 'object', properties: { pattern: { type: 'string' }, path: { type: 'string' } }, required: ['pattern'] },
+  },
+  {
+    name: 'repo_map',
+    description: 'List the repository file tree (alias of list_directory at root)',
+    parameters: { type: 'object', properties: {} },
+  },
 ];
 
 function walkFiles(dir: string, depth: number, out: string[]): void {
@@ -139,19 +150,47 @@ function runShell(command: string, cwd: string, timeoutMs: number): Promise<{ st
   });
 }
 
-/** eval 专用工具执行器（harness 工具面，非被测对象） */
-class EvalToolExecutor implements ToolExecutorAdapter {
+/** eval 专用工具执行器（harness 工具面，非被测对象）——导出供 conformance 测试 */
+export class EvalToolExecutor implements ToolExecutorAdapter {
+  private readonly activeTools: LLMToolDefinition[];
+
   constructor(
     private readonly workdir: string,
     private readonly calls: EvalToolCall[],
-  ) {}
+    allowedTools?: string[],
+  ) {
+    // Integrity Closure：allowedTools 真正决定 tool surface（manifest 驱动）
+    this.activeTools = allowedTools
+      ? TOOL_DEFS.filter((t) => allowedTools.includes(t.name))
+      : TOOL_DEFS;
+    if (allowedTools) {
+      const missing = allowedTools.filter((n) => !TOOL_DEFS.some((t) => t.name === n));
+      if (missing.length > 0) {
+        // benchmark configuration error：manifest 声明了未实现的工具——启动即失败
+        throw new Error(`benchmark configuration error: manifest allowedTools 未实现: ${missing.join(',')}`);
+      }
+    }
+  }
 
   getToolDefinitions(): LLMToolDefinition[] {
-    return TOOL_DEFS;
+    return this.activeTools;
   }
 
   hasTool(name: string): boolean {
-    return TOOL_DEFS.some((t) => t.name === name);
+    return this.activeTools.some((t) => t.name === name);
+  }
+
+  /**
+   * Integrity Closure：canonical containment——任何文件访问必须落在 workdir 内。
+   * 绝对路径、`..` 逃逸、符号链接外跳一律拒绝（hidden/benchmark source 不可触及）。
+   */
+  private contain(rel: string): { ok: true; path: string } | { ok: false; reason: string } {
+    const root = this.workdir;
+    const resolved = resolve(root, rel);
+    if (resolved !== root && !resolved.startsWith(root + sep)) {
+      return { ok: false, reason: `路径越出工作区: ${rel}` };
+    }
+    return { ok: true, path: resolved };
   }
 
   async executeToolStructured(
@@ -160,14 +199,16 @@ class EvalToolExecutor implements ToolExecutorAdapter {
     args: Record<string, unknown>,
   ): Promise<{ output: string; isError: boolean }> {
     const record = (isError: boolean, output: string): { output: string; isError: boolean } => {
-      this.calls.push({ toolName: name, args, denied: false, isError, outputPreview: output.slice(0, 200), timestamp: Date.now() });
+      this.calls.push({ toolName: name, toolCallId, args, denied: false, isError, outputPreview: output.slice(0, 200), timestamp: Date.now() });
       return { output, isError };
     };
     const root = this.workdir;
     switch (name) {
       case 'file_read': {
         const rel = String(args.path ?? '');
-        const p = resolve(root, rel);
+        const c = this.contain(rel);
+        if (!c.ok) return record(true, `[${c.reason}]`);
+        const p = c.path;
         if (!existsSync(p)) return record(true, `[文件不存在] ${rel}`);
         try {
           return record(false, readFileSync(p, 'utf-8'));
@@ -177,7 +218,9 @@ class EvalToolExecutor implements ToolExecutorAdapter {
       }
       case 'file_write': {
         const rel = String(args.path ?? '');
-        const p = resolve(root, rel);
+        const c = this.contain(rel);
+        if (!c.ok) return record(true, `[${c.reason}]`);
+        const p = c.path;
         try {
           mkdirSync(dirname(p), { recursive: true });
           writeFileSync(p, String(args.content ?? ''), 'utf-8');
@@ -188,7 +231,9 @@ class EvalToolExecutor implements ToolExecutorAdapter {
       }
       case 'file_edit': {
         const rel = String(args.path ?? '');
-        const p = resolve(root, rel);
+        const c = this.contain(rel);
+        if (!c.ok) return record(true, `[${c.reason}]`);
+        const p = c.path;
         if (!existsSync(p)) return record(true, `[文件不存在] ${rel}`);
         try {
           const content = readFileSync(p, 'utf-8');
@@ -209,7 +254,9 @@ class EvalToolExecutor implements ToolExecutorAdapter {
       }
       case 'list_directory': {
         const rel = String(args.path ?? '.');
-        const p = resolve(root, rel);
+        const c = this.contain(rel);
+        if (!c.ok) return record(true, `[${c.reason}]`);
+        const p = c.path;
         if (!existsSync(p)) return record(true, `[目录不存在] ${rel}`);
         const files: string[] = [];
         walkFiles(p, 3, files);
@@ -217,6 +264,11 @@ class EvalToolExecutor implements ToolExecutorAdapter {
       }
       case 'shell_exec': {
         const command = String(args.command ?? '');
+        // Integrity Closure：拒绝可越出工作区的命令——`..` 路径段、盘符绝对路径、
+        // 指向 workdir 外的路径（防止读 hidden-tests / benchmark source）
+        if (/[a-z]:[\\/]/i.test(command) || command.includes('../') || command.includes('..\\')) {
+          return record(true, '[被拒绝] 命令含越界路径（绝对路径或 ..）');
+        }
         const timeoutMs = typeof args.timeoutMs === 'number' ? args.timeoutMs : 60000;
         const r = await runShell(command, root, timeoutMs);
         const output = [r.stdout, r.stderr].filter(Boolean).join('\n').slice(0, 4000);
@@ -224,6 +276,10 @@ class EvalToolExecutor implements ToolExecutorAdapter {
       }
       case 'todo_write':
         return record(false, 'ok');
+      case 'code_search':
+        return this.executeToolStructured('file_search', toolCallId, args);
+      case 'repo_map':
+        return this.executeToolStructured('list_directory', toolCallId, { path: '.' });
       default:
         return record(true, `[未知工具] ${name}`);
     }
@@ -244,6 +300,8 @@ export interface AssembleOptions {
   autonomyMode: 'manual' | 'semi' | 'auto';
   denyRules?: PermissionRule[];
   maxIterations?: number;
+  /** Integrity Closure：manifest allowedTools 真正决定 tool surface */
+  allowedTools?: string[];
 }
 
 /**
@@ -254,8 +312,8 @@ export function assembleEvalAgent(opts: AssembleOptions): EvalAgentHandle {
   const { workdir, autonomyMode, denyRules } = opts;
   const calls: EvalToolCall[] = [];
 
-  // 工具面
-  const executor = new EvalToolExecutor(workdir, calls);
+  // 工具面（allowedTools 驱动 surface；manifest 未实现工具启动即抛 configuration error）
+  const executor = new EvalToolExecutor(workdir, calls, opts.allowedTools);
 
   // 权限：默认引擎 + 自定义 deny（L2-06 等）
   const engine = createDefaultEngine();

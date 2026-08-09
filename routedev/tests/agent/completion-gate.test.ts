@@ -27,17 +27,17 @@ describe('CompletionGate (Phase 31 Task 6.4)', { timeout: 30000 }, () => {
     tempDir = mkdtempSync(join(tmpdir(), 'rd-gate-'));
   });
 
-  afterEach(() => {
-    // EBUSY 重试：取消测试杀掉的进程树可能短暂占用临时目录，稍后清理。
-    // 全量并行（多 worker 争抢 CPU）时进程树释放可能超过 2s——放宽到 50×200ms=10s
+  afterEach(async () => {
+    // EBUSY 重试：取消测试杀掉的进程树可能短暂占用临时目录。
+    // 关键：等待必须让出事件循环（await setTimeout）——busy-wait 会阻塞
+    // 被杀子进程的 close/句柄释放，EBUSY 永远无法解除。
     for (let attempt = 0; attempt < 50; attempt++) {
       try {
         rmSync(tempDir, { recursive: true, force: true });
         return;
       } catch {
-        // 目录仍被占用的可能性低，短暂等待后重试
-        const until = Date.now() + 200;
-        while (Date.now() < until) { /* busy-wait 200ms */ }
+        // 让出事件循环 200ms 后重试（被杀进程的句柄释放依赖事件循环运转）
+        await new Promise((r) => setTimeout(r, 200));
       }
     }
     rmSync(tempDir, { recursive: true, force: true });

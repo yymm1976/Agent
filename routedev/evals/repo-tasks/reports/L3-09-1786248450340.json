@@ -67,5 +67,7 @@
     "completed": true,
     "llmRounds": 9,
     "retries": 0
-  }
+  },
+  "validity": "bringup_only",
+  "validityReason": "hidden_tests_visible_during_agent_run（Integrity Closure 前的 bringup smoke，不计入正式 baseline）"
 }

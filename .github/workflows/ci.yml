@@ -40,7 +40,9 @@ jobs:
           pnpm config list
           curl -sI https://registry.npmjs.org/ --max-time 10 | head -1
       - run: pnpm typecheck
+      - run: pnpm typecheck:evals
       - run: pnpm test
+      - run: pnpm test:repo-evals
 
   desktop:
     name: Desktop (${{ matrix.os }})

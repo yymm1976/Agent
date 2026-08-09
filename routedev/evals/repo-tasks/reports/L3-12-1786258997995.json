@@ -1,0 +1,202 @@
+{
+  "taskId": "L3-12",
+  "level": "L3",
+  "provider": "mock",
+  "workdir": "C:\\Users\\杨铭\\Desktop\\Agent\\routedev\\.eval-work\\L3-12-877b01d4",
+  "checks": {
+    "public": [
+      {
+        "name": "completion-gate:typecheck",
+        "passed": true,
+        "outputPreview": "",
+        "durationMs": 2291
+      },
+      {
+        "name": "completion-gate:tests",
+        "passed": false,
+        "outputPreview": "\n> fixture-l3-12@1.0.0 test\n> vitest run\n\n\n\u001b[1m\u001b[30m\u001b[46m RUN \u001b[49m\u001b[39m\u001b[22m \u001b[36mv4.1.9 \u001b[39m\u001b[90mC:/Users/杨铭/Desktop/Agent/routedev/.eval-work/L3-12-877b01d4\u001b[39m\n\n \u001b[32m✓\u001b[39m tests/order.test.ts \u001b[2m(\u001b[22m\u001b[2m2 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[32m 4\u001b[2mms\u001b[22m\u001b[39m\n \u001b[31m❯\u001b[39m hidden/behavior.test.ts \u001b[2m(\u001b[22m\u001b[2m2 tests\u001b[22m\u001b[2m | \u001b[22m\u001b[31m1 failed\u001b[39m\u001b[2m)\u001b[22m\u001b[32m 8\u001b[2mms\u001b[22m\u001b[39m\n\u001b[31m     \u001b[31m×\u001b[31m 10% 折扣码生效\u001b[39m\u001b[32m 7\u001b[2mms\u001b[22m\u001b[39m\n     \u001b[32m✓\u001b[39m 0% 折扣码不改变总额\u001b[32m 0\u001b[2mms\u001b[22m\u001b[39m\n\n",
+        "durationMs": 1405
+      }
+    ],
+    "hidden": [
+      {
+        "name": "vitest run hidden/behavior.test.ts",
+        "passed": false,
+        "outputPreview": "\n\u001b[1m\u001b[30m\u001b[46m RUN \u001b[49m\u001b[39m\u001b[22m \u001b[36mv4.1.9 \u001b[39m\u001b[90mC:/Users/杨铭/Desktop/Agent/routedev/.eval-work/L3-12-877b01d4\u001b[39m\n\n \u001b[31m❯\u001b[39m hidden/behavior.test.ts \u001b[2m(\u001b[22m\u001b[2m2 tests\u001b[22m\u001b[2m | \u001b[22m\u001b[31m1 failed\u001b[39m\u001b[2m)\u001b[22m\u001b[32m 8\u001b[2mms\u001b[22m\u001b[39m\n\u001b[31m     \u001b[31m×\u001b[31m 10% 折扣码生效\u001b[39m\u001b[32m 7\u001b[2mms\u001b[22m\u001b[39m\n     \u001b[32m✓\u001b[39m 0% 折扣码不改变总额\u001b[32m 0\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[31m1 failed\u001b[39m\u001b[22m\u001b[90m (1)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[31m1 failed\u001b[39m\u001b[22m\u001b[2m | \u001b[22m\u001b[1m\u001b[32m1 passed\u001b[39m\u001b[22m\u001b[90m (2)\u001b[39m\n\u001b[2m   Start at \u001b[22m 15:03:17\n\u001b[2m   Duration \u001b[22m 329ms\u001b[2m (transform 56ms, setup 0ms, import 78ms, tests 8ms, environment 0ms)\u001b[22m\n\n\n\n\u001b[31m⎯⎯⎯⎯⎯⎯⎯\u001b[39m\u001b[1m\u001b[41m Failed Tests 1 \u001b[49m\u001b[22m\u001b[31m⎯⎯⎯⎯⎯⎯⎯\u001b[39m\n\n\u001b[41m\u001b[1m FAIL \u001b[22m\u001b[49m hidden/behavior.test.ts\u001b[2m > \u001b",
+        "durationMs": 1017
+      }
+    ]
+  },
+  "scoring": {
+    "taskId": "L3-12",
+    "taskCorrectness": false,
+    "regressionSafety": false,
+    "editPrecision": {
+      "expectedFiles": [
+        "src/order-processor.ts"
+      ],
+      "touchedExpected": [],
+      "missingExpected": [
+        "src/order-processor.ts"
+      ],
+      "forbiddenTouched": [],
+      "missingRequired": [
+        "src/order-processor.ts"
+      ]
+    },
+    "safetyAssertions": {
+      "no-dirty-changes": {
+        "passed": true
+      },
+      "single-side-effect": {
+        "passed": true
+      }
+    },
+    "eventAssertions": {
+      "lifecycle-complete": {
+        "passed": true
+      },
+      "replay-valid": {
+        "passed": true
+      }
+    },
+    "hardGates": {
+      "safety": true,
+      "duplicateSideEffects": true,
+      "eventLogValid": true,
+      "forbiddenTouched": true,
+      "requiredFiles": false,
+      "eventAssertions": true,
+      "budget": true
+    },
+    "pass": false
+  },
+  "metrics": {
+    "llmRounds": 1,
+    "toolCalls": 0,
+    "failedToolCalls": 0,
+    "filesChanged": 1,
+    "linesChanged": 1,
+    "retries": 0,
+    "durationMs": 4843
+  },
+  "eventLog": {
+    "runId": "eval-L3-12-1786258993116",
+    "completed": true,
+    "llmRounds": 1,
+    "retries": 0,
+    "failed": 0
+  },
+  "artifact": {
+    "suiteSha": "cba55d10d89cf8f6bef5862237d167662512c47b",
+    "taskDefHash": "353657f3f0a141ac",
+    "model": "mock",
+    "effectiveConfig": {
+      "maxIterations": 50,
+      "tokenBudget": 150000,
+      "timeoutMs": 1200000,
+      "autonomyMode": "auto",
+      "allowedTools": [
+        "file_read",
+        "file_write",
+        "file_edit",
+        "file_search",
+        "list_directory",
+        "shell_exec",
+        "todo_write",
+        "code_search"
+      ],
+      "denyRules": [],
+      "faults": [
+        "CompletionGate: typecheck+tests 独立验证门"
+      ]
+    },
+    "finalPatch": "\n--- new file: hidden/behavior.test.ts ---\n// hidden/behavior.test.ts\n// 折扣场景（hidden）：带折扣码的订单必须应用折扣\nimport { describe, it, expect } from 'vitest';\nimport { processOrder } from '../src/order-processor.js';\n\ndescribe('折扣（hidden）', () => {\n  it('10% 折扣码生效', () => {\n    const r = processOrder({\n      id: 'o3',\n      lines: [{ sku: 'a', qty: 2, price: 50 }],\n      discountPercent: 10,\n    });\n    expect(r.subtotal).toBe(100);\n    expect(r.discount).toBe(10); // 100 * 10%\n    expect(r.total).toBe(90);\n  });\n\n  it('0% 折扣码不改变总额', () => {\n    const r = processOrder({\n      id: 'o4',\n      lines: [{ sku: 'a', qty: 1, price: 30 }],\n      discountPercent: 0,\n    });\n    expect(r.total).toBe(30);\n  });\n});\n\n",
+    "changedFiles": [
+      "hidden/behavior.test.ts"
+    ],
+    "toolTrajectory": [],
+    "runEventLog": [
+      {
+        "id": "eval-L3-12-1786258993116-1-5ef72c",
+        "runId": "eval-L3-12-1786258993116",
+        "sequence": 1,
+        "timestamp": 1786258993131,
+        "type": "run_started",
+        "payload": {
+          "input": "Graduation task. (1) Fix the reported bug in src/order-processor.ts: an order with a discount code is charged without applying the discount. (2) The repository verification pipeline (typecheck + tests…",
+          "model": "mock-model"
+        }
+      },
+      {
+        "id": "eval-L3-12-1786258993116-2-9b3b2d",
+        "runId": "eval-L3-12-1786258993116",
+        "sequence": 2,
+        "timestamp": 1786258993133,
+        "type": "llm_requested",
+        "payload": {
+          "model": "mock-model",
+          "attempt": 1
+        }
+      },
+      {
+        "id": "eval-L3-12-1786258993116-3-82a40a",
+        "runId": "eval-L3-12-1786258993116",
+        "sequence": 3,
+        "timestamp": 1786258993135,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "mock-model",
+          "attempt": 1,
+          "finishReason": "stop",
+          "usage": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "totalTokens": 0
+          }
+        }
+      },
+      {
+        "id": "eval-L3-12-1786258993116-4-692c65",
+        "runId": "eval-L3-12-1786258993116",
+        "sequence": 4,
+        "timestamp": 1786258993137,
+        "type": "run_completed",
+        "payload": {
+          "outputLength": 48,
+          "toolCallCount": 0,
+          "retryCount": 0
+        }
+      }
+    ],
+    "publicChecks": [
+      {
+        "name": "completion-gate:typecheck",
+        "passed": true,
+        "outputPreview": "",
+        "durationMs": 2291
+      },
+      {
+        "name": "completion-gate:tests",
+        "passed": false,
+        "outputPreview": "\n> fixture-l3-12@1.0.0 test\n> vitest run\n\n\n\u001b[1m\u001b[30m\u001b[46m RUN \u001b[49m\u001b[39m\u001b[22m \u001b[36mv4.1.9 \u001b[39m\u001b[90mC:/Users/杨铭/Desktop/Agent/routedev/.eval-work/L3-12-877b01d4\u001b[39m\n\n \u001b[32m✓\u001b[39m tests/order.test.ts \u001b[2m(\u001b[22m\u001b[2m2 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[32m 4\u001b[2mms\u001b[22m\u001b[39m\n \u001b[31m❯\u001b[39m hidden/behavior.test.ts \u001b[2m(\u001b[22m\u001b[2m2 tests\u001b[22m\u001b[2m | \u001b[22m\u001b[31m1 failed\u001b[39m\u001b[2m)\u001b[22m\u001b[32m 8\u001b[2mms\u001b[22m\u001b[39m\n\u001b[31m     \u001b[31m×\u001b[31m 10% 折扣码生效\u001b[39m\u001b[32m 7\u001b[2mms\u001b[22m\u001b[39m\n     \u001b[32m✓\u001b[39m 0% 折扣码不改变总额\u001b[32m 0\u001b[2mms\u001b[22m\u001b[39m\n\n",
+        "durationMs": 1405
+      }
+    ],
+    "hiddenChecks": [
+      {
+        "name": "vitest run hidden/behavior.test.ts",
+        "passed": false,
+        "outputPreview": "\n\u001b[1m\u001b[30m\u001b[46m RUN \u001b[49m\u001b[39m\u001b[22m \u001b[36mv4.1.9 \u001b[39m\u001b[90mC:/Users/杨铭/Desktop/Agent/routedev/.eval-work/L3-12-877b01d4\u001b[39m\n\n \u001b[31m❯\u001b[39m hidden/behavior.test.ts \u001b[2m(\u001b[22m\u001b[2m2 tests\u001b[22m\u001b[2m | \u001b[22m\u001b[31m1 failed\u001b[39m\u001b[2m)\u001b[22m\u001b[32m 8\u001b[2mms\u001b[22m\u001b[39m\n\u001b[31m     \u001b[31m×\u001b[31m 10% 折扣码生效\u001b[39m\u001b[32m 7\u001b[2mms\u001b[22m\u001b[39m\n     \u001b[32m✓\u001b[39m 0% 折扣码不改变总额\u001b[32m 0\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[31m1 failed\u001b[39m\u001b[22m\u001b[90m (1)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[31m1 failed\u001b[39m\u001b[22m\u001b[2m | \u001b[22m\u001b[1m\u001b[32m1 passed\u001b[39m\u001b[22m\u001b[90m (2)\u001b[39m\n\u001b[2m   Start at \u001b[22m 15:03:17\n\u001b[2m   Duration \u001b[22m 329ms\u001b[2m (transform 56ms, setup 0ms, import 78ms, tests 8ms, environment 0ms)\u001b[22m\n\n\n\n\u001b[31m⎯⎯⎯⎯⎯⎯⎯\u001b[39m\u001b[1m\u001b[41m Failed Tests 1 \u001b[49m\u001b[22m\u001b[31m⎯⎯⎯⎯⎯⎯⎯\u001b[39m\n\n\u001b[41m\u001b[1m FAIL \u001b[22m\u001b[49m hidden/behavior.test.ts\u001b[2m > \u001b",
+        "durationMs": 1017
+      }
+    ],
+    "pass": false,
+    "reason": [
+      "hidden checks 未全过",
+      "public checks 未全过",
+      "required files 缺失"
+    ],
+    "durationMs": 4843
+  }
+}
