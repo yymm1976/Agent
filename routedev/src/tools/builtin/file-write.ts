@@ -121,12 +121,20 @@ export class FileWriteTool implements ITool {
 
     try {
       const dir = path.dirname(filePath);
+      const beforeDirectoryMutation = await context.revalidateEffect?.('file_write', args);
+      if (beforeDirectoryMutation && !beforeDirectoryMutation.allowed) {
+        return { success: false, output: '', error: `权限在执行边界被拒绝: ${beforeDirectoryMutation.reason ?? '资源不再获准'}`, durationMs: 0 };
+      }
       await fs.mkdir(dir, { recursive: true });
 
       if (append) {
         // 追加模式：不主动处理 BOM（追加到已有文件末尾，BOM 状态由原文件决定）
         // 但需剥离开头可能的 BOM 字符（用户传入的 content 若以 BOM 开头会污染中段）
         const cleanContent = stripBom(content);
+        const beforeAppend = await context.revalidateEffect?.('file_write', args);
+        if (beforeAppend && !beforeAppend.allowed) {
+          return { success: false, output: '', error: `权限在执行边界被拒绝: ${beforeAppend.reason ?? '资源不再获准'}`, durationMs: 0 };
+        }
         await fs.appendFile(filePath, cleanContent, 'utf-8');
       } else {
         // 覆盖模式：保留原文件 BOM 状态（若原文件存在且带 BOM，写回时也带 BOM）
@@ -143,6 +151,10 @@ export class FileWriteTool implements ITool {
         const userExplicitBom = content.length > 0 && content.charCodeAt(0) === 0xfeff;
         const shouldWriteBom = hadBom || userExplicitBom;
         const cleanContent = stripBom(content);
+        const beforeWrite = await context.revalidateEffect?.('file_write', args);
+        if (beforeWrite && !beforeWrite.allowed) {
+          return { success: false, output: '', error: `权限在执行边界被拒绝: ${beforeWrite.reason ?? '资源不再获准'}`, durationMs: 0 };
+        }
         await writeWithBomInfo(filePath, cleanContent, shouldWriteBom);
       }
 

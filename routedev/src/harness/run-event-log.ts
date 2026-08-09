@@ -68,7 +68,18 @@ export interface LlmSucceededEvent extends RunEventBase {
 export interface LlmFailedEvent extends RunEventBase { type: 'llm_failed'; payload: { model: string; attempt: number; errorKind: string; error: string } }
 export interface ToolRequestedEvent extends RunEventBase { type: 'tool_requested'; payload: { toolName: string; toolCallId: string } }
 export interface ToolCompletedEvent extends RunEventBase { type: 'tool_completed'; payload: { toolName: string; toolCallId: string; isError: boolean; outputPreview: string } }
-export interface ToolRejectedEvent extends RunEventBase { type: 'tool_rejected'; payload: { toolName: string; toolCallId: string; reason: string } }
+export interface ToolRejectedEvent extends RunEventBase {
+  type: 'tool_rejected';
+  payload: {
+    toolName: string;
+    toolCallId: string;
+    reason: string;
+    policyRuleId?: string;
+    effectKind?: string;
+    /** Workspace-relative or fixed redaction marker; never a raw command. */
+    resource?: string;
+  };
+}
 export interface RunCompletedEvent extends RunEventBase { type: 'run_completed'; payload: { outputLength: number; toolCallCount: number; retryCount: number } }
 export interface RunInterruptedEvent extends RunEventBase { type: 'run_interrupted'; payload: { reason: string } }
 

@@ -233,6 +233,8 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
           id: `eval-deny-tests-write-${tool}`,
           layer: 'deny' as const,
           toolPattern: tool,
+          effectKinds: ['fs.write', 'fs.create', 'fs.delete', 'fs.move'] as const,
+          resourcePatterns: ['tests/**'],
           argsPredicate: (a) => String(a.path ?? '').replace(/^\.\//, '').startsWith('tests/'),
           description: `eval: tests/ 目录禁止 ${tool}`,
         }))

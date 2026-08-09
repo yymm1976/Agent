@@ -17,6 +17,9 @@ import { parseCommand } from './command-parser.js';
 import type { ParsedCommand } from './command-parser.js';
 import type { TrustGradientManager } from './trust-gradient.js';
 import { logger } from '../utils/logger.js';
+import { EffectResolver } from './effect-resolver.js';
+import { DeniedIntentLedger } from './denied-intent-ledger.js';
+import type { EffectKind, EffectResolution } from './effect-model.js';
 
 /** 权限决策结果（三层） */
 type PermissionDecision = 'deny' | 'confirm' | 'auto';
@@ -124,18 +127,40 @@ export interface PermissionRule {
   toolPattern: string;
   /** 参数谓词（可选，命中工具名后再判断参数） */
   argsPredicate?: (args: Record<string, unknown>) => boolean;
+  /** Tool-independent effects protected by this rule. */
+  effectKinds?: EffectKind[];
+  /** Workspace-relative resource globs (for example `tests/**`). */
+  resourcePatterns?: string[];
   /** 规则描述（用于日志和给用户的提示） */
   description: string;
 }
 
 /** 权限检查结果 */
-interface PermissionCheckResult {
+export interface PermissionCheckResult {
   /** 最终决策 */
   decision: PermissionDecision;
   /** 命中的规则 ID（fallback 时为 undefined） */
   matchedRuleId?: string;
   /** 决策原因（用于日志和给用户的提示） */
   reason: string;
+  /** Semantic denial metadata; safe to use for structured audit events. */
+  effectKind?: EffectKind;
+  canonicalResource?: string;
+  redactedResource?: string;
+  /** Parallel batch contains another mutation of the same canonical resource. */
+  batchConflict?: boolean;
+}
+
+export interface PermissionCheckContext {
+  /** Stable id for one agent run. Omit to disable denied-intent memory. */
+  runId?: string;
+  /** Workspace used to canonicalize relative resources. */
+  workingDirectory?: string;
+}
+
+export interface PermissionBatchCall {
+  toolName: string;
+  args: Record<string, unknown>;
 }
 
 /**
@@ -148,6 +173,8 @@ interface PermissionCheckResult {
  */
 export class PermissionEngine {
   private rules: PermissionRule[] = [];
+  private readonly effectResolver = new EffectResolver();
+  private readonly deniedIntents = new DeniedIntentLedger();
   /** Phase 40 Task 1：注入的信任梯度管理器（可选） */
   private trustManager?: TrustGradientManager;
 
@@ -241,6 +268,46 @@ export class PermissionEngine {
     return [...this.rules];
   }
 
+  /** Explicit run cleanup; semantic denial state must never leak to another run. */
+  clearRun(runId: string | undefined): void {
+    this.deniedIntents.clear(runId);
+  }
+
+  /**
+   * Resolve and authorize a whole batch before any caller starts execution.
+   * Known effects are checked first so an opaque substitute cannot win by
+   * appearing earlier in the model's parallel call array.
+   */
+  checkBatch(
+    calls: PermissionBatchCall[],
+    mode: AutonomyMode,
+    context: PermissionCheckContext = {},
+  ): PermissionCheckResult[] {
+    const resolutions = calls.map((call) => this.resolveEffects(call.toolName, call.args, context));
+    const results = new Array<PermissionCheckResult>(calls.length);
+    const order = calls.map((_, index) => index).sort((a, b) => {
+      const aOpaque = resolutions[a].classification === 'OPAQUE_MAY_WRITE' ? 1 : 0;
+      const bOpaque = resolutions[b].classification === 'OPAQUE_MAY_WRITE' ? 1 : 0;
+      return aOpaque - bOpaque;
+    });
+    for (const index of order) {
+      results[index] = this.check(calls[index].toolName, calls[index].args, mode, context, resolutions[index]);
+    }
+    const writersByResource = new Map<string, number[]>();
+    resolutions.forEach((item, index) => {
+      for (const effect of item.effects) {
+        if (!effect.canonicalResource || !this.isMutationEffect(effect.kind)) continue;
+        const indexes = writersByResource.get(effect.canonicalResource) ?? [];
+        indexes.push(index);
+        writersByResource.set(effect.canonicalResource, indexes);
+      }
+    });
+    for (const indexes of writersByResource.values()) {
+      if (indexes.length > 1) indexes.forEach((index) => { results[index].batchConflict = true; });
+    }
+    return results;
+  }
+
   /**
    * Phase 40 Task 1：注入 TrustGradientManager
    * Phase 79: TrustGradient Freeze — 注入后仅用于 /trust 命令查询和用户显式临时授权检查
@@ -287,7 +354,10 @@ export class PermissionEngine {
     toolName: string,
     args: Record<string, unknown>,
     mode: AutonomyMode,
+    context: PermissionCheckContext = {},
+    preResolved?: EffectResolution,
   ): PermissionCheckResult {
+    const effectResolution = preResolved ?? this.resolveEffects(toolName, args, context);
     // 工具分类（沙箱级和审批级共用）—— Phase 95：传入 args 支持 git_op 按 operation 动态分类
     const category = this.categorize(toolName, args);
 
@@ -318,17 +388,82 @@ export class PermissionEngine {
       }
     }
 
+    // GA Task A：规则保护的是资源副作用，不是某一个工具名。
+    // 例如 file_write tests/** 的 deny 同样覆盖 mv/cp/redirect/git restore。
+    const semanticDeny = this.findSemanticDeny(effectResolution);
+    if (semanticDeny) {
+      this.deniedIntents.record(context.runId, {
+        policyRuleId: semanticDeny.matchedRuleId!,
+        effectKind: semanticDeny.effectKind!,
+        canonicalResource: semanticDeny.canonicalResource,
+      });
+      return semanticDeny;
+    }
+
+    // 任意代码/未知 MCP 等无法证明无写入副作用。若本 run 已出现受保护
+    // 写入意图，替换成 opaque 工具必须 fail-closed；runId 缺失时不建全局状态。
+    if (effectResolution.classification === 'OPAQUE_MAY_WRITE') {
+      if (toolName.startsWith('mcp__')) {
+        return {
+          decision: 'deny',
+          matchedRuleId: 'deny-opaque-mcp-effects',
+          reason: '未知 MCP 工具未声明可验证副作用，禁止静默获得写入能力',
+          effectKind: 'opaque_may_write',
+          redactedResource: '<opaque-mcp-resource>',
+        };
+      }
+      const protectedWriteRule = this.rules.find((rule) => rule.layer === 'deny'
+        && (rule.resourcePatterns?.length ?? 0) > 0
+        && (rule.effectKinds ?? []).some((kind) => this.isMutationEffect(kind)));
+      if (protectedWriteRule) {
+        this.deniedIntents.record(context.runId, {
+          policyRuleId: protectedWriteRule.id,
+          effectKind: 'opaque_may_write',
+        });
+        return {
+          decision: 'deny',
+          matchedRuleId: protectedWriteRule.id,
+          reason: `无法证明调用不会绕过受保护写入规则: ${protectedWriteRule.description}`,
+          effectKind: 'opaque_may_write',
+          redactedResource: '<opaque-resource>',
+        };
+      }
+      const prior = this.deniedIntents.get(context.runId)[0];
+      if (prior) {
+        return {
+          decision: 'deny',
+          matchedRuleId: prior.policyRuleId,
+          reason: '拒绝无法证明安全的替代调用：当前 run 已有受保护写入意图',
+          effectKind: 'opaque_may_write',
+          canonicalResource: prior.canonicalResource,
+          redactedResource: this.redactResource(prior.canonicalResource, context.workingDirectory),
+        };
+      }
+    }
+
     // 找出所有命中的规则（工具名 + 参数谓词都满足）
     const matched = this.rules.filter(r => this.matchRule(r, toolName, args));
 
     // 1. deny 优先级最高，不可被覆盖（不可被临时授权绕过）
     const denyRule = matched.find(r => r.layer === 'deny');
     if (denyRule) {
-      return {
+      const effect = effectResolution.effects.find((item) => this.isMutationEffect(item.kind));
+      const denied: PermissionCheckResult = {
         decision: 'deny',
         matchedRuleId: denyRule.id,
         reason: denyRule.description,
+        effectKind: effect?.kind,
+        canonicalResource: effect?.canonicalResource,
+        redactedResource: this.redactResource(effect?.canonicalResource, context.workingDirectory),
       };
+      if (effect) {
+        this.deniedIntents.record(context.runId, {
+          policyRuleId: denyRule.id,
+          effectKind: effect.kind,
+          canonicalResource: effect.canonicalResource,
+        });
+      }
+      return denied;
     }
 
     // 2. TrustGradientManager 检查（如果注入了）
@@ -389,6 +524,89 @@ export class PermissionEngine {
       decision: mode === 'auto' ? 'auto' : 'confirm',
       reason: 'Fallback: 无匹配规则，按自主度模式决定',
     }, mode);
+  }
+
+  private resolveEffects(
+    toolName: string,
+    args: Record<string, unknown>,
+    context: PermissionCheckContext,
+  ): EffectResolution {
+    try {
+      return this.effectResolver.resolve(toolName, args, {
+        workingDirectory: context.workingDirectory ?? process.cwd(),
+      });
+    } catch (error) {
+      logger.warn('EffectResolver failed; treating call as opaque may-write', {
+        toolName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { classification: 'OPAQUE_MAY_WRITE', effects: [{ kind: 'opaque_may_write' }] };
+    }
+  }
+
+  private isMutationEffect(kind: EffectKind): boolean {
+    return kind === 'fs.write' || kind === 'fs.create' || kind === 'fs.delete'
+      || kind === 'fs.move' || kind === 'git.mutate';
+  }
+
+  private findSemanticDeny(resolution: EffectResolution): PermissionCheckResult | undefined {
+    for (const effect of resolution.effects) {
+      if (!this.isMutationEffect(effect.kind) || !effect.canonicalResource) continue;
+      const paths = [effect.relativeResource, effect.canonicalResource, effect.resource]
+        .filter((value): value is string => typeof value === 'string' && value.length > 0)
+        .map((value) => value.replace(/\\/g, '/').replace(/^\.\//, ''));
+      for (const rule of this.rules) {
+        if (rule.layer !== 'deny') continue;
+        if (rule.effectKinds?.includes(effect.kind) && rule.resourcePatterns?.some((pattern) => paths.some((resourcePath) => this.resourcePatternMatches(pattern, resourcePath)))) {
+          return {
+            decision: 'deny',
+            matchedRuleId: rule.id,
+            reason: rule.description,
+            effectKind: effect.kind,
+            canonicalResource: effect.canonicalResource,
+            redactedResource: effect.relativeResource,
+          };
+        }
+        for (const syntheticTool of ['file_write', 'file_edit']) {
+          for (const resourcePath of paths) {
+            if (this.matchRule(rule, syntheticTool, { path: resourcePath })) {
+              return {
+                decision: 'deny',
+                matchedRuleId: rule.id,
+                reason: rule.description,
+                effectKind: effect.kind,
+                canonicalResource: effect.canonicalResource,
+                redactedResource: effect.relativeResource,
+              };
+            }
+          }
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private redactResource(resource: string | undefined, workingDirectory: string | undefined): string | undefined {
+    if (!resource) return undefined;
+    if (!workingDirectory) return '<canonical-resource>';
+    try {
+      const relative = this.effectResolver.resolve('file_read', { path: resource }, { workingDirectory }).effects[0]?.relativeResource;
+      return relative && !relative.startsWith('..') ? relative : '<outside-workspace>';
+    } catch {
+      return '<unresolved-resource>';
+    }
+  }
+
+  private resourcePatternMatches(pattern: string, resource: string): boolean {
+    const normalizedPattern = pattern.replace(/\\/g, '/').replace(/^\.\//, '');
+    const normalizedResource = resource.replace(/\\/g, '/').replace(/^\.\//, '');
+    if (normalizedPattern === '*') return true;
+    if (normalizedPattern.endsWith('/**')) {
+      const prefix = normalizedPattern.slice(0, -3).replace(/\/$/, '');
+      return normalizedResource === prefix || normalizedResource.startsWith(`${prefix}/`);
+    }
+    const escaped = normalizedPattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*');
+    return new RegExp(`^${escaped}$`, process.platform === 'win32' ? 'i' : '').test(normalizedResource);
   }
 
   /**
@@ -464,15 +682,7 @@ export class PermissionEngine {
     args: Record<string, unknown>,
   ): boolean {
     // 工具名匹配
-    if (rule.toolPattern !== '*' && rule.toolPattern !== toolName) {
-      // 支持 prefix* 形式的通配
-      if (
-        !rule.toolPattern.endsWith('*') ||
-        !toolName.startsWith(rule.toolPattern.slice(0, -1))
-      ) {
-        return false;
-      }
-    }
+    if (!this.toolPatternMatches(rule.toolPattern, toolName)) return false;
 
     // 参数谓词匹配
     if (rule.argsPredicate && !rule.argsPredicate(args)) {
@@ -480,6 +690,11 @@ export class PermissionEngine {
     }
 
     return true;
+  }
+
+  private toolPatternMatches(pattern: string, toolName: string): boolean {
+    if (pattern === '*' || pattern === toolName) return true;
+    return pattern.endsWith('*') && toolName.startsWith(pattern.slice(0, -1));
   }
 
   /**

@@ -285,12 +285,16 @@ export class ShellExecTool implements ITool {
   }
 
   /** 实际执行 shell 命令的内部方法 */
-  private runCommand(
+  private async runCommand(
     command: string,
     cwd: string,
     timeoutMs: number,
     context: ToolExecutionContext,
   ): Promise<ToolResult> {
+    const boundary = await context.revalidateEffect?.('shell_exec', { command, workingDirectory: cwd, timeoutMs });
+    if (boundary && !boundary.allowed) {
+      return { success: false, output: '', error: `权限在执行边界被拒绝: ${boundary.reason ?? '命令副作用不再获准'}`, durationMs: 0 };
+    }
     return new Promise((resolve) => {
       let stdout = '';
       let stderr = '';

@@ -499,7 +499,19 @@ export class ReActAgentLoop {
     // Phase 79 Task 5：保存当前确认回调，供子 Agent 通过 getCurrentConfirmTool() 委托确认
     this.currentConfirmTool = onConfirmTool ?? null;
     // 保存当前自主度模式，供权限中间件使用
-      this.currentAutonomyMode = params.autonomyMode ?? 'manual';
+    this.currentAutonomyMode = params.autonomyMode ?? 'manual';
+    const permissionRunId = params.requestId ?? `react-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    let permissionWorkingDirectory = process.cwd();
+    const permissionContext = () => ({ runId: permissionRunId, workingDirectory: permissionWorkingDirectory });
+    const revalidateEffect = async (toolName: string, args: Record<string, unknown>) => {
+      const decision = await this.mwRunner.runOnActing(
+        toolName,
+        args,
+        this.currentAutonomyMode,
+        permissionContext(),
+      );
+      return { allowed: !decision.denied, reason: decision.reason };
+    };
 
     // C6 修复：触发 on-session-start 钩子
     await this.mwRunner.fireHookSafe('on-session-start', {});
@@ -512,7 +524,11 @@ export class ReActAgentLoop {
       // P2（turn 隔离）：run 开始重置 tool_search 提升池——每个 run 从干净工具面开始
       this.toolExecutor.resetBoost?.();
       // B-16（审查 I2 修复）：保存隔离工作区——worktree 实验时工具读写切换到 worktree
-      this.currentWorkspace = params.workspace;
+      const contextWorkspace = (this.currentContext as AgentExecutionContext & {
+        workspace?: { workingDirectory: string; allowedDirectories: string[] };
+      }).workspace;
+      this.currentWorkspace = params.workspace ?? contextWorkspace;
+      permissionWorkingDirectory = this.currentWorkspace?.workingDirectory ?? process.cwd();
       // 修复 8（复审）：保存任务形状映射的思考强度与输出预算
       this.currentReasoningEffort = params.reasoningEffort;
       this.currentMaxTokens = params.maxTokens ?? 4096;
@@ -872,18 +888,39 @@ export class ReActAgentLoop {
               if ((this.currentCapability?.parallelToolsEnabled ?? true)
                 && this.config.parallelToolExecution && !hasSequential && result.toolCalls.length > 1) {
                 // ===== 并行模式 =====
-                // 阶段1：串行权限校验 + 确认 + 中间件检查
+                // 阶段0：一次性解析并授权完整 batch。任何执行前先让 denied-intent
+                // ledger 看见所有已知副作用，避免 opaque 调用借数组顺序抢跑。
+                const batchPreflight = await this.mwRunner.runOnActingBatch(
+                  result.toolCalls.map((call) => ({ toolName: call.name, args: call.arguments })),
+                  this.currentAutonomyMode,
+                  permissionContext(),
+                );
+                const batchHasCanonicalWriteConflict = batchPreflight.some((result) => result.batchConflict);
+                // 阶段1：串行确认 + 其余中间件检查
                 const approvedCalls: typeof result.toolCalls = [];
                 // Phase 94：并行模式下收集最后一个 actingResult 的 explorationSuggestion（中间件对每次 onActing 都设置，最后一个最有意义）
                 let lastExplorationSuggestion: string | undefined;
-                for (const toolCall of result.toolCalls) {
+                for (let toolCallIndex = 0; toolCallIndex < result.toolCalls.length; toolCallIndex++) {
+                  const toolCall = result.toolCalls[toolCallIndex];
                   yield { type: 'tool_call_start', toolName: toolCall.name, toolCallId: toolCall.id, args: toolCall.arguments };
 
                   // Phase 79 Task 3：onActing 中间件 + 策略引擎前置（fail-closed）
-                  const actingResult = await this.mwRunner.runOnActing(toolCall.name, toolCall.arguments, this.currentAutonomyMode);
+                  const preflight = batchPreflight[toolCallIndex];
+                  const actingResult = preflight.denied
+                    ? preflight
+                    : await this.mwRunner.runOnActing(
+                      toolCall.name, toolCall.arguments, this.currentAutonomyMode, permissionContext(),
+                    );
                   if (actingResult.denied) {
                     // Closure 6：denial lifecycle——权限 deny 记 tool_rejected（不记 tool_requested）
-                    this.recordRunEvent('tool_rejected', { toolName: toolCall.name, toolCallId: toolCall.id, reason: actingResult.reason ?? '权限拦截' });
+                    this.recordRunEvent('tool_rejected', {
+                      toolName: toolCall.name,
+                      toolCallId: toolCall.id,
+                      reason: actingResult.reason ?? '权限拦截',
+                      policyRuleId: actingResult.permissionMatchedRule,
+                      effectKind: actingResult.effectKind,
+                      resource: actingResult.redactedResource,
+                    });
                     const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[被拦截] ${actingResult.reason ?? '未知原因'}`);
                     yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
                     messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError: true }] });
@@ -964,17 +1001,28 @@ export class ReActAgentLoop {
                   // allSettled 完成后按顺序 drain，避免多工具输出交错
                   const deltaBuffers: ReActEvent[][] = approvedCalls.map(tc => []);
                   // C8 修复：用 allSettled 隔离单个工具异常
-                  const settled = await Promise.allSettled(
-                    approvedCalls.map((tc, idx) => {
+                  const executeApproved = (tc: typeof approvedCalls[number], idx: number) => {
                       const onUpdate = (chunk: string) => {
                         deltaBuffers[idx].push({ type: 'tool_call_delta', toolName: tc.name, toolCallId: tc.id, chunk });
                       };
                       return useStructured
-                        ? this.toolExecutor.executeToolStructured!(tc.name, tc.id, tc.arguments, { signal, onUpdate, autonomyMode: this.currentAutonomyMode, workspace: this.currentWorkspace })
-                        : this.toolExecutor.executeTool(tc.name, tc.id, tc.arguments, { signal, onUpdate, autonomyMode: this.currentAutonomyMode, workspace: this.currentWorkspace })
+                        ? this.toolExecutor.executeToolStructured!(tc.name, tc.id, tc.arguments, { signal, onUpdate, autonomyMode: this.currentAutonomyMode, workspace: this.currentWorkspace, revalidateEffect })
+                        : this.toolExecutor.executeTool(tc.name, tc.id, tc.arguments, { signal, onUpdate, autonomyMode: this.currentAutonomyMode, workspace: this.currentWorkspace, revalidateEffect })
                             .then(output => ({ output, isError: /\[工具错误\]|\[被拦截\]/.test(output) }));
-                    }),
-                  );
+                    };
+                  let settled: PromiseSettledResult<{ output: string; isError: boolean }>[];
+                  if (batchHasCanonicalWriteConflict) {
+                    settled = [];
+                    for (let i = 0; i < approvedCalls.length; i++) {
+                      try {
+                        settled.push({ status: 'fulfilled', value: await executeApproved(approvedCalls[i], i) });
+                      } catch (reason) {
+                        settled.push({ status: 'rejected', reason });
+                      }
+                    }
+                  } else {
+                    settled = await Promise.allSettled(approvedCalls.map(executeApproved));
+                  }
                   const execResults = settled.map((s, i) => {
                     if (s.status === 'fulfilled') return s.value as { output: string; isError: boolean };
                     const tc = approvedCalls[i];
@@ -1020,10 +1068,19 @@ export class ReActAgentLoop {
 
                   // Phase 79 Task 3：onActing 中间件 + 策略引擎前置（fail-closed）
                   // PermissionEngine.check() 在此被调用，deny 拦截、confirm 驱动用户确认、auto 放行
-                  const actingResult = await this.mwRunner.runOnActing(toolCall.name, toolCall.arguments, this.currentAutonomyMode);
+                  const actingResult = await this.mwRunner.runOnActing(
+                    toolCall.name, toolCall.arguments, this.currentAutonomyMode, permissionContext(),
+                  );
                   if (actingResult.denied) {
                     // Closure 6：denial lifecycle——权限 deny 记 tool_rejected（不记 tool_requested）
-                    this.recordRunEvent('tool_rejected', { toolName: toolCall.name, toolCallId: toolCall.id, reason: actingResult.reason ?? '权限拦截' });
+                    this.recordRunEvent('tool_rejected', {
+                      toolName: toolCall.name,
+                      toolCallId: toolCall.id,
+                      reason: actingResult.reason ?? '权限拦截',
+                      policyRuleId: actingResult.permissionMatchedRule,
+                      effectKind: actingResult.effectKind,
+                      resource: actingResult.redactedResource,
+                    });
                     const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[被拦截] ${actingResult.reason ?? '未知原因'}`);
                     yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
                     messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError: true }] });
@@ -1116,7 +1173,7 @@ export class ReActAgentLoop {
                     const stream = this.createToolStream<{ output: string; isError: boolean; images?: Array<{ mediaType: string; data: string }> }>(toolCall.name, toolCall.id);
                     const toolPromise = this.toolExecutor.executeToolStructured!(
                       toolCall.name, toolCall.id, toolCall.arguments,
-                      { signal, onUpdate: stream.onUpdate, autonomyMode: this.currentAutonomyMode },
+                      { signal, onUpdate: stream.onUpdate, autonomyMode: this.currentAutonomyMode, workspace: this.currentWorkspace, revalidateEffect },
                     );
                     const structured = yield* stream.drain(toolPromise);
                     toolResult = structured.output;
@@ -1141,7 +1198,7 @@ export class ReActAgentLoop {
                     const stream = this.createToolStream<string>(toolCall.name, toolCall.id);
                     const toolPromise = this.toolExecutor.executeTool(
                       toolCall.name, toolCall.id, toolCall.arguments,
-                      { signal, onUpdate: stream.onUpdate, autonomyMode: this.currentAutonomyMode, workspace: this.currentWorkspace },
+                      { signal, onUpdate: stream.onUpdate, autonomyMode: this.currentAutonomyMode, workspace: this.currentWorkspace, revalidateEffect },
                     );
                     toolResult = yield* stream.drain(toolPromise);
                     isError = /\[工具错误\]|\[被拦截\]/.test(toolResult);
@@ -1331,6 +1388,7 @@ export class ReActAgentLoop {
         break followUpLoop;
       } // end followUpLoop
     } finally {
+      await this.mwRunner.clearPermissionRun(permissionRunId);
       // Phase 97 Part A：任何退出路径都发射 agent_end 并清理事件状态
       this.emitEngineEvent({ type: 'agent_end', payload: { reason: this.engineEndReason } });
       this.engineSeq = null;

@@ -139,6 +139,14 @@ export interface ToolExecutionContext {
    * 注意：回调应做节流处理（如 100ms），避免高频 stdout 触发过多事件
    */
   onUpdate?: (chunk: string) => void;
+  /**
+   * Re-run semantic authorization at the last responsible moment before a
+   * mutation/spawn. This closes path-link swaps between preflight and use.
+   */
+  revalidateEffect?: (
+    toolName: string,
+    args: Record<string, unknown>,
+  ) => Promise<{ allowed: boolean; reason?: string }>;
 }
 
 // ============================================================

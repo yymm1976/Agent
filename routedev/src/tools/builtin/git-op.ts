@@ -73,6 +73,10 @@ export class GitOpTool implements ITool {
     const opArgs = (args.args as string[]) ?? [];
 
     try {
+      const boundary = await context.revalidateEffect?.('git_op', args);
+      if (boundary && !boundary.allowed) {
+        return { success: false, output: '', error: `权限在执行边界被拒绝: ${boundary.reason ?? 'Git 副作用不再获准'}`, durationMs: 0 };
+      }
       // windowsHide + pipe：阻止 simple-git 在 Windows 上闪出 console 窗口
       // simple-git 类型只声明了 uid/gid，运行时仍透传完整 spawn 选项
       const git: SimpleGit = simpleGit({

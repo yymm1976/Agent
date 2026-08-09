@@ -122,6 +122,11 @@ export interface ToolExecCallOptions {
    * 使文件/shell 工具在 worktree 内读写而非主工作区）
    */
   workspace?: { workingDirectory: string; allowedDirectories: string[] };
+  /** Execution-boundary effect revalidation (TOCTOU defense). */
+  revalidateEffect?: (
+    toolName: string,
+    args: Record<string, unknown>,
+  ) => Promise<{ allowed: boolean; reason?: string }>;
 }
 
 /** 工具执行适配器接口

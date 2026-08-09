@@ -9,6 +9,8 @@ import { logger } from '../utils/logger.js';
 import type { AgentMiddlewarePipeline, MiddlewareContext } from './middleware.js';
 import type { HookRunner, HookContext, HookResult } from './hooks.js';
 import type { PolicyEngine } from '../policies/policy-engine.js';
+import type { PermissionBatchCall, PermissionCheckContext, PermissionCheckResult } from '../tools/permission-engine.js';
+import type { EffectKind } from '../tools/effect-model.js';
 
 /** onReasoning 中间件执行结果 */
 export interface ReasoningResult {
@@ -28,6 +30,10 @@ export interface ActingResult {
   permissionMatchedRule?: string;
   /** Phase 94：探索预算超限提示（ExplorationBudgetMiddleware 设置，loop.ts 注入到 LLM 上下文） */
   explorationSuggestion?: string;
+  effectKind?: EffectKind;
+  canonicalResource?: string;
+  redactedResource?: string;
+  batchConflict?: boolean;
 }
 
 /**
@@ -229,6 +235,7 @@ export class MiddlewareRunner {
     toolName: string,
     toolArgs: Record<string, unknown>,
     autonomyMode?: 'manual' | 'semi' | 'auto',
+    permissionContext: PermissionCheckContext = {},
   ): Promise<ActingResult> {
     if (!this.middleware) return { denied: false };
     const mwCtx: MiddlewareContext = {
@@ -237,6 +244,8 @@ export class MiddlewareRunner {
       toolArgs,
       metadata: {
         autonomyMode: autonomyMode ?? 'manual',
+        permissionRunId: permissionContext.runId,
+        permissionWorkingDirectory: permissionContext.workingDirectory,
       },
     };
     try {
@@ -265,7 +274,14 @@ export class MiddlewareRunner {
       }
     }
     if (mwCtx.metadata.permissionDenied) {
-      return { denied: true, reason: String(mwCtx.metadata.permissionDenied) };
+      return {
+        denied: true,
+        reason: String(mwCtx.metadata.permissionDenied),
+        permissionMatchedRule: mwCtx.metadata.permissionMatchedRule as string | undefined,
+        effectKind: mwCtx.metadata.permissionEffectKind as EffectKind | undefined,
+        canonicalResource: mwCtx.metadata.permissionCanonicalResource as string | undefined,
+        redactedResource: mwCtx.metadata.permissionRedactedResource as string | undefined,
+      };
     }
     // Phase 79 Task 3：透传 PermissionMiddleware 写入的权限决策字段
     // 供 loop.ts 据此驱动确认流程（confirm → onConfirmTool，auto → 放行）
@@ -275,7 +291,78 @@ export class MiddlewareRunner {
       requiresConfirmation: mwCtx.metadata.requiresConfirmation as boolean | undefined,
       permissionMatchedRule: mwCtx.metadata.permissionMatchedRule as string | undefined,
       explorationSuggestion: mwCtx.metadata.explorationSuggestion as string | undefined,
+      effectKind: mwCtx.metadata.permissionEffectKind as EffectKind | undefined,
+      canonicalResource: mwCtx.metadata.permissionCanonicalResource as string | undefined,
+      redactedResource: mwCtx.metadata.permissionRedactedResource as string | undefined,
     };
+  }
+
+  /** Permission-only all-call preflight used before a parallel batch can execute. */
+  async runOnActingBatch(
+    calls: PermissionBatchCall[],
+    autonomyMode?: 'manual' | 'semi' | 'auto',
+    permissionContext: PermissionCheckContext = {},
+  ): Promise<ActingResult[]> {
+    if (!this.middleware) return calls.map(() => ({ denied: false }));
+    const mwCtx: MiddlewareContext = {
+      phase: 'onActing',
+      metadata: {
+        autonomyMode: autonomyMode ?? 'manual',
+        permissionRunId: permissionContext.runId,
+        permissionWorkingDirectory: permissionContext.workingDirectory,
+        permissionBatch: calls,
+      },
+    };
+    try {
+      await this.middleware.execute('onActing', mwCtx);
+    } catch (error) {
+      const reason = `批量权限中间件异常 (fail-closed): ${error instanceof Error ? error.message : String(error)}`;
+      return calls.map(() => ({ denied: true, reason }));
+    }
+    const decisions = mwCtx.metadata.permissionBatchResults as PermissionCheckResult[] | undefined;
+    if (!decisions || decisions.length !== calls.length) return calls.map(() => ({ denied: false }));
+    return decisions.map((decision, index) => {
+      let denied = decision.decision === 'deny';
+      let reason = decision.reason;
+      if (!denied && this.policyEngine) {
+        try {
+          const policy = this.policyEngine.evaluateAction({
+            toolName: calls[index].toolName,
+            description: calls[index].toolName,
+            args: calls[index].args,
+          });
+          denied = policy.denied;
+          if (policy.reason) reason = policy.reason;
+        } catch (error) {
+          denied = true;
+          reason = `策略引擎异常: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+      return {
+        denied,
+        reason,
+        permissionDecision: decision.decision,
+        requiresConfirmation: decision.decision === 'confirm',
+        permissionMatchedRule: decision.matchedRuleId,
+        effectKind: decision.effectKind,
+        canonicalResource: decision.canonicalResource,
+        redactedResource: decision.redactedResource,
+        batchConflict: decision.batchConflict,
+      };
+    });
+  }
+
+  async clearPermissionRun(runId: string): Promise<void> {
+    if (!this.middleware) return;
+    const context: MiddlewareContext = {
+      phase: 'onActing',
+      metadata: { permissionClearRunId: runId },
+    };
+    try {
+      await this.middleware.execute('onActing', context);
+    } catch (error) {
+      logger.warn('Permission run cleanup failed', { runId, error: String(error) });
+    }
   }
 
   /**

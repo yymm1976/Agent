@@ -100,6 +100,7 @@ export class ToolRegistryAdapter implements ToolExecutorAdapter {
     if (callOptions.signal) merged.signal = callOptions.signal;
     if (callOptions.onUpdate) merged.onUpdate = callOptions.onUpdate;
     if (callOptions.autonomyMode) merged.autonomyMode = callOptions.autonomyMode;
+    if (callOptions.revalidateEffect) merged.revalidateEffect = callOptions.revalidateEffect;
     // B-16（审查 I2 修复）：隔离工作区覆盖——worktree 实验时工具按 worktree 路径读写，
     // 目录边界同步切换（不切换 allowedDirectories 会导致工具在工作区边界内操作 worktree 路径而被拒）
     if (callOptions.workspace) {

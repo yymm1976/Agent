@@ -21,6 +21,7 @@ import type { MiddlewareContext, MiddlewareHandler } from '../middleware.js';
 import type { PermissionEngine } from '../../tools/permission-engine.js';
 import type { AutonomyMode } from '../../config/schema.js';
 import { logger } from '../../utils/logger.js';
+import type { PermissionBatchCall, PermissionCheckContext, PermissionCheckResult } from '../../tools/permission-engine.js';
 
 /**
  * 权限决策中间件
@@ -48,6 +49,29 @@ export class PermissionMiddleware {
   /** 获取中间件处理器（注册到 onActing 阶段） */
   getHandler(): MiddlewareHandler {
     return async (ctx: MiddlewareContext, next: () => Promise<void>) => {
+      const clearRunId = ctx.metadata.permissionClearRunId as string | undefined;
+      if (ctx.phase === 'onActing' && clearRunId) {
+        this.permissionEngine.clearRun(clearRunId);
+        await next();
+        return;
+      }
+      const batch = ctx.metadata.permissionBatch as PermissionBatchCall[] | undefined;
+      if (ctx.phase === 'onActing' && Array.isArray(batch)) {
+        const mode = (ctx.metadata.autonomyMode as AutonomyMode | undefined) ?? this.defaultMode;
+        const checkContext: PermissionCheckContext = {
+          runId: ctx.metadata.permissionRunId as string | undefined,
+          workingDirectory: ctx.metadata.permissionWorkingDirectory as string | undefined,
+        };
+        try {
+          ctx.metadata.permissionBatchResults = this.permissionEngine.checkBatch(batch, mode, checkContext);
+        } catch (err) {
+          const reason = `PermissionEngine 批量预检异常 (fail-closed): ${err instanceof Error ? err.message : String(err)}`;
+          ctx.metadata.permissionBatchResults = batch.map((): PermissionCheckResult => ({ decision: 'deny', reason }));
+        }
+        await next();
+        return;
+      }
+
       // 仅处理 onActing 阶段且有 toolName 的情况
       if (ctx.phase !== 'onActing' || !ctx.toolName) {
         await next();
@@ -60,7 +84,10 @@ export class PermissionMiddleware {
       const mode = (ctx.metadata.autonomyMode as AutonomyMode | undefined) ?? this.defaultMode;
 
       try {
-        const decision = this.permissionEngine.check(toolName, args, mode);
+        const decision = this.permissionEngine.check(toolName, args, mode, {
+          runId: ctx.metadata.permissionRunId as string | undefined,
+          workingDirectory: ctx.metadata.permissionWorkingDirectory as string | undefined,
+        });
 
         // 把决策结果写入 metadata，供 Loop / 后续中间件 / 审计读取
         ctx.metadata.permissionDecision = decision.decision;
@@ -70,6 +97,9 @@ export class PermissionMiddleware {
         if (decision.reason) {
           ctx.metadata.permissionReason = decision.reason;
         }
+        ctx.metadata.permissionEffectKind = decision.effectKind;
+        ctx.metadata.permissionCanonicalResource = decision.canonicalResource;
+        ctx.metadata.permissionRedactedResource = decision.redactedResource;
 
         if (decision.decision === 'deny') {
           // deny → 设置 permissionDenied，loop.ts 会 fail-closed 拒绝执行

@@ -433,10 +433,6 @@ export class FileEditTool implements ITool {
         }
       }
 
-      // 写入前将原内容推入 EditHistory（/undo 可恢复）
-      // 注：确认通过后再 push，避免用户取消后栈中残留无效条目
-      editHistory.push(filePath, original);
-
       // P0-16：第二层 stale-check —— 写入前重新检测文件是否被外部进程修改
       // 借鉴 Claude Code FileEditTool：validateInput + call 双层检查，临界区内不 yield
       //   - 第一层 mtime 快速比对：若 mtime 未变，进入快速路径直接写
@@ -473,6 +469,14 @@ export class FileEditTool implements ITool {
         }
         // mtime 变化但内容相同（Windows mtime 误报），继续写入
       }
+
+      const beforeWrite = await context.revalidateEffect?.('file_edit', args);
+      if (beforeWrite && !beforeWrite.allowed) {
+        return { success: false, output: '', error: `权限在执行边界被拒绝: ${beforeWrite.reason ?? '资源不再获准'}`, durationMs: 0 };
+      }
+
+      // 授权与 stale-check 均通过后再记录历史，拒绝路径不污染 undo 栈。
+      editHistory.push(filePath, original);
 
       // 写回文件（临界区终点）
       // Phase 96 P1-3：按原文件 BOM 状态写回，保留 Windows 历史遗留文件的 BOM
