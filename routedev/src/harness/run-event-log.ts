@@ -11,6 +11,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { redactSensitiveValue } from '../utils/redact-sensitive.js';
 import { getAppDataDir } from '../utils/paths.js';
 import { RouteDevError } from '../utils/errors.js';
 
@@ -188,15 +189,19 @@ export class RunEventLog {
     return this.runId;
   }
 
-  /** Closure 6：redaction——输入/输出按契约截断，不落盘完整原文 */
+  /** Closure 6 + Observability Closure（P1-INFRA-01）：payload 截断 + 共享凭据脱敏——
+   *  截断防原文无限落盘；redactSensitiveValue 防凭据落盘（llm_retry.error /
+   *  llm_failed.error / tool_rejected.reason / run_interrupted.reason 等文本字段）。
+   *  只改 sink 层值，调用方（loop）传入的真实 payload 不变——runtime 行为不受影响。 */
   private redactPayload(type: RunEventType, payload: Record<string, unknown>): Record<string, unknown> {
+    let out = payload;
     if (type === 'run_started' && typeof payload.input === 'string' && payload.input.length > this.inputTruncateChars) {
-      return { ...payload, input: payload.input.slice(0, this.inputTruncateChars) + '…' };
+      out = { ...out, input: payload.input.slice(0, this.inputTruncateChars) + '…' };
     }
     if (type === 'tool_completed' && typeof payload.outputPreview === 'string' && payload.outputPreview.length > this.outputPreviewChars) {
-      return { ...payload, outputPreview: payload.outputPreview.slice(0, this.outputPreviewChars) + '…' };
+      out = { ...out, outputPreview: payload.outputPreview.slice(0, this.outputPreviewChars) + '…' };
     }
-    return payload;
+    return redactSensitiveValue(out) as Record<string, unknown>;
   }
 
   /** 内存事件流（测试/比对用） */

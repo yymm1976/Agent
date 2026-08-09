@@ -10,7 +10,7 @@
 // - 轨迹记录：runner 自维护 toolCalls[]（name/args/denied/isError），供评分用
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs';
-import { join, relative, resolve, dirname, sep } from 'node:path';
+import { join, relative, resolve, dirname, sep, delimiter } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { ReActAgentLoop } from '../../../src/agent/loop.js';
 import { NativeAgentKernel } from '../../../src/agent/kernel-native.js';
@@ -135,8 +135,10 @@ function grepFiles(root: string, pattern: string): string[] {
   return hits;
 }
 
-/** Eval Fix 2：给 shell 子进程注入 PATH（node bin + routedev node_modules/.bin），fixture 无需 npm install */
-function shellEnv(): NodeJS.ProcessEnv {
+/** Eval Fix 2：给 shell 子进程注入 PATH（node bin + routedev node_modules/.bin），fixture 无需 npm install。
+ *  Observability Closure（P2-INFRA-04）：分隔符用 path.delimiter（Windows ';' / POSIX ':'）——
+ *  硬编码 ';' 在 POSIX 上会拼成单条无效路径（CI ubuntu 靠 PATH 尾部原值侥幸通过）。 */
+export function shellEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
     PATH: [
@@ -144,7 +146,7 @@ function shellEnv(): NodeJS.ProcessEnv {
       resolve(import.meta.dirname, '../../../node_modules'),
       dirname(process.execPath),
       process.env.PATH ?? '',
-    ].join(';'),
+    ].join(delimiter),
   };
 }
 

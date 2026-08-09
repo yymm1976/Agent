@@ -11,6 +11,7 @@
 // 修复：使用 Proxy 懒加载模式，首次调用日志方法时才创建目录和文件 transport
 
 import { createLogger, format, transports } from 'winston';
+import { redactSensitiveText, redactSensitiveValue } from './redact-sensitive.js';
 import type * as winston from 'winston';
 import { getAppDataDir, ensureDir } from './paths.js';
 import { join } from 'path';
@@ -50,6 +51,29 @@ if (process.env.NODE_ENV !== 'production') {
  * 首次调用日志方法时才创建日志目录和文件 transport
  */
 let fileTransportsAdded = false;
+
+/**
+ * Observability Closure（P1-INFRA-01）：文件 transport 的脱敏 format——
+ * message 与结构化 meta 的字符串值统一凭据脱敏（winston File 默认输出整条
+ * info 对象，secret 可能出现在 message 或 meta 任意层）。Console transport
+ * 保持原样（非持久化面，开发可读性优先）。
+ */
+/** Observability Closure（P1-INFRA-01）：文件 transport 的脱敏 format——导出供 artifact 测试 */
+export function redactingFileFormat(): ReturnType<typeof format.combine> {
+  return format.combine(
+    format((info) => {
+      const out: Record<string, unknown> = { ...info };
+      for (const [k, v] of Object.entries(info)) {
+        if (k === 'message' && typeof v === 'string') out[k] = redactSensitiveText(v);
+        else if (typeof v === 'object' && v !== null) out[k] = redactSensitiveValue(v);
+        else out[k] = v;
+      }
+      return out as ReturnType<NonNullable<Parameters<typeof format>[0]>>;
+    })(),
+    format.json(),
+  );
+}
+
 function ensureFileTransports(): void {
   if (fileTransportsAdded) return;
   const logDir = join(getAppDataDir(), 'logs');
@@ -61,6 +85,7 @@ function ensureFileTransports(): void {
       level: 'error',
       maxsize: 5 * 1024 * 1024, // 5MB
       maxFiles: 3,
+      format: redactingFileFormat(),
     }),
   );
   _logger.add(
@@ -69,6 +94,7 @@ function ensureFileTransports(): void {
       filename: join(logDir, 'combined.log'),
       maxsize: 10 * 1024 * 1024, // 10MB
       maxFiles: 5,
+      format: redactingFileFormat(),
     }),
   );
   fileTransportsAdded = true;

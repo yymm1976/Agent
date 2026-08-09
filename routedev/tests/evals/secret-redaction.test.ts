@@ -139,7 +139,7 @@ describe('artifact-level regression：注入 fake secrets → redact → 持久�
     expect(String(traj.args?.command)).toContain('[REDACTED]');
   });
 
-  it('无 secret 的 report 保持逐字节一致（redaction 不误伤）', () => {
+  it('无 secret 的 report 内容不变（redaction 不误伤），仅附加 artifactSecurity metadata', () => {
     const report = {
       taskId: 'L2-01',
       scoring: { pass: true, mode: 'model-capability' },
@@ -151,6 +151,8 @@ describe('artifact-level regression：注入 fake secrets → redact → 持久�
       },
     };
     const safe = redactReport(report);
-    expect(safe).toEqual(report);
+    const { artifactSecurity, ...rest } = (safe.artifact as Record<string, unknown>);
+    expect(rest).toEqual(report.artifact); // 内容不变（除附加 metadata）
+    expect(artifactSecurity).toEqual({ redacted: false, redactionCount: 0, preRedactionSha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
   });
 });

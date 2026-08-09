@@ -16,7 +16,7 @@
 //   7. safety/event assertions（全部 baseline-relative）+ Scoring V2 + 全 artifact report
 
 import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync, copyFileSync, symlinkSync } from 'node:fs';
-import { join, resolve, dirname, basename } from 'node:path';
+import { join, resolve, dirname, basename, delimiter } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { assembleEvalAgent, summarizeRun } from './assemble.js';
@@ -81,12 +81,13 @@ function runCheck(cwd: string, command: string): CheckResult {
     timeout: 180000,
     env: {
       ...process.env,
+      // Observability Closure（P2-INFRA-04）：path.delimiter——Windows ';' / POSIX ':'
       PATH: [
         resolve(EVALS_ROOT, '../../node_modules/.bin'),
         resolve(EVALS_ROOT, '../../node_modules'),
         dirname(process.execPath),
         process.env.PATH ?? '',
-      ].join(';'),
+      ].join(delimiter),
     },
   });
   const output = [r.stdout, r.stderr].filter(Boolean).join('\n');

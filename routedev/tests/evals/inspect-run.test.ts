@@ -144,8 +144,58 @@ describe('inspectEvents — 11 类检测', () => {
     expect(r.findings.some((f) => f.code === 'RETRY_INCONSISTENCY')).toBe(true);
   });
 
-  it('RETRY_INCONSISTENCY：llm_retry 存在但无 attempt>1 请求', () => {
-    // 只有 attempt=1 的流 + llm_retry（attempt=1）——重试事件无对应 attempt>1 请求序列
+  it('Closure（P1-INFRA-02）：canonical L2-07 lifecycle = CLEAN（provider retry 不产生新 llm_requested）', () => {
+    // L2-07 正确契约：loop llm_requested=1 + provider attempts=2（llm_retry=1）+ llm_succeeded=1 + run_completed
+    const stream = [
+      ev({ type: 'run_started', payload: { input: 'x', model: 'm' } }, 1),
+      ev({ type: 'llm_requested', payload: { model: 'm', attempt: 1 } }, 2),
+      ev({ type: 'llm_retry', payload: { model: 'm', attempt: 2, errorKind: 'rate_limit', error: 'transient' } }, 3),
+      ev({ type: 'llm_succeeded', payload: { model: 'm', attempt: 1, finishReason: 'stop' } }, 4),
+      ev({ type: 'run_completed', payload: { outputLength: 1, toolCallCount: 0, retryCount: 1 } }, 5),
+    ];
+    const r = inspectEvents(stream, []);
+    expect(r.findings).toHaveLength(0); // RETRY_INCONSISTENCY = 0
+    expect(r.stats.retryCount).toBe(1);
+  });
+
+  it('Closure（P1-INFRA-02）：malformed provider retry 仍检测——llm_retry 后直接 run_completed（无 llm_succeeded/failed）', () => {
+    const stream = [
+      ev({ type: 'run_started', payload: { input: 'x', model: 'm' } }, 1),
+      ev({ type: 'llm_requested', payload: { model: 'm', attempt: 1 } }, 2),
+      ev({ type: 'llm_retry', payload: { model: 'm', attempt: 2, errorKind: 'x', error: 'e' } }, 3),
+      ev({ type: 'run_completed', payload: {} }, 4), // 无 succeeded/failed——provider retry 无终态
+    ];
+    const r = inspectEvents(stream, []);
+    expect(r.findings.some((f) => f.code === 'RETRY_INCONSISTENCY' && f.message.includes('无终态'))).toBe(true);
+  });
+
+  it('Closure（P1-INFRA-02）：malformed loop retry——llm_failed 后无新 requested 且无 interrupted 却 completed', () => {
+    const stream = [
+      ev({ type: 'run_started', payload: { input: 'x', model: 'm' } }, 1),
+      ev({ type: 'llm_requested', payload: { model: 'm', attempt: 1 } }, 2),
+      ev({ type: 'llm_failed', payload: { model: 'm', attempt: 1, errorKind: 'timeout', error: 'e' } }, 3),
+      ev({ type: 'run_completed', payload: {} }, 4), // 无新 requested、无 interrupted 却 completed
+    ];
+    const r = inspectEvents(stream, []);
+    expect(r.findings.some((f) => f.code === 'RETRY_INCONSISTENCY' && f.message.includes('loop retry 缺失'))).toBe(true);
+  });
+
+  it('Closure（P1-INFRA-02）：llm_failed 后有新 requested（loop retry 正常）→ 不报', () => {
+    const stream = [
+      ev({ type: 'run_started', payload: { input: 'x', model: 'm' } }, 1),
+      ev({ type: 'llm_requested', payload: { model: 'm', attempt: 1 } }, 2),
+      ev({ type: 'llm_failed', payload: { model: 'm', attempt: 1, errorKind: 'timeout', error: 'e' } }, 3),
+      ev({ type: 'llm_requested', payload: { model: 'm', attempt: 2 } }, 4),
+      ev({ type: 'llm_succeeded', payload: { model: 'm', attempt: 2 } }, 5),
+      ev({ type: 'run_completed', payload: {} }, 6),
+    ];
+    const r = inspectEvents(stream, []);
+    expect(r.findings.some((f) => f.code === 'RETRY_INCONSISTENCY')).toBe(false);
+  });
+
+  it('Closure（P1-INFRA-02）：provider retry 后同 logical request 有 llm_succeeded → 不报（旧"无 attempt>1 请求"语义已废弃）', () => {
+    // 只有 attempt=1 的流 + llm_retry（provider 层）——llm_retry 不产生新 llm_requested；
+    // 该 logical request 最终 llm_succeeded → CLEAN（旧规则曾误报）
     const stream = [
       ev({ type: 'run_started', payload: { input: 'x', model: 'm' } }, 1),
       ev({ type: 'llm_requested', payload: { model: 'm', attempt: 1 } }, 2),
@@ -154,7 +204,7 @@ describe('inspectEvents — 11 类检测', () => {
       ev({ type: 'run_completed', payload: {} }, 5),
     ];
     const r = inspectEvents(stream, []);
-    expect(r.findings.some((f) => f.code === 'RETRY_INCONSISTENCY')).toBe(true);
+    expect(r.findings.some((f) => f.code === 'RETRY_INCONSISTENCY')).toBe(false);
   });
 
   it('TRAJECTORY_MISMATCH：trajectory 与 EventLog 集合/结果不一致', () => {

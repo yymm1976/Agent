@@ -64,6 +64,13 @@ export interface CompareResult {
     warnings: string[];
     met: boolean;
   };
+  /** Observability Closure（P1-EVAL-03）：套件覆盖变化——长期 benchmark fail-closed */
+  suiteCoverage: {
+    disappeared: string[];      // A 有 B 无（capability 或 conformance）
+    newTasks: string[];         // B 有 A 无
+    coverageRegression: boolean;
+    allowSuiteChange: boolean;
+  };
   summary: {
     regressions: string[];
     improvements: string[];
@@ -178,18 +185,23 @@ function efficiencyDetail(a: TaskMetrics, b: TaskMetrics, threshold: number): st
   return worse.length > 0 ? worse.join(', ') : undefined;
 }
 
-export function compareBaselines(aPath: string, bPath: string, opts?: { efficiencyThreshold?: number }): CompareResult {
+export function compareBaselines(aPath: string, bPath: string, opts?: { efficiencyThreshold?: number; allowSuiteChange?: boolean }): CompareResult {
   const threshold = opts?.efficiencyThreshold ?? 1.5;
+  const allowSuiteChange = opts?.allowSuiteChange ?? false;
   const a = loadBaseline(aPath);
   const b = loadBaseline(bPath);
   const allIds = new Set([...a.entries.keys(), ...b.entries.keys()]);
 
+  const disappeared: string[] = [];
+  const newTasks: string[] = [];
   const tasks: TaskTransition[] = [];
   for (const taskId of [...allIds].sort()) {
     const ea = a.entries.get(taskId);
     const eb = b.entries.get(taskId);
     if (!ea || !eb) {
-      // 单侧存在：视为新增/消失任务（不判 correctness 回归）
+      // Observability Closure（P1-EVAL-03）：任务只在一侧存在——不再是静默 UNCHANGED
+      if (!ea && eb) newTasks.push(taskId);
+      if (ea && !eb) disappeared.push(taskId);
       tasks.push({ taskId, transition: 'UNCHANGED', aPass: ea?.pass ?? false, bPass: eb?.pass ?? false, metrics: { a: ea?.metrics ?? {}, b: eb?.metrics ?? {} } });
       continue;
     }
@@ -237,9 +249,17 @@ export function compareBaselines(aPath: string, bPath: string, opts?: { efficien
   }
   if (hardSafety.transition === 'REGRESSION') errors.push(`hard safety 0 → ${bSafe}`);
   if (conformance.transition === 'REGRESSION') errors.push('conformance PASS → FAIL');
-  if (errors.length === 0 && warnings.length === 0) {
-    // 无变化时仍标记 met（基线未回归）
+
+  // Observability Closure（P1-EVAL-03）：套件覆盖 fail-closed——
+  //   B 相对 A 消失的 capability/conformance 任务 = ERROR（默认）；
+  //   --allow-suite-change 显式放行（降为 WARNING）；新任务 = INFO 不阻断。
+  const coverageRegression = disappeared.length > 0;
+  if (coverageRegression && !allowSuiteChange) {
+    for (const t of disappeared) errors.push(`SUITE_COVERAGE_REGRESSION: 任务 ${t} 在 B 中消失（--allow-suite-change 可显式放行）`);
+  } else if (coverageRegression) {
+    for (const t of disappeared) warnings.push(`suite coverage: 任务 ${t} 在 B 中消失（allow-suite-change 放行）`);
   }
+  for (const t of newTasks) warnings.push(`NEW_TASK: ${t} 仅存在于 B（新增任务，不阻断）`);
 
   const summary = {
     regressions: tasks.filter((t) => t.transition === 'REGRESSION').map((t) => t.taskId),
@@ -254,6 +274,7 @@ export function compareBaselines(aPath: string, bPath: string, opts?: { efficien
     tasks,
     hardSafety,
     conformance,
+    suiteCoverage: { disappeared, newTasks, coverageRegression, allowSuiteChange },
     gates: { errors, warnings, met: errors.length === 0 },
     summary,
   };
@@ -278,6 +299,15 @@ export function toMarkdown(r: CompareResult): string {
   lines.push(`## Hard Safety`);
   lines.push('');
   lines.push(`A=${r.hardSafety.a} → B=${r.hardSafety.b} (**${r.hardSafety.transition}**)`);
+  lines.push('');
+  lines.push(`## Suite Coverage`);
+  lines.push('');
+  if (r.suiteCoverage.disappeared.length === 0 && r.suiteCoverage.newTasks.length === 0) {
+    lines.push('A/B 任务集合一致 ✅');
+  } else {
+    if (r.suiteCoverage.disappeared.length > 0) lines.push(`- ❌ **消失（coverage regression${r.suiteCoverage.allowSuiteChange ? '，已放行' : ''}）**: ${r.suiteCoverage.disappeared.join(', ')}`);
+    if (r.suiteCoverage.newTasks.length > 0) lines.push(`- ➕ **新增**: ${r.suiteCoverage.newTasks.join(', ')}`);
+  }
   lines.push('');
   lines.push(`## Conformance`);
   lines.push('');
@@ -316,8 +346,9 @@ if (typeof process.argv[1] === 'string' && process.argv[1].replace(/\\/g, '/').e
   const outPrefix = args.find((a) => a.startsWith('--out-prefix='))?.slice('--out-prefix='.length) ?? `BASELINE-DIFF-${Date.now()}`;
   const thresholdArg = args.find((a) => a.startsWith('--efficiency-threshold='));
   const threshold = thresholdArg ? Number(thresholdArg.slice('--efficiency-threshold='.length)) : 1.5;
+  const allowSuiteChange = args.includes('--allow-suite-change');
   try {
-    const result = compareBaselines(files[0], files[1], { efficiencyThreshold: threshold });
+    const result = compareBaselines(files[0], files[1], { efficiencyThreshold: threshold, allowSuiteChange });
     const reportDir = join(dirname(resolve(files[0])), '..', 'reports');
     mkdirSync(reportDir, { recursive: true });
     const jsonFile = join(reportDir, `${outPrefix}.json`);

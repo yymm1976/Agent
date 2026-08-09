@@ -16,6 +16,7 @@ import type {
 } from './trace-types.js';
 import { logger } from '../utils/logger.js';
 import { getAppDataDir, ensureDir } from '../utils/paths.js';
+import { redactSensitiveValue } from '../utils/redact-sensitive.js';
 
 const DEFAULT_CONFIG: TraceCollectorConfig = {
   enabled: true,
@@ -821,7 +822,10 @@ export class TraceCollector {
 
     for (const [sessionId, records] of bySession) {
       const filePath = path.join(dayDir, `${sessionId}.trace.jsonl`);
-      const content = records.map(r => JSON.stringify(r)).join('\n') + '\n';
+      // Observability Closure（P1-INFRA-01）：磁盘序列化前统一凭据脱敏——
+      // userInput/thinking/tool_call_result/engineEvent/error/worker 文本都可能含凭据；
+      // 只改 sink 层，内存 records 与分析逻辑不变。
+      const content = records.map(r => JSON.stringify(redactSensitiveValue(r))).join('\n') + '\n';
       const write = fs.appendFile(filePath, content, 'utf-8')
         .catch(err => {
           logger.warn('TraceCollector: batch write failed', {
@@ -850,14 +854,14 @@ export class TraceCollector {
     const sessionPath = path.join(dayDir, `${this.currentSession.id}.session.json`);
     await fs.writeFile(
       sessionPath,
-      JSON.stringify(this.currentSession, null, 2),
+      JSON.stringify(redactSensitiveValue(this.currentSession), null, 2),
       'utf-8',
     );
 
     const spansPath = path.join(dayDir, `${this.currentSession.id}.spans.json`);
     await fs.writeFile(
       spansPath,
-      JSON.stringify(this.spans, null, 2),
+      JSON.stringify(redactSensitiveValue(this.spans), null, 2),
       'utf-8',
     );
   }

@@ -202,25 +202,56 @@ export function inspectEvents(events: RawEvent[], trajectory: RawTrajectoryCall[
     }
   }
 
-  // 10. retry lifecycle inconsistency
-  const attemptsRequested = new Set<number>();
-  const attemptsTerminal = new Map<number, string>();
-  let retryEvents = 0;
-  for (const e of sorted) {
-    if (e.type === 'llm_requested') attemptsRequested.add(Number((e.payload as Record<string, unknown>).attempt));
-    if (e.type === 'llm_succeeded' || e.type === 'llm_failed') attemptsTerminal.set(Number((e.payload as Record<string, unknown>).attempt), e.type);
-    if (e.type === 'llm_retry') retryEvents += 1;
+  // 10. retry lifecycle inconsistency（Observability Closure P1-INFRA-02）：
+  //     RouteDev 区分两层重试——**不要混为一谈**：
+  //       a) loop logical retry：llm_failed(logical attempt=N) 之后，若 run 继续，
+  //          必然出现新的 llm_requested(attempt=N+1)（loop 把错误注入上下文继续迭代）；
+  //          若既无新 requested 也无 run_interrupted 却 run_completed → malformed。
+  //       b) provider transport retry：llm_retry 来自 provider onRetry(info)，**不产生**
+  //          新的 loop-level llm_requested（L2-07 正确契约：llm_requested=1 + llm_retry=1 +
+  //          llm_succeeded=1 + run_completed = CLEAN）。唯一不变量：llm_retry 所在
+  //          logical request 最终必须有 llm_succeeded 或 llm_failed（重试耗尽）。
+  const requestedByAttempt = new Map<number, number>(); // attempt → 事件序号
+  const failedAttempts = new Set<number>();
+  for (let i = 0; i < sorted.length; i++) {
+    const e = sorted[i]!;
+    if (e.type === 'llm_requested') requestedByAttempt.set(Number((e.payload as Record<string, unknown>).attempt), i);
+    if (e.type === 'llm_failed') failedAttempts.add(Number((e.payload as Record<string, unknown>).attempt));
   }
-  for (const attempt of attemptsTerminal.keys()) {
-    if (!attemptsRequested.has(attempt)) {
-      findings.push({ code: 'RETRY_INCONSISTENCY', severity: 'warning', message: `llm_${attemptsTerminal.get(attempt)} attempt=${attempt} 无对应 llm_requested` });
+  // a) loop retry：llm_failed 后（到 run 结束）无新 requested 且无 interrupted → malformed
+  for (const attempt of failedAttempts) {
+    const failIdx = sorted.findIndex((e) => e.type === 'llm_failed' && Number((e.payload as Record<string, unknown>).attempt) === attempt);
+    if (failIdx < 0) continue;
+    const after = sorted.slice(failIdx + 1);
+    const hasNewRequest = after.some((e) => e.type === 'llm_requested');
+    const hasInterrupted = after.some((e) => e.type === 'run_interrupted');
+    const hasCompleted = after.some((e) => e.type === 'run_completed');
+    if (!hasNewRequest && !hasInterrupted && hasCompleted) {
+      findings.push({
+        code: 'RETRY_INCONSISTENCY',
+        severity: 'error',
+        message: `llm_failed(attempt=${attempt}) 后既无新的 llm_requested 也无 run_interrupted，却 run_completed（loop retry 缺失）`,
+        sequence: failIdx + 1,
+      });
     }
   }
-  if (retryEvents > 0) {
-    // llm_retry 出现但无任何 attempt>1 的 llm_failed/llm_requested → 生命周期可疑
-    const hasRetriedAttempt = [...attemptsRequested].some((a) => a > 1);
-    if (!hasRetriedAttempt && retryEvents > 0) {
-      findings.push({ code: 'RETRY_INCONSISTENCY', severity: 'warning', message: `存在 ${retryEvents} 个 llm_retry 但无 attempt>1 的 llm_requested（重试未反映在请求序列）` });
+  // b) provider retry：llm_retry 所在 logical request 最终必须有 llm_succeeded 或 llm_failed
+  const retryEvents: Array<{ seq: number; attempt: number }> = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const e = sorted[i]!;
+    if (e.type === 'llm_retry') retryEvents.push({ seq: i + 1, attempt: Number((e.payload as Record<string, unknown>).attempt ?? 0) });
+  }
+  for (const r of retryEvents) {
+    const after = sorted.slice(r.seq);
+    const hasTerminal = after.some((e) => e.type === 'llm_succeeded' || e.type === 'llm_failed');
+    const terminalBeforeRunEnd = after.some((e) => e.type === 'run_completed' || e.type === 'run_interrupted');
+    if (!hasTerminal && terminalBeforeRunEnd) {
+      findings.push({
+        code: 'RETRY_INCONSISTENCY',
+        severity: 'warning',
+        message: `llm_retry(attempt=${r.attempt}) 所在 logical request 无最终 llm_succeeded/llm_failed（provider retry 无终态）`,
+        sequence: r.seq,
+      });
     }
   }
 
@@ -233,7 +264,7 @@ export function inspectEvents(events: RawEvent[], trajectory: RawTrajectoryCall[
     llmFailures: sorted.filter((e) => e.type === 'llm_failed').length,
     toolCalls: sorted.filter((e) => e.type === 'tool_requested').length,
     failedTools: sorted.filter((e) => e.type === 'tool_completed' && e.payload.isError === true).length,
-    retryCount: retryEvents,
+    retryCount: retryEvents.length,
     durationMs: sorted.length >= 2 ? sorted[sorted.length - 1]!.timestamp - sorted[0]!.timestamp : 0,
     terminalReason: hasCompleted ? 'completed' : terminalReasons[0] ?? (sorted.length === 0 ? 'no-events' : 'no-terminal'),
     eventCountByType,
