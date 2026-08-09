@@ -220,10 +220,11 @@ describe('MCPTool', () => {
 
     expect(result.success).toBe(true);
     expect(result.output).toBe('hello');
-    expect(mockClient.callTool).toHaveBeenCalledWith({
-      name: 'echo',
-      arguments: { text: 'hello' },
-    });
+    expect(mockClient.callTool).toHaveBeenCalledWith(
+      { name: 'echo', arguments: { text: 'hello' } },
+      undefined,
+      { signal: undefined, timeout: 30000, maxTotalTimeout: 30000 },
+    );
   });
 
   it('should handle MCP tool errors', async () => {
@@ -252,5 +253,30 @@ describe('MCPTool', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toBe('error occurred');
+  });
+
+  it('propagates cancellation and bounds untrusted MCP output', async () => {
+    mockClient.callTool.mockResolvedValue({
+      content: [{ type: 'text', text: 'x'.repeat(300_000) }],
+      isError: false,
+    });
+    const tool = new MCPTool(
+      'mcp__server1__large',
+      { name: 'large', description: 'Large output', inputSchema: { type: 'object' as const, properties: {} } },
+      mockClient as unknown as import('@modelcontextprotocol/sdk/client/index.js').Client,
+      { id: 'server1', name: 'Server 1', enabled: true, config: { transport: 'stdio', command: 'node', args: [] } },
+    );
+    const controller = new AbortController();
+
+    const result = await tool.execute({}, { ...context, signal: controller.signal, timeoutMs: 1234 });
+
+    expect(mockClient.callTool).toHaveBeenCalledWith(
+      { name: 'large', arguments: {} },
+      undefined,
+      { signal: controller.signal, timeout: 1234, maxTotalTimeout: 1234 },
+    );
+    expect(result.output.length).toBeLessThan(263_000);
+    expect(result.output).toContain('[MCP output truncated]');
+    expect(result.metadata).toMatchObject({ outputTruncated: true, originalOutputChars: 300_000 });
   });
 });

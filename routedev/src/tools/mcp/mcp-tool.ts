@@ -6,6 +6,28 @@ import type { Tool as MCPToolDefinition } from '@modelcontextprotocol/sdk/types.
 import type { ITool, ToolDefinition, ToolResult, ToolExecutionContext } from '../types.js';
 import type { MCPServerEntry, MCPToolMetadata } from './types.js';
 
+const MAX_MCP_OUTPUT_CHARS = 256 * 1024;
+
+function boundedContent(parts: Array<{ type: string; text?: string; [key: string]: unknown }>): {
+  content: string;
+  originalChars: number;
+  truncated: boolean;
+} {
+  let content = '';
+  let originalChars = 0;
+  for (const part of parts) {
+    const value = part.type === 'text' ? (part.text ?? '') : JSON.stringify(part);
+    const chunk = content.length === 0 ? value : `\n${value}`;
+    originalChars += chunk.length;
+    if (content.length < MAX_MCP_OUTPUT_CHARS) {
+      content += chunk.slice(0, MAX_MCP_OUTPUT_CHARS - content.length);
+    }
+  }
+  const truncated = originalChars > content.length;
+  if (truncated) content += '\n...[MCP output truncated]';
+  return { content, originalChars, truncated };
+}
+
 export class MCPTool implements ITool {
   readonly definition: ToolDefinition;
   private client: Client;
@@ -92,7 +114,7 @@ export class MCPTool implements ITool {
 
   async execute(
     args: Record<string, unknown>,
-    _context: ToolExecutionContext,
+    context: ToolExecutionContext,
   ): Promise<ToolResult> {
     const startTime = Date.now();
 
@@ -100,12 +122,14 @@ export class MCPTool implements ITool {
       const result = await this.client.callTool({
         name: this.originalName,
         arguments: args,
+      }, undefined, {
+        signal: context.signal,
+        timeout: context.timeoutMs,
+        maxTotalTimeout: context.timeoutMs,
       });
 
       const contentParts = result.content as Array<{ type: string; text?: string; [key: string]: unknown }>;
-      const content = contentParts
-        .map(part => (part.type === 'text' ? part.text : JSON.stringify(part)))
-        .join('\n');
+      const { content, originalChars, truncated } = boundedContent(contentParts);
 
       return {
         success: !result.isError,
@@ -116,6 +140,8 @@ export class MCPTool implements ITool {
           mcpToolName: this.originalName,
           serverId: this.metadata.serverId,
           serverName: this.metadata.serverName,
+          outputTruncated: truncated,
+          originalOutputChars: originalChars,
         },
       };
     } catch (error) {
