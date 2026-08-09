@@ -31,17 +31,23 @@ describe('CompletionGate (Phase 31 Task 6.4)', { timeout: 30000 }, () => {
     // EBUSY 重试：取消测试杀掉的进程树可能短暂占用临时目录。
     // 关键：等待必须让出事件循环（await setTimeout）——busy-wait 会阻塞
     // 被杀子进程的 close/句柄释放，EBUSY 永远无法解除。
-    for (let attempt = 0; attempt < 50; attempt++) {
+    // 全量并行下 Windows 句柄释放可能超过任何合理等待——最终兜底容忍残留
+    // （系统 temp 目录会被回收，残留无害；不得让清理失败污染测试结果）。
+    for (let attempt = 0; attempt < 40; attempt++) {
       try {
         rmSync(tempDir, { recursive: true, force: true });
         return;
       } catch {
-        // 让出事件循环 200ms 后重试（被杀进程的句柄释放依赖事件循环运转）
-        await new Promise((r) => setTimeout(r, 200));
+        // 让出事件循环 150ms 后重试（被杀进程的句柄释放依赖事件循环运转）
+        await new Promise((r) => setTimeout(r, 150));
       }
     }
-    rmSync(tempDir, { recursive: true, force: true });
-  });
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // 容忍残留（EBUSY 最终兜底）
+    }
+  }, 30000);
 
   describe('常量', () => {
     it('DEFAULT_GATE_CONFIG 有正确的默认值', () => {

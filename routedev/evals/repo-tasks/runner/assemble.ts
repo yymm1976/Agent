@@ -186,6 +186,11 @@ export class EvalToolExecutor implements ToolExecutorAdapter {
    */
   private contain(rel: string): { ok: true; path: string } | { ok: false; reason: string } {
     const root = this.workdir;
+    // 显式拒绝 `..` 段（两种分隔符）——Linux 上反斜杠不是路径分隔符，
+    // resolve 不会折叠 `..\x`，单靠 resolve 越界检查会漏（跨平台一致性）
+    if (rel.includes('../') || rel.includes('..\\') || rel.startsWith('..')) {
+      return { ok: false, reason: `路径越出工作区: ${rel}` };
+    }
     const resolved = resolve(root, rel);
     if (resolved !== root && !resolved.startsWith(root + sep)) {
       return { ok: false, reason: `路径越出工作区: ${rel}` };
