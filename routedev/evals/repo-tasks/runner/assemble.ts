@@ -150,23 +150,32 @@ function shellEnv(): NodeJS.ProcessEnv {
 
 function runShell(command: string, cwd: string, timeoutMs: number): Promise<{ stdout: string; stderr: string; status: number | null }> {
   return new Promise<{ stdout: string; stderr: string; status: number | null }>((resolvePromise) => {
-    const child = spawn(command, { cwd, shell: true, windowsHide: true, env: shellEnv() });
+    // TASK 4（cross-platform）：detached 创建独立进程组——POSIX 侧按组 SIGKILL，
+    // 确保 shell 与孙进程（sleep/node）一起终止；Windows 侧 taskkill /T /F。
+    const child = spawn(command, { cwd, shell: true, windowsHide: true, env: shellEnv(), detached: process.platform !== 'win32' });
     let stdout = '';
     let stderr = '';
     let settled = false;
+    let forceTimer: ReturnType<typeof setTimeout> | null = null;
     const finish = (status: number | null): void => {
-      if (!settled) { settled = true; resolvePromise({ stdout, stderr, status }); }
+      if (!settled) {
+        settled = true;
+        if (forceTimer) clearTimeout(forceTimer);
+        resolvePromise({ stdout, stderr, status });
+      }
     };
     const timer = setTimeout(() => {
       try {
-        // TASK 4（process cancellation）：kill 顶层 shell 后，Windows 上必须
-        // taskkill /T /F 终止整个进程树——cmd 外壳被杀时孙进程（node/npm）会残留
-        // 并继续写 workdir（确定性破坏）；POSIX 直接 kill（shell 与子进程同组）。
         if (process.platform === 'win32' && child.pid) {
           try { spawnSync('taskkill', ['/F', '/T', '/PID', String(child.pid)], { windowsHide: true }); } catch { /* noop */ }
+        } else if (child.pid) {
+          // POSIX：整组 SIGKILL（sh 收到 SIGTERM 可能不立即退出，sleep 子进程会拖住 close）
+          try { process.kill(-child.pid, 'SIGKILL'); } catch { /* noop */ }
         }
-        child.kill();
+        child.kill('SIGKILL');
       } catch { /* noop */ }
+      // 兜底：kill 后 2s 内 close 未到也强制 settle（进程组杀失败时不挂起）
+      forceTimer = setTimeout(() => finish(-1), 2000);
     }, timeoutMs);
     child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf-8'); });
     child.stderr?.on('data', (d: Buffer) => { stderr += d.toString('utf-8'); });

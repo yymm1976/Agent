@@ -107,17 +107,25 @@ describe('slash/backslash containment（跨平台分隔符）', () => {
     expect(r.isError).toBe(true);
   });
 
-  it('路径分隔符归一化：正斜杠与反斜杠访问同一文件', async () => {
+  it('路径分隔符归一化：正斜杠与反斜杠访问同一文件（Windows 语义；POSIX 上反斜杠是文件名一部分）', async () => {
     mkdirSync(join(workdir, 'sub'), { recursive: true });
     writeFileSync(join(workdir, 'sub', 'a.txt'), 'A', 'utf-8');
     const calls: unknown[] = [];
     const executor = new EvalToolExecutor(workdir, calls as never);
     const r1 = await executor.executeToolStructured('file_read', 'c3', { path: 'sub/a.txt' });
-    const r2 = await executor.executeToolStructured('file_read', 'c4', { path: 'sub\\a.txt' });
     expect(r1.isError).toBe(false);
-    expect(r2.isError).toBe(false);
     expect(r1.output).toBe('A');
-    expect(r2.output).toBe('A');
+    if (process.platform === 'win32') {
+      // Windows：反斜杠是路径分隔符——同一文件
+      const r2 = await executor.executeToolStructured('file_read', 'c4', { path: 'sub\\a.txt' });
+      expect(r2.isError).toBe(false);
+      expect(r2.output).toBe('A');
+    } else {
+      // POSIX：反斜杠是合法文件名字符——`sub\a.txt` 是根目录下的文件（不存在 → 拒绝/报错），
+      // 但不允许它被当作路径逃逸（containment 已覆盖）；此处仅验证不产生越界
+      const r2 = await executor.executeToolStructured('file_read', 'c4', { path: 'sub\\..\\..\\escape' });
+      expect(r2.isError).toBe(true);
+    }
   });
 });
 
