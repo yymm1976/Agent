@@ -1,0 +1,217 @@
+import { EffectResolver } from '../tools/effect-resolver.js';
+
+export type ObligationKind = 'file' | 'component' | 'behavior' | 'verification' | 'implementation';
+
+export interface TaskObligation {
+  id: string;
+  description: string;
+  kind: ObligationKind;
+  resourceHints: string[];
+}
+
+export interface RequirementEvidence {
+  obligationId: string;
+  description: string;
+  sources: string[];
+}
+
+export interface CompletionEvidenceResult {
+  status: 'complete' | 'recover' | 'interrupted';
+  missing: string[];
+  evidence: RequirementEvidence[];
+  recoveryAttempts: number;
+  recoveryMessage?: string;
+  reason?: 'cancelled' | 'completion_evidence_missing';
+}
+
+interface MutationRecord {
+  resource: string;
+  epoch: number;
+}
+
+const CODING_INTENT = /\b(add|build|change|create|delete|edit|fix|implement|migrate|refactor|remove|rename|update|write)\b|修复|实现|新增|修改|重构|删除|迁移/i;
+const VERIFICATION_REQUEST = /\b(test|tests|typecheck|lint|build|verify|verification|green)\b|测试|验证|构建|类型检查/i;
+const VERIFIER_COMMAND = /(?:^|\s)(?:pnpm|npm|yarn)\s+(?:run\s+)?(?:test(?::[\w-]+)?|typecheck(?::[\w-]+)?|lint|build|vitest|tsc)\b|(?:^|\s)(?:vitest|jest|pytest|tsc|eslint|ruff)\b|(?:^|\s)cargo\s+(?:test|check|build|clippy)\b|(?:^|\s)go\s+test\b|(?:^|\s)(?:gradle|gradlew|mvn|dotnet)\s+(?:test|check|build)\b/i;
+
+function normalizeResource(resource: string): string {
+  return resource.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+}
+
+function uniquePush(obligations: TaskObligation[], obligation: Omit<TaskObligation, 'id'>): void {
+  if (obligations.some((item) => item.description === obligation.description)) return;
+  obligations.push({ id: `obligation-${obligations.length + 1}`, ...obligation });
+}
+
+/** Deterministic, bounded task-contract extraction; no extra model call. */
+export function extractTaskObligations(userMessage: string): TaskObligation[] {
+  if (!CODING_INTENT.test(userMessage)) return [];
+  const obligations: TaskObligation[] = [];
+  const pathPattern = /\b(?:src|tests?|docs?|config|lib)[\\/][a-zA-Z0-9_.\\/-]+/g;
+  for (const match of userMessage.match(pathPattern) ?? []) {
+    const resource = match.replace(/[.,;:]+$/, '');
+    uniquePush(obligations, {
+      description: `修改要求涉及文件 ${resource}`,
+      kind: 'file',
+      resourceHints: [normalizeResource(resource)],
+    });
+  }
+
+  const components: Array<[RegExp, string, string[]]> = [
+    [/schema|type definition|类型定义|配置模式/i, '实现 schema/type definition', ['schema', 'type']],
+    [/config loader|\bloader\b|配置加载/i, '实现 config loader', ['loader']],
+    [/runtime logger|\blogger\b|日志器/i, '实现 runtime logger', ['logger']],
+    [/(?:its|the) tests|add[^.]{0,30}tests|update[^.]{0,30}tests|测试用例/i, '更新相关 tests', ['test']],
+    [/\breadme\b|documentation|文档示例/i, '更新 README/documentation', ['readme', 'docs/']],
+  ];
+  for (const [pattern, description, hints] of components) {
+    if (pattern.test(userMessage)) uniquePush(obligations, { description, kind: 'component', resourceHints: hints });
+  }
+
+  if (/invalid[^.]{0,80}reject|validated?|校验|无效[^。]{0,40}拒绝/i.test(userMessage)) {
+    uniquePush(obligations, {
+      description: '无效配置必须被验证并拒绝',
+      kind: 'behavior',
+      resourceHints: ['loader', 'schema'],
+    });
+  }
+
+  if (obligations.length === 0) {
+    uniquePush(obligations, { description: '完成请求的实现变更', kind: 'implementation', resourceHints: [] });
+  }
+  if (VERIFICATION_REQUEST.test(userMessage) && obligations.length < 8) {
+    uniquePush(obligations, { description: '在最新变更后完成验证', kind: 'verification', resourceHints: [] });
+  }
+  return obligations.slice(0, 8).map((item, index) => ({ ...item, id: `obligation-${index + 1}` }));
+}
+
+/**
+ * Run-local evidence tracker. Assistant prose is intentionally never accepted
+ * as evidence: only observed tool outcomes and their mutation/verification epoch.
+ */
+export class CompletionEvidenceGate {
+  private readonly resolver = new EffectResolver();
+  private readonly obligations: TaskObligation[];
+  private readonly mutations: MutationRecord[] = [];
+  private readonly verifierCommands: string[] = [];
+  private readonly unresolvedFailures = new Set<string>();
+  private mutationEpoch = 0;
+  private verifiedEpoch = -1;
+  private recoveryAttempts = 0;
+
+  constructor(userMessage: string, private readonly workingDirectory: string) {
+    this.obligations = extractTaskObligations(userMessage);
+  }
+
+  getObligations(): readonly TaskObligation[] {
+    return this.obligations;
+  }
+
+  getEpochs(): { mutationEpoch: number; verifiedEpoch: number } {
+    return { mutationEpoch: this.mutationEpoch, verifiedEpoch: this.verifiedEpoch };
+  }
+
+  observeAssistantText(_content: string): void {
+    // Deliberate no-op: self-reported completion is not requirement evidence.
+  }
+
+  observeToolRejection(kind: 'safety' | 'user' | 'hook' = 'safety'): void {
+    this.unresolvedFailures.add(kind);
+  }
+
+  observeToolResult(
+    toolName: string,
+    args: Record<string, unknown>,
+    isError: boolean,
+    _output: string,
+  ): void {
+    const command = toolName === 'shell_exec' && typeof args.command === 'string' ? args.command : '';
+    if (isError) {
+      this.unresolvedFailures.add(VERIFIER_COMMAND.test(command) ? 'verification' : `tool:${toolName}`);
+      return;
+    }
+
+    const effects = this.resolver.resolve(toolName, args, { workingDirectory: this.workingDirectory });
+    const mutations = effects.effects.filter((effect) =>
+      effect.kind === 'fs.write' || effect.kind === 'fs.create' || effect.kind === 'fs.delete'
+      || effect.kind === 'fs.move' || effect.kind === 'git.mutate');
+    if (mutations.length > 0) {
+      this.mutationEpoch += 1;
+      for (const effect of mutations) {
+        const resource = effect.relativeResource ?? effect.resource;
+        if (resource) this.mutations.push({ resource: normalizeResource(resource), epoch: this.mutationEpoch });
+      }
+      this.unresolvedFailures.delete(`tool:${toolName}`);
+    }
+
+    if (VERIFIER_COMMAND.test(command)) {
+      this.verifiedEpoch = this.mutationEpoch;
+      this.verifierCommands.push(command.replace(/\s+/g, ' ').trim().slice(0, 160));
+      this.unresolvedFailures.delete('verification');
+      // A successful verifier after a safely rejected attempt demonstrates the
+      // accepted implementation path is coherent; the rejection remains in audit logs.
+      this.unresolvedFailures.delete('safety');
+    } else if (toolName !== 'shell_exec') {
+      this.unresolvedFailures.delete(`tool:${toolName}`);
+    }
+  }
+
+  evaluate(options: { cancelled?: boolean } = {}): CompletionEvidenceResult {
+    if (options.cancelled) {
+      return this.result('interrupted', [], [], 'cancelled');
+    }
+    if (this.obligations.length === 0) {
+      return this.result('complete', [], []);
+    }
+
+    const evidence = this.buildEvidence();
+    const missing = evidence.filter((item) => item.sources.length === 0).map((item) => item.description);
+    if (this.mutationEpoch > 0 && this.verifiedEpoch !== this.mutationEpoch) {
+      missing.push(`最新变更尚未验证（mutation epoch ${this.mutationEpoch}, verified epoch ${this.verifiedEpoch}）`);
+    }
+    if (this.unresolvedFailures.size > 0) {
+      missing.push(`仍有未解决的失败：${[...this.unresolvedFailures].join(', ')}`);
+    }
+
+    if (missing.length === 0) return this.result('complete', missing, evidence);
+    if (this.recoveryAttempts < 2) {
+      this.recoveryAttempts += 1;
+      const compact = missing.slice(0, 6).map((item) => `- ${item}`).join('\n');
+      return {
+        ...this.result('recover', missing, evidence),
+        recoveryMessage: `[完成证据门] 尚不能宣告完成。请只补齐以下缺口，然后重新运行相关验证：\n${compact}`,
+      };
+    }
+    return this.result('interrupted', missing, evidence, 'completion_evidence_missing');
+  }
+
+  private buildEvidence(): RequirementEvidence[] {
+    const verificationCurrent = this.mutationEpoch > 0 && this.verifiedEpoch === this.mutationEpoch;
+    const verificationSource = verificationCurrent && this.verifierCommands.length > 0
+      ? `verification:${this.verifierCommands.at(-1)}@${this.verifiedEpoch}`
+      : undefined;
+    return this.obligations.map((obligation) => {
+      const matching = obligation.kind === 'verification'
+        ? []
+        : this.mutations.filter((mutation) => obligation.resourceHints.length === 0
+          || obligation.resourceHints.some((hint) => mutation.resource.includes(normalizeResource(hint))));
+      const sources = matching.map((mutation) => `mutation:${mutation.resource}@${mutation.epoch}`);
+      if (obligation.kind === 'verification') {
+        if (verificationSource) sources.push(verificationSource);
+      } else if (sources.length > 0 && verificationSource) {
+        sources.push(verificationSource);
+      } else if (sources.length > 0 && this.mutationEpoch === 0) {
+        sources.length = 0;
+      }
+      return { obligationId: obligation.id, description: obligation.description, sources };
+    });
+  }
+
+  private result(
+    status: CompletionEvidenceResult['status'],
+    missing: string[],
+    evidence: RequirementEvidence[],
+    reason?: CompletionEvidenceResult['reason'],
+  ): CompletionEvidenceResult {
+    return { status, missing, evidence, recoveryAttempts: this.recoveryAttempts, ...(reason ? { reason } : {}) };
+  }
+}

@@ -44,6 +44,7 @@ import { LoopContextManager } from './context-manager.js';
 import type { LLMStreamResult } from './context-manager.js';
 import { MiddlewareRunner } from './middleware-runner.js';
 import { MemoryIntegration } from './memory-integration.js';
+import { CompletionEvidenceGate } from './completion-evidence-gate.js';
 // DualLoop 编排器（type-only import，避免运行时循环依赖）
 import type { DualLoopOrchestrator } from './dual-loop-orchestrator.js';
 // VFS（运行时 import：构造函数中需默认实例化）
@@ -502,6 +503,7 @@ export class ReActAgentLoop {
     this.currentAutonomyMode = params.autonomyMode ?? 'manual';
     const permissionRunId = params.requestId ?? `react-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     let permissionWorkingDirectory = process.cwd();
+    let completionGate: CompletionEvidenceGate | null = null;
     const permissionContext = () => ({ runId: permissionRunId, workingDirectory: permissionWorkingDirectory });
     const revalidateEffect = async (toolName: string, args: Record<string, unknown>) => {
       const decision = await this.mwRunner.runOnActing(
@@ -529,6 +531,7 @@ export class ReActAgentLoop {
       }).workspace;
       this.currentWorkspace = params.workspace ?? contextWorkspace;
       permissionWorkingDirectory = this.currentWorkspace?.workingDirectory ?? process.cwd();
+      completionGate = new CompletionEvidenceGate(userMessage, permissionWorkingDirectory);
       // 修复 8（复审）：保存任务形状映射的思考强度与输出预算
       this.currentReasoningEffort = params.reasoningEffort;
       this.currentMaxTokens = params.maxTokens ?? 4096;
@@ -804,6 +807,7 @@ export class ReActAgentLoop {
               const doneEvent: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
               yield doneEvent; trace?.recordEvent(doneEvent);
               this.engineEndReason = 'cancelled';
+              this.recordRunEvent('run_interrupted', { reason: '用户取消了执行（流返回后）' });
               this.finishEngineTurn();
               return;
             }
@@ -912,6 +916,7 @@ export class ReActAgentLoop {
                       toolCall.name, toolCall.arguments, this.currentAutonomyMode, permissionContext(),
                     );
                   if (actingResult.denied) {
+                    completionGate.observeToolRejection('safety');
                     // Closure 6：denial lifecycle——权限 deny 记 tool_rejected（不记 tool_requested）
                     this.recordRunEvent('tool_rejected', {
                       toolName: toolCall.name,
@@ -962,6 +967,7 @@ export class ReActAgentLoop {
                   }
 
                   if (!approved) {
+                    completionGate.observeToolRejection('user');
                     // Closure 6：denial lifecycle——用户拒绝记 tool_rejected
                     this.recordRunEvent('tool_rejected', { toolName: toolCall.name, toolCallId: toolCall.id, reason: '用户拒绝' });
                     const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[用户拒绝了此工具调用] ${toolCall.name}`);
@@ -973,6 +979,7 @@ export class ReActAgentLoop {
                   // pre-tool-call 钩子
                   const preToolHookResult = await this.mwRunner.fireHookSafe('pre-tool-call', { stepId: toolCall.id, toolName: toolCall.name, toolArgs: toolCall.arguments });
                   if (preToolHookResult.action === 'deny') {
+                    completionGate.observeToolRejection('hook');
                     // Closure 6：denial lifecycle——pre-tool 钩子 deny 记 tool_rejected
                     this.recordRunEvent('tool_rejected', { toolName: toolCall.name, toolCallId: toolCall.id, reason: preToolHookResult.reason ?? 'pre-tool 钩子拒绝' });
                     const denyReason = preToolHookResult.reason ?? '工具调用被钩子拒绝';
@@ -1047,6 +1054,7 @@ export class ReActAgentLoop {
 
                     // TD-21 Phase 1：工具调用完成事件（并行）
                     this.recordRunEvent('tool_completed', { toolName: tc.name, toolCallId: tc.id, isError, outputPreview: execResult.output.slice(0, 200) });
+                    completionGate.observeToolResult(tc.name, tc.arguments, isError, toolResult);
 
                     yield { type: 'tool_call_result', toolName: tc.name, toolCallId: tc.id, result: toolResult, isError };
                     messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: tc.id, content: toolResult, isError }] });
@@ -1072,6 +1080,7 @@ export class ReActAgentLoop {
                     toolCall.name, toolCall.arguments, this.currentAutonomyMode, permissionContext(),
                   );
                   if (actingResult.denied) {
+                    completionGate.observeToolRejection('safety');
                     // Closure 6：denial lifecycle——权限 deny 记 tool_rejected（不记 tool_requested）
                     this.recordRunEvent('tool_rejected', {
                       toolName: toolCall.name,
@@ -1132,6 +1141,7 @@ export class ReActAgentLoop {
                   }
 
                   if (!approved) {
+                    completionGate.observeToolRejection('user');
                     // Closure 6：denial lifecycle——用户拒绝记 tool_rejected
                     this.recordRunEvent('tool_rejected', { toolName: toolCall.name, toolCallId: toolCall.id, reason: '用户拒绝' });
                     const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[用户拒绝了此工具调用] ${toolCall.name}`);
@@ -1150,6 +1160,7 @@ export class ReActAgentLoop {
                   // pre-tool-call 钩子
                   const preToolHookResult = await this.mwRunner.fireHookSafe('pre-tool-call', { stepId: toolCall.id, toolName: toolCall.name, toolArgs: toolCall.arguments });
                   if (preToolHookResult.action === 'deny') {
+                    completionGate.observeToolRejection('hook');
                     // Closure 6：denial lifecycle——pre-tool 钩子 deny 记 tool_rejected
                     this.recordRunEvent('tool_rejected', { toolName: toolCall.name, toolCallId: toolCall.id, reason: preToolHookResult.reason ?? 'pre-tool 钩子拒绝' });
                     const denyReason = preToolHookResult.reason ?? '工具调用被钩子拒绝';
@@ -1213,6 +1224,7 @@ export class ReActAgentLoop {
 
                   // TD-21 Phase 1：工具调用完成事件（串行）
                   this.recordRunEvent('tool_completed', { toolName: toolCall.name, toolCallId: toolCall.id, isError, outputPreview: toolResult.slice(0, 200) });
+                  completionGate.observeToolResult(toolCall.name, toolCall.arguments, isError, toolResult);
 
                   yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError };
                   messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError }] });
@@ -1310,6 +1322,34 @@ export class ReActAgentLoop {
               iteration = 0;
               consecutiveErrors = 0;
               continue followUpLoop;
+            }
+
+            completionGate.observeAssistantText(result.content);
+            const completionDecision = completionGate.evaluate({ cancelled: signal?.aborted });
+            if (completionDecision.status === 'recover') {
+              messages.push({ role: 'assistant', content: result.content });
+              messages.push({ role: 'user', content: completionDecision.recoveryMessage ?? '[完成证据门] 请补齐缺失证据并重新验证。' });
+              logger.warn('Completion evidence missing; continuing bounded recovery', {
+                attempt: completionDecision.recoveryAttempts,
+                missing: completionDecision.missing,
+              });
+              continue;
+            }
+            if (completionDecision.status === 'interrupted') {
+              const reason = completionDecision.reason ?? 'completion_evidence_missing';
+              const interrupted: ReActEvent = {
+                type: 'error',
+                error: reason === 'cancelled'
+                  ? '用户取消了执行（完成证据恢复前）'
+                  : `完成证据仍不充分：${completionDecision.missing.join('；')}`,
+              };
+              yield interrupted; trace?.recordEvent(interrupted);
+              const terminalDone: ReActEvent = { type: 'done', content: result.content, usage: totalUsage };
+              yield terminalDone; trace?.recordEvent(terminalDone);
+              this.engineEndReason = reason === 'cancelled' ? 'cancelled' : 'error';
+              this.recordRunEvent('run_interrupted', { reason });
+              this.finishEngineTurn();
+              return;
             }
 
             const finalDone: ReActEvent = { type: 'done', content: result.content, usage: totalUsage };
