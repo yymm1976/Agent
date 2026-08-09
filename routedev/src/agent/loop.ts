@@ -511,6 +511,7 @@ export class ReActAgentLoop {
         args,
         this.currentAutonomyMode,
         permissionContext(),
+        true,
       );
       return { allowed: !decision.denied, reason: decision.reason };
     };

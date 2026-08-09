@@ -236,6 +236,7 @@ export class MiddlewareRunner {
     toolArgs: Record<string, unknown>,
     autonomyMode?: 'manual' | 'semi' | 'auto',
     permissionContext: PermissionCheckContext = {},
+    permissionKernelOnly = false,
   ): Promise<ActingResult> {
     if (!this.middleware) return { denied: false };
     const mwCtx: MiddlewareContext = {
@@ -246,6 +247,7 @@ export class MiddlewareRunner {
         autonomyMode: autonomyMode ?? 'manual',
         permissionRunId: permissionContext.runId,
         permissionWorkingDirectory: permissionContext.workingDirectory,
+        permissionKernelOnly,
       },
     };
     try {
@@ -311,6 +313,7 @@ export class MiddlewareRunner {
         permissionRunId: permissionContext.runId,
         permissionWorkingDirectory: permissionContext.workingDirectory,
         permissionBatch: calls,
+        permissionKernelOnly: true,
       },
     };
     try {
@@ -356,7 +359,7 @@ export class MiddlewareRunner {
     if (!this.middleware) return;
     const context: MiddlewareContext = {
       phase: 'onActing',
-      metadata: { permissionClearRunId: runId },
+      metadata: { permissionClearRunId: runId, permissionKernelOnly: true },
     };
     try {
       await this.middleware.execute('onActing', context);

@@ -24,10 +24,14 @@ export interface MiddlewareContext {
 }
 
 /** 中间件处理器 */
-export type MiddlewareHandler = (
-  ctx: MiddlewareContext,
-  next: () => Promise<void>,
-) => Promise<void>;
+export type MiddlewareHandler = {
+  (
+    ctx: MiddlewareContext,
+    next: () => Promise<void>,
+  ): Promise<void>;
+  /** Security-kernel handlers also run during batch preflight and execution-boundary revalidation. */
+  permissionKernel?: boolean;
+};
 
 /** 中间件注册与管理 */
 export class AgentMiddlewarePipeline {
@@ -54,7 +58,10 @@ export class AgentMiddlewarePipeline {
   }
 
   async execute(phase: MiddlewarePhase, ctx: MiddlewareContext): Promise<void> {
-    const handlers = this.handlers.get(phase) || [];
+    const registered = this.handlers.get(phase) || [];
+    const handlers = ctx.metadata.permissionKernelOnly === true
+      ? registered.filter((handler) => handler.permissionKernel === true)
+      : registered;
     let index = 0;
     const next = async (): Promise<void> => {
       if (index < handlers.length) {

@@ -48,7 +48,7 @@ export class PermissionMiddleware {
 
   /** 获取中间件处理器（注册到 onActing 阶段） */
   getHandler(): MiddlewareHandler {
-    return async (ctx: MiddlewareContext, next: () => Promise<void>) => {
+    const handler: MiddlewareHandler = async (ctx: MiddlewareContext, next: () => Promise<void>) => {
       const clearRunId = ctx.metadata.permissionClearRunId as string | undefined;
       if (ctx.phase === 'onActing' && clearRunId) {
         this.permissionEngine.clearRun(clearRunId);
@@ -135,5 +135,7 @@ export class PermissionMiddleware {
       // permissionDenied 已设置时，loop.ts 会在中间件链结束后拒绝工具
       await next();
     };
+    handler.permissionKernel = true;
+    return handler;
   }
 }
