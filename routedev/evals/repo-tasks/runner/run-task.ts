@@ -118,11 +118,13 @@ export function setupWorkdir(fixtureDir: string, taskId: string): SetupResult {
   // Eval Fix 2b（L2-05）：fixture 无 node_modules——junction 指向 routedev/node_modules，
   // 模型侧 `npm run test` 直接可用，无需 npm install（实证：npm install 输出 + 安装后
   // 目录枚举浪费 ~50k token 导致 budget 超限）；.gitignore 忽略，不进 baseline。
+  // TASK 4（cross-platform）：'junction' 类型仅 Windows 支持（其他平台抛 ERR_FS_EINVAL），
+  // POSIX 用目录符号链接 'dir'——语义等价（CI ubuntu/macos 同样可解析依赖）。
   const nmTarget = resolve(EVALS_ROOT, '../../node_modules');
   if (existsSync(nmTarget) && !existsSync(join(workdir, 'node_modules'))) {
     try {
-      symlinkSync(nmTarget, join(workdir, 'node_modules'), 'junction');
-    } catch { /* junction 失败不阻塞——vitest 可向上解析 routedev/node_modules */ }
+      symlinkSync(nmTarget, join(workdir, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch { /* symlink 失败不阻塞——vitest 可向上解析 routedev/node_modules */ }
   }
   spawnSync('git', ['init', '-q'], { cwd: workdir });
   // TASK 4（cross-platform）：显式 core.autocrlf=false——Windows 全局 autocrlf=true
