@@ -51,6 +51,20 @@ describe('ShellExecTool', () => {
     const errorOrOutput = `${result.error ?? ''}\n${result.output}`;
     expect(errorOrOutput.toLowerCase()).toMatch(/超时|timeout/);
   });
+
+  it('bounds retained output while preserving streaming byte counts', async () => {
+    const result = await new ShellExecTool().execute(
+      { command: `node -e "process.stdout.write('x'.repeat(150000))"` },
+      context(tempDir),
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.output.length).toBeLessThan(110_000);
+    expect(result.metadata).toMatchObject({
+      stdoutTruncated: true,
+      stdoutTruncation: { originalBytes: 150000, truncatedBy: 'bytes' },
+    });
+  });
 });
 
 describe('GitOpTool', () => {

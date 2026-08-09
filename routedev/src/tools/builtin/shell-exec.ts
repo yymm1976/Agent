@@ -344,9 +344,12 @@ export class ShellExecTool implements ITool {
       });
 
       let sigkillTimer: NodeJS.Timeout | undefined;
-      // Phase 96 P1-5：保留原始 stdout/stderr（未经截断），用于 TruncationResult 元数据计算
-      let rawStdout = '';
-      let rawStderr = '';
+      // Count the full streams without retaining them. The bounded display buffers below
+      // are the only output kept in memory, even for a hostile infinite-output process.
+      let stdoutOriginalBytes = 0;
+      let stderrOriginalBytes = 0;
+      let stdoutOriginalLines = 1;
+      let stderrOriginalLines = 1;
       let stdoutTruncated = false;
       let stderrTruncated = false;
       // Phase 96 P1-1：标记是否因 AbortSignal 触发的取消
@@ -373,7 +376,8 @@ export class ShellExecTool implements ITool {
 
       child.stdout?.on('data', (data: Buffer) => {
         const chunk = data.toString('utf-8');
-        rawStdout += chunk;
+        stdoutOriginalBytes += data.length;
+        stdoutOriginalLines += (chunk.match(/\n/g) ?? []).length;
         if (stdout.length < MAX_STDOUT) {
           stdout += chunk;
           if (stdout.length > MAX_STDOUT) {
@@ -388,7 +392,8 @@ export class ShellExecTool implements ITool {
 
       child.stderr?.on('data', (data: Buffer) => {
         const chunk = data.toString('utf-8');
-        rawStderr += chunk;
+        stderrOriginalBytes += data.length;
+        stderrOriginalLines += (chunk.match(/\n/g) ?? []).length;
         if (stderr.length < MAX_STDERR) {
           stderr += chunk;
           if (stderr.length > MAX_STDERR) {
@@ -451,8 +456,20 @@ export class ShellExecTool implements ITool {
         // Phase 96 P1-5：附加 TruncationResult 结构化元数据
         // 之前 metadata 仅 { exitCode, signal }，下游只能正则匹配 in-band 文本判断截断
         // 现在 stdoutTruncation / stderrTruncation 让调用方直接读字段
-        const stdoutTruncation: TruncationResult = computeTruncationMetadata(rawStdout, cleanStdout);
-        const stderrTruncation: TruncationResult = computeTruncationMetadata(rawStderr, cleanStderr);
+        const stdoutRetained = computeTruncationMetadata(stdout, cleanStdout);
+        const stderrRetained = computeTruncationMetadata(stderr, cleanStderr);
+        const stdoutTruncation: TruncationResult = {
+          ...stdoutRetained,
+          truncatedBy: stdoutOriginalBytes > stdoutRetained.outputBytes ? 'bytes' : stdoutRetained.truncatedBy,
+          totalLines: stdoutOriginalLines,
+          originalBytes: stdoutOriginalBytes,
+        };
+        const stderrTruncation: TruncationResult = {
+          ...stderrRetained,
+          truncatedBy: stderrOriginalBytes > stderrRetained.outputBytes ? 'bytes' : stderrRetained.truncatedBy,
+          totalLines: stderrOriginalLines,
+          originalBytes: stderrOriginalBytes,
+        };
 
         resolve({
           success: code === 0,
