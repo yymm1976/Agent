@@ -125,8 +125,11 @@ export function setupWorkdir(fixtureDir: string, taskId: string): SetupResult {
     } catch { /* junction 失败不阻塞——vitest 可向上解析 routedev/node_modules */ }
   }
   spawnSync('git', ['init', '-q'], { cwd: workdir });
-  spawnSync('git', ['add', '-A'], { cwd: workdir });
-  spawnSync('git', ['-c', 'user.name=eval', '-c', 'user.email=eval@local', 'commit', '-q', '-m', 'baseline'], { cwd: workdir });
+  // TASK 4（cross-platform）：显式 core.autocrlf=false——Windows 全局 autocrlf=true
+  // 会把 baseline blob 转成 CRLF，Linux/macOS 保持 LF，导致同一 fixture 跨平台
+  // working tree 换行不一致（diff/评分确定性被破坏）。-c 覆盖 system/global 配置。
+  spawnSync('git', ['-c', 'core.autocrlf=false', 'add', '-A'], { cwd: workdir });
+  spawnSync('git', ['-c', 'user.name=eval', '-c', 'user.email=eval@local', '-c', 'core.autocrlf=false', 'commit', '-q', '-m', 'baseline'], { cwd: workdir });
   const baselineSha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: workdir, encoding: 'utf-8' }).stdout?.trim() ?? '';
   return { workdir, baselineSha };
 }
@@ -511,8 +514,11 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
   // 输出与 EventLog 的错误文本可能包含模型写入的凭据（fake-secret artifact regression 覆盖）
   const safeResult = redactReport(result as unknown as Record<string, unknown>) as unknown as RunResult;
   writeFileSync(reportFile, JSON.stringify(safeResult, null, 2), 'utf-8');
+  // TASK 4（temp cleanup）：workdir 与 workdir 外的 traceDir 一起清理
+  // （此前 traceDir 在 .eval-work/traces 残留——每个 run 留一份事件日志）
   if (process.env.KEEP_WORKDIR !== '1') {
     rmSync(workdir, { recursive: true, force: true });
+    try { rmSync(traceDir, { recursive: true, force: true }); } catch { /* trace 清理失败不阻塞 */ }
   }
 
   return result;

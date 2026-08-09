@@ -11,7 +11,7 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs';
 import { join, relative, resolve, dirname, sep } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { ReActAgentLoop } from '../../../src/agent/loop.js';
 import { NativeAgentKernel } from '../../../src/agent/kernel-native.js';
 import { PermissionEngine, createDefaultEngine, type PermissionRule } from '../../../src/tools/permission-engine.js';
@@ -158,7 +158,15 @@ function runShell(command: string, cwd: string, timeoutMs: number): Promise<{ st
       if (!settled) { settled = true; resolvePromise({ stdout, stderr, status }); }
     };
     const timer = setTimeout(() => {
-      try { child.kill(); } catch { /* noop */ }
+      try {
+        // TASK 4（process cancellation）：kill 顶层 shell 后，Windows 上必须
+        // taskkill /T /F 终止整个进程树——cmd 外壳被杀时孙进程（node/npm）会残留
+        // 并继续写 workdir（确定性破坏）；POSIX 直接 kill（shell 与子进程同组）。
+        if (process.platform === 'win32' && child.pid) {
+          try { spawnSync('taskkill', ['/F', '/T', '/PID', String(child.pid)], { windowsHide: true }); } catch { /* noop */ }
+        }
+        child.kill();
+      } catch { /* noop */ }
     }, timeoutMs);
     child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf-8'); });
     child.stderr?.on('data', (d: Buffer) => { stderr += d.toString('utf-8'); });
