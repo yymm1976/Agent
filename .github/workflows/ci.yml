@@ -2,7 +2,8 @@ name: RouteDev CI
 
 on:
   push:
-    branches: [main]
+    # GA Infrastructure Sprint：feat/** 分支直接 push 也触发 CI（observability 分支验证）
+    branches: [main, 'feat/**']
   pull_request:
   workflow_dispatch:
 
