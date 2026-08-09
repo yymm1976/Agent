@@ -115,6 +115,17 @@ export function setupWorkdir(fixtureDir: string, taskId: string): SetupResult {
   mkdirSync(WORK_ROOT, { recursive: true });
   const workdir = join(WORK_ROOT, `${taskId}-${randomUUID().slice(0, 8)}`);
   copyTree(fixtureDir, workdir);
+  // TASK 4（cross-platform）：POSIX 上目录 symlink 被 git 视为**文件**——
+  // fixture 的 .gitignore 通常只有 `node_modules/`（目录模式，不匹配 symlink 条目），
+  // 必须追加无斜杠 `node_modules` 模式，否则 node_modules symlink 会进 baseline
+  // 或被 untracked 快照收集（污染 changedFiles/评分）。
+  const gitignorePath = join(workdir, '.gitignore');
+  if (existsSync(gitignorePath)) {
+    const g = readFileSync(gitignorePath, 'utf-8');
+    if (!g.split(/\r?\n/).some((l) => l.trim() === 'node_modules')) {
+      writeFileSync(gitignorePath, `${g.replace(/\r?\n?$/, '')}\nnode_modules\n`, 'utf-8');
+    }
+  }
   // Eval Fix 2b（L2-05）：fixture 无 node_modules——junction 指向 routedev/node_modules，
   // 模型侧 `npm run test` 直接可用，无需 npm install（实证：npm install 输出 + 安装后
   // 目录枚举浪费 ~50k token 导致 budget 超限）；.gitignore 忽略，不进 baseline。
