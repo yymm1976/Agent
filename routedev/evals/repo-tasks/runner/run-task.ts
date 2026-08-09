@@ -21,6 +21,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { assembleEvalAgent, summarizeRun } from './assemble.js';
 import { scoreTask, detectRepeatStorm, detectTypeEscape, detectTddOrderViolation, type CheckResult, type EvalContext } from './scoring.js';
+import { redactReport } from './redact.js';
 import { CompletionGate } from '../../../src/agent/completion-gate.js';
 import type { ReActRunParams } from '../../../src/agent/loop.js';
 import type { AgentExecutionContext } from '../../../src/agent/execution-context.js';
@@ -506,7 +507,10 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
   const reportDir = join(EVALS_ROOT, 'reports');
   mkdirSync(reportDir, { recursive: true });
   const reportFile = join(reportDir, `${taskId}-${Date.now()}.json`);
-  writeFileSync(reportFile, JSON.stringify(result, null, 2), 'utf-8');
+  // TASK 3（redaction hardening）：持久化副本必须经 redaction——trajectory 的 shell 命令/
+  // 输出与 EventLog 的错误文本可能包含模型写入的凭据（fake-secret artifact regression 覆盖）
+  const safeResult = redactReport(result as unknown as Record<string, unknown>) as unknown as RunResult;
+  writeFileSync(reportFile, JSON.stringify(safeResult, null, 2), 'utf-8');
   if (process.env.KEEP_WORKDIR !== '1') {
     rmSync(workdir, { recursive: true, force: true });
   }
