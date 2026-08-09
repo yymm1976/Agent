@@ -23,7 +23,11 @@ function identity(value: string): string {
 }
 
 function portablePath(value: string): string {
-  return value.replace(/[\\/]+/g, path.sep);
+  const normalized = value.replace(/[\\/]+/g, path.sep);
+  if (process.platform === 'win32' && /^[\\/][a-z][\\/]/i.test(normalized)) {
+    return `${normalized[1]}:${normalized.slice(2)}`;
+  }
+  return normalized;
 }
 
 /** Resolve links and, for a new target, resolve its nearest existing parent. */
