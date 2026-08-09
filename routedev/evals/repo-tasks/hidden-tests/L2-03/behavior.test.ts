@@ -17,8 +17,8 @@ describe('maskSecret（hidden）', () => {
 
   it('等于 visibleEnd+2 时开始打码', () => {
     // Eval Fix 2：prompt 语义是 shorter than visibleEnd+2 才原样——
-    // 6 == 4+2 → 不短于 → 必须打码（旧 oracle 写"原样"与 prompt 直接矛盾）
-    expect(maskSecret('abcdef')).toBe('**ef');
+    // 6 == 4+2 → 不短于 → 必须打码：'*'.repeat(6-4) + 'cdef' = '**cdef'
+    expect(maskSecret('abcdef')).toBe('**cdef');
   });
 
   it('恰好可见位长度时全遮罩后保留可见位', () => {

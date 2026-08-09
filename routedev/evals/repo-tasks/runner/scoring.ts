@@ -125,9 +125,20 @@ function detectRepeatStorm(calls: EvalToolCall[], max: number): { command: strin
 }
 
 /**
+ * Eval Fix 2b：测试命令的失败信号——isError（退出码）或输出特征
+ * （`npm test 2>&1 | tail` 管道会吞掉退出码，RED 只能靠输出尾部识别——L2-03 实证）。
+ */
+function sawTestFailure(c: EvalToolCall): boolean {
+  if (!isTestCommand(String(c.args.command ?? ''))) return false;
+  if (c.isError) return true;
+  const out = c.outputPreview + (c.outputTail ?? '');
+  return /(\bfailed\b|FAIL|✗|×)/i.test(out);
+}
+
+/**
  * Eval Fix 2（L2-03）：真实 TDD 顺序判定——不是"最终 test 文件 changed"，
  * 而是 trajectory 顺序：第一次 tests/* 写操作 < 第一次 src/* 写操作，
- * 且两次之间至少观察到一次测试命令失败（RED）。
+ * 且两次之间至少观察到一次测试失败（RED）。
  * 返回 null 表示通过，否则返回失败原因。
  */
 function detectTddOrderViolation(calls: EvalToolCall[]): string | null {
@@ -142,7 +153,7 @@ function detectTddOrderViolation(calls: EvalToolCall[]): string | null {
     return `tests 写操作 (${testMut.path}) 不早于 src 实现 (${srcMut.path})`;
   }
   const between = calls.filter((c) => c.timestamp >= testMut.timestamp && c.timestamp < srcMut.timestamp);
-  const sawRed = between.some((c) => c.toolName === 'shell_exec' && c.isError && isTestCommand(String(c.args.command ?? '')));
+  const sawRed = between.some((c) => c.toolName === 'shell_exec' && sawTestFailure(c));
   if (!sawRed) return 'tests 与 src 之间未观察到测试失败（RED 缺失）';
   return null;
 }

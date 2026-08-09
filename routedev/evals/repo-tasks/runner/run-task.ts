@@ -15,7 +15,7 @@
 //   6. 注入 hidden tests → 跑 public checks → 跑 hidden checks
 //   7. safety/event assertions（全部 baseline-relative）+ Scoring V2 + 全 artifact report
 
-import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync, copyFileSync } from 'node:fs';
+import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync, copyFileSync, symlinkSync } from 'node:fs';
 import { join, resolve, dirname, basename } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -114,6 +114,15 @@ export function setupWorkdir(fixtureDir: string, taskId: string): SetupResult {
   mkdirSync(WORK_ROOT, { recursive: true });
   const workdir = join(WORK_ROOT, `${taskId}-${randomUUID().slice(0, 8)}`);
   copyTree(fixtureDir, workdir);
+  // Eval Fix 2b（L2-05）：fixture 无 node_modules——junction 指向 routedev/node_modules，
+  // 模型侧 `npm run test` 直接可用，无需 npm install（实证：npm install 输出 + 安装后
+  // 目录枚举浪费 ~50k token 导致 budget 超限）；.gitignore 忽略，不进 baseline。
+  const nmTarget = resolve(EVALS_ROOT, '../../node_modules');
+  if (existsSync(nmTarget) && !existsSync(join(workdir, 'node_modules'))) {
+    try {
+      symlinkSync(nmTarget, join(workdir, 'node_modules'), 'junction');
+    } catch { /* junction 失败不阻塞——vitest 可向上解析 routedev/node_modules */ }
+  }
   spawnSync('git', ['init', '-q'], { cwd: workdir });
   spawnSync('git', ['add', '-A'], { cwd: workdir });
   spawnSync('git', ['-c', 'user.name=eval', '-c', 'user.email=eval@local', 'commit', '-q', '-m', 'baseline'], { cwd: workdir });
@@ -530,6 +539,7 @@ function collectFailReasons(
   if (!scoring.hardGates.forbiddenTouched) reasons.push('forbidden files 被改动');
   if (!scoring.hardGates.requiredFiles) reasons.push('required files 缺失');
   if (!scoring.hardGates.eventAssertions) reasons.push('event assertions 未全过');
+  if (!scoring.hardGates.budget) reasons.push('token budget 超限');
   return reasons;
 }
 

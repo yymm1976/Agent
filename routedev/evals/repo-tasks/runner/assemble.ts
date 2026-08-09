@@ -30,6 +30,8 @@ export interface EvalToolCall {
   denied: boolean;
   isError: boolean;
   outputPreview: string;
+  /** Eval Fix 2b：shell 输出尾部（管道吞退出码时 RED 判定靠输出特征） */
+  outputTail?: string;
   timestamp: number;
 }
 
@@ -234,8 +236,8 @@ export class EvalToolExecutor implements ToolExecutorAdapter {
     toolCallId: string,
     args: Record<string, unknown>,
   ): Promise<{ output: string; isError: boolean }> {
-    const record = (isError: boolean, output: string): { output: string; isError: boolean } => {
-      this.calls.push({ toolName: name, toolCallId, args, denied: false, isError, outputPreview: output.slice(0, 200), timestamp: Date.now() });
+    const record = (isError: boolean, output: string, tail?: string): { output: string; isError: boolean } => {
+      this.calls.push({ toolName: name, toolCallId, args, denied: false, isError, outputPreview: output.slice(0, 200), outputTail: tail, timestamp: Date.now() });
       return { output, isError };
     };
     const root = this.workdir;
@@ -302,7 +304,11 @@ export class EvalToolExecutor implements ToolExecutorAdapter {
         const command = String(args.command ?? '');
         // Integrity Closure：拒绝可越出工作区的命令——`..` 路径段、盘符绝对路径、
         // 指向 workdir 外的路径（防止读 hidden-tests / benchmark source）
-        if (/[a-z]:[\\/]/i.test(command) || command.includes('../') || command.includes('..\\') || /\.eval[\\/]/.test(command)) {
+        // Eval Fix 2b：MSYS 绝对路径（`/c/Users/...`、`/tmp/x`）不匹配盘符正则但越出
+        // workdir（L2-05 实证模型 `ls /c/Users/.../node_modules` 读到 routedev 结构）；
+        // `/dev/null` 白名单（`2>/dev/null` 是常见 shell 习惯，不越界）
+        if (/[a-z]:[\\/]/i.test(command) || command.includes('../') || command.includes('..\\')
+          || /(^|[^\w])\/[a-zA-Z][a-zA-Z0-9._-]*\/(?!null)/.test(command) || /\.eval[\\/]/.test(command)) {
           return record(true, '[被拒绝] 命令含越界路径（绝对路径或 ..）');
         }
         // Eval Fix 2（L2-05）：第一次测试命令注入确定性 transient 失败（executor 层，
@@ -314,7 +320,7 @@ export class EvalToolExecutor implements ToolExecutorAdapter {
         const timeoutMs = typeof args.timeoutMs === 'number' ? args.timeoutMs : 60000;
         const r = await runShell(command, root, timeoutMs);
         const output = [r.stdout, r.stderr].filter(Boolean).join('\n').slice(0, 4000);
-        return record(r.status !== 0, output || `(exit ${r.status})`);
+        return record(r.status !== 0, output || `(exit ${r.status})`, output.slice(-300));
       }
       case 'todo_write':
         return record(false, 'ok');

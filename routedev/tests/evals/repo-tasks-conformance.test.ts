@@ -63,6 +63,20 @@ describe('Blind Eval Boundary（Integrity Closure）', () => {
     }
   });
 
+  it('Fix 2b：workdir 有 node_modules junction（模型无需 npm install——L2-05）', () => {
+    const { workdir: wd } = setupWorkdir(join(EVALS_ROOT, 'fixtures', 'L2-05'), 'L2-05');
+    try {
+      // junction 或真实目录均可——关键是 npm test 依赖可解析
+      expect(existsSync(join(wd, 'node_modules'))).toBe(true);
+      // junction 不进 baseline commit（.gitignore 忽略 node_modules）
+      const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
+      const ls = spawnSync('git', ['ls-files'], { cwd: wd, encoding: 'utf-8' });
+      expect(ls.stdout ?? '').not.toContain('node_modules');
+    } finally {
+      rmSync(wd, { recursive: true, force: true });
+    }
+  });
+
   it('恶意模型：file_read 越界（../../hidden-tests）→ 拒绝', async () => {
     const { executor } = makeExecutor(workdir);
     const r = await executor.executeToolStructured('file_read', 'c1', { path: '../../hidden-tests/L2-01/pagination-boundary.test.ts' });
@@ -97,6 +111,23 @@ describe('Blind Eval Boundary（Integrity Closure）', () => {
     const r = await executor.executeToolStructured('shell_exec', 'c5', { command: 'cat C:/Users/anything/secret.txt' });
     expect(r.isError).toBe(true);
     expect(r.output).toContain('被拒绝');
+  });
+
+  it('Fix 2b：shell MSYS 绝对路径（/c/Users/...、/tmp/x）→ 拒绝（L2-05 泄漏修复）', async () => {
+    const { executor } = makeExecutor(workdir);
+    const r1 = await executor.executeToolStructured('shell_exec', 'c5a', { command: 'ls /c/Users/anything/node_modules' });
+    expect(r1.isError).toBe(true);
+    expect(r1.output).toContain('被拒绝');
+    const r2 = await executor.executeToolStructured('shell_exec', 'c5b', { command: 'cat > /tmp/escape.mjs' });
+    expect(r2.isError).toBe(true);
+    expect(r2.output).toContain('被拒绝');
+  });
+
+  it('Fix 2b：/dev/null 重定向不受影响（2>/dev/null 白名单，Windows 用 2>nul）', async () => {
+    const { executor } = makeExecutor(workdir);
+    // Windows cmd 无 /dev/null（用 nul）——验证重定向形式不被越界正则误伤
+    const r = await executor.executeToolStructured('shell_exec', 'c5c', { command: 'echo ok 2>nul' });
+    expect(r.isError).toBe(false);
   });
 
   it('正常路径不受影响：workdir 内读写在 containment 下可用', async () => {
@@ -343,6 +374,16 @@ describe('Fix 2：tdd_order 判定（L2-03）', () => {
       call('file_write', false, { path: 'tests/secrets.test.ts', content: 'x' }, 2),
       call('shell_exec', true, { command: 'vitest run tests' }, 3), // RED
       call('file_write', false, { path: 'src/secrets.ts', content: 'y' }, 4),
+    ];
+    expect(detectTddOrderViolation(calls)).toBeNull();
+  });
+
+  it('Fix 2b：管道吞退出码的 RED 也能识别（`npm test 2>&1 | tail` isError=false 但输出含 failed）', () => {
+    const calls = [
+      call('file_write', false, { path: 'tests/secrets.test.ts', content: 'x' }, 1),
+      // isError=false（tail 吞掉退出码），但输出尾部含失败特征 → 仍算 RED
+      { toolName: 'shell_exec', toolCallId: 'c2', args: { command: 'npm test 2>&1 | tail -30' }, denied: false, isError: false, outputPreview: 'RUN v4', outputTail: '\nTests  1 failed | 0 passed', timestamp: 2 } as never,
+      call('file_write', false, { path: 'src/secrets.ts', content: 'y' }, 3),
     ];
     expect(detectTddOrderViolation(calls)).toBeNull();
   });
