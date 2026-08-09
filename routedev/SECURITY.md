@@ -6,6 +6,16 @@ This policy covers the desktop product under `routedev/`, the loopback/LAN remot
 
 The remote gateway is disabled by default. When enabled, pairing, device scopes, per-session ACL, the PermissionEngine, OS sandbox rules, SSRF protection, and the audit chain remain mandatory. Remote approvals and remote autonomy changes are disabled by default.
 
+## Effect-aware tool authorization
+
+Authorization is based on resource effects, not only tool names. Built-in file, Git, shell, process, and network tools resolve to known effects; tools that cannot prove their effect are treated as opaque and do not silently inherit mutation authority. File identities are canonicalized through existing parents so relative paths, `..`, slash variants, Windows case, symlinks, junctions, and not-yet-created targets converge on the same policy identity.
+
+A run-scoped denied-intent ledger carries authoritative resource denials across equivalent tool substitutions. Parallel batches resolve and authorize every call before execution, then serialize canonical write conflicts. Tool-call repair is authorized only after its final arguments are known. Mutating built-ins repeat the permission-kernel check immediately before the operating-system action to narrow check/use races. A hostile process can still swap a filesystem object after that final check; OS sandboxing and least-privilege workspace boundaries remain required defense in depth.
+
+## Completion evidence
+
+For repository-changing work, a task contract records concrete obligations and their evidence. Mutations advance an epoch, and verification evidence is valid only for the current epoch, so tests run before the last write cannot prove completion. Missing evidence triggers at most two compact recovery rounds; exhaustion ends as `run_interrupted(completion_evidence_missing)`, never successful completion. Cancellation, protocol failures, and output truncation remain higher-priority terminal conditions. Pure chat creates no contract and adds no model round.
+
 ## Reporting
 
 Please report suspected vulnerabilities privately to the repository maintainers rather than opening a public issue. Include the affected version/commit, platform, reproduction steps, impact, and a minimal proof of concept. Do not include real API keys, private pairing tokens, or user data.
