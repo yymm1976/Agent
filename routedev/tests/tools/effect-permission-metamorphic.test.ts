@@ -71,7 +71,7 @@ function forbiddenCommands(root: string, alias: string | undefined, count: numbe
   const commands: string[] = [];
   for (let i = 0; i < count; i++) {
     const target = quote(random.pick(paths), i);
-    const family = i % 16;
+    const family = i % 19;
     const base = (() => {
       switch (family) {
         case 0: return `mv temp.ts ${target}`;
@@ -89,7 +89,10 @@ function forbiddenCommands(root: string, alias: string | undefined, count: numbe
         case 12: return `echo preparing && mv temp.ts ${target}`;
         case 13: return `bash -c "mv temp.ts '${random.pick(paths)}'"`;
         case 14: return `powershell -Command "Set-Content -Path '${random.pick(paths)}' -Value x"`;
-        default: return `printf x | tee ${target} && git status --short`;
+        case 15: return `printf x | tee ${target} && git status --short`;
+        case 16: return './git status --short';
+        case 17: return '.\\git status --short';
+        default: return './cat src/safe.ts';
       }
     })();
     commands.push(i % 4 === 0 ? `  ${base}  ` : base);

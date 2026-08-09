@@ -130,6 +130,21 @@ describe('Effect-aware permission kernel', () => {
     }
   });
 
+  it('does not trust repository-local executables by a safe basename', () => {
+    const root = workspace();
+    const engine = new PermissionEngine();
+    engine.loadRules([protectedTestsRule]);
+
+    for (const command of ['./git status --short', '.\\git status --short', './cat src/a.ts', './node -e "console.log(1)"']) {
+      const result = engine.check('shell_exec', { command }, 'auto', {
+        runId: `path-exec-${command}`,
+        workingDirectory: root,
+      });
+      expect(result.decision, command).toBe('deny');
+      expect(result.effectKind, command).toBe('opaque_may_write');
+    }
+  });
+
   it('resolves directory links before matching protected resources', () => {
     const root = workspace();
     const alias = join(root, 'test-alias');

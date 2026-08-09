@@ -70,7 +70,11 @@ function resolution(classification: EffectClassification, effects: ResourceEffec
 }
 
 function commandName(parsed: ParsedCommand): string {
-  return path.basename(parsed.command.replace(/\\/g, '/')).toLowerCase().replace(/\.exe$/, '');
+  const normalized = parsed.command.replace(/\\/g, '/');
+  // A repository-local `./git` or absolute executable named `cat` does not inherit
+  // the semantics of the trusted command with the same basename.
+  if (normalized.includes('/')) return '__path_executable__';
+  return normalized.toLowerCase().replace(/\.exe$/, '');
 }
 
 function positional(args: string[]): string[] {
