@@ -15,6 +15,12 @@ export interface ReActConfig {
   toolsEnabled: boolean;
   /** 最大连续错误次数，超过则终止循环（默认 3） */
   maxConsecutiveErrors: number;
+  /**
+   * Eval P1（finish_reason=length non-terminal）：无工具调用且 finishReason='length'
+   * （输出被 maxTokens 截断）时，允许的**连续自动续写**次数（默认 2）。
+   * 达到上限仍截断 → run_interrupted(reason=model_output_truncated)，绝不记为 run_completed。
+   */
+  maxLengthContinuations: number;
   /** P2-12：是否并行执行工具调用（默认 false，与 Codex/Claude Code 对齐） */
   parallelToolExecution: boolean;
   /** 自动批准的工具名模式列表（支持精确匹配和通配符 *）
@@ -38,6 +44,7 @@ export const DEFAULT_REACT_CONFIG: ReActConfig = {
   llmTimeout: 120000,
   toolsEnabled: false,
   maxConsecutiveErrors: 3,
+  maxLengthContinuations: 2,
   // P2-12：默认开启并行工具执行，提升多工具调用场景的效率
   parallelToolExecution: true,
   // 默认自动批准只读安全工具，避免频繁打断用户

@@ -249,6 +249,12 @@ export class ReActAgentLoop {
   /** 修复 8（复审）：当前 run 的思考强度与输出预算（taskShape 映射，run 期间生效） */
   private currentReasoningEffort: 'low' | 'high' | 'max' | undefined;
   private currentMaxTokens: number = 4096;
+  /**
+   * Eval P1（finish_reason=length non-terminal）：连续无工具调用的 length 截断次数。
+   * 任何其他成功轮次（stop 或工具调用轮）清零；达到 maxLengthContinuations 上限
+   * 仍截断 → run_interrupted(model_output_truncated)，绝不当成功完成。
+   */
+  private consecutiveLengthReplies = 0;
   /** P1 修复（复审）：当前 run 的工具面上下文（每轮 schema 解析透传） */
   private currentToolSurface: import('../tools/tool-surface-resolver.js').ToolSurfaceContext | undefined;
   /**
@@ -808,6 +814,8 @@ export class ReActAgentLoop {
             // ===== 判断：文本回复 or 工具调用？ =====
             if (result.toolCalls.length > 0) {
               // ----- 有工具调用 -----
+              // Eval P1：工具轮刷新上下文，截断计数清零（length 只对"连续无工具调用"截断生效）
+              this.consecutiveLengthReplies = 0;
               // Phase 96+：工具调用修复 pipeline（借鉴 Reasonix 四道工序）
               //   1. scavenge — 从 reasoning_content 捞回被吃掉的 tool-call JSON
               //   2. truncation — 修复不完整的 arguments JSON
@@ -1185,6 +1193,47 @@ export class ReActAgentLoop {
             }
 
             // ----- 无工具调用，文本回复 → 循环结束 -----
+            // Eval P1（finish_reason=length non-terminal）：
+            //   输出被 maxTokens 截断（finishReason='length'）**绝不是正常完成**。
+            //   - 未达连续续写上限：把截断内容加入上下文并注入续写指令，继续 ReAct
+            //   - 已达上限：run_interrupted(reason=model_output_truncated)（L3-09 实证：
+            //     旧逻辑无工具调用 + length + content="" 直接记 run_completed → False Success）
+            if (result.finishReason === 'length') {
+              // 续写前再次确认取消优先（流返回后 signal 可能已翻转）
+              if (signal?.aborted) {
+                const cancelError: ReActEvent = { type: 'error', error: '用户取消了执行（截断续写前）' };
+                yield cancelError; trace?.recordEvent(cancelError);
+                const doneEvent: ReActEvent = { type: 'done', content: finalContent, usage: totalUsage };
+                yield doneEvent; trace?.recordEvent(doneEvent);
+                this.engineEndReason = 'cancelled';
+                this.recordRunEvent('run_interrupted', { reason: '用户取消了执行（截断续写前）' });
+                this.finishEngineTurn();
+                return;
+              }
+              this.consecutiveLengthReplies += 1;
+              if (this.consecutiveLengthReplies <= (this.config.maxLengthContinuations ?? 2)) {
+                messages.push({ role: 'assistant', content: result.content });
+                messages.push({
+                  role: 'user',
+                  content: `[系统提示] 你的上一条回复因达到输出长度上限被截断。请直接从截断处继续完成你的回复/任务，不要重复已输出的内容。`,
+                });
+                logger.warn('finish_reason=length：注入续写指令继续 ReAct', {
+                  iteration,
+                  consecutiveLengthReplies: this.consecutiveLengthReplies,
+                });
+                // 截断文本不参与 Compose 阶段流转/follow-up 判定——直接下一轮迭代
+                continue;
+              }
+              // 连续续写仍截断 → 运行中断（不是成功）
+              const truncEvent: ReActEvent = { type: 'done', content: result.content, usage: totalUsage };
+              yield truncEvent; trace?.recordEvent(truncEvent);
+              this.engineEndReason = 'error';
+              this.recordRunEvent('run_interrupted', { reason: 'model_output_truncated' });
+              this.finishEngineTurn();
+              return;
+            }
+            this.consecutiveLengthReplies = 0;
+
             // 任务1：Compose 模式下，检查 LLM 文本回复是否触发阶段自动流转
             const llmResultForAdvance: ToolResult = { success: true, output: result.content, durationMs: 0 };
             if (this.memIntegration.evaluateAdvance(llmResultForAdvance)) {
