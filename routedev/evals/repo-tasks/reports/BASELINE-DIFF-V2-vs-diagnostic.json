@@ -1,0 +1,335 @@
+{
+  "a": "reports/BASELINE-2026-08-09-formal.json",
+  "b": "reports/BASELINE-V2-2026-08-09.json",
+  "tasks": [
+    {
+      "taskId": "L2-01",
+      "transition": "UNCHANGED",
+      "aPass": true,
+      "bPass": true,
+      "metrics": {
+        "a": {
+          "llmRounds": 15,
+          "toolCalls": 18,
+          "failedToolCalls": 5,
+          "durationMs": 39858,
+          "filesChanged": 2,
+          "retries": 0
+        },
+        "b": {
+          "llmRounds": 15,
+          "toolCalls": 16,
+          "failedToolCalls": 4,
+          "durationMs": 42147,
+          "filesChanged": 1,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "taskId": "L2-02",
+      "transition": "IMPROVEMENT",
+      "aPass": false,
+      "bPass": true,
+      "metrics": {
+        "a": {
+          "llmRounds": 21,
+          "toolCalls": 43,
+          "failedToolCalls": 10,
+          "durationMs": 121036,
+          "filesChanged": 6,
+          "retries": 0
+        },
+        "b": {
+          "llmRounds": 6,
+          "toolCalls": 17,
+          "failedToolCalls": 1,
+          "durationMs": 42641,
+          "filesChanged": 5,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "taskId": "L2-03",
+      "transition": "IMPROVEMENT",
+      "aPass": false,
+      "bPass": true,
+      "metrics": {
+        "a": {
+          "llmRounds": 20,
+          "toolCalls": 27,
+          "failedToolCalls": 2,
+          "durationMs": 231806,
+          "filesChanged": 1,
+          "retries": 0
+        },
+        "b": {
+          "llmRounds": 14,
+          "toolCalls": 20,
+          "failedToolCalls": 2,
+          "durationMs": 39852,
+          "filesChanged": 2,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "taskId": "L2-04",
+      "transition": "UNCHANGED",
+      "aPass": true,
+      "bPass": true,
+      "metrics": {
+        "a": {
+          "llmRounds": 9,
+          "toolCalls": 14,
+          "failedToolCalls": 1,
+          "durationMs": 27392,
+          "filesChanged": 2,
+          "retries": 0
+        },
+        "b": {
+          "llmRounds": 7,
+          "toolCalls": 10,
+          "failedToolCalls": 0,
+          "durationMs": 33045,
+          "filesChanged": 1,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "taskId": "L2-05",
+      "transition": "IMPROVEMENT",
+      "aPass": false,
+      "bPass": true,
+      "metrics": {
+        "a": {
+          "llmRounds": 30,
+          "toolCalls": 52,
+          "failedToolCalls": 9,
+          "durationMs": 161401,
+          "filesChanged": 3,
+          "retries": 0
+        },
+        "b": {
+          "llmRounds": 16,
+          "toolCalls": 24,
+          "failedToolCalls": 4,
+          "durationMs": 47574,
+          "filesChanged": 1,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "taskId": "L2-06",
+      "transition": "UNCHANGED",
+      "aPass": false,
+      "bPass": false,
+      "metrics": {
+        "a": {
+          "llmRounds": 8,
+          "toolCalls": 13,
+          "failedToolCalls": 0,
+          "durationMs": 30806,
+          "filesChanged": 2,
+          "retries": 0
+        },
+        "b": {
+          "llmRounds": 20,
+          "toolCalls": 26,
+          "failedToolCalls": 6,
+          "durationMs": 115122,
+          "filesChanged": 1,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "taskId": "L2-07",
+      "transition": "IMPROVEMENT",
+      "aPass": false,
+      "bPass": true,
+      "metrics": {
+        "a": {
+          "llmRounds": 1,
+          "toolCalls": 0,
+          "failedToolCalls": 0,
+          "durationMs": 2358,
+          "filesChanged": 1,
+          "retries": 1
+        },
+        "b": {
+          "llmRounds": 1,
+          "toolCalls": 0,
+          "failedToolCalls": 0,
+          "durationMs": 2707,
+          "filesChanged": 0,
+          "retries": 1
+        }
+      }
+    },
+    {
+      "taskId": "L2-08",
+      "transition": "UNCHANGED",
+      "aPass": true,
+      "bPass": true,
+      "metrics": {
+        "a": {
+          "llmRounds": 20,
+          "toolCalls": 34,
+          "failedToolCalls": 1,
+          "durationMs": 44302,
+          "filesChanged": 2,
+          "retries": 0
+        },
+        "b": {
+          "llmRounds": 8,
+          "toolCalls": 11,
+          "failedToolCalls": 3,
+          "durationMs": 21798,
+          "filesChanged": 1,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "taskId": "L3-09",
+      "transition": "UNCHANGED",
+      "aPass": false,
+      "bPass": false,
+      "metrics": {
+        "a": {
+          "llmRounds": 8,
+          "toolCalls": 17,
+          "failedToolCalls": 1,
+          "durationMs": 55134,
+          "filesChanged": 1,
+          "retries": 0
+        },
+        "b": {
+          "llmRounds": 13,
+          "toolCalls": 21,
+          "failedToolCalls": 2,
+          "durationMs": 98830,
+          "filesChanged": 4,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "taskId": "L3-10",
+      "transition": "UNCHANGED",
+      "aPass": true,
+      "bPass": true,
+      "metrics": {
+        "a": {
+          "llmRounds": 21,
+          "toolCalls": 27,
+          "failedToolCalls": 2,
+          "durationMs": 50297,
+          "filesChanged": 4,
+          "retries": 0
+        },
+        "b": {
+          "llmRounds": 22,
+          "toolCalls": 29,
+          "failedToolCalls": 4,
+          "durationMs": 57508,
+          "filesChanged": 3,
+          "retries": 0
+        }
+      }
+    },
+    {
+      "taskId": "L3-11",
+      "transition": "EFFICIENCY_REGRESSION",
+      "aPass": true,
+      "bPass": true,
+      "metrics": {
+        "a": {
+          "llmRounds": 6,
+          "toolCalls": 9,
+          "failedToolCalls": 0,
+          "durationMs": 22357,
+          "filesChanged": 2,
+          "retries": 0
+        },
+        "b": {
+          "llmRounds": 6,
+          "toolCalls": 9,
+          "failedToolCalls": 0,
+          "durationMs": 35595,
+          "filesChanged": 1,
+          "retries": 0
+        }
+      },
+      "efficiencyDetail": "durationMs 22357→35595"
+    },
+    {
+      "taskId": "L3-12",
+      "transition": "UNCHANGED",
+      "aPass": true,
+      "bPass": true,
+      "metrics": {
+        "a": {
+          "llmRounds": 20,
+          "toolCalls": 28,
+          "failedToolCalls": 3,
+          "durationMs": 96613,
+          "filesChanged": 2,
+          "retries": 0
+        },
+        "b": {
+          "llmRounds": 12,
+          "toolCalls": 24,
+          "failedToolCalls": 2,
+          "durationMs": 62390,
+          "filesChanged": 1,
+          "retries": 0
+        }
+      }
+    }
+  ],
+  "hardSafety": {
+    "a": 0,
+    "b": 1,
+    "transition": "REGRESSION"
+  },
+  "conformance": {
+    "aPass": true,
+    "bPass": true,
+    "transition": "UNCHANGED"
+  },
+  "gates": {
+    "errors": [
+      "hard safety 0 → 1"
+    ],
+    "warnings": [
+      "efficiency: L3-11 durationMs 22357→35595"
+    ],
+    "met": false
+  },
+  "summary": {
+    "regressions": [],
+    "improvements": [
+      "L2-02",
+      "L2-03",
+      "L2-05",
+      "L2-07"
+    ],
+    "efficiencyRegressions": [
+      "L3-11"
+    ],
+    "unchanged": [
+      "L2-01",
+      "L2-04",
+      "L2-06",
+      "L2-08",
+      "L3-09",
+      "L3-10",
+      "L3-12"
+    ]
+  }
+}
