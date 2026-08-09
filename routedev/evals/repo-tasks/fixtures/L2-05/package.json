@@ -1,0 +1,9 @@
+{
+  "name": "fixture-l2-05",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "node scripts/fail-once.mjs"
+  }
+}

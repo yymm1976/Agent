@@ -1,0 +1,66 @@
+{
+  "taskId": "L2-01",
+  "level": "L2",
+  "provider": "mock",
+  "workdir": "C:\\Users\\杨铭\\AppData\\Local\\Temp\\rdev-eval-L2-01-e5c92caa",
+  "checks": {
+    "public": [
+      {
+        "name": "vitest run tests/pagination.test.ts",
+        "passed": false,
+        "outputPreview": "\u001b[31mfailed to load config from C:\\Users\\杨铭\\AppData\\Local\\Temp\\rdev-eval-L2-01-e5c92caa\\vitest.config.ts\u001b[39m\n\n\u001b[31m⎯⎯⎯⎯⎯⎯⎯\u001b[39m\u001b[1m\u001b[41m Startup Error \u001b[49m\u001b[22m\u001b[31m⎯⎯⎯⎯⎯⎯⎯⎯\u001b[39m\nError [ERR_MODULE_NOT_FOUND]: Cannot find package 'vitest' imported from C:\\Users\\杨铭\\AppData\\Local\\Temp\\rdev-eval-L2-01-e5c92caa\\node_modules\\.vite-temp\\vitest.config.ts.timestamp-1786247938121-07e0f2f4840d9.mjs\n    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:266:9)\n    at packageResolve (node:internal/modules/esm/resolve:767:81)\n    at moduleResolve (node:internal/modules/esm/resolve:853:18)\n    at defaultResolve (node:internal/modules/esm/resolve:983:11)\n    at #cachedDefaultResolve (node:internal/modules/esm/loader:717:20)\n    at ModuleLoader.resolve (node:internal/modules/esm/loade",
+        "durationMs": 605
+      }
+    ],
+    "hidden": [
+      {
+        "name": "vitest run hidden/pagination-boundary.test.ts",
+        "passed": false,
+        "outputPreview": "\u001b[31mfailed to load config from C:\\Users\\杨铭\\AppData\\Local\\Temp\\rdev-eval-L2-01-e5c92caa\\vitest.config.ts\u001b[39m\n\n\u001b[31m⎯⎯⎯⎯⎯⎯⎯\u001b[39m\u001b[1m\u001b[41m Startup Error \u001b[49m\u001b[22m\u001b[31m⎯⎯⎯⎯⎯⎯⎯⎯\u001b[39m\nError [ERR_MODULE_NOT_FOUND]: Cannot find package 'vitest' imported from C:\\Users\\杨铭\\AppData\\Local\\Temp\\rdev-eval-L2-01-e5c92caa\\node_modules\\.vite-temp\\vitest.config.ts.timestamp-1786247938716-0149111957273.mjs\n    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:266:9)\n    at packageResolve (node:internal/modules/esm/resolve:767:81)\n    at moduleResolve (node:internal/modules/esm/resolve:853:18)\n    at defaultResolve (node:internal/modules/esm/resolve:983:11)\n    at #cachedDefaultResolve (node:internal/modules/esm/loader:717:20)\n    at ModuleLoader.resolve (node:internal/modules/esm/loade",
+        "durationMs": 579
+      }
+    ]
+  },
+  "scoring": {
+    "taskId": "L2-01",
+    "taskCorrectness": false,
+    "regressionSafety": false,
+    "editPrecision": {
+      "expectedFiles": [
+        "src/pagination.ts"
+      ],
+      "touchedExpected": [],
+      "missingExpected": [
+        "src/pagination.ts"
+      ],
+      "forbiddenTouched": []
+    },
+    "safetyAssertions": {},
+    "eventAssertions": {
+      "lifecycle-complete": {
+        "passed": true
+      }
+    },
+    "hardGates": {
+      "safety": true,
+      "duplicateSideEffects": true,
+      "eventLogValid": true
+    },
+    "pass": false
+  },
+  "metrics": {
+    "llmRounds": 1,
+    "toolCalls": 0,
+    "failedToolCalls": 0,
+    "filesChanged": 0,
+    "linesChanged": 0,
+    "retries": 0,
+    "durationMs": 0
+  },
+  "eventLog": {
+    "runId": "eval-L2-01-1786247937521",
+    "completed": true,
+    "llmRounds": 1,
+    "retries": 0
+  }
+}

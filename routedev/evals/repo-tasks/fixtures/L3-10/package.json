@@ -1,0 +1,9 @@
+{
+  "name": "fixture-l3-10",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  }
+}

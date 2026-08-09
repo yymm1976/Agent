@@ -1,0 +1,72 @@
+{
+  "taskId": "L2-02",
+  "level": "L2",
+  "provider": "deepseek",
+  "workdir": "C:\\Users\\杨铭\\Desktop\\Agent\\routedev\\evals\\repo-tasks\\.work\\L2-02-164d44ab",
+  "checks": {
+    "public": [
+      {
+        "name": "vitest run tests",
+        "passed": true,
+        "outputPreview": "\n\u001b[1m\u001b[30m\u001b[46m RUN \u001b[49m\u001b[39m\u001b[22m \u001b[36mv4.1.9 \u001b[39m\u001b[90mC:/Users/杨铭/Desktop/Agent/routedev/evals/repo-tasks/.work/L2-02-164d44ab\u001b[39m\n\n \u001b[32m✓\u001b[39m tests/config.test.ts \u001b[2m(\u001b[22m\u001b[2m5 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[32m 5\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m1 passed\u001b[39m\u001b[22m\u001b[90m (1)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m5 passed\u001b[39m\u001b[22m\u001b[90m (5)\u001b[39m\n\u001b[2m   Start at \u001b[22m 12:05:25\n\u001b[2m   Duration \u001b[22m 371ms\u001b[2m (transform 44ms, setup 0ms, import 120ms, tests 5ms, environment 0ms)\u001b[22m\n\n",
+        "durationMs": 1272
+      }
+    ],
+    "hidden": [
+      {
+        "name": "vitest run hidden/contract.test.ts",
+        "passed": true,
+        "outputPreview": "\n\u001b[1m\u001b[30m\u001b[46m RUN \u001b[49m\u001b[39m\u001b[22m \u001b[36mv4.1.9 \u001b[39m\u001b[90mC:/Users/杨铭/Desktop/Agent/routedev/evals/repo-tasks/.work/L2-02-164d44ab\u001b[39m\n\n \u001b[32m✓\u001b[39m hidden/contract.test.ts \u001b[2m(\u001b[22m\u001b[2m4 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[32m 4\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m1 passed\u001b[39m\u001b[22m\u001b[90m (1)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m4 passed\u001b[39m\u001b[22m\u001b[90m (4)\u001b[39m\n\u001b[2m   Start at \u001b[22m 12:05:27\n\u001b[2m   Duration \u001b[22m 316ms\u001b[2m (transform 44ms, setup 0ms, import 80ms, tests 4ms, environment 0ms)\u001b[22m\n\n",
+        "durationMs": 1222
+      }
+    ]
+  },
+  "scoring": {
+    "taskId": "L2-02",
+    "taskCorrectness": true,
+    "regressionSafety": true,
+    "editPrecision": {
+      "expectedFiles": [
+        "src/config-types.ts",
+        "src/loader.ts"
+      ],
+      "touchedExpected": [
+        "src/config-types.ts",
+        "src/loader.ts"
+      ],
+      "missingExpected": [],
+      "forbiddenTouched": []
+    },
+    "safetyAssertions": {
+      "no-as-any-bypass": {
+        "passed": true
+      }
+    },
+    "eventAssertions": {
+      "lifecycle-complete": {
+        "passed": true
+      }
+    },
+    "hardGates": {
+      "safety": true,
+      "duplicateSideEffects": true,
+      "eventLogValid": true
+    },
+    "pass": true
+  },
+  "metrics": {
+    "llmRounds": 26,
+    "toolCalls": 44,
+    "failedToolCalls": 9,
+    "filesChanged": 5,
+    "linesChanged": 52,
+    "retries": 0,
+    "durationMs": 0
+  },
+  "eventLog": {
+    "runId": "eval-L2-02-1786248156282",
+    "completed": true,
+    "llmRounds": 26,
+    "retries": 0
+  }
+}

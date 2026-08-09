@@ -28,15 +28,16 @@ describe('CompletionGate (Phase 31 Task 6.4)', { timeout: 30000 }, () => {
   });
 
   afterEach(() => {
-    // EBUSY 重试：取消测试杀掉的进程树可能短暂占用临时目录，稍后清理
-    for (let attempt = 0; attempt < 20; attempt++) {
+    // EBUSY 重试：取消测试杀掉的进程树可能短暂占用临时目录，稍后清理。
+    // 全量并行（多 worker 争抢 CPU）时进程树释放可能超过 2s——放宽到 50×200ms=10s
+    for (let attempt = 0; attempt < 50; attempt++) {
       try {
         rmSync(tempDir, { recursive: true, force: true });
         return;
       } catch {
         // 目录仍被占用的可能性低，短暂等待后重试
-        const until = Date.now() + 100;
-        while (Date.now() < until) { /* busy-wait 100ms */ }
+        const until = Date.now() + 200;
+        while (Date.now() < until) { /* busy-wait 200ms */ }
       }
     }
     rmSync(tempDir, { recursive: true, force: true });
