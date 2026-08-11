@@ -169,4 +169,44 @@ describe('CompletionEvidenceGate', () => {
       expect(gate.evaluate().status, kind).toBe('recover');
     }
   });
+
+  it('blocks an unrequested breaking change to an explicit exported return contract', () => {
+    const gate = new CompletionEvidenceGate('Fix src/logger.ts and keep tests green.', 'C:/workspace');
+    const baseline = 'export function log(level: string): string { return level; }';
+    success(gate, 'file_read', { path: 'src/logger.ts' }, baseline);
+    success(gate, 'file_edit', {
+      path: 'src/logger.ts',
+      oldString: ': string {',
+      newString: ': string | undefined {',
+    });
+    success(gate, 'shell_exec', { command: 'pnpm test' });
+
+    const blocked = gate.evaluate();
+    expect(blocked.status).toBe('recover');
+    expect(blocked.missing.join(' ')).toContain('公共 API 返回契约发生未授权变更');
+
+    success(gate, 'file_edit', {
+      path: 'src/logger.ts',
+      oldString: ': string | undefined {',
+      newString: ': string {',
+    });
+    success(gate, 'shell_exec', { command: 'pnpm test' });
+    expect(gate.evaluate().status).toBe('complete');
+  });
+
+  it('allows an explicit user-requested return type change', () => {
+    const gate = new CompletionEvidenceGate(
+      'Change the return type in src/logger.ts and keep tests green.',
+      'C:/workspace',
+    );
+    success(gate, 'file_read', { path: 'src/logger.ts' }, 'export function log(): string { return "x"; }');
+    success(gate, 'file_edit', {
+      path: 'src/logger.ts',
+      oldString: ': string {',
+      newString: ': string | undefined {',
+    });
+    success(gate, 'shell_exec', { command: 'pnpm test' });
+
+    expect(gate.evaluate().status).toBe('complete');
+  });
 });
