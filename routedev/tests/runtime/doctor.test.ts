@@ -2,20 +2,64 @@
 // Doctor 探测器与 /doctor 命令测试
 // 测试项:
 // 1. node 命令探测返回 ok 且 version 包含 v
-// 2. 不存在的命令探测返回 missing
+// 2. 不存在的命令探测返回 missing（GA Release Hygiene Task 2：controlled spawnSync stub，
+//    不再依赖真实不存在命令与平台 shell error 文案——Windows 沙箱 ENOENT 差异曾致 flaky）
 // 3. formatReport 输出包含表格格式与标题
 // 4. probeTimeout 超时返回 timeout 状态(用慢 node 命令真实触发)
 // 5. MCP/目录/Provider 探测补充覆盖
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { Doctor } from '../../src/runtime/doctor.js';
 import type { ProbeResult } from '../../src/runtime/doctor.js';
+
+/**
+ * GA Release Hygiene Task 2：controlled spawnSync stub——
+ * 真实探测（node/pnpm/git 等）走 actual 实现；特定命令名返回受控结果，
+ * 不依赖机器上命令是否存在、不匹配平台 shell error 文案（Windows 沙箱 ENOENT 差异曾致 flaky）。
+ */
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    spawnSync: vi.fn((...args: Parameters<typeof actual.spawnSync>) => {
+      const name = String(args[0] ?? '');
+      if (name === 'nonexistent-cmd-xxx') {
+        // 无 shell 路径：error.code === 'ENOENT'
+        return {
+          status: null, signal: null, output: [], pid: -1, stdout: null, stderr: null,
+          error: Object.assign(new Error('spawn nonexistent-cmd-xxx ENOENT'), { code: 'ENOENT' }),
+        } as unknown as ReturnType<typeof actual.spawnSync>;
+      }
+      if (name === 'shell-missing-cmd') {
+        // shell 路径：status=1 + stderr 命令未找到文案（统一英文 sh 文案；doctor 用 encoding:'utf-8' → string）
+        return {
+          status: 1, signal: null, output: [], pid: 1,
+          stdout: '', stderr: 'sh: shell-missing-cmd: command not found',
+          error: undefined,
+        } as unknown as ReturnType<typeof actual.spawnSync>;
+      }
+      if (name === 'some-tool') {
+        // 退出码非 0 且非命令未找到 → broken
+        return {
+          status: 2, signal: null, output: [], pid: 1,
+          stdout: '', stderr: 'some real error output',
+          error: undefined,
+        } as unknown as ReturnType<typeof actual.spawnSync>;
+      }
+      return actual.spawnSync(...args);
+    }),
+  };
+});
 
 // ============================================================
 // 1. 本地工具探测: node
 // ============================================================
 
 describe('Doctor: 本地工具探测', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('node 命令探测返回 ok 且 version 包含 v', async () => {
     const doctor = new Doctor();
     const results = await doctor.runAllChecks();
@@ -26,12 +70,24 @@ describe('Doctor: 本地工具探测', () => {
     expect(nodeResult!.version!).toContain('v');
   });
 
-  it('不存在的命令(nonexistent-cmd-xxx)探测返回 missing', () => {
+  it('不存在的命令(nonexistent-cmd-xxx)探测返回 missing（ENOENT stub，平台无关）', () => {
     const doctor = new Doctor();
     const result = doctor.probeToolVersion('nonexistent-cmd-xxx', ['--version']);
     expect(result.status).toBe('missing');
     expect(result.component).toBe('nonexistent-cmd-xxx');
     expect(result.suggestion).toContain('nonexistent-cmd-xxx');
+  });
+
+  it('shell cmd-not-found 路径返回 missing（status=1 + 命令未找到 stderr，平台无关）', () => {
+    const doctor = new Doctor();
+    const result = doctor.probeToolVersion('shell-missing-cmd', ['--version']);
+    expect(result.status).toBe('missing');
+  });
+
+  it('退出码非 0 且非命令未找到 → broken（stub 判定不误伤）', () => {
+    const doctor = new Doctor();
+    const result = doctor.probeToolVersion('some-tool', ['--version']);
+    expect(result.status).toBe('broken');
   });
 });
 

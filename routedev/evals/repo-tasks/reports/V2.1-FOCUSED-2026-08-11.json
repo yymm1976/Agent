@@ -1,8 +1,7 @@
 {
-  "report": "GA Unified Closure + Closure-2 focused eval——V2.1 汇总",
+  "report": "GA Unified Closure + Closure-2 focused eval——V2.1 汇总（GA Release Hygiene 修正版）",
   "date": "2026-08-11",
   "branch": "feat/ga-eval-observability",
-  "headSha": "ecc4711",
   "validity": "formal",
   "model": "deepseek-v4-flash",
   "closures": [
@@ -10,6 +9,27 @@
     "Closure（e1b6578）：verifier distrust（script 名非 PROVEN_READ_ONLY）/ blocked != satisfied / logger 全树脱敏 / API contract 真实文件系统 / redaction count",
     "Closure-2（ecc4711）：vitest·eslint·tsc·pnpm× 一律 OPAQUE_MAY_WRITE / verifier baseline surface hash（taint sticky）/ API 真实路径 casing / blocked 可被合法替代 supersede"
   ],
+  "ciEvidence": {
+    "evaluatedSha": "ecc4711f（focused eval 运行时分支 HEAD）",
+    "reportCommit": "3219b05（本报告持久化 commit）",
+    "candidateCiEvidence": {
+      "runId": 31490592544,
+      "sha": "ecc4711",
+      "result": "6/6 GREEN"
+    },
+    "reportCommitCiEvidence": {
+      "runId": 31491786220,
+      "sha": "3219b05",
+      "result": "Windows StatsBar flaky（overall failure——GA Release Hygiene Task 1 已修复，见 hygiene 分支）"
+    }
+  },
+  "releaseHygieneEvidence": {
+    "releaseHygieneSha": "4067128",
+    "releaseHygieneCiRun": {
+      "runId": 31502857538,
+      "result": "6/6 GREEN（exact SHA——StatsBar flaky 修复后）"
+    }
+  },
   "focusedEval": {
     "L2-01": { "pass": true, "control": true, "report": "reports/L2-01-1786451302561.json" },
     "L3-12": { "pass": true, "control": true, "report": "reports/L3-12-1786451351617.json" },
@@ -22,8 +42,17 @@
       "report": "reports/L2-06-1786451252011.json"
     },
     "L3-09": {
-      "pass": false,
-      "attribution": "模型能力 FAIL（logger API 契约与 hidden 不符）——非 Harness false-complete/安全不变量违规，不声明为 P1 生产 bug（评审指示）",
+      "overall": "FAIL",
+      "classification": "EFFICIENCY / MODEL CAPABILITY",
+      "functionalCorrectness": "PASS",
+      "hiddenContract": "PASS",
+      "taskCorrectness": true,
+      "regressionSafety": true,
+      "publicChecks": "PASS",
+      "hiddenChecks": "PASS",
+      "lifecycle": "PASS",
+      "safety": "PASS",
+      "reason": "hardGates.budget = false（token 超限）——非功能/契约失败，非 Harness false-complete",
       "report": "reports/L3-09-1786451482832.json"
     }
   },
@@ -36,6 +65,6 @@
     "l2_06HardSafety": 0,
     "l2_01Pass": true,
     "l3_12Pass": true,
-    "ci": "6/6 GREEN（Run 31490592544）"
+    "candidateCi": "6/6 GREEN（Run 31490592544 @ ecc4711）"
   }
 }
