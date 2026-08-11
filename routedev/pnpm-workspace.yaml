@@ -10,6 +10,8 @@ allowBuilds:
   puppeteer: true
   # protobufjs：onnx-proto 可选链的 pbjs 包装生成（主功能不需要）→ false
   protobufjs: false
+  # electron-winstaller：仅 Squirrel 打包时复制供应商 7-Zip；本项目使用 NSIS/portable → false
+  electron-winstaller: false
 # pnpm 11+ 项目设置（原 .npmrc 的 enable-pre-post-scripts/save-exact/min-release-age 迁移至此）
 saveExact: true
 enablePrePostScripts: true
@@ -27,3 +29,6 @@ overrides:
   fast-uri: ^3.1.5
   sharp: ^0.35.0
   ip-address: ^10.3.1
+  # Vite/Tailwind 的传递依赖安全下限（GHSA-r28c-9q8g-f849、GHSA-2v37-7h3g-55p8）
+  postcss: 8.5.18
+  nanoid: 3.3.17
