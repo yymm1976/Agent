@@ -1,6 +1,10 @@
 // desktop/renderer/src/components/__tests__/StatsBar.test.tsx
 // Phase 96+ A3.4：StatsBar 组件单元测试
 // 验证空态隐藏、IPC 数据拉取后渲染、超限预算标红、卸载清理等行为
+//
+// GA Release Hygiene（Task 1）：全部使用 vi.useFakeTimers + vi.advanceTimersByTimeAsync
+// 确定性推进——不再用 wall-clock sleep（CI 慢时 setTimeout(5) 实际可能 >30ms，
+// interval 提前触发导致 `expected calls = 1 actual = 2` 的 timer scheduling flaky）。
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, act } from '@testing-library/react';
@@ -36,13 +40,20 @@ function clearStatsApi() {
   (window as any).routedev = undefined;
 }
 
+/** flush mount 时的首次 fetch（microtask + effect 时序） */
+async function flushMount() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+}
+
 describe('StatsBar 组件', () => {
   beforeEach(() => {
-    // 用 real timers 避免与 fake timers + async/await + setInterval 兼容问题
-    // 测试用极短 idleInterval / activeInterval 让轮询立即触发
+    vi.useFakeTimers();
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     cleanup();
     clearStatsApi();
   });
@@ -52,10 +63,7 @@ describe('StatsBar 组件', () => {
     injectStatsApi(async () => empty);
 
     const { container } = render(<StatsBar idleInterval={50} />);
-    // 等待 useEffect 中 fetchSnapshot 完成（real timer）
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 10));
-    });
+    await flushMount();
 
     expect(container.firstChild).toBeNull();
   });
@@ -75,9 +83,7 @@ describe('StatsBar 组件', () => {
     injectStatsApi(async () => snap);
 
     const { container } = render(<StatsBar idleInterval={50} />);
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 10));
-    });
+    await flushMount();
 
     // 应该出现 1.5k（输入 token）
     expect(container.textContent).toContain('1.5k');
@@ -104,9 +110,7 @@ describe('StatsBar 组件', () => {
     injectStatsApi(async () => snap);
 
     const { container } = render(<StatsBar idleInterval={50} />);
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 10));
-    });
+    await flushMount();
 
     expect(container.textContent).toContain('$0.0050');
   });
@@ -126,9 +130,7 @@ describe('StatsBar 组件', () => {
     injectStatsApi(async () => snap);
 
     const { container } = render(<StatsBar idleInterval={50} />);
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 10));
-    });
+    await flushMount();
 
     // 125% 应出现
     expect(container.textContent).toContain('125%');
@@ -152,9 +154,7 @@ describe('StatsBar 组件', () => {
     injectStatsApi(async () => snap);
 
     const { container } = render(<StatsBar idleInterval={50} />);
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 10));
-    });
+    await flushMount();
 
     // 模型计数 ×2
     expect(container.textContent).toContain('×2');
@@ -176,9 +176,7 @@ describe('StatsBar 组件', () => {
     injectStatsApi(async () => snap);
 
     const { container } = render(<StatsBar idleInterval={50} />);
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 10));
-    });
+    await flushMount();
 
     // 缓存命中率 50% 应出现
     expect(container.textContent).toContain('50%');
@@ -190,9 +188,9 @@ describe('StatsBar 组件', () => {
   it('无 window.routedev API 时安全挂载（IPC 调用 no-op）', async () => {
     clearStatsApi();
     expect(() => render(<StatsBar idleInterval={50} />)).not.toThrow();
-    // 等待一段时间不应抛错
+    // flush 定时器与 microtask 不应抛错
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 20));
+      await vi.advanceTimersByTimeAsync(20);
     });
   });
 
@@ -211,40 +209,36 @@ describe('StatsBar 组件', () => {
     injectStatsApi(async () => snap);
 
     const { unmount } = render(<StatsBar idleInterval={50} />);
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 10));
-    });
+    await flushMount();
 
     expect(() => unmount()).not.toThrow();
   });
 
-  it('空闲轮询按 idleInterval 间隔拉取', async () => {
+  it('空闲轮询按 idleInterval 间隔拉取（确定性 fake timers）', async () => {
     const getSnapshot = vi.fn(async () => makeSnapshot({
       tokens: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
     }));
     injectStatsApi(getSnapshot);
 
     render(<StatsBar idleInterval={30} activeInterval={20} />);
-    // 等待首次拉取
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 5));
-    });
+    // 首次 mount fetch——精确 1 次（fake timers 下无 wall-clock race）
+    await flushMount();
     expect(getSnapshot).toHaveBeenCalledTimes(1);
 
-    // 推进 30ms 应触发第二次
+    // 推进 30ms（idleInterval）→ 第二次
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 35));
+      await vi.advanceTimersByTimeAsync(30);
     });
-    expect(getSnapshot.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(getSnapshot).toHaveBeenCalledTimes(2);
 
-    // 再推进 30ms 应触发第三次
+    // 再推进 30ms → 第三次
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 35));
+      await vi.advanceTimersByTimeAsync(30);
     });
-    expect(getSnapshot.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(getSnapshot).toHaveBeenCalledTimes(3);
   });
 
-  it('isProcessing 切换时按 activeInterval 频率拉取', async () => {
+  it('isProcessing 切换时按 activeInterval 频率拉取（确定性 fake timers）', async () => {
     const getSnapshot = vi.fn(async () => makeSnapshot({
       tokens: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
     }));
@@ -253,17 +247,20 @@ describe('StatsBar 组件', () => {
     const { rerender } = render(
       <StatsBar isProcessing={false} idleInterval={200} activeInterval={20} />
     );
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 5));
-    });
+    await flushMount();
     expect(getSnapshot).toHaveBeenCalledTimes(1);
 
-    // 切换到生成中：重置定时器，20ms 后应触发
+    // 切换到生成中：effect 重跑（依赖 isProcessing）→ 立即 fetch 一次 + 重建 interval(20ms)
     rerender(<StatsBar isProcessing={true} idleInterval={200} activeInterval={20} />);
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 30));
+      await vi.advanceTimersByTimeAsync(0);
     });
-    // 至少触发了第二次
-    expect(getSnapshot.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(getSnapshot).toHaveBeenCalledTimes(2); // mount fetch + rerender effect fetch
+
+    // 推进 20ms（activeInterval）→ interval 触发第三次
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20);
+    });
+    expect(getSnapshot).toHaveBeenCalledTimes(3);
   });
 });
