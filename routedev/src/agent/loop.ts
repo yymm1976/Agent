@@ -70,6 +70,22 @@ const MESSAGE_WINDOW_THRESHOLD = 40;
 const MAX_FOLLOWUP_ITERATIONS = 100;
 
 /**
+ * 将权限拒绝反馈为不可绕过的资源策略，避免模型换工具重复同一副作用。
+ * 只使用脱敏资源，不把 canonical path 或工具参数注入上下文。
+ */
+function formatAuthoritativeDenialFeedback(result: {
+  reason?: string;
+  permissionMatchedRule?: string;
+  effectKind?: string;
+  redactedResource?: string;
+}): string {
+  const rule = result.permissionMatchedRule ? `（规则 ${result.permissionMatchedRule}）` : '';
+  const effect = result.effectKind ? `副作用 ${result.effectKind}` : '该副作用';
+  const resource = result.redactedResource ? `，资源 ${result.redactedResource}` : '';
+  return `[被拦截：不可覆盖的资源策略${rule}] ${result.reason ?? '未知原因'}。${effect}${resource}未获授权；不要改用其他工具或命令重复相同副作用。请继续完成允许的工作，并将该义务视为策略阻断。`;
+}
+
+/**
  * P0（复审）：统一 usage 聚合——累加全部字段，避免新增字段（缓存 hit/miss、
  * reasoning tokens 等）在 loop 汇总时再次遗漏。
  * 未知字段用 ?? 0 归一，缺失侧不污染累计值。
@@ -934,7 +950,10 @@ export class ReActAgentLoop {
                       effectKind: actingResult.effectKind,
                       resource: actingResult.redactedResource,
                     });
-                    const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[被拦截] ${actingResult.reason ?? '未知原因'}`);
+                    const toolResult = await this.ctxMgr.sanitizeToolResult(
+                      toolCall.name,
+                      formatAuthoritativeDenialFeedback(actingResult),
+                    );
                     yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
                     messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError: true }] });
                     continue;
@@ -1098,7 +1117,10 @@ export class ReActAgentLoop {
                       effectKind: actingResult.effectKind,
                       resource: actingResult.redactedResource,
                     });
-                    const toolResult = await this.ctxMgr.sanitizeToolResult(toolCall.name, `[被拦截] ${actingResult.reason ?? '未知原因'}`);
+                    const toolResult = await this.ctxMgr.sanitizeToolResult(
+                      toolCall.name,
+                      formatAuthoritativeDenialFeedback(actingResult),
+                    );
                     yield { type: 'tool_call_result', toolName: toolCall.name, toolCallId: toolCall.id, result: toolResult, isError: true };
                     messages.push({ role: 'user', content: [{ type: 'tool_result' as const, toolUseId: toolCall.id, content: toolResult, isError: true }] });
                     continue;

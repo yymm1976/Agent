@@ -55,6 +55,7 @@ describe('Effect-aware permission kernel', () => {
       "node -e \"require('fs').writeFileSync('tests/new.test.ts','x')\"",
       "python -c \"open('tests/new.test.ts','w').write('x')\"",
       "Set-Content -Path tests/new.test.ts -Value x",
+      "cd tests && powershell -NoProfile -Command \"Set-Content -Path 'new.test.ts' -Value x\"",
       'cmd /c copy temp.test.ts tests\\new.test.ts',
     ];
 
@@ -75,6 +76,7 @@ describe('Effect-aware permission kernel', () => {
       ['file_edit', { path: './tests/new.test.ts', oldText: 'a', newText: 'b' }],
       ['shell_exec', { command: 'mv tmp.ts tests/new.test.ts' }],
       ['shell_exec', { command: 'cat tmp.ts > ./tests/new.test.ts' }],
+      ['shell_exec', { command: "cd tests && powershell -NoProfile -Command \"Set-Content -Path 'new.test.ts' -Value x\"" }],
       ['git_op', { operation: 'restore', paths: ['tests/new.test.ts'] }],
     ];
 
@@ -122,6 +124,7 @@ describe('Effect-aware permission kernel', () => {
       'pnpm typecheck',
       'npm run lint',
       'echo diagnostic text',
+      'cd src && pnpm test',
     ];
 
     for (const command of commands) {

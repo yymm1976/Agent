@@ -77,6 +77,23 @@ function commandName(parsed: ParsedCommand): string {
   return normalized.toLowerCase().replace(/\.exe$/, '');
 }
 
+function directoryChangeContext(
+  parsed: ParsedCommand,
+  context: EffectResolveContext,
+): EffectResolveContext | 'opaque' | undefined {
+  const name = commandName(parsed);
+  if (!['cd', 'chdir', 'pushd', 'set-location', 'push-location'].includes(name)) return undefined;
+
+  const target = optionValue(parsed.args, ['-path', '-literalpath']) ?? positional(parsed.args).at(-1);
+  // Home/variable expansion and directory-stack state are shell-specific. Do not
+  // guess a cwd for later relative effects when the target is dynamic.
+  if (!target || /[$%*?~]/.test(target)) return 'opaque';
+  return {
+    ...context,
+    workingDirectory: path.resolve(context.workingDirectory, portablePath(target)),
+  };
+}
+
 function positional(args: string[]): string[] {
   return args.filter((arg) => arg && !arg.startsWith('-') && !/^\/[a-z]+$/i.test(arg));
 }
@@ -263,7 +280,21 @@ function analyzeOne(parsed: ParsedCommand, context: EffectResolveContext): Effec
 function analyzeShell(command: string, context: EffectResolveContext): EffectResolution {
   const parsed = parseCommand(command);
   const commands = parsed.subCommands && parsed.subCommands.length > 0 ? parsed.subCommands : [parsed];
-  const analyses = commands.map((item) => analyzeOne(item, context));
+  const analyses: EffectResolution[] = [];
+  let activeContext = context;
+  for (const item of commands) {
+    const changedContext = directoryChangeContext(item, activeContext);
+    if (changedContext === 'opaque') {
+      analyses.push(resolution('OPAQUE_MAY_WRITE', [{ kind: 'opaque_may_write' }, { kind: 'process.exec' }]));
+      continue;
+    }
+    if (changedContext) {
+      activeContext = changedContext;
+      analyses.push(resolution('PROVEN_READ_ONLY', [{ kind: 'process.exec' }]));
+      continue;
+    }
+    analyses.push(analyzeOne(item, activeContext));
+  }
   const effects = analyses.flatMap((item) => item.effects);
   if (analyses.some((item) => item.classification === 'OPAQUE_MAY_WRITE')) return resolution('OPAQUE_MAY_WRITE', effects);
   if (analyses.some((item) => item.classification === 'KNOWN_EFFECTS')) return resolution('KNOWN_EFFECTS', effects);

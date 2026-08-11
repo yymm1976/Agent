@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { ReActAgentLoop } from '../../src/agent/loop.js';
-import type { ToolExecutorAdapter } from '../../src/agent/loop-config.js';
+import type { ReActEvent, ToolExecutorAdapter } from '../../src/agent/loop-config.js';
 import { AgentMiddlewarePipeline } from '../../src/agent/middleware.js';
 import { PermissionMiddleware } from '../../src/agent/middleware/permission-middleware.js';
 import { PermissionEngine, type PermissionRule } from '../../src/tools/permission-engine.js';
@@ -77,7 +77,8 @@ describe('effect permission production loop wiring', () => {
     const log = new RunEventLog('repair-final-auth', mkdtempSync(join(tmpdir(), 'routedev-run-log-')));
     loop.setRunEventLog(log);
 
-    for await (const _event of loop.run({
+    const yielded: ReActEvent[] = [];
+    for await (const event of loop.run({
       requestId: 'repair-final-auth',
       userMessage: 'inspect source',
       llmClient: repairedCallClient(),
@@ -85,9 +86,22 @@ describe('effect permission production loop wiring', () => {
       conversationHistory: [],
       autonomyMode: 'auto',
       workspace: { workingDirectory: process.cwd(), allowedDirectories: [process.cwd()] },
-    })) { /* consume */ }
+    })) {
+      yielded.push(event);
+    }
 
     expect(executed).toEqual(['file_read']);
+    const deniedResult = yielded.find(
+      (event) => event.type === 'tool_call_result' && event.toolName === 'file_write',
+    );
+    expect(deniedResult?.type).toBe('tool_call_result');
+    if (deniedResult?.type === 'tool_call_result') {
+      expect(deniedResult.isError).toBe(true);
+      expect(deniedResult.result).toContain('不可覆盖的资源策略');
+      expect(deniedResult.result).toContain('不要改用其他工具或命令重复相同副作用');
+      expect(deniedResult.result).toContain('tests/scavenged.ts');
+      expect(deniedResult.result).not.toContain('"content":"x"');
+    }
     const rejected = log.getEvents().find((event) => event.type === 'tool_rejected');
     expect(rejected?.type).toBe('tool_rejected');
     if (rejected?.type === 'tool_rejected') {
