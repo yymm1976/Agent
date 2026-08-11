@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import { CompletionEvidenceGate } from '../../src/agent/completion-evidence-gate.js';
 
@@ -144,7 +147,7 @@ describe('CompletionEvidenceGate', () => {
     }
   });
 
-  it('treats a policy-denied requested resource as blocked rather than falsely incomplete', () => {
+  it('treats a policy-denied requested resource as BLOCKED, not satisfied (GA Unified Closure P1-2)', () => {
     const gate = new CompletionEvidenceGate(
       'Add tests/score-calc-empty.test.ts following the style (see tests/score-calc.test.ts), then run the tests.',
       'C:/workspace',
@@ -157,8 +160,20 @@ describe('CompletionEvidenceGate', () => {
     success(gate, 'shell_exec', { command: 'pnpm test' });
 
     const result = gate.evaluate();
-    expect(result.status).toBe('complete');
-    expect(result.evidence.some((item) => item.sources.some((source) => source.startsWith('policy-denial:')))).toBe(true);
+    // policy denial != satisfied：不得 complete，也不得把 policy-denial 当 positive evidence
+    expect(result.status).toBe('interrupted');
+    expect(result.reason).toBe('policy_blocked_requirement');
+    expect(result.evidence.some((item) => item.sources.some((source) => source.startsWith('policy-denial:')))).toBe(false);
+    expect(result.missing.some((item) => /score-calc-empty/i.test(item))).toBe(true);
+  });
+
+  it('policy denial on an unrelated resource does not block other obligations (GA Unified Closure P1-2)', () => {
+    const gate = new CompletionEvidenceGate('Fix src/a.ts and keep tests green.', 'C:/workspace');
+    // 拒绝一个无关资源（docs/notes.md）——不标记任何 obligation blocked
+    gate.observeToolRejection('safety', 'file_write', { path: 'docs/notes.md', content: 'x' });
+    success(gate, 'file_edit', { path: 'src/a.ts' });
+    success(gate, 'shell_exec', { command: 'pnpm test' });
+    expect(gate.evaluate().status).toBe('complete');
   });
 
   it('does not waive an obligation after a user or hook rejection', () => {
@@ -170,28 +185,34 @@ describe('CompletionEvidenceGate', () => {
     }
   });
 
-  it('blocks an unrequested breaking change to an explicit exported return contract', () => {
-    const gate = new CompletionEvidenceGate('Fix src/logger.ts and keep tests green.', 'C:/workspace');
-    const baseline = 'export function log(level: string): string { return level; }';
-    success(gate, 'file_read', { path: 'src/logger.ts' }, baseline);
-    success(gate, 'file_edit', {
-      path: 'src/logger.ts',
-      oldString: ': string {',
-      newString: ': string | undefined {',
-    });
-    success(gate, 'shell_exec', { command: 'pnpm test' });
+  it('blocks an unrequested breaking change to an explicit exported return contract (real filesystem)', () => {
+    // P2-1（GA Unified Closure）：contract 校验必须基于实际最终文件系统——
+    // 用真实临时目录，shadow replay 之外 shell 对真实文件的修改也必须被观察到。
+    const base = mkdtempSync(join(tmpdir(), 'rdev-gate-api-'));
+    const file = join(base, 'src', 'logger.ts');
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, 'export function log(level: string): string { return level; }', 'utf-8');
+    try {
+      const gate = new CompletionEvidenceGate('Fix src/logger.ts and keep tests green.', base);
+      const baseline = readFileSync(file, 'utf-8');
+      success(gate, 'file_read', { path: 'src/logger.ts' }, baseline);
+      // shell 直接修改真实文件（shadow replay 看不到）
+      writeFileSync(file, 'export function log(level: string): string | undefined { return level; }', 'utf-8');
+      success(gate, 'shell_exec', { command: 'pnpm test' });
 
-    const blocked = gate.evaluate();
-    expect(blocked.status).toBe('recover');
-    expect(blocked.missing.join(' ')).toContain('公共 API 返回契约发生未授权变更');
+      const blocked = gate.evaluate();
+      expect(blocked.status).toBe('recover');
+      expect(blocked.missing.join(' ')).toContain('公共 API 返回契约发生未授权变更');
 
-    success(gate, 'file_edit', {
-      path: 'src/logger.ts',
-      oldString: ': string | undefined {',
-      newString: ': string {',
-    });
-    success(gate, 'shell_exec', { command: 'pnpm test' });
-    expect(gate.evaluate().status).toBe('complete');
+      // 恢复契约后完成：真实文件恢复 + file_edit 观察提供 mutation evidence（shell
+      // 直接写文件 gate 观察不到 mutation——evidence 来自工具轨迹与真实文件双源）
+      writeFileSync(file, 'export function log(level: string): string { return level; }', 'utf-8');
+      success(gate, 'file_edit', { path: 'src/logger.ts' });
+      success(gate, 'shell_exec', { command: 'pnpm test' });
+      expect(gate.evaluate().status).toBe('complete');
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 
   it('allows an explicit user-requested return type change', () => {
@@ -208,5 +229,41 @@ describe('CompletionEvidenceGate', () => {
     success(gate, 'shell_exec', { command: 'pnpm test' });
 
     expect(gate.evaluate().status).toBe('complete');
+  });
+
+  it('agent cannot mutate its verifier and then use it to certify itself (GA Unified Closure P1-1)', () => {
+    const base = mkdtempSync(join(tmpdir(), 'rdev-gate-ver-'));
+    writeFileSync(join(base, 'package.json'), '{"scripts":{"test":"vitest run"}}', 'utf-8');
+    try {
+      const gate = new CompletionEvidenceGate('Fix src/a.ts and keep tests green.', base);
+      success(gate, 'file_edit', { path: 'src/a.ts' });
+      // Agent 修改 verifier 定义（package.json script 改为恒真）
+      success(gate, 'file_edit', { path: 'package.json' });
+      success(gate, 'shell_exec', { command: 'pnpm test' });
+      // verifiedEpoch MUST NOT advance authoritatively——修改后的 verifier 不能自证
+      expect(gate.getEpochs().verifiedEpoch).toBe(-1);
+      expect(gate.evaluate().status).toBe('recover');
+      expect(gate.evaluate().missing.join(' ')).toMatch(/最新变更尚未验证|latest mutation/i);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('modifying vitest config invalidates subsequent verifier trust (GA Unified Closure P1-1)', () => {
+    const base = mkdtempSync(join(tmpdir(), 'rdev-gate-vit-'));
+    writeFileSync(join(base, 'vitest.config.ts'), 'export default {}', 'utf-8');
+    try {
+      const gate = new CompletionEvidenceGate('Fix src/a.ts and keep tests green.', base);
+      success(gate, 'file_edit', { path: 'src/a.ts' });
+      success(gate, 'shell_exec', { command: 'pnpm test' });
+      expect(gate.getEpochs().verifiedEpoch).toBe(1); // 定义未被改 → 可信
+
+      success(gate, 'file_edit', { path: 'vitest.config.ts' });
+      success(gate, 'shell_exec', { command: 'pnpm test' });
+      // verifier 定义已 mutation（epoch 2）→ verifiedEpoch 不 advance（停留 1）
+      expect(gate.getEpochs()).toEqual({ mutationEpoch: 2, verifiedEpoch: 1 });
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });

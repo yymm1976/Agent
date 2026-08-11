@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { EffectResolver } from '../tools/effect-resolver.js';
 import { parseCommand, type ParsedCommand } from '../tools/command-parser.js';
 
@@ -22,7 +24,7 @@ export interface CompletionEvidenceResult {
   evidence: RequirementEvidence[];
   recoveryAttempts: number;
   recoveryMessage?: string;
-  reason?: 'cancelled' | 'completion_evidence_missing';
+  reason?: 'cancelled' | 'completion_evidence_missing' | 'policy_blocked_requirement';
 }
 
 interface MutationRecord {
@@ -38,6 +40,20 @@ interface ObservedApiFile {
 const CODING_INTENT = /\b(add|build|change|create|delete|edit|fix|implement|migrate|refactor|remove|rename|update|write)\b|修复|实现|新增|修改|重构|删除|迁移/i;
 const VERIFICATION_REQUEST = /\b(test|tests|typecheck|lint|build|verify|verification|green)\b|测试|验证|构建|类型检查/i;
 const EXPLICIT_API_CHANGE = /\b(?:break(?:ing)? change|change|alter|widen|narrow|remove|rename)\b[^.\n]{0,48}\b(?:api|signature|return type|export)\b|(?:修改|变更|移除|重命名)[^。\n]{0,32}(?:API|接口|签名|返回类型|导出)/i;
+
+/**
+ * P1-1（GA Unified Closure）：verifier 定义文件——repository-controlled verifier
+ * 的可信度必须绑定其定义未被 Run 内 mutation 修改。Agent 不能先改 verifier 定义
+ * （package.json script / vitest·jest config / tsconfig）再用修改后的 verifier
+ * 证明自己的完成。
+ */
+const VERIFIER_DEFINITION_FILES = [
+  'package.json',
+  'vitest.config.ts', 'vitest.config.js', 'vitest.config.mts', 'vitest.config.mjs',
+  'vitest.workspace.ts', 'vitest.workspace.js', 'vitest.workspace.mts', 'vitest.workspace.mjs',
+  'jest.config.ts', 'jest.config.js', 'jest.config.mjs', 'jest.config.cjs',
+  'tsconfig.json', 'tsconfig.evals.json', 'tsconfig.desktop.json',
+];
 
 function normalizedExecutable(parsed: ParsedCommand): string | undefined {
   const normalized = parsed.command.replace(/\\/g, '/');
@@ -215,6 +231,8 @@ export class CompletionEvidenceGate {
   private readonly apiContractChangesAllowed: boolean;
   private mutationEpoch = 0;
   private verifiedEpoch = -1;
+  /** P1-1：verifier 定义文件最后一次被 mutation 的 epoch（-1 = 从未被改） */
+  private verifierMutationEpoch = -1;
   private recoveryAttempts = 0;
 
   constructor(userMessage: string, private readonly workingDirectory: string) {
@@ -278,13 +296,25 @@ export class CompletionEvidenceGate {
       this.mutationEpoch += 1;
       for (const effect of mutations) {
         const resource = effect.relativeResource ?? effect.resource;
-        if (resource) this.mutations.push({ resource: normalizeResource(resource), epoch: this.mutationEpoch });
+        if (resource) {
+          const normalized = normalizeResource(resource);
+          this.mutations.push({ resource: normalized, epoch: this.mutationEpoch });
+          // P1-1：verifier 定义被 mutation → 记录 epoch——修改后的 verifier 不得自证
+          if (VERIFIER_DEFINITION_FILES.some((file) => normalized === normalizeResource(file))) {
+            this.verifierMutationEpoch = this.mutationEpoch;
+          }
+        }
       }
       this.unresolvedFailures.delete(`tool:${toolName}`);
     }
 
     if (isVerifierCommand(command)) {
-      this.verifiedEpoch = this.mutationEpoch;
+      // P1-1（verifier provenance）：verifier 成功只在其定义未被本次 Run 修改时
+      // advance verifiedEpoch——`Agent 修改 verifier → 用该 verifier 证明自己` 的
+      // invariant 必须成立；否则 verifiedEpoch 保持旧值（evaluate 报"最新变更尚未验证"）。
+      if (this.verifierMutationEpoch < this.mutationEpoch) {
+        this.verifiedEpoch = this.mutationEpoch;
+      }
       this.verifierCommands.push(command.replace(/\s+/g, ' ').trim().slice(0, 160));
       this.unresolvedFailures.delete('verification');
       // A successful verifier supersedes earlier transient shell diagnostics:
@@ -309,6 +339,22 @@ export class CompletionEvidenceGate {
 
     const evidence = this.buildEvidence();
     const missing = evidence.filter((item) => item.sources.length === 0).map((item) => item.description);
+
+    // P1-2（GA Unified Closure）：policy denial 是 BLOCKED，不是 SATISFIED——
+    // 被策略阻塞的 required obligation 不能通过 verifier green 或其他 evidence 满足。
+    // 若存在被阻塞且无合法替代（无 mutation evidence）的 obligation，直接中断
+    // （reason=policy_blocked_requirement），不进入 recover 循环（Agent 无法满足）。
+    const blockedUnresolved = evidence.filter((item) =>
+      this.policyBlockedObligations.has(item.obligationId) && item.sources.length === 0);
+    if (blockedUnresolved.length > 0) {
+      return this.result(
+        'interrupted',
+        blockedUnresolved.map((item) => item.description),
+        evidence,
+        'policy_blocked_requirement',
+      );
+    }
+
     if (this.mutationEpoch > 0 && this.verifiedEpoch !== this.mutationEpoch) {
       missing.push(`最新变更尚未验证（mutation epoch ${this.mutationEpoch}, verified epoch ${this.verifiedEpoch}）`);
     }
@@ -330,17 +376,19 @@ export class CompletionEvidenceGate {
   }
 
   private buildEvidence(): RequirementEvidence[] {
-    const verificationCurrent = (this.mutationEpoch > 0 || this.policyBlockedObligations.size > 0)
+    const verificationCurrent = this.mutationEpoch > 0
       && this.verifiedEpoch === this.mutationEpoch;
     const verificationSource = verificationCurrent && this.verifierCommands.length > 0
       ? `verification:${this.verifierCommands.at(-1)}@${this.verifiedEpoch}`
       : undefined;
     return this.obligations.map((obligation) => {
       if (this.policyBlockedObligations.has(obligation.id)) {
+        // P1-2：policy denial 不产生 positive evidence——被阻塞 obligation 的
+        // sources 保持为空（缺失），由 evaluate 决定 interrupted 终态。
         return {
           obligationId: obligation.id,
           description: obligation.description,
-          sources: [`policy-denial:${obligation.id}`],
+          sources: [],
         };
       }
       const matching = obligation.kind === 'verification'
@@ -389,7 +437,16 @@ export class CompletionEvidenceGate {
     const violations: string[] = [];
     for (const [resource, observed] of this.observedApiFiles) {
       const baseline = explicitFunctionReturns(observed.baseline);
-      const current = explicitFunctionReturns(observed.current);
+      // P2-1（GA Unified Closure）：terminal 校验必须比较 baseline contract 与
+      // **实际最终文件系统**的 contract——shell/node/python/git mutation 对真实源码的
+      // 修改不能被 in-memory shadow replay 掩盖（shadow 只跟随 file_read/write/edit）。
+      let currentSource: string;
+      try {
+        currentSource = readFileSync(join(this.workingDirectory, resource), 'utf-8');
+      } catch {
+        currentSource = ''; // 文件被删除/移动 → 导出缺失 → violation
+      }
+      const current = explicitFunctionReturns(currentSource);
       for (const [name, expected] of baseline) {
         const actual = current.get(name);
         if (actual !== expected) {

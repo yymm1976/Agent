@@ -116,11 +116,9 @@ function safeCommands(count: number): string[] {
     'git log -5 --oneline',
     'rg -n "TODO" src',
     'grep -R "TODO" src',
-    'pnpm test',
+    // GA Unified Closure P1-1：repository-controlled script 名（test/typecheck/lint/build）
+    // 不再是 safe corpus——pnpm/npm run 脚本可写任意文件；仅直接 bin 调用保留
     'pnpm vitest run',
-    'pnpm typecheck',
-    'npm run lint',
-    'npm run build',
     'echo "diagnostic text"',
     'node -e "console.log(\'ok\')"',
     'Get-Content src/a.ts',

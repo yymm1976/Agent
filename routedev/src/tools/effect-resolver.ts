@@ -15,7 +15,6 @@ const READ_ONLY_COMMANDS = new Set([
   'ls', 'dir', 'pwd', 'cd', 'get-childitem', 'get-content', 'select-string',
   'rg', 'grep', 'findstr', 'where', 'which', 'stat', 'test-path',
 ]);
-const VERIFY_SCRIPTS = new Set(['test', 'test:desktop', 'typecheck', 'typecheck:desktop', 'lint', 'build']);
 const GIT_READ = new Set(['status', 'diff', 'log', 'show', 'blame', 'branch', 'rev-parse', 'ls-files']);
 
 function identity(value: string): string {
@@ -268,9 +267,14 @@ function analyzeOne(parsed: ParsedCommand, context: EffectResolveContext): Effec
     return resolution('PROVEN_READ_ONLY', [{ kind: 'process.exec' }]);
   }
   if (name === 'npm' || name === 'pnpm' || name === 'yarn') {
+    // P1-1（GA Unified Closure）：package.json script 是 repository-controlled
+    // arbitrary code——script 名（test/build/lint/typecheck）不能推出 PROVEN_READ_ONLY
+    // （`"test": "node scripts/write-protected.js"` 可写 tests/**，`"build"` 可写 dist/**）。
+    // 仅直接调用已知包 bin（`pnpm vitest` / `pnpm tsc`，args[0] 即 bin 名且非 `run`）
+    // 且无 mutating flag 时放行；`run <script>` 与其余一律 OPAQUE_MAY_WRITE（fail-closed）。
     const script = args[0] === 'run' ? args[1] : args[0];
-    if (script && !hasMutatingVerifierFlag(args)
-      && (VERIFY_SCRIPTS.has(script) || script === 'vitest' || script === 'tsc')) {
+    if (script && args[0] !== 'run' && !hasMutatingVerifierFlag(args)
+      && (script === 'vitest' || script === 'tsc')) {
       return resolution('PROVEN_READ_ONLY', [{ kind: 'process.exec' }]);
     }
   }

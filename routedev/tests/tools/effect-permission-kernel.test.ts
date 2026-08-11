@@ -109,27 +109,37 @@ describe('Effect-aware permission kernel', () => {
     expect(freshRun.decision).not.toBe('deny');
   });
 
-  it('keeps the proven read-only and verification corpus allowed', () => {
+  it('keeps the proven read-only corpus allowed and denies repository-controlled scripts (GA Unified Closure P1-1)', () => {
     const root = workspace();
     const engine = new PermissionEngine();
     engine.loadRules([protectedTestsRule]);
-    const commands = [
+    // 真 PROVEN_READ_ONLY / 直接 bin：允许
+    const allowed = [
       'git status --short',
       'git diff -- tests/a.ts',
       'git log -5 --oneline',
       'rg -n TODO src',
       'grep -R TODO src',
-      'pnpm test',
       'pnpm vitest run',
-      'pnpm typecheck',
-      'npm run lint',
       'echo diagnostic text',
-      'cd src && pnpm test',
     ];
-
-    for (const command of commands) {
+    for (const command of allowed) {
       const result = engine.check('shell_exec', { command }, 'auto', { runId: 'safe-run', workingDirectory: root });
       expect(result.decision, command).not.toBe('deny');
+    }
+    // P1-1：package.json script 是 repository-controlled arbitrary code——
+    // script 名（test/typecheck/lint/build）不能证明 read-only；protected tests/**
+    // deny 存在时 OPAQUE_MAY_WRITE + 无法证明 disjoint → fail-closed DENY
+    const deniedScripts = [
+      'pnpm test',
+      'pnpm typecheck',
+      'npm run lint',
+      'npm run build',
+      'cd src && pnpm test',
+    ];
+    for (const command of deniedScripts) {
+      const result = engine.check('shell_exec', { command }, 'auto', { runId: `script-run-${command}`, workingDirectory: root });
+      expect(result.decision, command).toBe('deny');
     }
   });
 
