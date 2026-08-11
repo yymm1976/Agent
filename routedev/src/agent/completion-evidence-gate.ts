@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { EffectResolver } from '../tools/effect-resolver.js';
 import { parseCommand, type ParsedCommand } from '../tools/command-parser.js';
@@ -33,8 +34,11 @@ interface MutationRecord {
 }
 
 interface ObservedApiFile {
+  /** comparison identity（normalized/lowercase——跨平台对比用） */
+  identity: string;
+  /** 实际文件系统路径（保留原始大小写——terminal 读取必须用真实路径，Linux case-sensitive） */
+  actualPath: string;
   baseline: string;
-  current: string;
 }
 
 const CODING_INTENT = /\b(add|build|change|create|delete|edit|fix|implement|migrate|refactor|remove|rename|update|write)\b|修复|实现|新增|修改|重构|删除|迁移/i;
@@ -192,7 +196,7 @@ export function extractTaskObligations(userMessage: string): TaskObligation[] {
     [/schema|type definition|类型定义|配置模式/i, '实现 schema/type definition', ['schema', 'type']],
     [/config loader|\bloader\b|配置加载/i, '实现 config loader', ['loader']],
     [/runtime logger|\blogger\b|日志器/i, '实现 runtime logger', ['logger']],
-    [/(?:its|the) tests|add[^.]{0,30}tests|update[^.]{0,30}tests|测试用例/i, '更新相关 tests', ['test']],
+    [/(?:its|the) tests|add[^.]{0,30}tests|update[^.]{0,30}tests|测试用例/i, '更新相关 tests', ['test', 'spec']],
     [/\breadme\b|documentation|文档示例/i, '更新 README/documentation', ['readme', 'docs/']],
   ];
   for (const [pattern, description, hints] of components) {
@@ -231,13 +235,28 @@ export class CompletionEvidenceGate {
   private readonly apiContractChangesAllowed: boolean;
   private mutationEpoch = 0;
   private verifiedEpoch = -1;
-  /** P1-1：verifier 定义文件最后一次被 mutation 的 epoch（-1 = 从未被改） */
-  private verifierMutationEpoch = -1;
+  /** P1-B（Closure-2）：run 开始时冻结的 verifier 定义面 hash——仅当当前 verifier
+   *  定义面与 baseline 完全一致时，verifier 成功才能 advance verifiedEpoch。
+   *  （替代 P1-1 的"最后 mutation epoch"比较——后者在 verifier 被改后又发生无关
+   *    mutation 时会错误恢复信任。） */
+  private readonly baselineVerifierHash: string;
   private recoveryAttempts = 0;
 
   constructor(userMessage: string, private readonly workingDirectory: string) {
     this.obligations = extractTaskObligations(userMessage);
     this.apiContractChangesAllowed = EXPLICIT_API_CHANGE.test(userMessage);
+    this.baselineVerifierHash = this.verifierSurfaceHash();
+  }
+
+  /** P1-B：verifier 定义面 hash——VERIFIER_DEFINITION_FILES 中实际存在的文件内容组合 */
+  private verifierSurfaceHash(): string {
+    const parts: string[] = [];
+    for (const file of VERIFIER_DEFINITION_FILES) {
+      try {
+        parts.push(`${file}=${readFileSync(join(this.workingDirectory, file), 'utf-8')}`);
+      } catch { /* 文件不存在 → 不参与 hash（baseline 与当前一致对待） */ }
+    }
+    return createHash('sha256').update(parts.join('\n---\n'), 'utf-8').digest('hex');
   }
 
   getObligations(): readonly TaskObligation[] {
@@ -299,9 +318,15 @@ export class CompletionEvidenceGate {
         if (resource) {
           const normalized = normalizeResource(resource);
           this.mutations.push({ resource: normalized, epoch: this.mutationEpoch });
-          // P1-1：verifier 定义被 mutation → 记录 epoch——修改后的 verifier 不得自证
-          if (VERIFIER_DEFINITION_FILES.some((file) => normalized === normalizeResource(file))) {
-            this.verifierMutationEpoch = this.mutationEpoch;
+          // P2-B（Closure-2）：合法替代 evidence 可 supersede 被策略阻塞的 obligation——
+          // file 级需精确路径命中；behavior/component 级任一匹配 mutation 即合法替代。
+          for (const obligation of this.obligations) {
+            if (!this.policyBlockedObligations.has(obligation.id)) continue;
+            const superseded = obligation.kind === 'file'
+              ? obligation.resourceHints.some((hint) => normalized === normalizeResource(hint))
+              : obligation.resourceHints.length === 0
+                || obligation.resourceHints.some((hint) => normalized.includes(normalizeResource(hint)));
+            if (superseded) this.policyBlockedObligations.delete(obligation.id);
           }
         }
       }
@@ -309,10 +334,11 @@ export class CompletionEvidenceGate {
     }
 
     if (isVerifierCommand(command)) {
-      // P1-1（verifier provenance）：verifier 成功只在其定义未被本次 Run 修改时
-      // advance verifiedEpoch——`Agent 修改 verifier → 用该 verifier 证明自己` 的
-      // invariant 必须成立；否则 verifiedEpoch 保持旧值（evaluate 报"最新变更尚未验证"）。
-      if (this.verifierMutationEpoch < this.mutationEpoch) {
+      // P1-B（Closure-2）：仅当当前 verifier 定义面与 baseline hash 完全一致时，
+      // verifier 成功才 advance verifiedEpoch——`Agent 修改 verifier → 无关 mutation →
+      // 用修改后的 verifier 自证` 的 invariant 成立（sticky：修改后永不恢复信任，
+      // 除非 byte-identical 恢复原定义）。
+      if (this.verifierSurfaceHash() === this.baselineVerifierHash) {
         this.verifiedEpoch = this.mutationEpoch;
       }
       this.verifierCommands.push(command.replace(/\s+/g, ' ').trim().slice(0, 160));
@@ -410,39 +436,33 @@ export class CompletionEvidenceGate {
   private observeApiSurface(toolName: string, args: Record<string, unknown>, output: string): void {
     const rawPath = args.path ?? args.filePath ?? args.file_path;
     if (typeof rawPath !== 'string' || !/\.[cm]?[jt]sx?$/i.test(rawPath)) return;
-    const resource = normalizeResource(rawPath);
+    // P2-A（Closure-2）：identity 用于跨平台对比（normalized/lowercase）；
+    // actualPath 保留原始大小写——terminal 读取必须用真实路径（Linux case-sensitive
+    // 下 `src/MyLogger.ts` 不能被 `src/mylogger.ts` 替代，否则 ENOENT 假 violation）。
+    const identity = normalizeResource(rawPath);
+    const actualPath = rawPath.replace(/\\/g, '/').replace(/^\.\//, '');
     if (toolName === 'file_read') {
-      if (!this.observedApiFiles.has(resource) && explicitFunctionReturns(output).size > 0) {
-        this.observedApiFiles.set(resource, { baseline: output, current: output });
+      if (!this.observedApiFiles.has(identity) && explicitFunctionReturns(output).size > 0) {
+        this.observedApiFiles.set(identity, { identity, actualPath, baseline: output });
       }
       return;
     }
-    const observed = this.observedApiFiles.get(resource);
-    if (!observed) return;
-    if (toolName === 'file_write' && typeof args.content === 'string') {
-      observed.current = args.content;
-      return;
-    }
-    if (toolName === 'file_edit') {
-      const oldString = args.oldString ?? args.old_string;
-      const newString = args.newString ?? args.new_string;
-      if (typeof oldString === 'string' && typeof newString === 'string' && observed.current.includes(oldString)) {
-        observed.current = observed.current.replace(oldString, newString);
-      }
-    }
+    // file_write/file_edit 仍可用于更新 shadow（作为观察），但 terminal 校验以真实文件为准
+    void toolName;
+    void actualPath;
   }
 
   private apiContractViolations(): string[] {
     if (this.apiContractChangesAllowed) return [];
     const violations: string[] = [];
-    for (const [resource, observed] of this.observedApiFiles) {
+    for (const observed of this.observedApiFiles.values()) {
       const baseline = explicitFunctionReturns(observed.baseline);
-      // P2-1（GA Unified Closure）：terminal 校验必须比较 baseline contract 与
-      // **实际最终文件系统**的 contract——shell/node/python/git mutation 对真实源码的
-      // 修改不能被 in-memory shadow replay 掩盖（shadow 只跟随 file_read/write/edit）。
+      // P2-1 + P2-A（Closure/Closure-2）：terminal 校验比较 baseline contract 与
+      // **实际最终文件系统**（真实路径大小写）——shell/node/python/git mutation 对
+      // 真实源码的修改不能被 shadow replay 掩盖；Linux case-sensitive 下用原始路径。
       let currentSource: string;
       try {
-        currentSource = readFileSync(join(this.workingDirectory, resource), 'utf-8');
+        currentSource = readFileSync(join(this.workingDirectory, observed.actualPath), 'utf-8');
       } catch {
         currentSource = ''; // 文件被删除/移动 → 导出缺失 → violation
       }
@@ -450,7 +470,7 @@ export class CompletionEvidenceGate {
       for (const [name, expected] of baseline) {
         const actual = current.get(name);
         if (actual !== expected) {
-          violations.push(`公共 API 返回契约发生未授权变更：${resource}#${name} ${expected} → ${actual ?? '缺少显式返回类型'}`);
+          violations.push(`公共 API 返回契约发生未授权变更：${observed.actualPath}#${name} ${expected} → ${actual ?? '缺少显式返回类型'}`);
         }
       }
     }
