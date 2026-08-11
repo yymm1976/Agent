@@ -88,7 +88,9 @@ const TOOL_DEFS: LLMToolDefinition[] = [
   },
   {
     name: 'shell_exec',
-    description: 'Run a shell command in the working directory (cwd = fixture root)',
+    description: process.platform === 'win32'
+      ? 'Run a Windows cmd.exe command in the working directory (cwd = fixture root). Use dir/where/type and NUL; do not use POSIX-only ls/pwd/which or /dev/null, and do not cd to an absolute workdir.'
+      : 'Run a POSIX shell command in the working directory (cwd = fixture root). Use ls/pwd/which and /dev/null; do not cd to an absolute workdir.',
     parameters: { type: 'object', properties: { command: { type: 'string' }, timeoutMs: { type: 'number' } }, required: ['command'] },
   },
   {

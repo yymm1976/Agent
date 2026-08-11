@@ -31,6 +31,16 @@ function makeExecutor(workdir: string, faults?: { firstTestShellFailure?: boolea
   return { executor, calls };
 }
 
+describe('Eval shell contract', () => {
+  it('advertises the actual host shell dialect to the model', () => {
+    const { executor } = makeExecutor(process.cwd());
+    const shell = executor.getToolDefinitions().find((tool) => tool.name === 'shell_exec');
+
+    expect(shell?.description).toContain(process.platform === 'win32' ? 'Windows cmd.exe' : 'POSIX shell');
+    expect(shell?.description).toContain('do not cd to an absolute workdir');
+  });
+});
+
 describe('Blind Eval Boundary（Integrity Closure）', () => {
   let base: string;
   let workdir: string;

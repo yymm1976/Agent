@@ -1,6 +1,6 @@
 // evals/repo-tasks/runner/run-task.ts
 // GA Eval Phase A：单任务执行入口（Eval Baseline Integrity Fix 2 修订）
-//   `pnpm exec tsx evals/repo-tasks/runner/run-task.ts <taskId> [--provider=deepseek|mock]`
+//   `pnpm exec tsx evals/repo-tasks/runner/run-task.ts <taskId> [--provider=deepseek|opencode-go|mock]`
 //
 // 流程（Fix 2 修订）：
 //   1. 读 manifest task 定义
@@ -212,7 +212,9 @@ export interface RunResult {
   artifact: Record<string, unknown>;
 }
 
-export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Promise<RunResult> {
+type EvalProvider = 'deepseek' | 'opencode-go' | 'mock';
+
+export async function runTask(taskId: string, provider: EvalProvider): Promise<RunResult> {
   const task = getTask(taskId);
   const fixtureDir = join(EVALS_ROOT, 'fixtures', taskId);
   if (!existsSync(fixtureDir)) throw new Error(`fixture missing: ${fixtureDir}`);
@@ -245,7 +247,10 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
   // ---- provider ----
   const client = provider === 'deepseek'
     ? await createDeepSeekClient()
-    : await createMockClient(taskId);
+    : provider === 'opencode-go'
+      ? await createOpenCodeGoClient()
+      : await createMockClient(taskId);
+  const modelId = provider === 'mock' ? 'mock-model' : 'deepseek-v4-flash';
 
   // ---- Integrity Closure：overall timeoutMs → AbortController ----
   const timeoutController = new AbortController();
@@ -259,8 +264,8 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
     llmClient: client as never,
     routeDecision: {
       model: {
-        id: provider === 'deepseek' ? 'deepseek-v4-flash' : 'mock-model',
-        name: provider === 'deepseek' ? 'deepseek-v4-flash' : 'mock',
+        id: modelId,
+        name: modelId,
         provider: 'eval',
         tier: 'simple' as const,
         contextWindow: 64000,
@@ -499,7 +504,7 @@ export async function runTask(taskId: string, provider: 'deepseek' | 'mock'): Pr
     artifact: {
       suiteSha: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: EVALS_ROOT, encoding: 'utf-8' }).stdout?.trim() ?? 'unknown',
       taskDefHash: createHash('sha256').update(JSON.stringify(task)).digest('hex').slice(0, 16),
-      model: provider,
+      model: modelId,
       baselineSha,
       effectiveConfig: {
         maxIterations: task.maxIterations,
@@ -580,6 +585,17 @@ async function createDeepSeekClient(): Promise<unknown> {
   return new DeepSeekClient({ providerId: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey });
 }
 
+async function createOpenCodeGoClient(): Promise<unknown> {
+  const { OpenAIClient } = await import('../../../src/router/llm/openai.js');
+  const apiKey = process.env.OPENCODE_API_KEY;
+  if (!apiKey) throw new Error('OPENCODE_API_KEY 未设置（OpenCode GO 真实评测需要）');
+  return new OpenAIClient({
+    providerId: 'opencode-go',
+    baseUrl: 'https://opencode.ai/zen/go/v1',
+    apiKey,
+  });
+}
+
 async function createMockClient(taskId: string): Promise<unknown> {
   const { createMockClient } = await import('./mock-provider.js');
   return createMockClient(taskId);
@@ -591,9 +607,14 @@ async function createMockClient(taskId: string): Promise<unknown> {
 
 if (typeof process.argv[1] === 'string' && process.argv[1].replace(/\\/g, '/').endsWith('run-task.ts')) {
   const taskId = process.argv[2];
-  const provider = (process.argv[3]?.replace('--provider=', '') ?? 'mock') as 'deepseek' | 'mock';
+  const rawProvider = process.argv[3]?.replace('--provider=', '') ?? 'mock';
+  const provider = rawProvider as EvalProvider;
   if (!taskId) {
-    console.error('usage: pnpm exec tsx evals/repo-tasks/runner/run-task.ts <taskId> [--provider=deepseek|mock]');
+    console.error('usage: pnpm exec tsx evals/repo-tasks/runner/run-task.ts <taskId> [--provider=deepseek|opencode-go|mock]');
+    process.exit(1);
+  }
+  if (!['deepseek', 'opencode-go', 'mock'].includes(provider)) {
+    console.error(`unsupported provider: ${rawProvider}`);
     process.exit(1);
   }
   runTask(taskId, provider).then((r) => {

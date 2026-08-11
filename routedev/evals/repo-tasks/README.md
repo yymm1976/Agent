@@ -27,6 +27,9 @@ pnpm exec tsx evals/repo-tasks/runner/run-task.ts L2-01 mock
 
 # 真实 DeepSeek smoke（评审指定第一轮：L2-01/L2-02/L2-08/L3-09）
 DEEPSEEK_API_KEY=<key> pnpm exec tsx evals/repo-tasks/runner/run-task.ts L2-01 deepseek
+
+# OpenCode GO 上的 DeepSeek V4 Flash（OpenAI-compatible）
+OPENCODE_API_KEY=<key> pnpm exec tsx evals/repo-tasks/runner/run-task.ts L2-01 opencode-go
 ```
 
 ## 评分模型
