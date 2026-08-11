@@ -1,0 +1,37 @@
+{
+  "report": "GA Release Hygiene & Flaky Closure——evidence 汇总",
+  "date": "2026-08-11",
+  "branch": "feat/ga-release-hygiene",
+  "baseSha": "3219b05",
+  "hygieneSha": "3ab9ad7（push 后由 exact CI 验证，releaseHygieneCiRun 见下）",
+  "tasks": {
+    "1_statsbar_flaky": {
+      "rootCause": "test fake-timer race：StatsBar 空闲轮询测试用 real timers + wall-clock sleep（setTimeout 5ms），CI 慢时实际等待 >30ms 导致 interval 提前触发（expected calls=1 actual=2）",
+      "fix": "全部改用 vi.useFakeTimers + vi.advanceTimersByTimeAsync + act 确定性推进；生产 StatsBar 无改动",
+      "status": "FIXED",
+      "validation": "50x repeat = 0 failures；desktop suite 128/128 PASS"
+    },
+    "2_doctor_enoent": {
+      "rootCause": "测试依赖真实不存在命令 + 平台 shell error 文案（Windows 沙箱 ENOENT 差异返回 broken）",
+      "fix": "controlled spawnSync stub（vi.mock node:child_process 内部转发）：ENOENT / shell cmd-not-found / broken 三路径受控；生产 doctor 无改动（双重 ENOENT 判定正确）",
+      "status": "FIXED",
+      "validation": "doctor suite 12/12 PASS（含 3 个确定性 stub 用例）"
+    },
+    "3_v2_1_metadata": {
+      "3A_ciEvidence": "区分 evaluatedSha=ecc4711 / reportCommit=3219b05 / candidateCiEvidence(Run 31490592544, 6/6 GREEN) / reportCommitCiEvidence(Run 31491786220, Windows StatsBar flaky)",
+      "3B_l3_09": "归因修正：functionalCorrectness=PASS、hiddenContract=PASS、overall=FAIL 仅因 hardGates.budget=false（EFFICIENCY/MODEL CAPABILITY，非功能/契约失败）",
+      "status": "CORRECTED"
+    },
+    "4_act_warning": {
+      "rootCause": "InputArea 测试未 flush mount 后 async IPC 微任务（skill.list/mcp.tools resolved promise → setState 在 act 外）",
+      "fix": "render 后统一 await act(async () => {}) flush；生产 InputArea 无改动",
+      "status": "FIXED",
+      "validation": "InputArea 4/4 PASS，act warning 计数 = 0"
+    },
+    "5_stale_debug": {
+      "findings": "无可操作遗留：src/ 与 desktop/ 无 DEBUGGEM/DEBUG: 临时标记；console.log 命中 3 处均为合法内容（sandbox.ts 文档示例、SKILL.md 反模式描述、index.ts renderer 日志转发生产功能）",
+      "status": "NO_ACTIONABLE_ARTIFACT"
+    }
+  },
+  "releaseHygieneCiRun": "待 exact SHA CI 完成后填入"
+}
