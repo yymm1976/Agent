@@ -924,7 +924,7 @@ export class ReActAgentLoop {
                       toolCall.name, toolCall.arguments, this.currentAutonomyMode, permissionContext(),
                     );
                   if (actingResult.denied) {
-                    completionGate?.observeToolRejection('safety');
+                    completionGate?.observeToolRejection('safety', toolCall.name, toolCall.arguments);
                     // Closure 6：denial lifecycle——权限 deny 记 tool_rejected（不记 tool_requested）
                     this.recordRunEvent('tool_rejected', {
                       toolName: toolCall.name,
@@ -1088,7 +1088,7 @@ export class ReActAgentLoop {
                     toolCall.name, toolCall.arguments, this.currentAutonomyMode, permissionContext(),
                   );
                   if (actingResult.denied) {
-                    completionGate?.observeToolRejection('safety');
+                    completionGate?.observeToolRejection('safety', toolCall.name, toolCall.arguments);
                     // Closure 6：denial lifecycle——权限 deny 记 tool_rejected（不记 tool_requested）
                     this.recordRunEvent('tool_rejected', {
                       toolName: toolCall.name,

@@ -85,4 +85,58 @@ describe('CompletionEvidenceGate', () => {
     success(gate, 'shell_exec', { command: 'pnpm test' });
     expect(gate.evaluate().status).toBe('complete');
   });
+
+  it('rejects verifier text printed by a non-verifier command', () => {
+    const gate = new CompletionEvidenceGate('Fix src/a.ts and keep tests green.', 'C:/workspace');
+    success(gate, 'file_edit', { path: 'src/a.ts' });
+    success(gate, 'shell_exec', { command: 'echo pnpm test' }, 'pnpm test passed');
+
+    expect(gate.getEpochs()).toEqual({ mutationEpoch: 1, verifiedEpoch: -1 });
+    expect(gate.evaluate().status).toBe('recover');
+  });
+
+  it('does not accept a verifier chained with a later mutation', () => {
+    const gate = new CompletionEvidenceGate('Fix src/a.ts and keep tests green.', 'C:/workspace');
+    success(gate, 'file_edit', { path: 'src/a.ts' });
+    success(gate, 'shell_exec', { command: 'pnpm test && echo x > src/a.ts' });
+
+    expect(gate.getEpochs()).toEqual({ mutationEpoch: 2, verifiedEpoch: -1 });
+    expect(gate.evaluate().status).toBe('recover');
+  });
+
+  it('does not accept verifier update/fix modes as current evidence', () => {
+    for (const command of ['vitest -u', 'pnpm test -- --update', 'eslint tests/a.ts --fix']) {
+      const gate = new CompletionEvidenceGate('Fix src/a.ts and keep tests green.', 'C:/workspace');
+      success(gate, 'file_edit', { path: 'src/a.ts' });
+      success(gate, 'shell_exec', { command });
+      expect(gate.getEpochs().verifiedEpoch, command).toBe(-1);
+      expect(gate.evaluate().status, command).toBe('recover');
+    }
+  });
+
+  it('treats a policy-denied requested resource as blocked rather than falsely incomplete', () => {
+    const gate = new CompletionEvidenceGate(
+      'Add tests/score-calc-empty.test.ts following the style (see tests/score-calc.test.ts), then run the tests.',
+      'C:/workspace',
+    );
+    expect(gate.getObligations().some((item) => item.resourceHints.includes('tests/score-calc.test.ts'))).toBe(false);
+    gate.observeToolRejection('safety', 'file_write', {
+      path: 'tests/score-calc-empty.test.ts',
+      content: 'blocked',
+    });
+    success(gate, 'shell_exec', { command: 'pnpm test' });
+
+    const result = gate.evaluate();
+    expect(result.status).toBe('complete');
+    expect(result.evidence.some((item) => item.sources.some((source) => source.startsWith('policy-denial:')))).toBe(true);
+  });
+
+  it('does not waive an obligation after a user or hook rejection', () => {
+    for (const kind of ['user', 'hook'] as const) {
+      const gate = new CompletionEvidenceGate('Add tests/a.test.ts and run tests.', 'C:/workspace');
+      gate.observeToolRejection(kind, 'file_write', { path: 'tests/a.test.ts', content: 'x' });
+      success(gate, 'shell_exec', { command: 'pnpm test' });
+      expect(gate.evaluate().status, kind).toBe('recover');
+    }
+  });
 });

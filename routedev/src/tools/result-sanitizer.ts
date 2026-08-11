@@ -7,6 +7,7 @@
 // 三项职责：智能截断 + 注入检测 + 敏感字段脱敏
 
 import { logger } from '../utils/logger.js';
+import { redactSensitiveText } from '../utils/redact-sensitive.js';
 import { filterSensitiveFields } from './security-enhanced.js';
 
 // --- 注入检测模式 ---
@@ -91,10 +92,10 @@ export class ToolResultSanitizer {
       });
     }
 
-    // 3. Phase 32 Task 1.6：敏感字段脱敏
-    //    仅对 JSON 内容生效——非 JSON 内容跳过（避免误伤纯文本）
-    //    脱敏 API Key、密码、token 等敏感字段，防止泄露给 LLM
+    // 3. 敏感信息脱敏：JSON 先按敏感键递归处理，再对所有文本应用共享凭据模式。
+    //    这是送回 LLM 前的边界，纯文本 shell/file/MCP 输出同样可能含凭据。
     content = this.redactSensitiveFields(content, toolName);
+    content = redactSensitiveText(content);
 
     return {
       content,

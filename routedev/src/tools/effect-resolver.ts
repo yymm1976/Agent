@@ -11,7 +11,7 @@ import type {
 } from './effect-model.js';
 
 const READ_ONLY_COMMANDS = new Set([
-  'cat', 'type', 'more', 'less', 'head', 'tail', 'wc', 'sort', 'uniq',
+  'cat', 'type', 'more', 'less', 'head', 'tail', 'wc', 'uniq',
   'ls', 'dir', 'pwd', 'cd', 'get-childitem', 'get-content', 'select-string',
   'rg', 'grep', 'findstr', 'where', 'which', 'stat', 'test-path',
 ]);
@@ -83,7 +83,9 @@ function positional(args: string[]): string[] {
 
 function extractRedirects(raw: string): string[] {
   const targets: string[] = [];
-  const redirect = /(?:^|\s)(?:>>|1?>)(?!&)(?:\s*)(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))/g;
+  // Shell redirection does not require surrounding whitespace (`echo x>file`).
+  // Include numbered descriptors such as `2>file`; `>&1` remains excluded.
+  const redirect = /(?:\d*>>?)(?!&)(?:\s*)(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))/g;
   let match: RegExpExecArray | null;
   while ((match = redirect.exec(raw)) !== null) {
     const target = match[1] ?? match[2] ?? match[3];
@@ -95,10 +97,56 @@ function extractRedirects(raw: string): string[] {
 function optionValue(args: string[], names: string[]): string | undefined {
   const lowered = args.map((arg) => arg.toLowerCase());
   for (const name of names) {
-    const index = lowered.indexOf(name.toLowerCase());
+    const normalizedName = name.toLowerCase();
+    const index = lowered.indexOf(normalizedName);
     if (index >= 0 && args[index + 1]) return args[index + 1];
+    const inline = lowered.findIndex((arg) => arg.startsWith(`${normalizedName}=`) || arg.startsWith(`${normalizedName}:`));
+    if (inline >= 0) return args[inline].slice(normalizedName.length + 1);
   }
   return undefined;
+}
+
+function gitOperation(args: string[]): { operation: string; index: number } | undefined {
+  const consumesValue = new Set(['-c', '-C', '--git-dir', '--work-tree', '--namespace']);
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (consumesValue.has(arg)) {
+      index++;
+      continue;
+    }
+    if (arg.startsWith('-')) continue;
+    return { operation: arg.toLowerCase(), index };
+  }
+  return undefined;
+}
+
+function isProvenReadOnlyInlineNode(raw: string): boolean {
+  const command = String.raw`(?:node|nodejs)(?:\.exe)?\s+(?:-e|--eval)\s+`;
+  const doubleQuoted = String.raw`"(?:console\.log|process\.stdout\.write)\((?:'[^'\\]*'|\d+)\);?"`;
+  const singleQuoted = String.raw`'(?:console\.log|process\.stdout\.write)\((?:"[^"\\]*"|\d+)\);?'`;
+  return new RegExp(`^${command}(?:${doubleQuoted}|${singleQuoted})$`, 'i').test(raw.trim());
+}
+
+function isNoEmitTypecheck(args: string[]): boolean {
+  const lowered = args.map((arg) => arg.toLowerCase());
+  const noEmitIndex = lowered.indexOf('--noemit');
+  const noEmit = (noEmitIndex >= 0 && lowered[noEmitIndex + 1] !== 'false')
+    || lowered.includes('--noemit=true');
+  if (!noEmit) return false;
+  return !lowered.some((arg) => arg === '--incremental'
+    || arg.startsWith('--incremental=')
+    || arg === '--generatetrace'
+    || arg.startsWith('--generatetrace=')
+    || arg === '--tsbuildinfofile'
+    || arg.startsWith('--tsbuildinfofile='));
+}
+
+function hasMutatingVerifierFlag(args: string[]): boolean {
+  const lowered = args.map((arg) => arg.toLowerCase());
+  return lowered.some((arg) => arg === '--fix' || arg.startsWith('--fix=')
+    || arg === '-u' || arg === '--update' || arg === '--update-snapshot'
+    || arg === '--updatesnapshot' || arg.startsWith('--updatesnapshot=')
+    || arg === '-o' || arg === '--output-file' || arg.startsWith('--output-file='));
 }
 
 function quotedCapture(raw: string, pattern: RegExp): string | undefined {
@@ -118,9 +166,7 @@ function analyzeScriptRuntime(name: string, raw: string, context: EffectResolveC
   if (effects.length > 0) return resolution('KNOWN_EFFECTS', effects);
 
   // Deliberately tiny safe subset. Arbitrary runtime code is never guessed safe.
-  if ((name === 'node' || name === 'nodejs')
-    && /(?:console\.log|process\.stdout\.write)\s*\(/i.test(raw)
-    && !/(?:require\s*\(\s*['"](?:fs|child_process)|\bimport\b|\beval\s*\()/i.test(raw)) {
+  if ((name === 'node' || name === 'nodejs') && isProvenReadOnlyInlineNode(raw)) {
     return resolution('PROVEN_READ_ONLY', [{ kind: 'process.exec' }]);
   }
   return resolution('OPAQUE_MAY_WRITE', [{ kind: 'opaque_may_write' }]);
@@ -137,7 +183,7 @@ function analyzeOne(parsed: ParsedCommand, context: EffectResolveContext): Effec
 
   if (['mv', 'move', 'cp', 'copy', 'copy-item', 'move-item'].includes(name)) {
     const values = positional(args);
-    const destination = optionValue(args, ['-destination', '-dest']) ?? values.at(-1);
+    const destination = optionValue(args, ['-destination', '-dest', '-t', '--target-directory']) ?? values.at(-1);
     if (!destination) return resolution('OPAQUE_MAY_WRITE', [{ kind: 'opaque_may_write' }]);
     const kind: EffectKind = name === 'mv' || name === 'move' || name === 'move-item' ? 'fs.move' : 'fs.create';
     return resolution('KNOWN_EFFECTS', [resourceEffect(kind, destination, context)]);
@@ -167,15 +213,18 @@ function analyzeOne(parsed: ParsedCommand, context: EffectResolveContext): Effec
       : resolution('OPAQUE_MAY_WRITE', [{ kind: 'opaque_may_write' }]);
   }
   if (name === 'git') {
-    const op = (args[0] ?? '').toLowerCase();
+    const output = optionValue(args, ['--output']);
+    if (output) return resolution('KNOWN_EFFECTS', [resourceEffect('fs.write', output, context), { kind: 'process.exec' }]);
+    const parsedOperation = gitOperation(args);
+    const op = parsedOperation?.operation ?? '';
     if (GIT_READ.has(op)) return resolution('PROVEN_READ_ONLY', [{ kind: 'git.read' }, { kind: 'process.exec' }]);
     if (op === 'restore' || op === 'checkout') {
       const separator = args.indexOf('--');
-      const targets = (separator >= 0 ? args.slice(separator + 1) : args.slice(1))
+      const targets = (separator >= 0 ? args.slice(separator + 1) : args.slice((parsedOperation?.index ?? 0) + 1))
         .filter((arg) => !arg.startsWith('-') && arg.toUpperCase() !== 'HEAD');
       if (targets.length > 0) return resolution('KNOWN_EFFECTS', targets.map((target) => resourceEffect('fs.write', target, context)));
     }
-    return resolution('KNOWN_EFFECTS', [{ kind: 'git.mutate' }, { kind: 'process.exec' }]);
+    return resolution('OPAQUE_MAY_WRITE', [{ kind: 'git.mutate' }, { kind: 'opaque_may_write' }, { kind: 'process.exec' }]);
   }
   if (['node', 'nodejs', 'python', 'python3', 'py'].includes(name)) {
     return analyzeScriptRuntime(name, raw, context);
@@ -192,12 +241,19 @@ function analyzeOne(parsed: ParsedCommand, context: EffectResolveContext): Effec
   if (name === 'echo' || name === 'printf' || READ_ONLY_COMMANDS.has(name)) {
     return resolution('PROVEN_READ_ONLY', [{ kind: 'process.exec' }]);
   }
-  if (name === 'tsc' || name === 'vitest' || name === 'eslint') {
+  if (name === 'tsc' && isNoEmitTypecheck(args)) {
+    return resolution('PROVEN_READ_ONLY', [{ kind: 'process.exec' }]);
+  }
+  if (name === 'vitest' && !hasMutatingVerifierFlag(args)) {
+    return resolution('PROVEN_READ_ONLY', [{ kind: 'process.exec' }]);
+  }
+  if (name === 'eslint' && !hasMutatingVerifierFlag(args)) {
     return resolution('PROVEN_READ_ONLY', [{ kind: 'process.exec' }]);
   }
   if (name === 'npm' || name === 'pnpm' || name === 'yarn') {
     const script = args[0] === 'run' ? args[1] : args[0];
-    if (script && (VERIFY_SCRIPTS.has(script) || script === 'vitest' || script === 'tsc')) {
+    if (script && !hasMutatingVerifierFlag(args)
+      && (VERIFY_SCRIPTS.has(script) || script === 'vitest' || script === 'tsc')) {
       return resolution('PROVEN_READ_ONLY', [{ kind: 'process.exec' }]);
     }
   }
@@ -267,7 +323,7 @@ export class EffectResolver {
           const targets = values.filter((value): value is string => typeof value === 'string' && !value.startsWith('-'));
           if (targets.length > 0) return resolution('KNOWN_EFFECTS', targets.map((target) => resourceEffect('fs.write', target, context)));
         }
-        return resolution('KNOWN_EFFECTS', [{ kind: 'git.mutate' }]);
+        return resolution('OPAQUE_MAY_WRITE', [{ kind: 'git.mutate' }, { kind: 'opaque_may_write' }]);
       }
       case 'web_search':
       case 'browser':

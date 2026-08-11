@@ -71,7 +71,7 @@ function forbiddenCommands(root: string, alias: string | undefined, count: numbe
   const commands: string[] = [];
   for (let i = 0; i < count; i++) {
     const target = quote(random.pick(paths), i);
-    const family = i % 19;
+    const family = i % 27;
     const base = (() => {
       switch (family) {
         case 0: return `mv temp.ts ${target}`;
@@ -92,7 +92,15 @@ function forbiddenCommands(root: string, alias: string | undefined, count: numbe
         case 15: return `printf x | tee ${target} && git status --short`;
         case 16: return './git status --short';
         case 17: return '.\\git status --short';
-        default: return './cat src/safe.ts';
+        case 18: return './cat src/safe.ts';
+        case 19: return `echo x>${target}`;
+        case 20: return `echo diagnostic 2>${target}`;
+        case 21: return `git diff --output=${target}`;
+        case 22: return 'git reset --hard';
+        case 23: return `git -C . checkout -- ${target}`;
+        case 24: return `node -e "console.log('ok'); require('f'+'s').writeFileSync('${random.pick(paths)}','x')"`;
+        case 25: return 'tsc';
+        default: return `eslint ${target} --fix`;
       }
     })();
     commands.push(i % 4 === 0 ? `  ${base}  ` : base);

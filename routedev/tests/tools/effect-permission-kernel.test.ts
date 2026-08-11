@@ -145,6 +145,33 @@ describe('Effect-aware permission kernel', () => {
     }
   });
 
+  it('fails closed on verifier-shaped and unbounded mutation bypasses', () => {
+    const root = workspace();
+    const engine = new PermissionEngine();
+    engine.loadRules([protectedTestsRule]);
+
+    const commands = [
+      `node -e "console.log('ok'); require('f'+'s').writeFileSync('tests/a.ts','x')"`,
+      'echo x>tests/a.ts',
+      'echo diagnostic 2>tests/a.ts',
+      'sort src/a.ts -o tests/a.ts',
+      'cp -t tests src/a.ts',
+      'git diff --output=tests/a.patch',
+      'git reset --hard',
+      'git -C . checkout -- tests/a.ts',
+      'tsc',
+      'eslint tests/a.ts --fix',
+    ];
+
+    for (const command of commands) {
+      const result = engine.check('shell_exec', { command }, 'auto', {
+        runId: `adversarial-${command}`,
+        workingDirectory: root,
+      });
+      expect(result.decision, command).toBe('deny');
+    }
+  });
+
   it('resolves directory links before matching protected resources', () => {
     const root = workspace();
     const alias = join(root, 'test-alias');

@@ -80,6 +80,23 @@ describe('ToolResultSanitizer (Phase 31 Task 6.2 + 6.6)', () => {
     });
   });
 
+  describe('敏感信息脱敏', () => {
+    it('脱敏纯文本工具输出中的凭据', () => {
+      const s = new ToolResultSanitizer();
+      const fakeKey = `sk-${'a'.repeat(40)}`;
+      const result = s.sanitize('shell_exec', `Authorization: Bearer fake-token-value\nkey=${fakeKey}`);
+
+      expect(result.content).toContain('[REDACTED]');
+      expect(result.content).not.toContain('fake-token-value');
+      expect(result.content).not.toContain(fakeKey);
+    });
+
+    it('仍保留普通纯文本内容', () => {
+      const s = new ToolResultSanitizer();
+      expect(s.sanitize('file_read', 'export const answer = 42;').content).toBe('export const answer = 42;');
+    });
+  });
+
   describe('智能截断', () => {
     it('短内容不截断', () => {
       const s = new ToolResultSanitizer(10000);
