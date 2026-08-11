@@ -86,6 +86,36 @@ describe('CompletionEvidenceGate', () => {
     expect(gate.evaluate().status).toBe('complete');
   });
 
+  it('accepts a direct verifier with a trailing descriptor merge', () => {
+    const gate = new CompletionEvidenceGate('Fix src/a.ts and keep tests green.', 'C:/workspace');
+    success(gate, 'file_edit', { path: 'src/a.ts' });
+    success(gate, 'shell_exec', { command: 'npm test 2>&1' });
+
+    expect(gate.getEpochs()).toEqual({ mutationEpoch: 1, verifiedEpoch: 1 });
+    expect(gate.evaluate().status).toBe('complete');
+  });
+
+  it('requires no-emit mode for package-run TypeScript verification', () => {
+    const emitting = new CompletionEvidenceGate('Fix src/a.ts and keep tests green.', 'C:/workspace');
+    success(emitting, 'file_edit', { path: 'src/a.ts' });
+    success(emitting, 'shell_exec', { command: 'pnpm exec tsc' });
+    expect(emitting.getEpochs().verifiedEpoch).toBe(-1);
+
+    const noEmit = new CompletionEvidenceGate('Fix src/a.ts and keep tests green.', 'C:/workspace');
+    success(noEmit, 'file_edit', { path: 'src/a.ts' });
+    success(noEmit, 'shell_exec', { command: 'npx tsc --noEmit 2>&1' });
+    expect(noEmit.getEpochs().verifiedEpoch).toBe(1);
+  });
+
+  it('lets a successful verifier supersede an earlier transient shell diagnostic', () => {
+    const gate = new CompletionEvidenceGate('Fix src/a.ts and keep tests green.', 'C:/workspace');
+    success(gate, 'file_edit', { path: 'src/a.ts' });
+    gate.observeToolResult('shell_exec', { command: 'ls -la' }, true, 'unsupported command');
+    success(gate, 'shell_exec', { command: 'pnpm test' });
+
+    expect(gate.evaluate().status).toBe('complete');
+  });
+
   it('rejects verifier text printed by a non-verifier command', () => {
     const gate = new CompletionEvidenceGate('Fix src/a.ts and keep tests green.', 'C:/workspace');
     success(gate, 'file_edit', { path: 'src/a.ts' });

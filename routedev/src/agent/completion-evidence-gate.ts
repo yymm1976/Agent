@@ -46,19 +46,29 @@ function hasMutatingVerifierFlag(args: string[]): boolean {
     || arg === '-o' || arg === '--output-file' || arg.startsWith('--output-file='));
 }
 
+function isTypeScriptNoEmit(args: string[]): boolean {
+  const index = args.indexOf('--noemit');
+  return (index >= 0 && args[index + 1] !== 'false') || args.includes('--noemit=true');
+}
+
 function isVerifierInvocation(parsed: ParsedCommand): boolean {
   const executable = normalizedExecutable(parsed);
   if (!executable) return false;
   const args = parsed.args.map((arg) => arg.toLowerCase());
-  if (executable === 'pnpm' || executable === 'npm' || executable === 'yarn') {
+  if (executable === 'pnpm' || executable === 'npm' || executable === 'yarn' || executable === 'npx') {
     if (hasMutatingVerifierFlag(args)) return false;
-    const command = args[0] === 'run' ? args[1] : args[0] === 'exec' ? args[1] : args[0];
-    return typeof command === 'string'
-      && /^(?:test(?::[\w-]+)?|typecheck(?::[\w-]+)?|lint|build|vitest|tsc)$/.test(command);
+    const commandIndex = args[0] === 'run' || args[0] === 'exec' ? 1 : 0;
+    const command = args[commandIndex];
+    const commandArgs = args.slice(commandIndex + 1);
+    if (command === 'tsc') return isTypeScriptNoEmit(commandArgs);
+    if (command === 'vitest' || command === 'jest') return true;
+    if (command === 'eslint') return executable === 'npx';
+    return executable !== 'npx'
+      && typeof command === 'string'
+      && /^(?:test(?::[\w-]+)?|typecheck(?::[\w-]+)?|lint|build)$/.test(command);
   }
   if (executable === 'tsc') {
-    const index = args.indexOf('--noemit');
-    return (index >= 0 && args[index + 1] !== 'false') || args.includes('--noemit=true');
+    return isTypeScriptNoEmit(args);
   }
   if (executable === 'eslint') {
     return !hasMutatingVerifierFlag(args);
@@ -78,7 +88,10 @@ function isVerifierInvocation(parsed: ParsedCommand): boolean {
 }
 
 function isVerifierCommand(command: string): boolean {
-  const parsed = parseCommand(command);
+  // A trailing fd-to-fd merge preserves the verifier exit status and does not
+  // write a resource. File redirects and all other shell composition remain rejected.
+  const directCommand = command.trim().replace(/\s+[12]>&[12]\s*$/, '');
+  const parsed = parseCommand(directCommand);
   // A single successful shell status cannot prove every step in a pipeline,
   // sequence, fallback chain, redirect, or substitution succeeded safely.
   if (parsed.hasCommandChain || parsed.hasPipe || parsed.hasRedirect || parsed.hasSubstitution) return false;
@@ -224,6 +237,10 @@ export class CompletionEvidenceGate {
       this.verifiedEpoch = this.mutationEpoch;
       this.verifierCommands.push(command.replace(/\s+/g, ' ').trim().slice(0, 160));
       this.unresolvedFailures.delete('verification');
+      // A successful verifier supersedes earlier transient shell diagnostics:
+      // the final repository state is now evidenced, while failed commands remain
+      // available in the durable event log for audit.
+      this.unresolvedFailures.delete('tool:shell_exec');
       // A successful verifier after a safely rejected attempt demonstrates the
       // accepted implementation path is coherent; the rejection remains in audit logs.
       this.unresolvedFailures.delete('safety');
