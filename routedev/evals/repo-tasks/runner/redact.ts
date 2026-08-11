@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 import {
   redactSensitiveText,
   redactSensitiveValue,
+  redactSensitiveValueWithCount,
   redactSensitiveTextWithCount,
   SECRET_PATTERNS,
 } from '../../../src/utils/redact-sensitive.js';
@@ -50,13 +51,12 @@ export function redactReport(report: Record<string, unknown>): Record<string, un
     redactedArtifact.toolTrajectory = trajectory.map((c) => {
       const safe: Record<string, unknown> = { ...c };
       for (const field of ['args', 'outputPreview', 'outputTail'] as const) {
-        if (typeof safe[field] === 'string') {
-          const r = redactTextCounted(safe[field] as string);
-          safe[field] = r.text;
-          redactionCount += r.count;
-        } else if (safe[field] !== undefined && safe[field] !== null) {
-          safe[field] = redactSensitiveValue(safe[field]);
-        }
+        const v = safe[field];
+        if (v === undefined || v === null) continue;
+        // P2-2：全部走递归计数版本——嵌套结构/敏感键的替换也计入 redactionCount
+        const r = redactSensitiveValueWithCount(v, field);
+        safe[field] = r.value;
+        redactionCount += r.count;
       }
       return safe;
     });
@@ -70,13 +70,9 @@ export function redactReport(report: Record<string, unknown>): Record<string, un
         const payload = e.payload as Record<string, unknown>;
         const safePayload: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(payload)) {
-          if (typeof v === 'string' && /(error|outputPreview|reason|input|message)/i.test(k)) {
-            const r = redactTextCounted(v);
-            safePayload[k] = r.text;
-            redactionCount += r.count;
-          } else {
-            safePayload[k] = redactSensitiveValue(v, k);
-          }
+          const r = redactSensitiveValueWithCount(v, k);
+          safePayload[k] = r.value;
+          redactionCount += r.count;
         }
         safe.payload = safePayload;
       }

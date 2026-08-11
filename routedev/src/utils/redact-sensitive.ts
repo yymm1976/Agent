@@ -61,3 +61,37 @@ export function redactSensitiveValue(value: unknown, key?: string): unknown {
   }
   return value;
 }
+
+/**
+ * P2-2（GA Unified Closure）：递归值级脱敏 + **真实替换计数**。
+ * redactSensitiveValue 内部的替换（嵌套结构、敏感键整体、数组元素）此前不计数——
+ * artifact 的 redactionCount/redacted 可能为 0 而值实际已变。本函数把
+ * 字符串模式替换与敏感键整体替换全部计入 count。
+ */
+export function redactSensitiveValueWithCount(value: unknown, key?: string): { value: unknown; count: number } {
+  if (typeof value === 'string') {
+    if (key && SENSITIVE_KEYS.test(key)) return { value: REDACTED, count: 1 };
+    const r = redactSensitiveTextWithCount(value);
+    return { value: r.text, count: r.count };
+  }
+  if (Array.isArray(value)) {
+    let count = 0;
+    const out = value.map((v) => {
+      const r = redactSensitiveValueWithCount(v);
+      count += r.count;
+      return r.value;
+    });
+    return { value: out, count };
+  }
+  if (value !== null && typeof value === 'object') {
+    let count = 0;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      const r = redactSensitiveValueWithCount(v, k);
+      count += r.count;
+      out[k] = r.value;
+    }
+    return { value: out, count };
+  }
+  return { value, count: 0 };
+}
