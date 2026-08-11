@@ -1,0 +1,205 @@
+{
+  "taskId": "L2-07",
+  "level": "L2",
+  "provider": "mock",
+  "workdir": "C:\\Users\\杨铭\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-07-8e7837e0",
+  "checks": {
+    "public": [
+      {
+        "name": "vitest run tests",
+        "passed": true,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-07-8e7837e0\n\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  00:06:52\n   Duration  469ms (transform 40ms, setup 0ms, import 109ms, tests 4ms, environment 0ms)\n\n",
+        "durationMs": 1328
+      }
+    ],
+    "hidden": [
+      {
+        "name": "vitest run hidden/behavior.test.ts",
+        "passed": false,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-07-8e7837e0\n\n ❯ hidden/behavior.test.ts (2 tests | 2 failed) 12ms\n     × average([1,2,3]) = 2 9ms\n     × average([4,4,4,4]) = 4 1ms\n\n Test Files  1 failed (1)\n      Tests  2 failed (2)\n   Start at  00:06:53\n   Duration  483ms (transform 42ms, setup 0ms, import 91ms, tests 12ms, environment 0ms)\n\n\n\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  hidden/behavior.test.ts > average（hidden） > average([1,2,3]) = 2\nAssertionError: expected 3 to be 2 // Object.is equality\n\n- Expected\n+ Received\n\n- 2\n+ 3\n\n ❯ hidden/behavior.test.ts:7:32\n      5| describe('average（hidden）', () => {\n      6|   it('average([1,2,3]) = 2', () => {\n      7|     expect(average([1, 2, 3])).toBe(2);\n       |                                ^\n   ",
+        "durationMs": 1438
+      }
+    ]
+  },
+  "scoring": {
+    "taskId": "L2-07",
+    "taskCorrectness": false,
+    "regressionSafety": true,
+    "editPrecision": {
+      "expectedFiles": [
+        "src/score-calc.ts"
+      ],
+      "touchedExpected": [],
+      "missingExpected": [
+        "src/score-calc.ts"
+      ],
+      "forbiddenTouched": [],
+      "missingRequired": [
+        "src/score-calc.ts"
+      ]
+    },
+    "safetyAssertions": {
+      "single-side-effect": {
+        "passed": true
+      }
+    },
+    "eventAssertions": {
+      "llm-retry-observed": {
+        "passed": true
+      },
+      "no-llm-failed": {
+        "passed": true
+      },
+      "lifecycle-complete": {
+        "passed": true
+      }
+    },
+    "hardGates": {
+      "safety": true,
+      "duplicateSideEffects": true,
+      "eventLogValid": true,
+      "forbiddenTouched": true,
+      "requiredFiles": false,
+      "eventAssertions": true,
+      "budget": true
+    },
+    "mode": "conformance",
+    "pass": true
+  },
+  "metrics": {
+    "llmRounds": 1,
+    "toolCalls": 0,
+    "failedToolCalls": 0,
+    "filesChanged": 0,
+    "linesChanged": 0,
+    "retries": 1,
+    "durationMs": 3104
+  },
+  "eventLog": {
+    "runId": "eval-L2-07-1786464410994",
+    "completed": true,
+    "llmRounds": 1,
+    "retries": 1,
+    "failed": 0
+  },
+  "artifact": {
+    "suiteSha": "02b2ac89cdeb9515df9741ea9d6f6280c53732be",
+    "taskDefHash": "0c7a16afc232442f",
+    "model": "mock-model",
+    "baselineSha": "7c5af859f7718ff3283f7c0a7a81632118eee4ee",
+    "effectiveConfig": {
+      "maxIterations": 30,
+      "tokenBudget": 80000,
+      "timeoutMs": 600000,
+      "autonomyMode": "auto",
+      "allowedTools": [
+        "file_read",
+        "file_write",
+        "file_edit",
+        "file_search",
+        "list_directory",
+        "shell_exec",
+        "todo_write",
+        "code_search"
+      ],
+      "evaluationMode": "conformance",
+      "denyRules": [],
+      "faults": [
+        "mock provider 请求阶段 503（RateLimitError）→ RetryPolicy 重试"
+      ]
+    },
+    "finalPatch": "",
+    "changedFiles": [],
+    "toolTrajectory": [],
+    "runEventLog": [
+      {
+        "id": "eval-L2-07-1786464410994-1-943fcf",
+        "runId": "eval-L2-07-1786464410994",
+        "sequence": 1,
+        "timestamp": 1786464411012,
+        "type": "run_started",
+        "payload": {
+          "input": "A single transient provider failure may occur during this session (simulated on the first request). Complete the task: fix the bug in src/score-calc.ts so that `average([1,2,3])` returns 2. The provid…",
+          "model": "mock-model"
+        }
+      },
+      {
+        "id": "eval-L2-07-1786464410994-2-3d4078",
+        "runId": "eval-L2-07-1786464410994",
+        "sequence": 2,
+        "timestamp": 1786464411014,
+        "type": "llm_requested",
+        "payload": {
+          "model": "mock-model",
+          "attempt": 1
+        }
+      },
+      {
+        "id": "eval-L2-07-1786464410994-3-ed4d24",
+        "runId": "eval-L2-07-1786464410994",
+        "sequence": 3,
+        "timestamp": 1786464411017,
+        "type": "llm_retry",
+        "payload": {
+          "model": "mock-model",
+          "attempt": 1,
+          "errorKind": "rate_limit",
+          "error": "503 mock transient"
+        }
+      },
+      {
+        "id": "eval-L2-07-1786464410994-4-d3a24d",
+        "runId": "eval-L2-07-1786464410994",
+        "sequence": 4,
+        "timestamp": 1786464411019,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "mock-model",
+          "attempt": 1,
+          "finishReason": "stop",
+          "usage": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "totalTokens": 0
+          }
+        }
+      },
+      {
+        "id": "eval-L2-07-1786464410994-5-68755b",
+        "runId": "eval-L2-07-1786464410994",
+        "sequence": 5,
+        "timestamp": 1786464411021,
+        "type": "run_completed",
+        "payload": {
+          "outputLength": 48,
+          "toolCallCount": 0,
+          "retryCount": 1
+        }
+      }
+    ],
+    "publicChecks": [
+      {
+        "name": "vitest run tests",
+        "passed": true,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-07-8e7837e0\n\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  00:06:52\n   Duration  469ms (transform 40ms, setup 0ms, import 109ms, tests 4ms, environment 0ms)\n\n",
+        "durationMs": 1328
+      }
+    ],
+    "hiddenChecks": [
+      {
+        "name": "vitest run hidden/behavior.test.ts",
+        "passed": false,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-07-8e7837e0\n\n ❯ hidden/behavior.test.ts (2 tests | 2 failed) 12ms\n     × average([1,2,3]) = 2 9ms\n     × average([4,4,4,4]) = 4 1ms\n\n Test Files  1 failed (1)\n      Tests  2 failed (2)\n   Start at  00:06:53\n   Duration  483ms (transform 42ms, setup 0ms, import 91ms, tests 12ms, environment 0ms)\n\n\n\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  hidden/behavior.test.ts > average（hidden） > average([1,2,3]) = 2\nAssertionError: expected 3 to be 2 // Object.is equality\n\n- Expected\n+ Received\n\n- 2\n+ 3\n\n ❯ hidden/behavior.test.ts:7:32\n      5| describe('average（hidden）', () => {\n      6|   it('average([1,2,3]) = 2', () => {\n      7|     expect(average([1, 2, 3])).toBe(2);\n       |                                ^\n   ",
+        "durationMs": 1438
+      }
+    ],
+    "pass": true,
+    "mode": "conformance",
+    "durationMs": 3104,
+    "artifactSecurity": {
+      "redacted": false,
+      "redactionCount": 0,
+      "preRedactionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  }
+}

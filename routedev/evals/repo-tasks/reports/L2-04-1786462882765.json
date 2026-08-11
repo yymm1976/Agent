@@ -1,0 +1,1398 @@
+{
+  "taskId": "L2-04",
+  "level": "L2",
+  "provider": "opencode-go",
+  "workdir": "C:\\Users\\杨铭\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-04-7f4211f1",
+  "checks": {
+    "public": [
+      {
+        "name": "vitest run tests",
+        "passed": true,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-04-7f4211f1\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n   Start at  23:41:21\n   Duration  401ms (transform 46ms, setup 0ms, import 72ms, tests 18ms, environment 0ms)\n\n",
+        "durationMs": 1170
+      }
+    ],
+    "hidden": [
+      {
+        "name": "vitest run hidden/behavior.test.ts",
+        "passed": true,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-04-7f4211f1\n\n\n Test Files  1 passed (1)\n      Tests  4 passed (4)\n   Start at  23:41:22\n   Duration  402ms (transform 42ms, setup 0ms, import 83ms, tests 14ms, environment 0ms)\n\n",
+        "durationMs": 1199
+      }
+    ]
+  },
+  "scoring": {
+    "taskId": "L2-04",
+    "taskCorrectness": true,
+    "regressionSafety": true,
+    "editPrecision": {
+      "expectedFiles": [
+        "src/order-utils.ts"
+      ],
+      "touchedExpected": [
+        "src/order-utils.ts"
+      ],
+      "missingExpected": [],
+      "forbiddenTouched": [],
+      "missingRequired": []
+    },
+    "safetyAssertions": {
+      "api-unchanged": {
+        "passed": true
+      },
+      "refactor-happened": {
+        "passed": true
+      }
+    },
+    "eventAssertions": {
+      "lifecycle-complete": {
+        "passed": true
+      }
+    },
+    "hardGates": {
+      "safety": true,
+      "duplicateSideEffects": true,
+      "eventLogValid": true,
+      "forbiddenTouched": true,
+      "requiredFiles": true,
+      "eventAssertions": true,
+      "budget": false
+    },
+    "mode": "model-capability",
+    "pass": false
+  },
+  "metrics": {
+    "llmRounds": 16,
+    "toolCalls": 21,
+    "failedToolCalls": 1,
+    "filesChanged": 1,
+    "linesChanged": 93,
+    "retries": 0,
+    "durationMs": 224861
+  },
+  "eventLog": {
+    "runId": "eval-L2-04-1786462658084",
+    "completed": true,
+    "llmRounds": 16,
+    "retries": 0,
+    "failed": 0
+  },
+  "artifact": {
+    "suiteSha": "02b2ac89cdeb9515df9741ea9d6f6280c53732be",
+    "taskDefHash": "be7c43f1f7b19acc",
+    "model": "deepseek-v4-flash",
+    "baselineSha": "18c1d5345ac5a7247201a5e30eef71eb8e99443c",
+    "effectiveConfig": {
+      "maxIterations": 30,
+      "tokenBudget": 80000,
+      "timeoutMs": 600000,
+      "autonomyMode": "auto",
+      "allowedTools": [
+        "file_read",
+        "file_write",
+        "file_edit",
+        "file_search",
+        "list_directory",
+        "shell_exec",
+        "todo_write",
+        "code_search"
+      ],
+      "evaluationMode": "model-capability",
+      "denyRules": [],
+      "faults": []
+    },
+    "finalPatch": "diff --git a/src/order-utils.ts b/src/order-utils.ts\nindex 6a12674..fcd1abb 100644\n--- a/src/order-utils.ts\n+++ b/src/order-utils.ts\n@@ -1,45 +1,46 @@\n-// src/order-utils.ts\r\n-// 订单工具：两个高度重复的归一化函数（重构目标——提取公共逻辑，不得改公共 API）\r\n-\r\n-export interface OrderItem {\r\n-  sku: string;\r\n-  qty: number;\r\n-  price: number;\r\n-}\r\n-\r\n-export interface NormalizedOrder {\r\n-  items: OrderItem[];\r\n-  total: number;\r\n-  currency: string;\r\n-}\r\n-\r\n-function validateOrder(items: readonly OrderItem[]): void {\r\n-  if (!Array.isArray(items)) throw new Error('items must be an array');\r\n-  for (const item of items) {\r\n-    if (typeof item.sku !== 'string' || item.sku.length === 0) throw new Error('sku required');\r\n-    if (typeof item.qty !== 'number' || item.qty <= 0) throw new Error('qty must be positive');\r\n-    if (typeof item.price !== 'number' || item.price < 0) throw new Error('price must be >= 0');\r\n-  }\r\n-}\r\n-\r\n-function sortItems(items: readonly OrderItem[]): OrderItem[] {\r\n-  return [...items].sort((a, b) => a.sku.localeCompare(b.sku));\r\n-}\r\n-\r\n-function computeTotal(items: readonly OrderItem[]): number {\r\n-  return items.reduce((acc, it) => acc + it.qty * it.price, 0);\r\n-}\r\n-\r\n-export function normalizeOrderA(items: readonly OrderItem[], currency = 'USD'): NormalizedOrder {\r\n-  validateOrder(items);\r\n-  const sorted = sortItems(items);\r\n-  const total = computeTotal(sorted);\r\n-  return { items: sorted, total, currency };\r\n-}\r\n-\r\n-export function normalizeOrderB(items: readonly OrderItem[], currency = 'USD'): NormalizedOrder {\r\n-  validateOrder(items);\r\n-  const sorted = sortItems(items);\r\n-  const total = computeTotal(sorted);\r\n-  return { items: sorted, total, currency };\r\n-}\r\n+// src/order-utils.ts\n+// 订单工具：公共逻辑已提取到私有 helper normalize()，两个导出函数均委托给它（公共 API 不变）\n+\n+export interface OrderItem {\n+  sku: string;\n+  qty: number;\n+  price: number;\n+}\n+\n+export interface NormalizedOrder {\n+  items: OrderItem[];\n+  total: number;\n+  currency: string;\n+}\n+\n+function validateOrder(items: readonly OrderItem[]): void {\n+  if (!Array.isArray(items)) throw new Error('items must be an array');\n+  for (const item of items) {\n+    if (typeof item.sku !== 'string' || item.sku.length === 0) throw new Error('sku required');\n+    if (typeof item.qty !== 'number' || item.qty <= 0) throw new Error('qty must be positive');\n+    if (typeof item.price !== 'number' || item.price < 0) throw new Error('price must be >= 0');\n+  }\n+}\n+\n+function sortItems(items: readonly OrderItem[]): OrderItem[] {\n+  return [...items].sort((a, b) => a.sku.localeCompare(b.sku));\n+}\n+\n+function computeTotal(items: readonly OrderItem[]): number {\n+  return items.reduce((acc, it) => acc + it.qty * it.price, 0);\n+}\n+\n+function normalize(items: readonly OrderItem[], currency: string): NormalizedOrder {\n+  validateOrder(items);\n+  const sorted = sortItems(items);\n+  const total = computeTotal(sorted);\n+  return { items: sorted, total, currency };\n+}\n+\n+export function normalizeOrderA(items: readonly OrderItem[], currency = 'USD'): NormalizedOrder {\n+  return normalize(items, currency);\n+}\n+\n+export function normalizeOrderB(items: readonly OrderItem[], currency = 'USD'): NormalizedOrder {\n+  return normalize(items, currency);\n+}\n",
+    "changedFiles": [
+      "src/order-utils.ts"
+    ],
+    "toolTrajectory": [
+      {
+        "toolName": "list_directory",
+        "toolCallId": "call_00_9QiExYEKzZj2JrBXgO3D9138",
+        "args": {
+          "path": "."
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": ".gitignore\npackage.json\nsrc/order-utils.ts\ntests/order-utils.test.ts\ntsconfig.json\nvitest.config.ts",
+        "timestamp": 1786462670912
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_01_6ZXH2sPFXYvlTBXObCpR6577",
+        "args": {
+          "path": "src/order-utils.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/order-utils.ts\r\n// 订单工具：两个高度重复的归一化函数（重构目标——提取公共逻辑，不得改公共 API）\r\n\r\nexport interface OrderItem {\r\n  sku: string;\r\n  qty: number;\r\n  price: number;\r\n}\r\n\r\nexport interface NormalizedOrder {\r\n  items:",
+        "timestamp": 1786462670921
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_00_9eAVXbJh4QeO8im0q2O30208",
+        "args": {
+          "path": "tests/order-utils.test.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// tests/order-utils.test.ts\r\nimport { describe, it, expect } from 'vitest';\r\nimport { normalizeOrderA, normalizeOrderB } from '../src/order-utils.js';\r\n\r\nconst items = [\r\n  { sku: 'b', qty: 1, price:",
+        "timestamp": 1786462684761
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_01_VkVcvYTIF1OaKO6c8mPc0388",
+        "args": {
+          "path": "package.json"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "{\r\n  \"name\": \"fixture-l2-04\",\r\n  \"private\": true,\r\n  \"version\": \"1.0.0\",\r\n  \"type\": \"module\",\r\n  \"scripts\": {\r\n    \"test\": \"vitest run\"\r\n  }\r\n}\r\n",
+        "timestamp": 1786462684767
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_02_Z3h56Avs9o0KQSgoorD02263",
+        "args": {
+          "command": "git status && git log --oneline -10"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "On branch master\nnothing to commit, working tree clean\n18c1d53 baseline\n",
+        "outputTail": "On branch master\nnothing to commit, working tree clean\n18c1d53 baseline\n",
+        "timestamp": 1786462684986
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_tS54HuEZrmJ7L0enMasQ3840",
+        "args": {
+          "command": "type src\\order-utils.ts && echo ---- && dir /s /b"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/order-utils.ts\r\n// 订单工具：两个高度重复的归一化函数（重构目标——提取公共逻辑，不得改公共 API）\r\n\r\nexport interface OrderItem {\r\n  sku: string;\r\n  qty: number;\r\n  price: number;\r\n}\r\n\r\nexport interface NormalizedOrder {\r\n  items:",
+        "outputTail": "f4211f1\\.git\\hooks\\post-update.sample\r\nC:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-04-7f4211f1\\.git\\hooks\\pre-applypatch.sample\r\nC:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-04-7f4211f1\\.git\\hooks\\pre-commit.sample\r\nC:\\Users\\����\\Des",
+        "timestamp": 1786462706406
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_mUotVV505nDhvkqt75SO4915",
+        "args": {
+          "command": "npm test",
+          "timeoutMs": 120000
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "\n> fixture-l2-04@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-04-7f4211f1\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n  ",
+        "outputTail": "l2-04@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-04-7f4211f1\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n   Start at  23:38:41\n   Duration  460ms (transform 44ms, setup 0ms, import 108ms, tests 15ms, environment 0ms)\n\n",
+        "timestamp": 1786462721608
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_00_biyvsEhXRpGJ0XPIoc6X2723",
+        "args": {
+          "path": "tsconfig.json"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "{\r\n  \"compilerOptions\": {\r\n    \"target\": \"ES2022\",\r\n    \"module\": \"ESNext\",\r\n    \"moduleResolution\": \"bundler\",\r\n    \"strict\": true,\r\n    \"noEmit\": true,\r\n    \"types\": []\r\n  },\r\n  \"include\": [\"src\", \"",
+        "timestamp": 1786462733122
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_01_B4ZlKIDKvF6UlDVa7y6i3749",
+        "args": {
+          "path": "vitest.config.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "import { defineConfig } from 'vitest/config';\r\n\r\nexport default defineConfig({\r\n  test: {\r\n    include: ['tests/**/*.test.ts', 'hidden/**/*.test.ts'],\r\n    environment: 'node',\r\n  },\r\n});\r\n",
+        "timestamp": 1786462733128
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_ZS4R9bFpaSIIZxJ6ck8U5891",
+        "args": {
+          "command": "dir hidden /s /b 2>NUL & echo ---- & git status --porcelain"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "---- \r\n",
+        "outputTail": "---- \r\n",
+        "timestamp": 1786462744824
+      },
+      {
+        "toolName": "file_edit",
+        "toolCallId": "call_00_IOHOObLQVMHFElz2WiBP9422",
+        "args": {
+          "path": "src/order-utils.ts",
+          "oldString": "export function normalizeOrderA(items: readonly OrderItem[], currency = 'USD'): NormalizedOrder {\n  validateOrder(items);\n  const sorted = sortItems(items);\n  const total = computeTotal(sorted);\n  return { items: sorted, total, currency };\n}\n\nexport function normalizeOrderB(items: readonly OrderItem[], currency = 'USD'): NormalizedOrder {\n  validateOrder(items);\n  const sorted = sortItems(items);\n  const total = computeTotal(sorted);\n  return { items: sorted, total, currency };\n}",
+          "newString": "function normalize(items: readonly OrderItem[], currency: string): NormalizedOrder {\n  validateOrder(items);\n  const sorted = sortItems(items);\n  const total = computeTotal(sorted);\n  return { items: sorted, total, currency };\n}\n\nexport function normalizeOrderA(items: readonly OrderItem[], currency = 'USD'): NormalizedOrder {\n  return normalize(items, currency);\n}\n\nexport function normalizeOrderB(items: readonly OrderItem[], currency = 'USD'): NormalizedOrder {\n  return normalize(items, currency);\n}"
+        },
+        "denied": false,
+        "isError": true,
+        "outputPreview": "[未找到 oldString] export function normalizeOrderA(items: readonly OrderItem[], currency = 'USD'): ",
+        "timestamp": 1786462765132
+      },
+      {
+        "toolName": "file_write",
+        "toolCallId": "call_00_dxHGNksQNb87DlkQx1JQ3510",
+        "args": {
+          "path": "src/order-utils.ts",
+          "content": "// src/order-utils.ts\n// 订单工具：两个高度重复的归一化函数（重构目标——提取公共逻辑，不得改公共 API）\n\nexport interface OrderItem {\n  sku: string;\n  qty: number;\n  price: number;\n}\n\nexport interface NormalizedOrder {\n  items: OrderItem[];\n  total: number;\n  currency: string;\n}\n\nfunction validateOrder(items: readonly OrderItem[]): void {\n  if (!Array.isArray(items)) throw new Error('items must be an array');\n  for (const item of items) {\n    if (typeof item.sku !== 'string' || item.sku.length === 0) throw new Error('sku required');\n    if (typeof item.qty !== 'number' || item.qty <= 0) throw new Error('qty must be positive');\n    if (typeof item.price !== 'number' || item.price < 0) throw new Error('price must be >= 0');\n  }\n}\n\nfunction sortItems(items: readonly OrderItem[]): OrderItem[] {\n  return [...items].sort((a, b) => a.sku.localeCompare(b.sku));\n}\n\nfunction computeTotal(items: readonly OrderItem[]): number {\n  return items.reduce((acc, it) => acc + it.qty * it.price, 0);\n}\n\nfunction normalize(items: readonly OrderItem[], currency: string): NormalizedOrder {\n  validateOrder(items);\n  const sorted = sortItems(items);\n  const total = computeTotal(sorted);\n  return { items: sorted, total, currency };\n}\n\nexport function normalizeOrderA(items: readonly OrderItem[], currency = 'USD'): NormalizedOrder {\n  return normalize(items, currency);\n}\n\nexport function normalizeOrderB(items: readonly OrderItem[], currency = 'USD'): NormalizedOrder {\n  return normalize(items, currency);\n}\n"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "written src/order-utils.ts",
+        "timestamp": 1786462777812
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_ET_7zL9EXBY6Ni5zPVpDye92438",
+        "args": {
+          "command": "npm test",
+          "timeoutMs": 120000
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "\n> fixture-l2-04@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-04-7f4211f1\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n  ",
+        "outputTail": "-l2-04@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-04-7f4211f1\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n   Start at  23:39:48\n   Duration  439ms (transform 46ms, setup 0ms, import 92ms, tests 16ms, environment 0ms)\n\n",
+        "timestamp": 1786462789300
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_01_ET_CIHrPGWSaUHfgaVHjDph4907",
+        "args": {
+          "command": "npx tsc --noEmit",
+          "timeoutMs": 120000
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "(exit 0)",
+        "outputTail": "",
+        "timestamp": 1786462792031
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_lGADOFam8MaUEqas9waK9167",
+        "args": {
+          "command": "git diff -- src/order-utils.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "diff --git a/src/order-utils.ts b/src/order-utils.ts\nindex 6a12674..66c2335 100644\n--- a/src/order-utils.ts\n+++ b/src/order-utils.ts\n@@ -1,45 +1,46 @@\n-// src/order-utils.ts\r\n-// 订单工具：两个高度重复的归一化函数（重构目",
+        "outputTail": "er {\n+  return normalize(items, currency);\n+}\n+\n+export function normalizeOrderB(items: readonly OrderItem[], currency = 'USD'): NormalizedOrder {\n+  return normalize(items, currency);\n+}\n\nwarning: in the working copy of 'src/order-utils.ts', LF will be replaced by CRLF the next time Git touches it\n",
+        "timestamp": 1786462803630
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_00_4lZIrRxL90MrTwoSpJyj6840",
+        "args": {
+          "path": "src/order-utils.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/order-utils.ts\n// 订单工具：两个高度重复的归一化函数（重构目标——提取公共逻辑，不得改公共 API）\n\nexport interface OrderItem {\n  sku: string;\n  qty: number;\n  price: number;\n}\n\nexport interface NormalizedOrder {\n  items: OrderItem",
+        "timestamp": 1786462838535
+      },
+      {
+        "toolName": "file_edit",
+        "toolCallId": "call_00_RhrzHeQpAIQvgPVHmx5b3593",
+        "args": {
+          "path": "src/order-utils.ts",
+          "oldString": "// src/order-utils.ts\n// 订单工具：两个高度重复的归一化函数（重构目标——提取公共逻辑，不得改公共 API）",
+          "newString": "// src/order-utils.ts\n// 订单工具：公共逻辑已提取到私有 helper normalize()，两个导出函数均委托给它（公共 API 不变）"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "edited src/order-utils.ts",
+        "timestamp": 1786462849562
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_00_mlmvuY95JSRe5BJtIV3a9205",
+        "args": {
+          "path": "src/order-utils.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/order-utils.ts\n// 订单工具：公共逻辑已提取到私有 helper normalize()，两个导出函数均委托给它（公共 API 不变）\n\nexport interface OrderItem {\n  sku: string;\n  qty: number;\n  price: number;\n}\n\nexport interface NormalizedOrder {\n  ",
+        "timestamp": 1786462858923
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_01_k3f9LB8Tso3ZMnx6b4Jl4123",
+        "args": {
+          "command": "npm test",
+          "timeoutMs": 120000
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "\n> fixture-l2-04@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-04-7f4211f1\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n  ",
+        "outputTail": "-l2-04@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-04-7f4211f1\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n   Start at  23:41:00\n   Duration  439ms (transform 46ms, setup 0ms, import 93ms, tests 15ms, environment 0ms)\n\n",
+        "timestamp": 1786462860552
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_HHPc550Z4NTZmwfhpBbo9723",
+        "args": {
+          "command": "npx tsc --noEmit && echo TSC_OK",
+          "timeoutMs": 120000
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "TSC_OK\r\n",
+        "outputTail": "TSC_OK\r\n",
+        "timestamp": 1786462869491
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_01_jY2sCUcYBGepBoj796aJ3388",
+        "args": {
+          "command": "git status --short && git diff --stat"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": " M src/order-utils.ts\n src/order-utils.ts | 91 +++++++++++++++++++++++++++---------------------------\n 1 file changed, 46 insertions(+), 45 deletions(-)\n\nwarning: in the working copy of 'src/order-uti",
+        "outputTail": " M src/order-utils.ts\n src/order-utils.ts | 91 +++++++++++++++++++++++++++---------------------------\n 1 file changed, 46 insertions(+), 45 deletions(-)\n\nwarning: in the working copy of 'src/order-utils.ts', LF will be replaced by CRLF the next time Git touches it\n",
+        "timestamp": 1786462869674
+      }
+    ],
+    "runEventLog": [
+      {
+        "id": "eval-L2-04-1786462658084-1-92718a",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 1,
+        "timestamp": 1786462658107,
+        "type": "run_started",
+        "payload": {
+          "input": "src/order-utils.ts contains two large duplicated functions (`normalizeOrderA` and `normalizeOrderB`) that share the same validation and sorting logic. Extract the common logic into a private helper an…",
+          "model": "deepseek-v4-flash"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-2-c388fb",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 2,
+        "timestamp": 1786462658110,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 1
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-3-8e9b37",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 3,
+        "timestamp": 1786462670901,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 1,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 902,
+            "outputTokens": 91,
+            "totalTokens": 993,
+            "cacheHitTokens": 768,
+            "cacheMissTokens": 134
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-4-b26b61",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 4,
+        "timestamp": 1786462670907,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "list_directory",
+          "toolCallId": "call_00_9QiExYEKzZj2JrBXgO3D9138"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-5-2c2d7d",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 5,
+        "timestamp": 1786462670913,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "list_directory",
+          "toolCallId": "call_00_9QiExYEKzZj2JrBXgO3D9138",
+          "isError": false,
+          "outputPreview": ".gitignore\npackage.json\nsrc/order-utils.ts\ntests/order-utils.test.ts\ntsconfig.json\nvitest.config.ts"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-6-fe49e7",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 6,
+        "timestamp": 1786462670919,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_6ZXH2sPFXYvlTBXObCpR6577"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-7-de8632",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 7,
+        "timestamp": 1786462670921,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_6ZXH2sPFXYvlTBXObCpR6577",
+          "isError": false,
+          "outputPreview": "// src/order-utils.ts\r\n// 订单工具：两个高度重复的归一化函数（重构目标——提取公共逻辑，不得改公共 API）\r\n\r\nexport interface OrderItem {\r\n  sku: string;\r\n  qty: number;\r\n  price: number;\r\n}\r\n\r\nexport interface NormalizedOrder {\r\n  items:"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-8-34ffdc",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 8,
+        "timestamp": 1786462670926,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 2
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-9-3d0860",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 9,
+        "timestamp": 1786462684756,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 2,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 1517,
+            "outputTokens": 266,
+            "totalTokens": 1783,
+            "cacheHitTokens": 896,
+            "cacheMissTokens": 621
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-10-b03312",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 10,
+        "timestamp": 1786462684760,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_9eAVXbJh4QeO8im0q2O30208"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-11-da1d04",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 11,
+        "timestamp": 1786462684761,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_9eAVXbJh4QeO8im0q2O30208",
+          "isError": false,
+          "outputPreview": "// tests/order-utils.test.ts\r\nimport { describe, it, expect } from 'vitest';\r\nimport { normalizeOrderA, normalizeOrderB } from '../src/order-utils.js';\r\n\r\nconst items = [\r\n  { sku: 'b', qty: 1, price:"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-12-577d3d",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 12,
+        "timestamp": 1786462684765,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_VkVcvYTIF1OaKO6c8mPc0388"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-13-531c72",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 13,
+        "timestamp": 1786462684767,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_VkVcvYTIF1OaKO6c8mPc0388",
+          "isError": false,
+          "outputPreview": "{\r\n  \"name\": \"fixture-l2-04\",\r\n  \"private\": true,\r\n  \"version\": \"1.0.0\",\r\n  \"type\": \"module\",\r\n  \"scripts\": {\r\n    \"test\": \"vitest run\"\r\n  }\r\n}\r\n"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-14-2042f1",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 14,
+        "timestamp": 1786462684774,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_02_Z3h56Avs9o0KQSgoorD02263"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-15-bad057",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 15,
+        "timestamp": 1786462684986,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_02_Z3h56Avs9o0KQSgoorD02263",
+          "isError": false,
+          "outputPreview": "On branch master\nnothing to commit, working tree clean\n18c1d53 baseline\n"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-16-d11013",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 16,
+        "timestamp": 1786462684988,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 3
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-17-728e48",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 17,
+        "timestamp": 1786462700481,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 3,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 2225,
+            "outputTokens": 858,
+            "totalTokens": 3083,
+            "cacheHitTokens": 1664,
+            "cacheMissTokens": 561
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-18-813846",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 18,
+        "timestamp": 1786462700484,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_tS54HuEZrmJ7L0enMasQ3840"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-19-4d82a4",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 19,
+        "timestamp": 1786462706407,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_tS54HuEZrmJ7L0enMasQ3840",
+          "isError": false,
+          "outputPreview": "// src/order-utils.ts\r\n// 订单工具：两个高度重复的归一化函数（重构目标——提取公共逻辑，不得改公共 API）\r\n\r\nexport interface OrderItem {\r\n  sku: string;\r\n  qty: number;\r\n  price: number;\r\n}\r\n\r\nexport interface NormalizedOrder {\r\n  items:"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-20-278996",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 20,
+        "timestamp": 1786462706410,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 4
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-21-2db590",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 21,
+        "timestamp": 1786462719846,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 4,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 4587,
+            "outputTokens": 407,
+            "totalTokens": 4994,
+            "cacheHitTokens": 3072,
+            "cacheMissTokens": 1515
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-22-46c331",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 22,
+        "timestamp": 1786462719849,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_mUotVV505nDhvkqt75SO4915"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-23-3b2a80",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 23,
+        "timestamp": 1786462721608,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_mUotVV505nDhvkqt75SO4915",
+          "isError": false,
+          "outputPreview": "\n> fixture-l2-04@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-04-7f4211f1\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n  "
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-24-52289f",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 24,
+        "timestamp": 1786462721614,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 5
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-25-02e064",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 25,
+        "timestamp": 1786462733118,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 5,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 5127,
+            "outputTokens": 1170,
+            "totalTokens": 6297,
+            "cacheHitTokens": 4992,
+            "cacheMissTokens": 135
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-26-cab208",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 26,
+        "timestamp": 1786462733121,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_biyvsEhXRpGJ0XPIoc6X2723"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-27-8a5363",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 27,
+        "timestamp": 1786462733122,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_biyvsEhXRpGJ0XPIoc6X2723",
+          "isError": false,
+          "outputPreview": "{\r\n  \"compilerOptions\": {\r\n    \"target\": \"ES2022\",\r\n    \"module\": \"ESNext\",\r\n    \"moduleResolution\": \"bundler\",\r\n    \"strict\": true,\r\n    \"noEmit\": true,\r\n    \"types\": []\r\n  },\r\n  \"include\": [\"src\", \""
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-28-d27f15",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 28,
+        "timestamp": 1786462733126,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_B4ZlKIDKvF6UlDVa7y6i3749"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-29-c1ea50",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 29,
+        "timestamp": 1786462733128,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_B4ZlKIDKvF6UlDVa7y6i3749",
+          "isError": false,
+          "outputPreview": "import { defineConfig } from 'vitest/config';\r\n\r\nexport default defineConfig({\r\n  test: {\r\n    include: ['tests/**/*.test.ts', 'hidden/**/*.test.ts'],\r\n    environment: 'node',\r\n  },\r\n});\r\n"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-30-20c34f",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 30,
+        "timestamp": 1786462733132,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 6
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-31-c367a4",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 31,
+        "timestamp": 1786462741357,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 6,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 6471,
+            "outputTokens": 154,
+            "totalTokens": 6625,
+            "cacheHitTokens": 6272,
+            "cacheMissTokens": 199
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-32-d983ad",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 32,
+        "timestamp": 1786462741360,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_ZS4R9bFpaSIIZxJ6ck8U5891"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-33-0297e3",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 33,
+        "timestamp": 1786462744824,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_ZS4R9bFpaSIIZxJ6ck8U5891",
+          "isError": false,
+          "outputPreview": "---- \r\n"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-34-389c89",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 34,
+        "timestamp": 1786462744826,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 7
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-35-c4c9f2",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 35,
+        "timestamp": 1786462765126,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 7,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 6641,
+            "outputTokens": 1588,
+            "totalTokens": 8229,
+            "cacheHitTokens": 6528,
+            "cacheMissTokens": 113
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-36-62a7b8",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 36,
+        "timestamp": 1786462765130,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_edit",
+          "toolCallId": "call_00_IOHOObLQVMHFElz2WiBP9422"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-37-b65f3f",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 37,
+        "timestamp": 1786462765132,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_edit",
+          "toolCallId": "call_00_IOHOObLQVMHFElz2WiBP9422",
+          "isError": true,
+          "outputPreview": "[未找到 oldString] export function normalizeOrderA(items: readonly OrderItem[], currency = 'USD'): "
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-38-cbadb0",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 38,
+        "timestamp": 1786462765134,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 8
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-39-b57acb",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 39,
+        "timestamp": 1786462777806,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 8,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 8263,
+            "outputTokens": 765,
+            "totalTokens": 9028,
+            "cacheHitTokens": 8192,
+            "cacheMissTokens": 71
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-40-60f249",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 40,
+        "timestamp": 1786462777809,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_write",
+          "toolCallId": "call_00_dxHGNksQNb87DlkQx1JQ3510"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-41-ab799e",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 41,
+        "timestamp": 1786462777812,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_write",
+          "toolCallId": "call_00_dxHGNksQNb87DlkQx1JQ3510",
+          "isError": false,
+          "outputPreview": "written src/order-utils.ts"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-42-8396a6",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 42,
+        "timestamp": 1786462777816,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 9
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-43-b756e6",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 43,
+        "timestamp": 1786462787636,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 9,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 9047,
+            "outputTokens": 134,
+            "totalTokens": 9181,
+            "cacheHitTokens": 8960,
+            "cacheMissTokens": 87
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-44-1e1f7e",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 44,
+        "timestamp": 1786462787638,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_ET_7zL9EXBY6Ni5zPVpDye92438"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-45-133d92",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 45,
+        "timestamp": 1786462789300,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_ET_7zL9EXBY6Ni5zPVpDye92438",
+          "isError": false,
+          "outputPreview": "\n> fixture-l2-04@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-04-7f4211f1\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n  "
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-46-06ca4a",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 46,
+        "timestamp": 1786462789305,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_01_ET_CIHrPGWSaUHfgaVHjDph4907"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-47-191cde",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 47,
+        "timestamp": 1786462792031,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_01_ET_CIHrPGWSaUHfgaVHjDph4907",
+          "isError": false,
+          "outputPreview": "(exit 0)"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-48-94f66f",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 48,
+        "timestamp": 1786462792036,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 10
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-49-54e4c0",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 49,
+        "timestamp": 1786462803494,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 10,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 9325,
+            "outputTokens": 90,
+            "totalTokens": 9415,
+            "cacheHitTokens": 9088,
+            "cacheMissTokens": 237
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-50-1d429e",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 50,
+        "timestamp": 1786462803496,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_lGADOFam8MaUEqas9waK9167"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-51-07006c",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 51,
+        "timestamp": 1786462803630,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_lGADOFam8MaUEqas9waK9167",
+          "isError": false,
+          "outputPreview": "diff --git a/src/order-utils.ts b/src/order-utils.ts\nindex 6a12674..66c2335 100644\n--- a/src/order-utils.ts\n+++ b/src/order-utils.ts\n@@ -1,45 +1,46 @@\n-// src/order-utils.ts\r\n-// 订单工具：两个高度重复的归一化函数（重构目"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-52-fde535",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 52,
+        "timestamp": 1786462803632,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 11
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-53-cc23da",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 53,
+        "timestamp": 1786462814822,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 11,
+          "finishReason": "stop",
+          "usage": {
+            "inputTokens": 10466,
+            "outputTokens": 545,
+            "totalTokens": 11011,
+            "cacheHitTokens": 9344,
+            "cacheMissTokens": 1122
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-54-db7807",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 54,
+        "timestamp": 1786462814826,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 12
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-55-102d62",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 55,
+        "timestamp": 1786462838529,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 12,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 10894,
+            "outputTokens": 1630,
+            "totalTokens": 12524,
+            "cacheHitTokens": 10368,
+            "cacheMissTokens": 526
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-56-3ec7e9",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 56,
+        "timestamp": 1786462838533,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_4lZIrRxL90MrTwoSpJyj6840"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-57-bfdbe9",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 57,
+        "timestamp": 1786462838535,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_4lZIrRxL90MrTwoSpJyj6840",
+          "isError": false,
+          "outputPreview": "// src/order-utils.ts\n// 订单工具：两个高度重复的归一化函数（重构目标——提取公共逻辑，不得改公共 API）\n\nexport interface OrderItem {\n  sku: string;\n  qty: number;\n  price: number;\n}\n\nexport interface NormalizedOrder {\n  items: OrderItem"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-58-e5efd6",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 58,
+        "timestamp": 1786462838538,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 13
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-59-392caf",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 59,
+        "timestamp": 1786462849557,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 13,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 12920,
+            "outputTokens": 326,
+            "totalTokens": 13246,
+            "cacheHitTokens": 12416,
+            "cacheMissTokens": 504
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-60-250c7d",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 60,
+        "timestamp": 1786462849560,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_edit",
+          "toolCallId": "call_00_RhrzHeQpAIQvgPVHmx5b3593"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-61-898fe5",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 61,
+        "timestamp": 1786462849563,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_edit",
+          "toolCallId": "call_00_RhrzHeQpAIQvgPVHmx5b3593",
+          "isError": false,
+          "outputPreview": "edited src/order-utils.ts"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-62-be7548",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 62,
+        "timestamp": 1786462849565,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 14
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-63-d29ebd",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 63,
+        "timestamp": 1786462858919,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 14,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 13265,
+            "outputTokens": 139,
+            "totalTokens": 13404,
+            "cacheHitTokens": 13184,
+            "cacheMissTokens": 81
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-64-7548b6",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 64,
+        "timestamp": 1786462858921,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_mlmvuY95JSRe5BJtIV3a9205"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-65-9063a0",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 65,
+        "timestamp": 1786462858923,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_mlmvuY95JSRe5BJtIV3a9205",
+          "isError": false,
+          "outputPreview": "// src/order-utils.ts\n// 订单工具：公共逻辑已提取到私有 helper normalize()，两个导出函数均委托给它（公共 API 不变）\n\nexport interface OrderItem {\n  sku: string;\n  qty: number;\n  price: number;\n}\n\nexport interface NormalizedOrder {\n  "
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-66-1fda33",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 66,
+        "timestamp": 1786462858925,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_01_k3f9LB8Tso3ZMnx6b4Jl4123"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-67-47315f",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 67,
+        "timestamp": 1786462860552,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_01_k3f9LB8Tso3ZMnx6b4Jl4123",
+          "isError": false,
+          "outputPreview": "\n> fixture-l2-04@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-04-7f4211f1\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n  "
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-68-4b420d",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 68,
+        "timestamp": 1786462860557,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 15
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-69-2de026",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 69,
+        "timestamp": 1786462866806,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 15,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 13931,
+            "outputTokens": 133,
+            "totalTokens": 14064,
+            "cacheHitTokens": 13312,
+            "cacheMissTokens": 619
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-70-24b500",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 70,
+        "timestamp": 1786462866808,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_HHPc550Z4NTZmwfhpBbo9723"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-71-e0725d",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 71,
+        "timestamp": 1786462869491,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_HHPc550Z4NTZmwfhpBbo9723",
+          "isError": false,
+          "outputPreview": "TSC_OK\r\n"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-72-07b362",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 72,
+        "timestamp": 1786462869494,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_01_jY2sCUcYBGepBoj796aJ3388"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-73-c79f95",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 73,
+        "timestamp": 1786462869674,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_01_jY2sCUcYBGepBoj796aJ3388",
+          "isError": false,
+          "outputPreview": " M src/order-utils.ts\n src/order-utils.ts | 91 +++++++++++++++++++++++++++---------------------------\n 1 file changed, 46 insertions(+), 45 deletions(-)\n\nwarning: in the working copy of 'src/order-uti"
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-74-837585",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 74,
+        "timestamp": 1786462869675,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 16
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-75-ac0815",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 75,
+        "timestamp": 1786462880104,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 16,
+          "finishReason": "stop",
+          "usage": {
+            "inputTokens": 14157,
+            "outputTokens": 338,
+            "totalTokens": 14495,
+            "cacheHitTokens": 13952,
+            "cacheMissTokens": 205
+          }
+        }
+      },
+      {
+        "id": "eval-L2-04-1786462658084-76-255bd2",
+        "runId": "eval-L2-04-1786462658084",
+        "sequence": 76,
+        "timestamp": 1786462880106,
+        "type": "run_completed",
+        "payload": {
+          "outputLength": 1370,
+          "toolCallCount": 21,
+          "retryCount": 0
+        }
+      }
+    ],
+    "publicChecks": [
+      {
+        "name": "vitest run tests",
+        "passed": true,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-04-7f4211f1\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n   Start at  23:41:21\n   Duration  401ms (transform 46ms, setup 0ms, import 72ms, tests 18ms, environment 0ms)\n\n",
+        "durationMs": 1170
+      }
+    ],
+    "hiddenChecks": [
+      {
+        "name": "vitest run hidden/behavior.test.ts",
+        "passed": true,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-04-7f4211f1\n\n\n Test Files  1 passed (1)\n      Tests  4 passed (4)\n   Start at  23:41:22\n   Duration  402ms (transform 42ms, setup 0ms, import 83ms, tests 14ms, environment 0ms)\n\n",
+        "durationMs": 1199
+      }
+    ],
+    "pass": false,
+    "mode": "model-capability",
+    "reason": [
+      "token budget 超限"
+    ],
+    "durationMs": 224861,
+    "artifactSecurity": {
+      "redacted": false,
+      "redactionCount": 0,
+      "preRedactionSha256": "190ff3606b045655ea0b8ff4b69562450fffb5c18f3c197398d9cfff4d3818ed"
+    }
+  }
+}

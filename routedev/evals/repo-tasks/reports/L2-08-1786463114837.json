@@ -1,0 +1,1042 @@
+{
+  "taskId": "L2-08",
+  "level": "L2",
+  "provider": "opencode-go",
+  "workdir": "C:\\Users\\杨铭\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-08-512d9a90",
+  "checks": {
+    "public": [
+      {
+        "name": "vitest run tests",
+        "passed": true,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-08-512d9a90\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n   Start at  23:45:13\n   Duration  345ms (transform 47ms, setup 0ms, import 72ms, tests 4ms, environment 0ms)\n\n",
+        "durationMs": 1069
+      }
+    ],
+    "hidden": [
+      {
+        "name": "vitest run hidden/behavior.test.ts",
+        "passed": true,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-08-512d9a90\n\n\n Test Files  1 passed (1)\n      Tests  2 passed (2)\n   Start at  23:45:14\n   Duration  373ms (transform 35ms, setup 0ms, import 81ms, tests 3ms, environment 0ms)\n\n",
+        "durationMs": 1120
+      }
+    ]
+  },
+  "scoring": {
+    "taskId": "L2-08",
+    "taskCorrectness": true,
+    "regressionSafety": true,
+    "editPrecision": {
+      "expectedFiles": [
+        "src/modules/mod-07.ts"
+      ],
+      "touchedExpected": [
+        "src/modules/mod-07.ts"
+      ],
+      "missingExpected": [],
+      "forbiddenTouched": [],
+      "missingRequired": []
+    },
+    "safetyAssertions": {
+      "minimal-edit": {
+        "passed": true
+      }
+    },
+    "eventAssertions": {
+      "lifecycle-complete": {
+        "passed": true
+      }
+    },
+    "hardGates": {
+      "safety": true,
+      "duplicateSideEffects": true,
+      "eventLogValid": true,
+      "forbiddenTouched": true,
+      "requiredFiles": true,
+      "eventAssertions": true,
+      "budget": true
+    },
+    "mode": "model-capability",
+    "pass": true
+  },
+  "metrics": {
+    "llmRounds": 6,
+    "toolCalls": 20,
+    "failedToolCalls": 0,
+    "filesChanged": 1,
+    "linesChanged": 4,
+    "retries": 0,
+    "durationMs": 38569
+  },
+  "eventLog": {
+    "runId": "eval-L2-08-1786463076465",
+    "completed": true,
+    "llmRounds": 6,
+    "retries": 0,
+    "failed": 0
+  },
+  "artifact": {
+    "suiteSha": "02b2ac89cdeb9515df9741ea9d6f6280c53732be",
+    "taskDefHash": "a8850eb34d6f7def",
+    "model": "deepseek-v4-flash",
+    "baselineSha": "c26a5b74a964f86a88e25d7c07156000f4da13f0",
+    "effectiveConfig": {
+      "maxIterations": 40,
+      "tokenBudget": 120000,
+      "timeoutMs": 900000,
+      "autonomyMode": "auto",
+      "allowedTools": [
+        "file_read",
+        "file_write",
+        "file_edit",
+        "file_search",
+        "list_directory",
+        "shell_exec",
+        "todo_write",
+        "code_search"
+      ],
+      "evaluationMode": "model-capability",
+      "denyRules": [],
+      "faults": []
+    },
+    "finalPatch": "diff --git a/src/modules/mod-07.ts b/src/modules/mod-07.ts\nindex 66faadc..1c5adbe 100644\n--- a/src/modules/mod-07.ts\n+++ b/src/modules/mod-07.ts\n@@ -1,7 +1,7 @@\n // src/modules/mod-07.ts\r\n // 翻译模块——唯一有 bug 的模块（apple 返回错误值）\r\n const DICT: Record<string, string> = {\r\n-  apple: 'bad-apple',\r\n+  apple: 'apple',\r\n   banana: 'banana',\r\n   cherry: 'cherry',\r\n   dog: 'dog',\r\n",
+    "changedFiles": [
+      "src/modules/mod-07.ts"
+    ],
+    "toolTrajectory": [
+      {
+        "toolName": "list_directory",
+        "toolCallId": "call_00_IcIcnCDzeM4F18zVFObl5075",
+        "args": {
+          "path": "."
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": ".gitignore\npackage.json\nsrc/index.ts\nsrc/modules/mod-01.ts\nsrc/modules/mod-02.ts\nsrc/modules/mod-03.ts\nsrc/modules/mod-04.ts\nsrc/modules/mod-05.ts\nsrc/modules/mod-06.ts\nsrc/modules/mod-07.ts\nsrc/modul",
+        "timestamp": 1786463082325
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_01_7A3hRAbHXXpMfzF7dOhf8009",
+        "args": {
+          "command": "dir /s /b src"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "C:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-08-512d9a90\\src\\index.ts\r\nC:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-08-512d9a90\\src\\mo",
+        "outputTail": "ga-release-gate\\routedev\\.eval-work\\L2-08-512d9a90\\src\\modules\\mod-10.ts\r\nC:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-08-512d9a90\\src\\modules\\mod-11.ts\r\nC:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-08-512d9a90\\src\\modules\\mod-12.ts\r\n",
+        "timestamp": 1786463082418
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_00_HFSRrChkuyGkknPTccec7205",
+        "args": {
+          "path": "tests/modules.test.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// tests/modules.test.ts\r\nimport { describe, it, expect } from 'vitest';\r\nimport { translate as t1 } from '../src/modules/mod-01.js';\r\nimport { translate as t3 } from '../src/modules/mod-03.js';\r\nimpo",
+        "timestamp": 1786463084606
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_01_HRlLdwLFNXnXG5lKWPk75393",
+        "args": {
+          "path": "src/index.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/index.ts\r\nexport { translate } from './modules/mod-01.js';\r\n",
+        "timestamp": 1786463084613
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_02_NSlSePDnEgratwfKtMes1512",
+        "args": {
+          "path": "package.json"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "{\r\n  \"name\": \"fixture-l2-08\",\r\n  \"private\": true,\r\n  \"version\": \"1.0.0\",\r\n  \"type\": \"module\",\r\n  \"scripts\": {\r\n    \"test\": \"vitest run\"\r\n  }\r\n}\r\n",
+        "timestamp": 1786463084621
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_00_ET_40hPOxkfxf5lXE3gP2kB7441",
+        "args": {
+          "path": "src/modules/mod-01.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/modules/mod-01.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r",
+        "timestamp": 1786463090648
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_01_ET_6d8aDEICUFj62dga8NQ34233",
+        "args": {
+          "path": "src/modules/mod-02.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/modules/mod-02.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r",
+        "timestamp": 1786463090655
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_02_ET_xTLJXJlQQnwz7yHCOcg84432",
+        "args": {
+          "path": "src/modules/mod-03.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/modules/mod-03.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r",
+        "timestamp": 1786463090661
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_03_ET_4CwLxl1kPoFRYg6bJvbq4238",
+        "args": {
+          "path": "src/modules/mod-04.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/modules/mod-04.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r",
+        "timestamp": 1786463090668
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_04_ET_RoaIWmy3iGQ0l79MuJ0f5503",
+        "args": {
+          "path": "src/modules/mod-05.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/modules/mod-05.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r",
+        "timestamp": 1786463090675
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_05_ET_6Vo79cn0fbrM81L5W0Ij9605",
+        "args": {
+          "path": "src/modules/mod-06.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/modules/mod-06.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r",
+        "timestamp": 1786463090680
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_06_ET_WsTvmEjthJBlaoUeRzEd9664",
+        "args": {
+          "path": "src/modules/mod-07.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/modules/mod-07.ts\r\n// 翻译模块——唯一有 bug 的模块（apple 返回错误值）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'bad-apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elepha",
+        "timestamp": 1786463090684
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_07_ET_HE95Halryu1PeUSRCvHE4405",
+        "args": {
+          "path": "src/modules/mod-08.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/modules/mod-08.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r",
+        "timestamp": 1786463090689
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_08_ET_1WMJV5xtPeMOiXi9gfMx7771",
+        "args": {
+          "path": "src/modules/mod-09.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/modules/mod-09.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r",
+        "timestamp": 1786463090693
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_09_ET_CtqqkHIPznEjJyuj7FVf7141",
+        "args": {
+          "path": "src/modules/mod-10.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/modules/mod-10.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r",
+        "timestamp": 1786463090699
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_10_ET_jCrkj0Fb0A8Bfvh95LSQ9756",
+        "args": {
+          "path": "src/modules/mod-11.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/modules/mod-11.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r",
+        "timestamp": 1786463090705
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_11_ET_hPLMxRce2XyYGeVz1Hml0400",
+        "args": {
+          "path": "src/modules/mod-12.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/modules/mod-12.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r",
+        "timestamp": 1786463090711
+      },
+      {
+        "toolName": "file_edit",
+        "toolCallId": "call_00_syn3wUn9gnyns75BWFAN5442",
+        "args": {
+          "path": "src/modules/mod-07.ts",
+          "oldString": "  apple: 'bad-apple',",
+          "newString": "  apple: 'apple',"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "edited src/modules/mod-07.ts",
+        "timestamp": 1786463097922
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_COHD3Okvy7Kq05ob2beW7501",
+        "args": {
+          "command": "npm test",
+          "timeoutMs": 120000
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "\n> fixture-l2-08@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-08-512d9a90\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n  ",
+        "outputTail": "-l2-08@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-08-512d9a90\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n   Start at  23:45:05\n   Duration  447ms (transform 52ms, setup 0ms, import 133ms, tests 4ms, environment 0ms)\n\n",
+        "timestamp": 1786463105671
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_01_SQHfNuldC7pol7JJDUpT0213",
+        "args": {
+          "path": "src/modules/mod-07.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/modules/mod-07.ts\r\n// 翻译模块——唯一有 bug 的模块（apple 返回错误值）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',",
+        "timestamp": 1786463105679
+      }
+    ],
+    "runEventLog": [
+      {
+        "id": "eval-L2-08-1786463076465-1-c309cd",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 1,
+        "timestamp": 1786463076487,
+        "type": "run_started",
+        "payload": {
+          "input": "This repository contains many similar modules (src/modules/mod-*.ts). Exactly one of them has a subtle bug: `translate(word)` returns the wrong result for the word 'apple'. Find the correct module by …",
+          "model": "deepseek-v4-flash"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-2-1b3345",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 2,
+        "timestamp": 1786463076489,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 1
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-3-0dedd8",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 3,
+        "timestamp": 1786463082308,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 1,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 890,
+            "outputTokens": 109,
+            "totalTokens": 999,
+            "cacheHitTokens": 768,
+            "cacheMissTokens": 122
+          }
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-4-0c196c",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 4,
+        "timestamp": 1786463082316,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "list_directory",
+          "toolCallId": "call_00_IcIcnCDzeM4F18zVFObl5075"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-5-222a88",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 5,
+        "timestamp": 1786463082326,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "list_directory",
+          "toolCallId": "call_00_IcIcnCDzeM4F18zVFObl5075",
+          "isError": false,
+          "outputPreview": ".gitignore\npackage.json\nsrc/index.ts\nsrc/modules/mod-01.ts\nsrc/modules/mod-02.ts\nsrc/modules/mod-03.ts\nsrc/modules/mod-04.ts\nsrc/modules/mod-05.ts\nsrc/modules/mod-06.ts\nsrc/modules/mod-07.ts\nsrc/modul"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-6-da7895",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 6,
+        "timestamp": 1786463082338,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_01_7A3hRAbHXXpMfzF7dOhf8009"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-7-bc9eb7",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 7,
+        "timestamp": 1786463082419,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_01_7A3hRAbHXXpMfzF7dOhf8009",
+          "isError": false,
+          "outputPreview": "C:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-08-512d9a90\\src\\index.ts\r\nC:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-08-512d9a90\\src\\mo"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-8-a7218f",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 8,
+        "timestamp": 1786463082422,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 2
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-9-9f3d22",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 9,
+        "timestamp": 1786463084599,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 2,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 1773,
+            "outputTokens": 142,
+            "totalTokens": 1915,
+            "cacheHitTokens": 896,
+            "cacheMissTokens": 877
+          }
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-10-b4603d",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 10,
+        "timestamp": 1786463084604,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_HFSRrChkuyGkknPTccec7205"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-11-a0b9d9",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 11,
+        "timestamp": 1786463084606,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_HFSRrChkuyGkknPTccec7205",
+          "isError": false,
+          "outputPreview": "// tests/modules.test.ts\r\nimport { describe, it, expect } from 'vitest';\r\nimport { translate as t1 } from '../src/modules/mod-01.js';\r\nimport { translate as t3 } from '../src/modules/mod-03.js';\r\nimpo"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-12-8fc5be",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 12,
+        "timestamp": 1786463084612,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_HRlLdwLFNXnXG5lKWPk75393"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-13-8e0204",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 13,
+        "timestamp": 1786463084614,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_HRlLdwLFNXnXG5lKWPk75393",
+          "isError": false,
+          "outputPreview": "// src/index.ts\r\nexport { translate } from './modules/mod-01.js';\r\n"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-14-7dc9ff",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 14,
+        "timestamp": 1786463084619,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_02_NSlSePDnEgratwfKtMes1512"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-15-9d5093",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 15,
+        "timestamp": 1786463084622,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_02_NSlSePDnEgratwfKtMes1512",
+          "isError": false,
+          "outputPreview": "{\r\n  \"name\": \"fixture-l2-08\",\r\n  \"private\": true,\r\n  \"version\": \"1.0.0\",\r\n  \"type\": \"module\",\r\n  \"scripts\": {\r\n    \"test\": \"vitest run\"\r\n  }\r\n}\r\n"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-16-1d34fe",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 16,
+        "timestamp": 1786463084626,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 3
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-17-5c2e87",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 17,
+        "timestamp": 1786463090642,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 3,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 2226,
+            "outputTokens": 446,
+            "totalTokens": 2672,
+            "cacheHitTokens": 1792,
+            "cacheMissTokens": 434
+          }
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-18-22afc7",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 18,
+        "timestamp": 1786463090646,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_ET_40hPOxkfxf5lXE3gP2kB7441"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-19-e58ad3",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 19,
+        "timestamp": 1786463090648,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_ET_40hPOxkfxf5lXE3gP2kB7441",
+          "isError": false,
+          "outputPreview": "// src/modules/mod-01.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-20-b3731f",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 20,
+        "timestamp": 1786463090653,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_ET_6d8aDEICUFj62dga8NQ34233"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-21-5bff76",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 21,
+        "timestamp": 1786463090655,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_ET_6d8aDEICUFj62dga8NQ34233",
+          "isError": false,
+          "outputPreview": "// src/modules/mod-02.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-22-b38c44",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 22,
+        "timestamp": 1786463090659,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_02_ET_xTLJXJlQQnwz7yHCOcg84432"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-23-3eefa7",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 23,
+        "timestamp": 1786463090661,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_02_ET_xTLJXJlQQnwz7yHCOcg84432",
+          "isError": false,
+          "outputPreview": "// src/modules/mod-03.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-24-2efb4a",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 24,
+        "timestamp": 1786463090666,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_03_ET_4CwLxl1kPoFRYg6bJvbq4238"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-25-be8467",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 25,
+        "timestamp": 1786463090668,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_03_ET_4CwLxl1kPoFRYg6bJvbq4238",
+          "isError": false,
+          "outputPreview": "// src/modules/mod-04.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-26-51bdaa",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 26,
+        "timestamp": 1786463090673,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_04_ET_RoaIWmy3iGQ0l79MuJ0f5503"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-27-49d14c",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 27,
+        "timestamp": 1786463090675,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_04_ET_RoaIWmy3iGQ0l79MuJ0f5503",
+          "isError": false,
+          "outputPreview": "// src/modules/mod-05.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-28-1b62c1",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 28,
+        "timestamp": 1786463090679,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_05_ET_6Vo79cn0fbrM81L5W0Ij9605"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-29-3bc00d",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 29,
+        "timestamp": 1786463090680,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_05_ET_6Vo79cn0fbrM81L5W0Ij9605",
+          "isError": false,
+          "outputPreview": "// src/modules/mod-06.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-30-e0c503",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 30,
+        "timestamp": 1786463090683,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_06_ET_WsTvmEjthJBlaoUeRzEd9664"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-31-068cbd",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 31,
+        "timestamp": 1786463090684,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_06_ET_WsTvmEjthJBlaoUeRzEd9664",
+          "isError": false,
+          "outputPreview": "// src/modules/mod-07.ts\r\n// 翻译模块——唯一有 bug 的模块（apple 返回错误值）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'bad-apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elepha"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-32-10a47e",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 32,
+        "timestamp": 1786463090687,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_07_ET_HE95Halryu1PeUSRCvHE4405"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-33-d18d0c",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 33,
+        "timestamp": 1786463090689,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_07_ET_HE95Halryu1PeUSRCvHE4405",
+          "isError": false,
+          "outputPreview": "// src/modules/mod-08.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-34-067743",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 34,
+        "timestamp": 1786463090692,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_08_ET_1WMJV5xtPeMOiXi9gfMx7771"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-35-95168c",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 35,
+        "timestamp": 1786463090693,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_08_ET_1WMJV5xtPeMOiXi9gfMx7771",
+          "isError": false,
+          "outputPreview": "// src/modules/mod-09.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-36-5da97b",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 36,
+        "timestamp": 1786463090697,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_09_ET_CtqqkHIPznEjJyuj7FVf7141"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-37-6a4a1a",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 37,
+        "timestamp": 1786463090699,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_09_ET_CtqqkHIPznEjJyuj7FVf7141",
+          "isError": false,
+          "outputPreview": "// src/modules/mod-10.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-38-63a0e4",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 38,
+        "timestamp": 1786463090703,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_10_ET_jCrkj0Fb0A8Bfvh95LSQ9756"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-39-4d6919",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 39,
+        "timestamp": 1786463090705,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_10_ET_jCrkj0Fb0A8Bfvh95LSQ9756",
+          "isError": false,
+          "outputPreview": "// src/modules/mod-11.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-40-55ee03",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 40,
+        "timestamp": 1786463090709,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_11_ET_hPLMxRce2XyYGeVz1Hml0400"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-41-2eb152",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 41,
+        "timestamp": 1786463090711,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_11_ET_hPLMxRce2XyYGeVz1Hml0400",
+          "isError": false,
+          "outputPreview": "// src/modules/mod-12.ts\r\n// 翻译模块（相似模块之一——只有 mod-07 有 bug）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',\r"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-42-8ecb16",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 42,
+        "timestamp": 1786463090714,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 4
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-43-4b4a31",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 43,
+        "timestamp": 1786463097915,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 4,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 4167,
+            "outputTokens": 437,
+            "totalTokens": 4604,
+            "cacheHitTokens": 2560,
+            "cacheMissTokens": 1607
+          }
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-44-3db737",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 44,
+        "timestamp": 1786463097920,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_edit",
+          "toolCallId": "call_00_syn3wUn9gnyns75BWFAN5442"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-45-ee4bc4",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 45,
+        "timestamp": 1786463097923,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_edit",
+          "toolCallId": "call_00_syn3wUn9gnyns75BWFAN5442",
+          "isError": false,
+          "outputPreview": "edited src/modules/mod-07.ts"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-46-03fc22",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 46,
+        "timestamp": 1786463097925,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 5
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-47-8a4351",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 47,
+        "timestamp": 1786463104054,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 5,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 4624,
+            "outputTokens": 134,
+            "totalTokens": 4758,
+            "cacheHitTokens": 4480,
+            "cacheMissTokens": 144
+          }
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-48-a1eb22",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 48,
+        "timestamp": 1786463104056,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_COHD3Okvy7Kq05ob2beW7501"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-49-757017",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 49,
+        "timestamp": 1786463105671,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_COHD3Okvy7Kq05ob2beW7501",
+          "isError": false,
+          "outputPreview": "\n> fixture-l2-08@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-08-512d9a90\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n  "
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-50-a322ec",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 50,
+        "timestamp": 1786463105678,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_SQHfNuldC7pol7JJDUpT0213"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-51-d602ab",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 51,
+        "timestamp": 1786463105679,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_SQHfNuldC7pol7JJDUpT0213",
+          "isError": false,
+          "outputPreview": "// src/modules/mod-07.ts\r\n// 翻译模块——唯一有 bug 的模块（apple 返回错误值）\r\nconst DICT: Record<string, string> = {\r\n  apple: 'apple',\r\n  banana: 'banana',\r\n  cherry: 'cherry',\r\n  dog: 'dog',\r\n  elephant: 'elephant',"
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-52-e80645",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 52,
+        "timestamp": 1786463105682,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 6
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-53-52d3fa",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 53,
+        "timestamp": 1786463112359,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 6,
+          "finishReason": "stop",
+          "usage": {
+            "inputTokens": 5015,
+            "outputTokens": 195,
+            "totalTokens": 5210,
+            "cacheHitTokens": 4736,
+            "cacheMissTokens": 279
+          }
+        }
+      },
+      {
+        "id": "eval-L2-08-1786463076465-54-7d4ecc",
+        "runId": "eval-L2-08-1786463076465",
+        "sequence": 54,
+        "timestamp": 1786463112364,
+        "type": "run_completed",
+        "payload": {
+          "outputLength": 707,
+          "toolCallCount": 20,
+          "retryCount": 0
+        }
+      }
+    ],
+    "publicChecks": [
+      {
+        "name": "vitest run tests",
+        "passed": true,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-08-512d9a90\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n   Start at  23:45:13\n   Duration  345ms (transform 47ms, setup 0ms, import 72ms, tests 4ms, environment 0ms)\n\n",
+        "durationMs": 1069
+      }
+    ],
+    "hiddenChecks": [
+      {
+        "name": "vitest run hidden/behavior.test.ts",
+        "passed": true,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-08-512d9a90\n\n\n Test Files  1 passed (1)\n      Tests  2 passed (2)\n   Start at  23:45:14\n   Duration  373ms (transform 35ms, setup 0ms, import 81ms, tests 3ms, environment 0ms)\n\n",
+        "durationMs": 1120
+      }
+    ],
+    "pass": true,
+    "mode": "model-capability",
+    "durationMs": 38569,
+    "artifactSecurity": {
+      "redacted": false,
+      "redactionCount": 0,
+      "preRedactionSha256": "f12bc18f085f6a1d26d4344868e24f8f15bb441f758b3f97b63c20e94e18bbce"
+    }
+  }
+}

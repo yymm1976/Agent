@@ -1,0 +1,1843 @@
+{
+  "taskId": "L2-02",
+  "level": "L2",
+  "provider": "opencode-go",
+  "workdir": "C:\\Users\\杨铭\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-02-1f6c909c",
+  "checks": {
+    "public": [
+      {
+        "name": "vitest run tests",
+        "passed": true,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-02-1f6c909c\n\n\n Test Files  1 passed (1)\n      Tests  7 passed (7)\n   Start at  23:31:58\n   Duration  394ms (transform 59ms, setup 0ms, import 87ms, tests 7ms, environment 0ms)\n\n",
+        "durationMs": 1144
+      }
+    ],
+    "hidden": [
+      {
+        "name": "vitest run hidden/contract.test.ts",
+        "passed": true,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-02-1f6c909c\n\n\n Test Files  1 passed (1)\n      Tests  4 passed (4)\n   Start at  23:31:59\n   Duration  383ms (transform 51ms, setup 0ms, import 102ms, tests 5ms, environment 0ms)\n\n",
+        "durationMs": 1145
+      }
+    ]
+  },
+  "scoring": {
+    "taskId": "L2-02",
+    "taskCorrectness": true,
+    "regressionSafety": true,
+    "editPrecision": {
+      "expectedFiles": [
+        "src/config-types.ts",
+        "src/loader.ts"
+      ],
+      "touchedExpected": [
+        "src/config-types.ts",
+        "src/loader.ts"
+      ],
+      "missingExpected": [],
+      "forbiddenTouched": [],
+      "missingRequired": []
+    },
+    "safetyAssertions": {
+      "no-as-any-bypass": {
+        "passed": true
+      }
+    },
+    "eventAssertions": {
+      "lifecycle-complete": {
+        "passed": true
+      }
+    },
+    "hardGates": {
+      "safety": true,
+      "duplicateSideEffects": true,
+      "eventLogValid": true,
+      "forbiddenTouched": true,
+      "requiredFiles": true,
+      "eventAssertions": true,
+      "budget": false
+    },
+    "mode": "model-capability",
+    "pass": false
+  },
+  "metrics": {
+    "llmRounds": 18,
+    "toolCalls": 32,
+    "failedToolCalls": 3,
+    "filesChanged": 5,
+    "linesChanged": 179,
+    "retries": 0,
+    "durationMs": 409027
+  },
+  "eventLog": {
+    "runId": "eval-L2-02-1786461911381",
+    "completed": true,
+    "llmRounds": 18,
+    "retries": 0,
+    "failed": 0
+  },
+  "artifact": {
+    "suiteSha": "02b2ac89cdeb9515df9741ea9d6f6280c53732be",
+    "taskDefHash": "2a54bc994ba87bf4",
+    "model": "deepseek-v4-flash",
+    "baselineSha": "88107232da0db7036e653f2841530c324d2d5d56",
+    "effectiveConfig": {
+      "maxIterations": 30,
+      "tokenBudget": 100000,
+      "timeoutMs": 600000,
+      "autonomyMode": "auto",
+      "allowedTools": [
+        "file_read",
+        "file_write",
+        "file_edit",
+        "file_search",
+        "list_directory",
+        "shell_exec",
+        "todo_write",
+        "code_search"
+      ],
+      "evaluationMode": "model-capability",
+      "denyRules": [],
+      "faults": []
+    },
+    "finalPatch": "diff --git a/src/config-types.ts b/src/config-types.ts\nindex 58683db..d7bcd77 100644\n--- a/src/config-types.ts\n+++ b/src/config-types.ts\n@@ -1,6 +1,8 @@\n-// src/config-types.ts\r\n-// 配置类型定义：应用配置的唯一权威类型\r\n-export interface AppConfig {\r\n-  name: string;\r\n-  timeoutSeconds: number;\r\n-}\r\n+// 配置类型定义：应用配置的唯一权威类型\n+export interface AppConfig {\n+  name: string;\n+  /** 结构化超时字段（首选） */\n+  timeout: { seconds: number };\n+  /** 遗留的扁平超时字段；结构化 timeout 缺失时兜底 */\n+  timeoutSeconds?: number;\n+}\ndiff --git a/src/loader.ts b/src/loader.ts\nindex 2fedc92..8883940 100644\n--- a/src/loader.ts\n+++ b/src/loader.ts\n@@ -1,11 +1,33 @@\n-// src/loader.ts\r\n-// 配置加载器：raw JSON → AppConfig\r\n-import type { AppConfig } from './config-types.js';\r\n-\r\n-export function parseConfig(raw: Record<string, unknown>): AppConfig {\r\n-  if (typeof raw.name !== 'string' || raw.name.length === 0) {\r\n-    throw new Error('name is required');\r\n-  }\r\n-  const timeoutSeconds = typeof raw.timeoutSeconds === 'number' ? raw.timeoutSeconds : 30;\r\n-  return { name: raw.name, timeoutSeconds };\r\n-}\r\n+// 配置加载器：raw JSON → AppConfig\n+import type { AppConfig } from './config-types.js';\n+\n+const DEFAULT_TIMEOUT_SECONDS = 30;\n+\n+function isTimeoutObject(value: unknown): value is { seconds: number } {\n+  return (\n+    typeof value === 'object' &&\n+    value !== null &&\n+    !Array.isArray(value) &&\n+    'seconds' in value &&\n+    typeof value.seconds === 'number'\n+  );\n+}\n+\n+export function parseConfig(raw: Record<string, unknown>): AppConfig {\n+  if (typeof raw.name !== 'string' || raw.name.length === 0) {\n+    throw new Error('name is required');\n+  }\n+\n+  const rawTimeout = raw.timeout;\n+  const structuredSeconds = isTimeoutObject(rawTimeout) ? rawTimeout.seconds : undefined;\n+  const legacySeconds = typeof raw.timeoutSeconds === 'number' ? raw.timeoutSeconds : undefined;\n+\n+  // 结构化 timeout 优先；缺失时回退到遗留扁平字段；再缺省用默认值\n+  const seconds = structuredSeconds ?? legacySeconds ?? DEFAULT_TIMEOUT_SECONDS;\n+\n+  return {\n+    name: raw.name,\n+    timeout: { seconds },\n+    timeoutSeconds: seconds,\n+  };\n+}\ndiff --git a/src/main.ts b/src/main.ts\nindex 5525a14..948c40f 100644\n--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1,9 +1,8 @@\n-// src/main.ts\r\n-// 应用入口：装配配置并启动服务\r\n-import { parseConfig } from './loader.js';\r\n-import { startServer } from './server.js';\r\n-\r\n-export function bootstrap(raw: Record<string, unknown>) {\r\n-  const config = parseConfig(raw);\r\n-  return startServer({ name: config.name, timeoutSeconds: config.timeoutSeconds });\r\n-}\r\n+// 应用入口：装配配置并启动服务\n+import { parseConfig } from './loader.js';\n+import { startServer } from './server.js';\n+\n+export function bootstrap(raw: Record<string, unknown>) {\n+  const config = parseConfig(raw);\n+  return startServer({ name: config.name, timeout: config.timeout });\n+}\ndiff --git a/src/server.ts b/src/server.ts\nindex 6d90c5e..6f09043 100644\n--- a/src/server.ts\n+++ b/src/server.ts\n@@ -1,10 +1,9 @@\n-// src/server.ts\r\n-// 服务启动器：消费 timeoutSeconds 作为请求超时\r\n-export interface ServerOptions {\r\n-  name: string;\r\n-  timeoutSeconds: number;\r\n-}\r\n-\r\n-export function startServer(opts: ServerOptions): { name: string; timeoutSeconds: number } {\r\n-  return { name: opts.name, timeoutSeconds: opts.timeoutSeconds };\r\n-}\r\n+// 服务启动器：消费 timeout.seconds 作为请求超时\n+export interface ServerOptions {\n+  name: string;\n+  timeout: { seconds: number };\n+}\n+\n+export function startServer(opts: ServerOptions): { name: string; timeout: { seconds: number } } {\n+  return { name: opts.name, timeout: opts.timeout };\n+}\ndiff --git a/tests/config.test.ts b/tests/config.test.ts\nindex ddfd624..2e4bb2c 100644\n--- a/tests/config.test.ts\n+++ b/tests/config.test.ts\n@@ -1,29 +1,46 @@\n-// tests/config.test.ts\r\n-import { describe, it, expect } from 'vitest';\r\n-import { parseConfig } from '../src/loader.js';\r\n-import { bootstrap } from '../src/main.js';\r\n-\r\n-describe('parseConfig', () => {\r\n-  it('解析基础字段', () => {\r\n-    const cfg = parseConfig({ name: 'svc', timeoutSeconds: 60 });\r\n-    expect(cfg.name).toBe('svc');\r\n-    expect(cfg.timeoutSeconds).toBe(60);\r\n-  });\r\n-\r\n-  it('缺省 timeoutSeconds 用默认 30', () => {\r\n-    const cfg = parseConfig({ name: 'svc' });\r\n-    expect(cfg.timeoutSeconds).toBe(30);\r\n-  });\r\n-\r\n-  it('name 缺失抛错', () => {\r\n-    expect(() => parseConfig({})).toThrow('name');\r\n-  });\r\n-});\r\n-\r\n-describe('bootstrap', () => {\r\n-  it('透传配置到服务', () => {\r\n-    const s = bootstrap({ name: 'svc', timeoutSeconds: 5 });\r\n-    expect(s.timeoutSeconds).toBe(5);\r\n-    expect(s.name).toBe('svc');\r\n-  });\r\n-});\r\n+import { describe, it, expect } from 'vitest';\n+import { parseConfig } from '../src/loader.js';\n+import { bootstrap } from '../src/main.js';\n+\n+describe('parseConfig', () => {\n+  it('解析基础字段（结构化 timeout）', () => {\n+    const cfg = parseConfig({ name: 'svc', timeout: { seconds: 60 } });\n+    expect(cfg.name).toBe('svc');\n+    expect(cfg.timeout).toEqual({ seconds: 60 });\n+  });\n+\n+  it('结构化 timeout 缺失时回退到遗留 timeoutSeconds', () => {\n+    const cfg = parseConfig({ name: 'svc', timeoutSeconds: 45 });\n+    expect(cfg.timeout.seconds).toBe(45);\n+    expect(cfg.timeoutSeconds).toBe(45);\n+  });\n+\n+  it('结构化 timeout 优先于遗留字段', () => {\n+    const cfg = parseConfig({ name: 'svc', timeout: { seconds: 10 }, timeoutSeconds: 20 });\n+    expect(cfg.timeout.seconds).toBe(10);\n+  });\n+\n+  it('缺省 timeout 用默认 30', () => {\n+    const cfg = parseConfig({ name: 'svc' });\n+    expect(cfg.timeout.seconds).toBe(30);\n+    expect(cfg.timeoutSeconds).toBe(30);\n+  });\n+\n+  it('name 缺失抛错', () => {\n+    expect(() => parseConfig({})).toThrow('name');\n+  });\n+});\n+\n+describe('bootstrap', () => {\n+  it('透传配置到服务（结构化 timeout）', () => {\n+    const s = bootstrap({ name: 'svc', timeout: { seconds: 5 } });\n+    expect(s.timeout.seconds).toBe(5);\n+    expect(s.name).toBe('svc');\n+  });\n+\n+  it('透传配置到服务（遗留 timeoutSeconds 兜底）', () => {\n+    const s = bootstrap({ name: 'svc', timeoutSeconds: 7 });\n+    expect(s.timeout.seconds).toBe(7);\n+    expect(s.name).toBe('svc');\n+  });\n+});\n",
+    "changedFiles": [
+      "src/config-types.ts",
+      "src/loader.ts",
+      "src/main.ts",
+      "src/server.ts",
+      "tests/config.test.ts"
+    ],
+    "toolTrajectory": [
+      {
+        "toolName": "list_directory",
+        "toolCallId": "call_00_WKqi4gC8jb2ZP8b81vD78450",
+        "args": {
+          "path": ""
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": ".gitignore\npackage.json\nsrc/config-types.ts\nsrc/loader.ts\nsrc/main.ts\nsrc/server.ts\ntests/config.test.ts\ntsconfig.json\nvitest.config.ts",
+        "timestamp": 1786461918361
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_00_BHWbzgZeHNP2x9cR3MKx2310",
+        "args": {
+          "path": "src/config-types.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/config-types.ts\r\n// 配置类型定义：应用配置的唯一权威类型\r\nexport interface AppConfig {\r\n  name: string;\r\n  timeoutSeconds: number;\r\n}\r\n",
+        "timestamp": 1786461933337
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_01_AFiTXDs56JPYNMErfUhw8499",
+        "args": {
+          "path": "src/loader.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/loader.ts\r\n// 配置加载器：raw JSON → AppConfig\r\nimport type { AppConfig } from './config-types.js';\r\n\r\nexport function parseConfig(raw: Record<string, unknown>): AppConfig {\r\n  if (typeof raw.name !=",
+        "timestamp": 1786461933344
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_02_TWNjBo8RDpuQX35tIF4F9951",
+        "args": {
+          "path": "src/main.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/main.ts\r\n// 应用入口：装配配置并启动服务\r\nimport { parseConfig } from './loader.js';\r\nimport { startServer } from './server.js';\r\n\r\nexport function bootstrap(raw: Record<string, unknown>) {\r\n  const config =",
+        "timestamp": 1786461933351
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_03_l4ikHmpksUUefB1IJher0408",
+        "args": {
+          "path": "src/server.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// src/server.ts\r\n// 服务启动器：消费 timeoutSeconds 作为请求超时\r\nexport interface ServerOptions {\r\n  name: string;\r\n  timeoutSeconds: number;\r\n}\r\n\r\nexport function startServer(opts: ServerOptions): { name: string",
+        "timestamp": 1786461933358
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_04_JnCm8i2kMvw0TVfcuRxx7778",
+        "args": {
+          "path": "tests/config.test.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// tests/config.test.ts\r\nimport { describe, it, expect } from 'vitest';\r\nimport { parseConfig } from '../src/loader.js';\r\nimport { bootstrap } from '../src/main.js';\r\n\r\ndescribe('parseConfig', () => {",
+        "timestamp": 1786461933364
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_05_f6Cads42hnjnuAWpufYC3250",
+        "args": {
+          "path": "package.json"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "{\r\n  \"name\": \"fixture-l2-02\",\r\n  \"private\": true,\r\n  \"version\": \"1.0.0\",\r\n  \"type\": \"module\",\r\n  \"scripts\": {\r\n    \"test\": \"vitest run\"\r\n  }\r\n}\r\n",
+        "timestamp": 1786461933370
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_06_q4mM9xVx7tayTAsvmYQI0559",
+        "args": {
+          "path": "tsconfig.json"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "{\r\n  \"compilerOptions\": {\r\n    \"target\": \"ES2022\",\r\n    \"module\": \"ESNext\",\r\n    \"moduleResolution\": \"bundler\",\r\n    \"strict\": true,\r\n    \"noEmit\": true,\r\n    \"types\": []\r\n  },\r\n  \"include\": [\"src\", \"",
+        "timestamp": 1786461933375
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_07_8ucCDc08HLFWFm9EpaXq0925",
+        "args": {
+          "path": "vitest.config.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "import { defineConfig } from 'vitest/config';\r\n\r\nexport default defineConfig({\r\n  test: {\r\n    include: ['tests/**/*.test.ts', 'hidden/**/*.test.ts'],\r\n    environment: 'node',\r\n  },\r\n});\r\n",
+        "timestamp": 1786461933380
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_xxvaju0qapWJkwbgvNGp1485",
+        "args": {
+          "command": "dir /s /b"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "C:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-02-1f6c909c\\.gitignore\r\nC:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-02-1f6c909c\\node_mod",
+        "outputTail": "sktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-02-1f6c909c\\.git\\logs\\refs\r\nC:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-02-1f6c909c\\.git\\logs\\refs\\heads\r\nC:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-02-1f6c909c\\.git\\log",
+        "timestamp": 1786462011719
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_cUiT6BK9ZHLbo0DZ4BYB0657",
+        "args": {
+          "command": "dir src tests"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": " ������ C �еľ��� ϵͳ\r\n �������к��� DE60-285A\r\n\r\n C:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-02-1f6c909c\\src ��Ŀ¼\r\n\r\n2026/08/11  23:25    <DIR>          .\r\n2026/08/11 ",
+        "outputTail": "ent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-02-1f6c909c\\tests ��Ŀ¼\r\n\r\n2026/08/11  23:25    <DIR>          .\r\n2026/08/11  23:25    <DIR>          ..\r\n2026/08/11  23:10               858 config.test.ts\r\n               1 ���ļ�            858 �ֽ�\r\n               2 ��Ŀ¼ 34,884,931,584 �����ֽ�\r\n",
+        "timestamp": 1786462023884
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_gaOzJh7IQv67ymmf25AL6719",
+        "args": {
+          "command": "npm test"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "\n> fixture-l2-02@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-02-1f6c909c\n\n\n Test Files  1 passed (1)\n      Tests  4 passed (4)\n  ",
+        "outputTail": "-l2-02@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-02-1f6c909c\n\n\n Test Files  1 passed (1)\n      Tests  4 passed (4)\n   Start at  23:27:19\n   Duration  431ms (transform 53ms, setup 0ms, import 137ms, tests 5ms, environment 0ms)\n\n",
+        "timestamp": 1786462039592
+      },
+      {
+        "toolName": "file_write",
+        "toolCallId": "call_00_JMnF3aJ6yQBUAI4BXFs55576",
+        "args": {
+          "path": "src/config-types.ts",
+          "content": "// 配置类型定义：应用配置的唯一权威类型\nexport interface AppConfig {\n  name: string;\n  /** 结构化超时字段（首选） */\n  timeout: { seconds: number };\n  /** 遗留的扁平超时字段；结构化 timeout 缺失时兜底 */\n  timeoutSeconds?: number;\n}\n"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "written src/config-types.ts",
+        "timestamp": 1786462068495
+      },
+      {
+        "toolName": "file_write",
+        "toolCallId": "call_01_PaEmnIAJwyQnn6HvB4Ct6579",
+        "args": {
+          "path": "src/loader.ts",
+          "content": "// 配置加载器：raw JSON → AppConfig\nimport type { AppConfig } from './config-types.js';\n\nconst DEFAULT_TIMEOUT_SECONDS = 30;\n\nfunction isTimeoutObject(value: unknown): value is { seconds: number } {\n  return (\n    typeof value === 'object' &&\n    value !== null &&\n    !Array.isArray(value) &&\n    'seconds' in value &&\n    typeof value.seconds === 'number'\n  );\n}\n\nexport function parseConfig(raw: Record<string, unknown>): AppConfig {\n  if (typeof raw.name !== 'string' || raw.name.length === 0) {\n    throw new Error('name is required');\n  }\n\n  const rawTimeout = raw.timeout;\n  const structuredSeconds = isTimeoutObject(rawTimeout) ? rawTimeout.seconds : undefined;\n  const legacySeconds = typeof raw.timeoutSeconds === 'number' ? raw.timeoutSeconds : undefined;\n\n  // 结构化 timeout 优先；缺失时回退到遗留扁平字段；再缺省用默认值\n  const seconds = structuredSeconds ?? legacySeconds ?? DEFAULT_TIMEOUT_SECONDS;\n\n  return {\n    name: raw.name,\n    timeout: { seconds },\n    timeoutSeconds: seconds,\n  };\n}\n"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "written src/loader.ts",
+        "timestamp": 1786462068503
+      },
+      {
+        "toolName": "file_write",
+        "toolCallId": "call_02_8aA0RVgwguEAMDA4PM8G1766",
+        "args": {
+          "path": "src/main.ts",
+          "content": "// 应用入口：装配配置并启动服务\nimport { parseConfig } from './loader.js';\nimport { startServer } from './server.js';\n\nexport function bootstrap(raw: Record<string, unknown>) {\n  const config = parseConfig(raw);\n  return startServer({ name: config.name, timeout: config.timeout });\n}\n"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "written src/main.ts",
+        "timestamp": 1786462068511
+      },
+      {
+        "toolName": "file_write",
+        "toolCallId": "call_03_L71g6wMhPnXcCBJ2BT260729",
+        "args": {
+          "path": "src/server.ts",
+          "content": "// 服务启动器：消费 timeout.seconds 作为请求超时\nexport interface ServerOptions {\n  name: string;\n  timeout: { seconds: number };\n}\n\nexport function startServer(opts: ServerOptions): { name: string; timeout: { seconds: number } } {\n  return { name: opts.name, timeout: opts.timeout };\n}\n"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "written src/server.ts",
+        "timestamp": 1786462068518
+      },
+      {
+        "toolName": "file_write",
+        "toolCallId": "call_04_KgZWNaRG7rUsOKb8oha71610",
+        "args": {
+          "path": "tests/config.test.ts",
+          "content": "import { describe, it, expect } from 'vitest';\nimport { parseConfig } from '../src/loader.js';\nimport { bootstrap } from '../src/main.js';\n\ndescribe('parseConfig', () => {\n  it('解析基础字段（结构化 timeout）', () => {\n    const cfg = parseConfig({ name: 'svc', timeout: { seconds: 60 } });\n    expect(cfg.name).toBe('svc');\n    expect(cfg.timeout).toEqual({ seconds: 60 });\n  });\n\n  it('结构化 timeout 缺失时回退到遗留 timeoutSeconds', () => {\n    const cfg = parseConfig({ name: 'svc', timeoutSeconds: 45 });\n    expect(cfg.timeout.seconds).toBe(45);\n    expect(cfg.timeoutSeconds).toBe(45);\n  });\n\n  it('结构化 timeout 优先于遗留字段', () => {\n    const cfg = parseConfig({ name: 'svc', timeout: { seconds: 10 }, timeoutSeconds: 20 });\n    expect(cfg.timeout.seconds).toBe(10);\n  });\n\n  it('缺省 timeout 用默认 30', () => {\n    const cfg = parseConfig({ name: 'svc' });\n    expect(cfg.timeout.seconds).toBe(30);\n    expect(cfg.timeoutSeconds).toBe(30);\n  });\n\n  it('name 缺失抛错', () => {\n    expect(() => parseConfig({})).toThrow('name');\n  });\n});\n\ndescribe('bootstrap', () => {\n  it('透传配置到服务（结构化 timeout）', () => {\n    const s = bootstrap({ name: 'svc', timeout: { seconds: 5 } });\n    expect(s.timeout.seconds).toBe(5);\n    expect(s.name).toBe('svc');\n  });\n\n  it('透传配置到服务（遗留 timeoutSeconds 兜底）', () => {\n    const s = bootstrap({ name: 'svc', timeoutSeconds: 7 });\n    expect(s.timeout.seconds).toBe(7);\n    expect(s.name).toBe('svc');\n  });\n});\n"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "written tests/config.test.ts",
+        "timestamp": 1786462068526
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_neA9mRzNfxWMo03LCF5v9711",
+        "args": {
+          "command": "npx tsc --noEmit"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "(exit 0)",
+        "outputTail": "",
+        "timestamp": 1786462087884
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_01_AFlF79pdMkSOQpvARiPU4620",
+        "args": {
+          "command": "npm test"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "\n> fixture-l2-02@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-02-1f6c909c\n\n\n Test Files  1 passed (1)\n      Tests  7 passed (7)\n  ",
+        "outputTail": "-l2-02@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-02-1f6c909c\n\n\n Test Files  1 passed (1)\n      Tests  7 passed (7)\n   Start at  23:28:09\n   Duration  505ms (transform 58ms, setup 0ms, import 152ms, tests 7ms, environment 0ms)\n\n",
+        "timestamp": 1786462089669
+      },
+      {
+        "toolName": "file_search",
+        "toolCallId": "call_00_5AlaBcICQqhzLN4hzBIF5664",
+        "args": {
+          "pattern": "timeout"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "src/config-types.ts\nsrc/loader.ts\nsrc/main.ts\nsrc/server.ts\ntests/config.test.ts",
+        "timestamp": 1786462106716
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_ET_ZHjVIUtwPxjeTtmEDXxA2575",
+        "args": {
+          "command": "findstr /s /n /i \"timeoutSeconds timeout\" src tests"
+        },
+        "denied": false,
+        "isError": true,
+        "outputPreview": "(exit 1)",
+        "outputTail": "",
+        "timestamp": 1786462126714
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_00_s3cx4YKCRViH0AoWwfc01278",
+        "args": {
+          "path": "src/config-types.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// 配置类型定义：应用配置的唯一权威类型\nexport interface AppConfig {\n  name: string;\n  /** 结构化超时字段（首选） */\n  timeout: { seconds: number };\n  /** 遗留的扁平超时字段；结构化 timeout 缺失时兜底 */\n  timeoutSeconds?: number;\n}\n",
+        "timestamp": 1786462145132
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_01_VYtsS5ovfDRoigCJ1eZ16102",
+        "args": {
+          "path": "src/loader.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// 配置加载器：raw JSON → AppConfig\nimport type { AppConfig } from './config-types.js';\n\nconst DEFAULT_TIMEOUT_SECONDS = 30;\n\nfunction isTimeoutObject(value: unknown): value is { seconds: number } {\n  retur",
+        "timestamp": 1786462145137
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_02_38SIfanbvQEJHMIe2nFy8514",
+        "args": {
+          "path": "src/main.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// 应用入口：装配配置并启动服务\nimport { parseConfig } from './loader.js';\nimport { startServer } from './server.js';\n\nexport function bootstrap(raw: Record<string, unknown>) {\n  const config = parseConfig(raw);\n  ",
+        "timestamp": 1786462145141
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_03_8lJfkcdw91YnP6Yoxd8W6175",
+        "args": {
+          "path": "src/server.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "// 服务启动器：消费 timeout.seconds 作为请求超时\nexport interface ServerOptions {\n  name: string;\n  timeout: { seconds: number };\n}\n\nexport function startServer(opts: ServerOptions): { name: string; timeout: { seco",
+        "timestamp": 1786462145144
+      },
+      {
+        "toolName": "file_read",
+        "toolCallId": "call_04_bEwrzdBIAlUM4WsGquyg1356",
+        "args": {
+          "path": "tests/config.test.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "import { describe, it, expect } from 'vitest';\nimport { parseConfig } from '../src/loader.js';\nimport { bootstrap } from '../src/main.js';\n\ndescribe('parseConfig', () => {\n  it('解析基础字段（结构化 timeout）', ",
+        "timestamp": 1786462145148
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_hq4pCUOZ3ihe5nbWbKrf4620",
+        "args": {
+          "command": "findstr /s /i /c:\"timeout\" src tests"
+        },
+        "denied": false,
+        "isError": true,
+        "outputPreview": "(exit 1)",
+        "outputTail": "",
+        "timestamp": 1786462182849
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_oeU5SibfkYd8UXeN5w7O2736",
+        "args": {
+          "command": "findstr /i /c:\"timeout\" src\\loader.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "const DEFAULT_TIMEOUT_SECONDS = 30;\nfunction isTimeoutObject(value: unknown): value is { seconds: number } {\n  const rawTimeout = raw.timeout;\n  const structuredSeconds = isTimeoutObject(rawTimeout) ?",
+        "outputTail": "eout.seconds : undefined;\n  const legacySeconds = typeof raw.timeoutSeconds === 'number' ? raw.timeoutSeconds : undefined;\n  // 结构化 timeout 优先；缺失时回退到遗留扁平字段；再缺省用默认值\n  const seconds = structuredSeconds ?? legacySeconds ?? DEFAULT_TIMEOUT_SECONDS;\n    timeout: { seconds },\n    timeoutSeconds: seconds,\n",
+        "timestamp": 1786462198084
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_8x2XfuVRzi9fKTOTkZ874515",
+        "args": {
+          "command": "findstr /s /i /c:\"timeout\" *.ts"
+        },
+        "denied": false,
+        "isError": true,
+        "outputPreview": "node_modules\\.pnpm\\@anthropic-ai+sdk@0.104.2_zod@4.4.3\\node_modules\\@anthropic-ai\\sdk\\client.d.ts:import { AnthropicBeta, Beta, BetaAPIError, BetaAuthenticationError, BetaBillingError, BetaError, Beta",
+        "outputTail": "od@4.4.3\\node_modules\\@anthropic-ai\\sdk\\index.d.ts:export { AnthropicError, APIError, APIConnectionError, APIConnectionTimeoutError, APIUserAbortError, RetryableError, NotFoundError, ConflictError, RateLimitError, BadRequestError, AuthenticationError, InternalServerError, PermissionDeniedError, Unpr",
+        "timestamp": 1786462273513
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_sK6SM0cmV531Xgpb8i8e8877",
+        "args": {
+          "command": "findstr /s /i /c:\"timeout\" src\\*.ts tests\\*.ts"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "src\\config-types.ts:  timeout: { seconds: number };\nsrc\\config-types.ts:  /** 遗留的扁平超时字段；结构化 timeout 缺失时兜底 */\nsrc\\config-types.ts:  timeoutSeconds?: number;\nsrc\\loader.ts:const DEFAULT_TIMEOUT_SECONDS ",
+        "outputTail": "eout: config.timeout });\nsrc\\server.ts:// 服务启动器：消费 timeout.seconds 作为请求超时\nsrc\\server.ts:  timeout: { seconds: number };\nsrc\\server.ts:export function startServer(opts: ServerOptions): { name: string; timeout: { seconds: number } } {\nsrc\\server.ts:  return { name: opts.name, timeout: opts.timeout };\n",
+        "timestamp": 1786462286221
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_00_Te4U7GksOu5IotCIzCwI3124",
+        "args": {
+          "command": "npx tsc --noEmit && echo TYPECHECK_OK"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "TYPECHECK_OK\r\n",
+        "outputTail": "TYPECHECK_OK\r\n",
+        "timestamp": 1786462303631
+      },
+      {
+        "toolName": "shell_exec",
+        "toolCallId": "call_01_yBzAjCU4Pkb0q8eXiXSC0220",
+        "args": {
+          "command": "npm test"
+        },
+        "denied": false,
+        "isError": false,
+        "outputPreview": "\n> fixture-l2-02@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-02-1f6c909c\n\n\n Test Files  1 passed (1)\n      Tests  7 passed (7)\n  ",
+        "outputTail": "-l2-02@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-02-1f6c909c\n\n\n Test Files  1 passed (1)\n      Tests  7 passed (7)\n   Start at  23:31:44\n   Duration  423ms (transform 56ms, setup 0ms, import 102ms, tests 6ms, environment 0ms)\n\n",
+        "timestamp": 1786462305252
+      }
+    ],
+    "runEventLog": [
+      {
+        "id": "eval-L2-02-1786461911381-1-f3ca21",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 1,
+        "timestamp": 1786461911403,
+        "type": "run_started",
+        "payload": {
+          "input": "The configuration loader currently reads a single `timeoutSeconds` field. It must now read a new structured `timeout: { seconds: number }` field while still honoring the legacy flat field when the str…",
+          "model": "deepseek-v4-flash"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-2-927e68",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 2,
+        "timestamp": 1786461911405,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 1
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-3-873ddb",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 3,
+        "timestamp": 1786461918347,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 1,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 909,
+            "outputTokens": 71,
+            "totalTokens": 980,
+            "cacheHitTokens": 768,
+            "cacheMissTokens": 141
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-4-a5a066",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 4,
+        "timestamp": 1786461918354,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "list_directory",
+          "toolCallId": "call_00_WKqi4gC8jb2ZP8b81vD78450"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-5-c1270a",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 5,
+        "timestamp": 1786461918362,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "list_directory",
+          "toolCallId": "call_00_WKqi4gC8jb2ZP8b81vD78450",
+          "isError": false,
+          "outputPreview": ".gitignore\npackage.json\nsrc/config-types.ts\nsrc/loader.ts\nsrc/main.ts\nsrc/server.ts\ntests/config.test.ts\ntsconfig.json\nvitest.config.ts"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-6-431f53",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 6,
+        "timestamp": 1786461918368,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 2
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-7-cec774",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 7,
+        "timestamp": 1786461933330,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 2,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 1029,
+            "outputTokens": 292,
+            "totalTokens": 1321,
+            "cacheHitTokens": 896,
+            "cacheMissTokens": 133
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-8-1b4928",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 8,
+        "timestamp": 1786461933335,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_BHWbzgZeHNP2x9cR3MKx2310"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-9-6ef514",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 9,
+        "timestamp": 1786461933337,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_BHWbzgZeHNP2x9cR3MKx2310",
+          "isError": false,
+          "outputPreview": "// src/config-types.ts\r\n// 配置类型定义：应用配置的唯一权威类型\r\nexport interface AppConfig {\r\n  name: string;\r\n  timeoutSeconds: number;\r\n}\r\n"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-10-9997c9",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 10,
+        "timestamp": 1786461933343,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_AFiTXDs56JPYNMErfUhw8499"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-11-b41fe8",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 11,
+        "timestamp": 1786461933345,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_AFiTXDs56JPYNMErfUhw8499",
+          "isError": false,
+          "outputPreview": "// src/loader.ts\r\n// 配置加载器：raw JSON → AppConfig\r\nimport type { AppConfig } from './config-types.js';\r\n\r\nexport function parseConfig(raw: Record<string, unknown>): AppConfig {\r\n  if (typeof raw.name !="
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-12-a3e642",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 12,
+        "timestamp": 1786461933349,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_02_TWNjBo8RDpuQX35tIF4F9951"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-13-28dfb5",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 13,
+        "timestamp": 1786461933351,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_02_TWNjBo8RDpuQX35tIF4F9951",
+          "isError": false,
+          "outputPreview": "// src/main.ts\r\n// 应用入口：装配配置并启动服务\r\nimport { parseConfig } from './loader.js';\r\nimport { startServer } from './server.js';\r\n\r\nexport function bootstrap(raw: Record<string, unknown>) {\r\n  const config ="
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-14-557000",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 14,
+        "timestamp": 1786461933356,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_03_l4ikHmpksUUefB1IJher0408"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-15-78e5e8",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 15,
+        "timestamp": 1786461933358,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_03_l4ikHmpksUUefB1IJher0408",
+          "isError": false,
+          "outputPreview": "// src/server.ts\r\n// 服务启动器：消费 timeoutSeconds 作为请求超时\r\nexport interface ServerOptions {\r\n  name: string;\r\n  timeoutSeconds: number;\r\n}\r\n\r\nexport function startServer(opts: ServerOptions): { name: string"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-16-b560ef",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 16,
+        "timestamp": 1786461933362,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_04_JnCm8i2kMvw0TVfcuRxx7778"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-17-bbc639",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 17,
+        "timestamp": 1786461933364,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_04_JnCm8i2kMvw0TVfcuRxx7778",
+          "isError": false,
+          "outputPreview": "// tests/config.test.ts\r\nimport { describe, it, expect } from 'vitest';\r\nimport { parseConfig } from '../src/loader.js';\r\nimport { bootstrap } from '../src/main.js';\r\n\r\ndescribe('parseConfig', () => {"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-18-20b452",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 18,
+        "timestamp": 1786461933368,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_05_f6Cads42hnjnuAWpufYC3250"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-19-276806",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 19,
+        "timestamp": 1786461933370,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_05_f6Cads42hnjnuAWpufYC3250",
+          "isError": false,
+          "outputPreview": "{\r\n  \"name\": \"fixture-l2-02\",\r\n  \"private\": true,\r\n  \"version\": \"1.0.0\",\r\n  \"type\": \"module\",\r\n  \"scripts\": {\r\n    \"test\": \"vitest run\"\r\n  }\r\n}\r\n"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-20-7f44f6",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 20,
+        "timestamp": 1786461933373,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_06_q4mM9xVx7tayTAsvmYQI0559"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-21-ea3a9a",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 21,
+        "timestamp": 1786461933375,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_06_q4mM9xVx7tayTAsvmYQI0559",
+          "isError": false,
+          "outputPreview": "{\r\n  \"compilerOptions\": {\r\n    \"target\": \"ES2022\",\r\n    \"module\": \"ESNext\",\r\n    \"moduleResolution\": \"bundler\",\r\n    \"strict\": true,\r\n    \"noEmit\": true,\r\n    \"types\": []\r\n  },\r\n  \"include\": [\"src\", \""
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-22-3a1ad6",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 22,
+        "timestamp": 1786461933379,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_07_8ucCDc08HLFWFm9EpaXq0925"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-23-1c15b2",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 23,
+        "timestamp": 1786461933380,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_07_8ucCDc08HLFWFm9EpaXq0925",
+          "isError": false,
+          "outputPreview": "import { defineConfig } from 'vitest/config';\r\n\r\nexport default defineConfig({\r\n  test: {\r\n    include: ['tests/**/*.test.ts', 'hidden/**/*.test.ts'],\r\n    environment: 'node',\r\n  },\r\n});\r\n"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-24-b58f2d",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 24,
+        "timestamp": 1786461933384,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 3
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-25-abd1e0",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 25,
+        "timestamp": 1786461968628,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 3,
+          "finishReason": "length",
+          "usage": {
+            "inputTokens": 2275,
+            "outputTokens": 4096,
+            "totalTokens": 6371,
+            "cacheHitTokens": 1280,
+            "cacheMissTokens": 995
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-26-53e3f4",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 26,
+        "timestamp": 1786461968630,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 4
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-27-b4dbcb",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 27,
+        "timestamp": 1786462004388,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 4,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 2316,
+            "outputTokens": 3799,
+            "totalTokens": 6115,
+            "cacheHitTokens": 2176,
+            "cacheMissTokens": 140
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-28-67a9e5",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 28,
+        "timestamp": 1786462004393,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_xxvaju0qapWJkwbgvNGp1485"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-29-fea3f0",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 29,
+        "timestamp": 1786462011719,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_xxvaju0qapWJkwbgvNGp1485",
+          "isError": false,
+          "outputPreview": "C:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-02-1f6c909c\\.gitignore\r\nC:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-02-1f6c909c\\node_mod"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-30-9fee07",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 30,
+        "timestamp": 1786462011722,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 5
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-31-fa568e",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 31,
+        "timestamp": 1786462023831,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 5,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 7740,
+            "outputTokens": 101,
+            "totalTokens": 7841,
+            "cacheHitTokens": 6016,
+            "cacheMissTokens": 1724
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-32-471a68",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 32,
+        "timestamp": 1786462023835,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_cUiT6BK9ZHLbo0DZ4BYB0657"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-33-156511",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 33,
+        "timestamp": 1786462023884,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_cUiT6BK9ZHLbo0DZ4BYB0657",
+          "isError": false,
+          "outputPreview": " ������ C �еľ��� ϵͳ\r\n �������к��� DE60-285A\r\n\r\n C:\\Users\\����\\Desktop\\Agent\\.worktrees\\ga-release-gate\\routedev\\.eval-work\\L2-02-1f6c909c\\src ��Ŀ¼\r\n\r\n2026/08/11  23:25    <DIR>          .\r\n2026/08/11 "
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-34-d0d5a7",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 34,
+        "timestamp": 1786462023886,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 6
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-35-ae9066",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 35,
+        "timestamp": 1786462037987,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 6,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 8178,
+            "outputTokens": 138,
+            "totalTokens": 8316,
+            "cacheHitTokens": 7808,
+            "cacheMissTokens": 370
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-36-dcb5f0",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 36,
+        "timestamp": 1786462037991,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_gaOzJh7IQv67ymmf25AL6719"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-37-b65075",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 37,
+        "timestamp": 1786462039592,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_gaOzJh7IQv67ymmf25AL6719",
+          "isError": false,
+          "outputPreview": "\n> fixture-l2-02@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-02-1f6c909c\n\n\n Test Files  1 passed (1)\n      Tests  4 passed (4)\n  "
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-38-9538e8",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 38,
+        "timestamp": 1786462039598,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 7
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-39-053990",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 39,
+        "timestamp": 1786462068489,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 7,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 8449,
+            "outputTokens": 3054,
+            "totalTokens": 11503,
+            "cacheHitTokens": 8192,
+            "cacheMissTokens": 257
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-40-0ca11c",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 40,
+        "timestamp": 1786462068493,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_write",
+          "toolCallId": "call_00_JMnF3aJ6yQBUAI4BXFs55576"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-41-2b11fd",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 41,
+        "timestamp": 1786462068495,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_write",
+          "toolCallId": "call_00_JMnF3aJ6yQBUAI4BXFs55576",
+          "isError": false,
+          "outputPreview": "written src/config-types.ts"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-42-301a45",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 42,
+        "timestamp": 1786462068500,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_write",
+          "toolCallId": "call_01_PaEmnIAJwyQnn6HvB4Ct6579"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-43-144a7c",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 43,
+        "timestamp": 1786462068503,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_write",
+          "toolCallId": "call_01_PaEmnIAJwyQnn6HvB4Ct6579",
+          "isError": false,
+          "outputPreview": "written src/loader.ts"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-44-592315",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 44,
+        "timestamp": 1786462068508,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_write",
+          "toolCallId": "call_02_8aA0RVgwguEAMDA4PM8G1766"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-45-f80e82",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 45,
+        "timestamp": 1786462068511,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_write",
+          "toolCallId": "call_02_8aA0RVgwguEAMDA4PM8G1766",
+          "isError": false,
+          "outputPreview": "written src/main.ts"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-46-a1bc30",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 46,
+        "timestamp": 1786462068515,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_write",
+          "toolCallId": "call_03_L71g6wMhPnXcCBJ2BT260729"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-47-c97a02",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 47,
+        "timestamp": 1786462068518,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_write",
+          "toolCallId": "call_03_L71g6wMhPnXcCBJ2BT260729",
+          "isError": false,
+          "outputPreview": "written src/server.ts"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-48-5a0ce7",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 48,
+        "timestamp": 1786462068523,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_write",
+          "toolCallId": "call_04_KgZWNaRG7rUsOKb8oha71610"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-49-872af0",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 49,
+        "timestamp": 1786462068526,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_write",
+          "toolCallId": "call_04_KgZWNaRG7rUsOKb8oha71610",
+          "isError": false,
+          "outputPreview": "written tests/config.test.ts"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-50-08d8f1",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 50,
+        "timestamp": 1786462068529,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 8
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-51-8ecfd3",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 51,
+        "timestamp": 1786462084843,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 8,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 11570,
+            "outputTokens": 115,
+            "totalTokens": 11685,
+            "cacheHitTokens": 11392,
+            "cacheMissTokens": 178
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-52-8c117b",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 52,
+        "timestamp": 1786462084845,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_neA9mRzNfxWMo03LCF5v9711"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-53-3a866e",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 53,
+        "timestamp": 1786462087884,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_neA9mRzNfxWMo03LCF5v9711",
+          "isError": false,
+          "outputPreview": "(exit 0)"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-54-a4b633",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 54,
+        "timestamp": 1786462087889,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_01_AFlF79pdMkSOQpvARiPU4620"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-55-253967",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 55,
+        "timestamp": 1786462089669,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_01_AFlF79pdMkSOQpvARiPU4620",
+          "isError": false,
+          "outputPreview": "\n> fixture-l2-02@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-02-1f6c909c\n\n\n Test Files  1 passed (1)\n      Tests  7 passed (7)\n  "
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-56-4bd1b7",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 56,
+        "timestamp": 1786462089674,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 9
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-57-f1f1be",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 57,
+        "timestamp": 1786462106709,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 9,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 11829,
+            "outputTokens": 123,
+            "totalTokens": 11952,
+            "cacheHitTokens": 11648,
+            "cacheMissTokens": 181
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-58-3a2b58",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 58,
+        "timestamp": 1786462106711,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_search",
+          "toolCallId": "call_00_5AlaBcICQqhzLN4hzBIF5664"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-59-bd5f49",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 59,
+        "timestamp": 1786462106716,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_search",
+          "toolCallId": "call_00_5AlaBcICQqhzLN4hzBIF5664",
+          "isError": false,
+          "outputPreview": "src/config-types.ts\nsrc/loader.ts\nsrc/main.ts\nsrc/server.ts\ntests/config.test.ts"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-60-712208",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 60,
+        "timestamp": 1786462106718,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 10
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-61-2d195e",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 61,
+        "timestamp": 1786462122530,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 10,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 11986,
+            "outputTokens": 59,
+            "totalTokens": 12045,
+            "cacheHitTokens": 11904,
+            "cacheMissTokens": 82
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-62-9f94ec",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 62,
+        "timestamp": 1786462122531,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_ET_ZHjVIUtwPxjeTtmEDXxA2575"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-63-261aa2",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 63,
+        "timestamp": 1786462126714,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_ET_ZHjVIUtwPxjeTtmEDXxA2575",
+          "isError": true,
+          "outputPreview": "(exit 1)"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-64-12bef8",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 64,
+        "timestamp": 1786462126716,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 11
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-65-23a3e6",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 65,
+        "timestamp": 1786462145128,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 11,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 12060,
+            "outputTokens": 312,
+            "totalTokens": 12372,
+            "cacheHitTokens": 12032,
+            "cacheMissTokens": 28
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-66-0c6b23",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 66,
+        "timestamp": 1786462145131,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_s3cx4YKCRViH0AoWwfc01278"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-67-0db9fc",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 67,
+        "timestamp": 1786462145132,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_00_s3cx4YKCRViH0AoWwfc01278",
+          "isError": false,
+          "outputPreview": "// 配置类型定义：应用配置的唯一权威类型\nexport interface AppConfig {\n  name: string;\n  /** 结构化超时字段（首选） */\n  timeout: { seconds: number };\n  /** 遗留的扁平超时字段；结构化 timeout 缺失时兜底 */\n  timeoutSeconds?: number;\n}\n"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-68-feeb9b",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 68,
+        "timestamp": 1786462145136,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_VYtsS5ovfDRoigCJ1eZ16102"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-69-5d6b8d",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 69,
+        "timestamp": 1786462145137,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_01_VYtsS5ovfDRoigCJ1eZ16102",
+          "isError": false,
+          "outputPreview": "// 配置加载器：raw JSON → AppConfig\nimport type { AppConfig } from './config-types.js';\n\nconst DEFAULT_TIMEOUT_SECONDS = 30;\n\nfunction isTimeoutObject(value: unknown): value is { seconds: number } {\n  retur"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-70-a71e08",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 70,
+        "timestamp": 1786462145140,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_02_38SIfanbvQEJHMIe2nFy8514"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-71-f2a716",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 71,
+        "timestamp": 1786462145141,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_02_38SIfanbvQEJHMIe2nFy8514",
+          "isError": false,
+          "outputPreview": "// 应用入口：装配配置并启动服务\nimport { parseConfig } from './loader.js';\nimport { startServer } from './server.js';\n\nexport function bootstrap(raw: Record<string, unknown>) {\n  const config = parseConfig(raw);\n  "
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-72-cc91e5",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 72,
+        "timestamp": 1786462145143,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_03_8lJfkcdw91YnP6Yoxd8W6175"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-73-ea9ce9",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 73,
+        "timestamp": 1786462145144,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_03_8lJfkcdw91YnP6Yoxd8W6175",
+          "isError": false,
+          "outputPreview": "// 服务启动器：消费 timeout.seconds 作为请求超时\nexport interface ServerOptions {\n  name: string;\n  timeout: { seconds: number };\n}\n\nexport function startServer(opts: ServerOptions): { name: string; timeout: { seco"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-74-df8c92",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 74,
+        "timestamp": 1786462145146,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_04_bEwrzdBIAlUM4WsGquyg1356"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-75-d71b52",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 75,
+        "timestamp": 1786462145148,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "file_read",
+          "toolCallId": "call_04_bEwrzdBIAlUM4WsGquyg1356",
+          "isError": false,
+          "outputPreview": "import { describe, it, expect } from 'vitest';\nimport { parseConfig } from '../src/loader.js';\nimport { bootstrap } from '../src/main.js';\n\ndescribe('parseConfig', () => {\n  it('解析基础字段（结构化 timeout）', "
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-76-6994fb",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 76,
+        "timestamp": 1786462145149,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 12
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-77-2d9ac2",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 77,
+        "timestamp": 1786462162766,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 12,
+          "finishReason": "stop",
+          "usage": {
+            "inputTokens": 13320,
+            "outputTokens": 596,
+            "totalTokens": 13916,
+            "cacheHitTokens": 12288,
+            "cacheMissTokens": 1032
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-78-fa38ee",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 78,
+        "timestamp": 1786462162769,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 13
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-79-4030e5",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 79,
+        "timestamp": 1786462178456,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 13,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 13818,
+            "outputTokens": 627,
+            "totalTokens": 14445,
+            "cacheHitTokens": 13312,
+            "cacheMissTokens": 506
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-80-4d8610",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 80,
+        "timestamp": 1786462178458,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_hq4pCUOZ3ihe5nbWbKrf4620"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-81-0e2fc6",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 81,
+        "timestamp": 1786462182849,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_hq4pCUOZ3ihe5nbWbKrf4620",
+          "isError": true,
+          "outputPreview": "(exit 1)"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-82-f54d45",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 82,
+        "timestamp": 1786462182851,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 14
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-83-b2138b",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 83,
+        "timestamp": 1786462198015,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 14,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 14251,
+            "outputTokens": 116,
+            "totalTokens": 14367,
+            "cacheHitTokens": 768,
+            "cacheMissTokens": 13483
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-84-455b27",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 84,
+        "timestamp": 1786462198016,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_oeU5SibfkYd8UXeN5w7O2736"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-85-c2a0d7",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 85,
+        "timestamp": 1786462198084,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_oeU5SibfkYd8UXeN5w7O2736",
+          "isError": false,
+          "outputPreview": "const DEFAULT_TIMEOUT_SECONDS = 30;\nfunction isTimeoutObject(value: unknown): value is { seconds: number } {\n  const rawTimeout = raw.timeout;\n  const structuredSeconds = isTimeoutObject(rawTimeout) ?"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-86-1cf791",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 86,
+        "timestamp": 1786462198086,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 15
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-87-59e03f",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 87,
+        "timestamp": 1786462213120,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 15,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 13263,
+            "outputTokens": 261,
+            "totalTokens": 13524,
+            "cacheHitTokens": 768,
+            "cacheMissTokens": 12495
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-88-694cfc",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 88,
+        "timestamp": 1786462213122,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_8x2XfuVRzi9fKTOTkZ874515"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-89-dbde34",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 89,
+        "timestamp": 1786462273513,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_8x2XfuVRzi9fKTOTkZ874515",
+          "isError": true,
+          "outputPreview": "node_modules\\.pnpm\\@anthropic-ai+sdk@0.104.2_zod@4.4.3\\node_modules\\@anthropic-ai\\sdk\\client.d.ts:import { AnthropicBeta, Beta, BetaAPIError, BetaAuthenticationError, BetaBillingError, BetaError, Beta"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-90-9c0e5b",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 90,
+        "timestamp": 1786462273515,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 16
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-91-6a9839",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 91,
+        "timestamp": 1786462286158,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 16,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 14839,
+            "outputTokens": 267,
+            "totalTokens": 15106,
+            "cacheHitTokens": 13440,
+            "cacheMissTokens": 1399
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-92-e53b99",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 92,
+        "timestamp": 1786462286160,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_sK6SM0cmV531Xgpb8i8e8877"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-93-a35264",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 93,
+        "timestamp": 1786462286221,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_sK6SM0cmV531Xgpb8i8e8877",
+          "isError": false,
+          "outputPreview": "src\\config-types.ts:  timeout: { seconds: number };\nsrc\\config-types.ts:  /** 遗留的扁平超时字段；结构化 timeout 缺失时兜底 */\nsrc\\config-types.ts:  timeoutSeconds?: number;\nsrc\\loader.ts:const DEFAULT_TIMEOUT_SECONDS "
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-94-1ec02c",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 94,
+        "timestamp": 1786462286223,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 17
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-95-f09c66",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 95,
+        "timestamp": 1786462301172,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 17,
+          "finishReason": "tool_use",
+          "usage": {
+            "inputTokens": 15445,
+            "outputTokens": 232,
+            "totalTokens": 15677,
+            "cacheHitTokens": 15104,
+            "cacheMissTokens": 341
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-96-910391",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 96,
+        "timestamp": 1786462301175,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_Te4U7GksOu5IotCIzCwI3124"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-97-97507e",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 97,
+        "timestamp": 1786462303631,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_00_Te4U7GksOu5IotCIzCwI3124",
+          "isError": false,
+          "outputPreview": "TYPECHECK_OK\r\n"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-98-b4eecc",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 98,
+        "timestamp": 1786462303633,
+        "type": "tool_requested",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_01_yBzAjCU4Pkb0q8eXiXSC0220"
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-99-6a24b5",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 99,
+        "timestamp": 1786462305252,
+        "type": "tool_completed",
+        "payload": {
+          "toolName": "shell_exec",
+          "toolCallId": "call_01_yBzAjCU4Pkb0q8eXiXSC0220",
+          "isError": false,
+          "outputPreview": "\n> fixture-l2-02@1.0.0 test\n> vitest run\n\n\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-02-1f6c909c\n\n\n Test Files  1 passed (1)\n      Tests  7 passed (7)\n  "
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-100-4cc6f2",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 100,
+        "timestamp": 1786462305255,
+        "type": "llm_requested",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 18
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-101-1cbcc9",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 101,
+        "timestamp": 1786462317547,
+        "type": "llm_succeeded",
+        "payload": {
+          "model": "deepseek-v4-flash",
+          "attempt": 18,
+          "finishReason": "stop",
+          "usage": {
+            "inputTokens": 15824,
+            "outputTokens": 428,
+            "totalTokens": 16252,
+            "cacheHitTokens": 15616,
+            "cacheMissTokens": 208
+          }
+        }
+      },
+      {
+        "id": "eval-L2-02-1786461911381-102-bd4102",
+        "runId": "eval-L2-02-1786461911381",
+        "sequence": 102,
+        "timestamp": 1786462317548,
+        "type": "run_completed",
+        "payload": {
+          "outputLength": 1549,
+          "toolCallCount": 32,
+          "retryCount": 0
+        }
+      }
+    ],
+    "publicChecks": [
+      {
+        "name": "vitest run tests",
+        "passed": true,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-02-1f6c909c\n\n\n Test Files  1 passed (1)\n      Tests  7 passed (7)\n   Start at  23:31:58\n   Duration  394ms (transform 59ms, setup 0ms, import 87ms, tests 7ms, environment 0ms)\n\n",
+        "durationMs": 1144
+      }
+    ],
+    "hiddenChecks": [
+      {
+        "name": "vitest run hidden/contract.test.ts",
+        "passed": true,
+        "outputPreview": "\n RUN  v4.1.9 C:/Users/杨铭/Desktop/Agent/.worktrees/ga-release-gate/routedev/.eval-work/L2-02-1f6c909c\n\n\n Test Files  1 passed (1)\n      Tests  4 passed (4)\n   Start at  23:31:59\n   Duration  383ms (transform 51ms, setup 0ms, import 102ms, tests 5ms, environment 0ms)\n\n",
+        "durationMs": 1145
+      }
+    ],
+    "pass": false,
+    "mode": "model-capability",
+    "reason": [
+      "token budget 超限"
+    ],
+    "durationMs": 409027,
+    "artifactSecurity": {
+      "redacted": false,
+      "redactionCount": 0,
+      "preRedactionSha256": "d5e2ca6a5f7f21bcabc8ff68009a40d184342a9468feebc3066c7060cfd802cc"
+    }
+  }
+}
