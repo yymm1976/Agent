@@ -23,6 +23,13 @@
       "result": "Windows StatsBar flaky（overall failure——GA Release Hygiene Task 1 已修复，见 hygiene 分支）"
     }
   },
+  "releaseHygieneEvidence": {
+    "releaseHygieneSha": "4067128",
+    "releaseHygieneCiRun": {
+      "runId": 31502857538,
+      "result": "6/6 GREEN（exact SHA——StatsBar flaky 修复后）"
+    }
+  },
   "focusedEval": {
     "L2-01": { "pass": true, "control": true, "report": "reports/L2-01-1786451302561.json" },
     "L3-12": { "pass": true, "control": true, "report": "reports/L3-12-1786451351617.json" },

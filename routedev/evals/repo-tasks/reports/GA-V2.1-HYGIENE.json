@@ -3,7 +3,8 @@
   "date": "2026-08-11",
   "branch": "feat/ga-release-hygiene",
   "baseSha": "3219b05",
-  "hygieneSha": "3ab9ad7（push 后由 exact CI 验证，releaseHygieneCiRun 见下）",
+  "hygieneSha": "4067128",
+  "hygieneBranch": "feat/ga-release-hygiene",
   "tasks": {
     "1_statsbar_flaky": {
       "rootCause": "test fake-timer race：StatsBar 空闲轮询测试用 real timers + wall-clock sleep（setTimeout 5ms），CI 慢时实际等待 >30ms 导致 interval 提前触发（expected calls=1 actual=2）",
@@ -33,5 +34,9 @@
       "status": "NO_ACTIONABLE_ARTIFACT"
     }
   },
-  "releaseHygieneCiRun": "待 exact SHA CI 完成后填入"
+  "releaseHygieneCiRun": {
+    "runId": 31502857538,
+    "sha": "4067128",
+    "result": "6/6 GREEN（Core / Desktop ubuntu·windows·macos / Android / Dependency）"
+  }
 }
