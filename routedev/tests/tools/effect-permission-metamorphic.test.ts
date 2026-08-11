@@ -116,9 +116,9 @@ function safeCommands(count: number): string[] {
     'git log -5 --oneline',
     'rg -n "TODO" src',
     'grep -R "TODO" src',
-    // GA Unified Closure P1-1：repository-controlled script 名（test/typecheck/lint/build）
-    // 不再是 safe corpus——pnpm/npm run 脚本可写任意文件；仅直接 bin 调用保留
-    'pnpm vitest run',
+    // GA Unified Closure P1-1 + P1-A：repository-controlled script 名与 verifier bin
+    // （test/typecheck/lint/build/vitest/tsc/eslint）都不是 safe corpus——vitest 执行
+    // repo 代码、eslint 加载 repo config、pnpm bin 可被 repo-local resolution impersonate
     'echo "diagnostic text"',
     'node -e "console.log(\'ok\')"',
     'Get-Content src/a.ts',

@@ -109,38 +109,62 @@ describe('Effect-aware permission kernel', () => {
     expect(freshRun.decision).not.toBe('deny');
   });
 
-  it('keeps the proven read-only corpus allowed and denies repository-controlled scripts (GA Unified Closure P1-1)', () => {
+  it('keeps the proven read-only corpus allowed and denies repository-controlled scripts and verifiers (GA Unified Closure P1-1/P1-A)', () => {
     const root = workspace();
     const engine = new PermissionEngine();
     engine.loadRules([protectedTestsRule]);
-    // 真 PROVEN_READ_ONLY / 直接 bin：允许
+    // 真 PROVEN_READ_ONLY：允许
     const allowed = [
       'git status --short',
       'git diff -- tests/a.ts',
       'git log -5 --oneline',
       'rg -n TODO src',
       'grep -R TODO src',
-      'pnpm vitest run',
       'echo diagnostic text',
     ];
     for (const command of allowed) {
       const result = engine.check('shell_exec', { command }, 'auto', { runId: 'safe-run', workingDirectory: root });
       expect(result.decision, command).not.toBe('deny');
     }
-    // P1-1：package.json script 是 repository-controlled arbitrary code——
-    // script 名（test/typecheck/lint/build）不能证明 read-only；protected tests/**
-    // deny 存在时 OPAQUE_MAY_WRITE + 无法证明 disjoint → fail-closed DENY
+    // P1-1 + P1-A：package.json script 与 repository code execution（vitest 加载并执行
+    // repo 测试/源码、pnpm 直接 bin 也可被 repo-local resolution impersonate）——
+    // script 名与 verifier bin 都不能证明 read-only；protected tests/** deny 存在时
+    // OPAQUE_MAY_WRITE + 无法证明 disjoint → fail-closed DENY
     const deniedScripts = [
       'pnpm test',
       'pnpm typecheck',
       'npm run lint',
       'npm run build',
       'cd src && pnpm test',
+      'vitest run',
+      'pnpm vitest run',
+      'pnpm exec vitest run',
+      'npm exec vitest run',
+      'eslint src/a.ts',
+      'pnpm tsc --noEmit',
     ];
     for (const command of deniedScripts) {
       const result = engine.check('shell_exec', { command }, 'auto', { runId: `script-run-${command}`, workingDirectory: root });
       expect(result.decision, command).toBe('deny');
     }
+  });
+
+  it('P1-A adversarial bypass: vitest executing repo code cannot write protected resources', () => {
+    // 真实 semantic bypass 场景：src/foo.ts 被改成执行 writeFileSync('tests/pwn.ts')，
+    // `pnpm vitest run` 会加载并执行它——OPAQUE_MAY_WRITE + tests/** deny → fail-closed。
+    const root = workspace();
+    writeFileSync(join(root, 'src', 'foo.ts'), "import { writeFileSync } from 'node:fs';\nwriteFileSync('tests/pwn.ts', 'pwned');\n", 'utf-8');
+    const engine = new PermissionEngine();
+    engine.loadRules([protectedTestsRule]);
+
+    const result = engine.check('shell_exec', { command: 'pnpm vitest run' }, 'auto', {
+      runId: 'vitest-bypass',
+      workingDirectory: root,
+    });
+    expect(result.decision).toBe('deny');
+    expect(result.effectKind).toBe('opaque_may_write');
+    // fail-closed 后 tests/pwn.ts 不可能被创建（写入路径被 deny 拦截）
+    expect(existsSync(join(root, 'tests', 'pwn.ts'))).toBe(false);
   });
 
   it('does not trust repository-local executables by a safe basename', () => {

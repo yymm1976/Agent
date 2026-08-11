@@ -143,28 +143,6 @@ function isProvenReadOnlyInlineNode(raw: string): boolean {
   return new RegExp(`^${command}(?:${doubleQuoted}|${singleQuoted})$`, 'i').test(raw.trim());
 }
 
-function isNoEmitTypecheck(args: string[]): boolean {
-  const lowered = args.map((arg) => arg.toLowerCase());
-  const noEmitIndex = lowered.indexOf('--noemit');
-  const noEmit = (noEmitIndex >= 0 && lowered[noEmitIndex + 1] !== 'false')
-    || lowered.includes('--noemit=true');
-  if (!noEmit) return false;
-  return !lowered.some((arg) => arg === '--incremental'
-    || arg.startsWith('--incremental=')
-    || arg === '--generatetrace'
-    || arg.startsWith('--generatetrace=')
-    || arg === '--tsbuildinfofile'
-    || arg.startsWith('--tsbuildinfofile='));
-}
-
-function hasMutatingVerifierFlag(args: string[]): boolean {
-  const lowered = args.map((arg) => arg.toLowerCase());
-  return lowered.some((arg) => arg === '--fix' || arg.startsWith('--fix=')
-    || arg === '-u' || arg === '--update' || arg === '--update-snapshot'
-    || arg === '--updatesnapshot' || arg.startsWith('--updatesnapshot=')
-    || arg === '-o' || arg === '--output-file' || arg.startsWith('--output-file='));
-}
-
 function quotedCapture(raw: string, pattern: RegExp): string | undefined {
   const match = pattern.exec(raw);
   return match?.[1] ?? match?.[2];
@@ -257,27 +235,14 @@ function analyzeOne(parsed: ParsedCommand, context: EffectResolveContext): Effec
   if (name === 'echo' || name === 'printf' || READ_ONLY_COMMANDS.has(name)) {
     return resolution('PROVEN_READ_ONLY', [{ kind: 'process.exec' }]);
   }
-  if (name === 'tsc' && isNoEmitTypecheck(args)) {
-    return resolution('PROVEN_READ_ONLY', [{ kind: 'process.exec' }]);
-  }
-  if (name === 'vitest' && !hasMutatingVerifierFlag(args)) {
-    return resolution('PROVEN_READ_ONLY', [{ kind: 'process.exec' }]);
-  }
-  if (name === 'eslint' && !hasMutatingVerifierFlag(args)) {
-    return resolution('PROVEN_READ_ONLY', [{ kind: 'process.exec' }]);
-  }
-  if (name === 'npm' || name === 'pnpm' || name === 'yarn') {
-    // P1-1（GA Unified Closure）：package.json script 是 repository-controlled
-    // arbitrary code——script 名（test/build/lint/typecheck）不能推出 PROVEN_READ_ONLY
-    // （`"test": "node scripts/write-protected.js"` 可写 tests/**，`"build"` 可写 dist/**）。
-    // 仅直接调用已知包 bin（`pnpm vitest` / `pnpm tsc`，args[0] 即 bin 名且非 `run`）
-    // 且无 mutating flag 时放行；`run <script>` 与其余一律 OPAQUE_MAY_WRITE（fail-closed）。
-    const script = args[0] === 'run' ? args[1] : args[0];
-    if (script && args[0] !== 'run' && !hasMutatingVerifierFlag(args)
-      && (script === 'vitest' || script === 'tsc')) {
-      return resolution('PROVEN_READ_ONLY', [{ kind: 'process.exec' }]);
-    }
-  }
+  // P1-A（GA Unified Closure-2）：repository code execution 不是 PROVEN_READ_ONLY——
+  // vitest 加载并执行 repository 测试/源码（可写任意 workspace 资源），eslint 加载
+  // repository-controlled config/plugin，tsc/vitest 的 executable identity 可被
+  // repo-local binary/package resolution impersonate（node_modules/.bin 是 repo 控制）。
+  // 一律 OPAQUE_MAY_WRITE：存在 protected resource deny 且无法证明 disjoint → fail closed。
+  // （原本的 `tsc --noEmit` / `vitest` / `pnpm vitest` PROVEN_READ_ONLY 分支全部移除——
+  //   验证语义与 read-only 语义不得混用；verification 的可信度由 CompletionEvidenceGate
+  //   的 verifier provenance 层单独管理，不在此赋予文件系统效果信任。）
   return resolution('OPAQUE_MAY_WRITE', [{ kind: 'opaque_may_write' }]);
 }
 
