@@ -11,7 +11,7 @@
 // 修复：使用 Proxy 懒加载模式，首次调用日志方法时才创建目录和文件 transport
 
 import { createLogger, format, transports } from 'winston';
-import { redactSensitiveText, redactSensitiveValue } from './redact-sensitive.js';
+import { redactSensitiveValue } from './redact-sensitive.js';
 import type * as winston from 'winston';
 import { getAppDataDir, ensureDir } from './paths.js';
 import { join } from 'path';
@@ -58,15 +58,19 @@ let fileTransportsAdded = false;
  * info 对象，secret 可能出现在 message 或 meta 任意层）。Console transport
  * 保持原样（非持久化面，开发可读性优先）。
  */
-/** Observability Closure（P1-INFRA-01）：文件 transport 的脱敏 format——导出供 artifact 测试 */
+/** Observability Closure（P1-INFRA-01 + GA Unified Closure P1-3）：文件 transport 的脱敏
+ *  format——**完整 info value tree** 统一 sink-level redaction：
+ *  message、top-level string meta（error/reason 等）、嵌套对象、数组、敏感键 scalar
+ *  全部覆盖（此前 top-level string scalar 直接透传——error.log 仍可能含 raw credential）。
+ *  导出供 artifact 测试。Console transport 保持原样（非持久化面）。 */
 export function redactingFileFormat(): ReturnType<typeof format.combine> {
   return format.combine(
     format((info) => {
-      const out: Record<string, unknown> = { ...info };
+      const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(info)) {
-        if (k === 'message' && typeof v === 'string') out[k] = redactSensitiveText(v);
-        else if (typeof v === 'object' && v !== null) out[k] = redactSensitiveValue(v);
-        else out[k] = v;
+        // redactSensitiveValue 覆盖：string（键名敏感→整体 [REDACTED]，否则文本替换）、
+        // 嵌套 object/array 递归、Error-like 元数据；非字符串非对象值原样保留。
+        out[k] = redactSensitiveValue(v, k);
       }
       return out as ReturnType<NonNullable<Parameters<typeof format>[0]>>;
     })(),

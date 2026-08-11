@@ -134,6 +134,27 @@ describe('Closure 1c：logger file transport format redaction', () => {
     expect(text).toContain('connect failed');
     expect(rendered.meta.attempt).toBe(2);
   });
+
+  it('GA Unified Closure P1-3：top-level string meta（error/reason）也脱敏，原 metadata 不被 mutation', () => {
+    const fmt = redactingFileFormat();
+    const info = {
+      level: 'warn',
+      message: 'provider failed',
+      error: FAKE.bearer,
+      reason: `token=${FAKE.sk}`,
+      providerError: { authorization: FAKE.auth },
+      attempts: 3,
+    };
+    // 原对象快照（mutation 断言）
+    const snapshot = JSON.stringify(info);
+    const rendered = fmt.transform(info);
+    const text = JSON.stringify(rendered);
+    assertZeroRawSecrets(text, 'logger top-level string meta');
+    // 原传入 metadata 未被 mutation
+    expect(JSON.stringify(info)).toBe(snapshot);
+    // 数值字段保留
+    expect(rendered.attempts).toBe(3);
+  });
 });
 
 // ============================================================
@@ -248,6 +269,26 @@ describe('Closure 5：artifactSecurity 完整性 metadata', () => {
     expect(sec.redacted).toBe(false);
     expect(sec.redactionCount).toBe(0);
     expect(String(sec.preRedactionSha256)).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('GA Unified Closure P2-2：嵌套结构（args.apiKey 敏感键）替换计入 redactionCount/redacted', () => {
+    const report = {
+      artifact: {
+        toolTrajectory: [
+          { toolName: 'shell_exec', toolCallId: 'c1', isError: false, args: { apiKey: FAKE.sk, command: 'curl -x' }, outputPreview: 'ok', timestamp: 1 },
+        ],
+        finalPatch: 'diff --git a/x b/x\n+export const a = 1;',
+        runEventLog: [],
+      },
+    };
+    const safe = redactReport(report);
+    const sec = (safe.artifact as Record<string, unknown>).artifactSecurity as Record<string, unknown>;
+    // 嵌套敏感键实际替换 → count > 0、redacted = true（此前 redactSensitiveValue 的替换不计入）
+    expect(sec.redacted).toBe(true);
+    expect(sec.redactionCount as number).toBeGreaterThan(0);
+    expect(JSON.stringify(safe)).not.toContain(FAKE.sk);
+    const traj = ((safe.artifact as Record<string, unknown>).toolTrajectory as Array<Record<string, unknown>>)[0]!;
+    expect((traj.args as Record<string, unknown>).apiKey).toBe('[REDACTED]');
   });
 });
 
